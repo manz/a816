@@ -1,88 +1,113 @@
+from cpu_65c816 import snes_opcode_table, snes_to_rom
+
+
 class ValueNode(object):
     def __init__(self, value):
-        self.value = int(value, 16)
+        self.value = value
 
     def get_value(self):
-        return self.value
+        return int(self.value, 16)
+
+    def get_value_string_len(self):
+        value_length = len(self.value)
+        return value_length
+
+    def get_operand_size(self):
+        value_length = self.get_value_string_len()
+        if value_length <= 2:
+            retval = 'b'
+        elif value_length <= 4:
+            retval = 'w'
+        else:
+            retval = 'l'
+
+        return retval
 
     def __repr__(self):
         return 'ValueNode(%s)' % self.value
 
 
-class SymbolNode(object):
+class LabelReferenceNode(object):
     def __init__(self, symbol, resolver):
         self.symbol = symbol
         self.resolver = resolver
 
     def get_value(self):
-        return self.resolver.value_for(self.symbol)
+        return self.resolver.value_for(self.symbol) or 0
+
+    def get_value_string_len(self):
+        return len(hex(self.get_value())) - 2
+
+    def get_operand_size(self):
+        value_length = self.get_value_string_len()
+        if value_length <= 2:
+            retval = 'b'
+        elif value_length <= 4:
+            retval = 'w'
+        else:
+            retval = 'l'
+
+        return retval
 
     def __repr__(self):
-        return 'SymbolNode(%s)' % self.symbol
+        return 'LabelReferenceNode(%s)' % self.symbol
+
+
+class LabelNode(object):
+    def __init__(self, symbol_name, resolver):
+        self.symbol_name = symbol_name
+        self.resolver = resolver
+
+    def emit(self, current_addr):
+        return []
+        # self.resolver.add_symbol(self.symbol_name, current_addr)
+
+    def pc_after(self, current_pc):
+        self.resolver.add_symbol(self.symbol_name, current_pc)
+        return current_pc
+
+    def __repr__(self):
+        return 'LabelNode(%s)' % self.symbol_name
+
+
+class OpcodeNode(object):
+    def __init__(self, opcode, size=None, addressing_mode=None, index=None, value_node=None):
+        self.opcode = opcode.lower()
+        self.addressing_mode = addressing_mode
+        self.index = index
+        self.value_node = value_node
+        self.size = size.lower() if size else None
+
+    def _get_emitter(self):
+        opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
+        if isinstance(opcode_emitter, dict):
+            opcode_emitter = opcode_emitter[self.index]
+        return opcode_emitter
     
+    def emit(self, resolver):
+        opcode_emitter = self._get_emitter()
+        instruction_bytes = opcode_emitter.emit(self.value_node, self.size, resolver)
+        return instruction_bytes
 
-class ImmediateInstructionNode(object):
-    def __init__(self, match, value_node):
-        self.opcode = match.group('opcode').lower()
-        self.value_node = value_node
-
-    def __repr__(self):
-        return '%s(%s, %s)' % (self.__class__.__name__, self.opcode, self.value_node)
-
-
-class DirectInstructionNode(object):
-    def __init__(self, match, value_node):
-        self.opcode = match.group('opcode').lower()
-        self.value_node = value_node
+    def pc_after(self, current_pc):
+        opcode_emitter = self._get_emitter()
+        return current_pc + opcode_emitter.supposed_length(self.value_node, self.size)
 
     def __repr__(self):
-        return '%s(%s, %s)' % (self.__class__.__name__, self.opcode, self.value_node)
+        return 'OpcodeNode(%s, %s, %s, %s)' % (self.opcode, self.addressing_mode, self.index, self.value_node)
 
 
-class DirectIndexedInstructionNode(object):
-    def __init__(self, match, value_node):
-        self.opcode = match.group('opcode').lower()
-        self.index = match.group('index').lower()
-        self.value_node = value_node
+class CodePositionNode(object):
+    def __init__(self, code_position, resolver):
+        self.code_position = code_position
+        self.resolver = resolver
 
-    def __repr__(self):
-        return '%s(%s, %s, %s)' % (self.__class__.__name__, self.opcode, self.value_node, self.index)
+    def pc_after(self, current_pc):
+        return snes_to_rom(int(self.code_position, 16))
 
-
-class IndirectInstructionNode(object):
-    def __init__(self, match, value_node):
-        self.opcode = match.group('opcode').lower()
-        self.value_node = value_node
+    def emit(self, current_addr):
+        self.resolver.pc = snes_to_rom(int(self.code_position, 16))
+        return []
 
     def __repr__(self):
-        return '%s(%s, %s)' % (self.__class__.__name__, self.opcode, self.value_node)
-
-class IndirectIndexedInstructionNode(object):
-    def __init__(self, match, value_node):
-        self.opcode = match.group('opcode').lower()
-        self.index = match.group('index').lower()
-        self.value_node = value_node
-
-    def __repr__(self):
-        return '%s(%s, %s, %s)' % (self.__class__.__name__, self.opcode, self.value_node, self.index)
-
-
-class IndirectLongInstructionNode(object):
-    def __init__(self, match, value_node):
-        self.opcode = match.group('opcode').lower()
-        self.value_node = value_node
-        self.value_size = 3
-
-    def __repr__(self):
-        return '%s(%s, %s)' % (self.__class__.__name__, self.opcode, self.value_node)
-
-class IndirectLongIndexedInstructionNode(object):
-    def __init__(self, match, value_node):
-        self.opcode = match.group('opcode').lower()
-        self.index = match.group('index').lower()
-        self.value_node = value_node
-        self.value_size = 3
-
-    def __repr__(self):
-        return '%s(%s, %s, %s)' % (self.__class__.__name__, self.opcode, self.value_node, self.index)
-
+        return 'CodePositionNode(%s)' % self.code_position
