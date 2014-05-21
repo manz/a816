@@ -1,15 +1,32 @@
 import re
 
-pc_change_regexp = r'^\*=\s*(?:(?:(?:\$|0x)(?P<value>[0-9-A-Fa-f]+)))$'
+pc_change_regexp = r'^(?:(?:\*=\s*)|(?:\.patch \())(?:(?:(?:\$|0x)))(?P<value>[0-9-A-Fa-f]+)\)?$'
+
 rom_type_regexp = r'^\.(?P<romtype>low_rom|low_rom_2|high_rom)$'
+
+data_word_regexp = r'\.dw (?P<data>[^;]+)'
+data_byte_regexp = r'\.db (?P<data>[^;]+)'
+
+push_context_regexp = r'^\{'
+pop_context_regexp = r'^\}'
 
 symbol_regex = r'[_a-zA-Z][_a-zA-Z0-9]*'
 label_regexp = r'^(?P<label>' + symbol_regex + r')\s*:$'
 operand_size_regexp = re.compile(r'\.(al|as|xl|xs)\s*$')
 
+include_binary_regex = r'\.incbin "(?P<path>[^"]+)"'
+include_source_regex = r'\.incsrc "(?<path>[^"]+)"'
+
+define_symbol_regex = r'^(?P<symbol>[_a-zA-Z][_a-zA-Z0-9]*)\s*=\s*(?P<expression>.*)$'
+
 opcode_regexp = r'^(?P<opcode>\w+)(?:\.(?P<size>[Bb]|[Ww]|[Ll]))?'
-operand = r'(?:(?:(?:\$|0x)(?P<value>[0-9-A-Fa-f]+))|(?P<symbol>{symbol}))'.format(symbol=symbol_regex)
-indexed = r'\s*,\s*(?P<index>[xXyY])'
+operand = r'(?:(?:(?:\$|0x)(?P<value>[0-9-A-Fa-f]+))|(?P<symbol>{symbol})|{expression})'.format(
+    symbol=symbol_regex,
+    expression="(?:')(?P<expression>[^']+)(?:')")
+
+indexed = r'\s*,\s*(?P<index>[xXyYSs])'
+
+comment_regexp = r'\s*;.*'
 
 none_regexp = opcode_regexp
 immediate_regexp = opcode_regexp + r'\s+(?P<immediate>#)' + operand
@@ -21,4 +38,3 @@ indirect_indexed_regexp = indirect_regexp + indexed
 indirect_long_regexp = opcode_regexp + r'\s+' + r'\[\s*' + operand + r'\s*\]'
 indirect_indexed_long_regexp = indirect_long_regexp + indexed
 
-symbol_define = re.compile(r'\.define\s+(?P<symbol_name>[_a-zA-Z][_a-zA-Z0-9]*)\s*=' + operand)

@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -e
+
+python3.4 -m a816.cli.x816 $@
+

@@ -27,7 +27,7 @@ class BaseOpcode(object):
 class RelativeJumpOpcode(BaseOpcode):
     def emit(self, value_node, size=None, resolver=None):
         value = value_node.get_value()
-        from nodes import LabelReferenceNode
+        from ..parse.nodes import LabelReferenceNode
 
         if isinstance(value_node, LabelReferenceNode):
             pc = resolver.pc
@@ -102,11 +102,23 @@ snes_opcode_table = {
         AddressingMode.immediate: Opcode([0xA9, 0xA9], is_a=True),
         AddressingMode.direct: Opcode([0xA5, 0xAD, 0xAF], is_a=True),
         AddressingMode.direct_indexed: {
-            'x': Opcode([None, 0xBD, 0xBF], is_a=True),
-            'y': Opcode([None, 0xB9, None], is_a=True)
+            'x': Opcode([0xB5, 0xBD, 0xBF], is_a=True),
+            'y': Opcode([None, 0xB9, None], is_a=True),
+            's': Opcode([0xA3])
         },
         AddressingMode.indirect_indexed_long: {
             'y': Opcode([0xB7])
+        }
+    },
+    'ora': {
+        AddressingMode.immediate: Opcode([0x09, 0xA9], is_a=True),
+        AddressingMode.direct: Opcode([0x05, 0x0D, 0x0F], is_a=True),
+        AddressingMode.direct_indexed: {
+            'x': Opcode([None, 0x1D, 0x1F], is_a=True),
+            'y': Opcode([None, 0x19, None], is_a=True)
+        },
+        AddressingMode.indirect_indexed_long: {
+            'y': Opcode([0x17])
         }
     },
     'ldx': {
@@ -162,7 +174,8 @@ snes_opcode_table = {
         AddressingMode.direct: Opcode([0x65, 0x6D, 0x6F]),
         AddressingMode.direct_indexed: {
             'x': Opcode([0x75, 0x7D, 0x7F]),
-            'y': Opcode([None, 0x79, None])
+            'y': Opcode([None, 0x79, None]),
+            's': Opcode([0x63])
         },
         AddressingMode.indirect: Opcode([0x72]),
         AddressingMode.indirect_indexed: {
@@ -238,6 +251,9 @@ snes_opcode_table = {
             'y': Opcode([None, 0xD9, None], is_a=True)
         },
     },
+    'pea': {
+        AddressingMode.direct: Opcode([None, 0xF4])
+    },
     'pha': {
         AddressingMode.none: BaseOpcode(0x48)
     },
@@ -255,6 +271,18 @@ snes_opcode_table = {
     },
     'plx': {
         AddressingMode.none: BaseOpcode(0xFA)
+    },
+    'php': {
+        AddressingMode.none: BaseOpcode(0x08)
+    },
+    'plp': {
+        AddressingMode.none: BaseOpcode(0x28)
+    },
+    'phb': {
+        AddressingMode.none: BaseOpcode(0x8B)
+    },
+    'plb': {
+        AddressingMode.none: BaseOpcode(0xAB)
     },
     'rol': {
         AddressingMode.none: BaseOpcode(0x2A),
@@ -315,7 +343,8 @@ snes_opcode_table = {
         },
         AddressingMode.direct_indexed: {
             'x': Opcode([0x95, 0x9D, 0x9F]),
-            'y': Opcode([None, 0x99, None])
+            'y': Opcode([None, 0x99, None]),
+            's': Opcode([0x83])
         }
     },
     'stx': {
