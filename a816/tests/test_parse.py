@@ -1,5 +1,6 @@
 import unittest
 import struct
+
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.expressions import eval_expr
 from a816.parse.nodes import OpcodeNode, ValueNode
@@ -75,7 +76,7 @@ class ParseTest(unittest.TestCase):
     def test_expressions(self):
         input_program = [
             'my_symbol = 0x4567',
-            "jmp.w 'my_symbol'",
+            "jmp.w my_symbol",
             "{",
             "my_symbol = 0x1234",
             "pea.w label",

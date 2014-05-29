@@ -1,4 +1,4 @@
-from .cpu.cpu_65c816 import rom_to_snes, RomType
+from a816.cpu.cpu_65c816 import rom_to_snes, RomType
 
 
 class Scope(object):

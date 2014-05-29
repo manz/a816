@@ -1,6 +1,7 @@
 import struct
+
 from a816.expressions import eval_expr
-from ..cpu.cpu_65c816 import snes_opcode_table, snes_to_rom
+from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom
 
 
 class ValueNode(object):
