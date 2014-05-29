@@ -1,5 +1,6 @@
 import logging
 import re
+
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.matchers import RomTypeMatcher, LabelMatcher, ProgramCounterPositionMatcher, AbstractInstructionMatcher, \
     SymbolDefineMatcher, BinaryIncludeMatcher, DataWordMatcher, DataByteMatcher, StateMatcher

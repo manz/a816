@@ -27,7 +27,7 @@ class BaseOpcode(object):
 class RelativeJumpOpcode(BaseOpcode):
     def emit(self, value_node, size=None, resolver=None):
         value = value_node.get_value()
-        from ..parse.nodes import LabelReferenceNode
+        from a816.parse.nodes import LabelReferenceNode
 
         if isinstance(value_node, LabelReferenceNode):
             pc = resolver.pc

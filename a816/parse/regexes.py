@@ -20,9 +20,11 @@ include_source_regex = r'\.incsrc "(?<path>[^"]+)"'
 define_symbol_regex = r'^(?P<symbol>[_a-zA-Z][_a-zA-Z0-9]*)\s*=\s*(?P<expression>.*)$'
 
 opcode_regexp = r'^(?P<opcode>\w+)(?:\.(?P<size>[Bb]|[Ww]|[Ll]))?'
-operand = r'(?:(?:(?:\$|0x)(?P<value>[0-9-A-Fa-f]+))|(?P<symbol>{symbol})|{expression})'.format(
-    symbol=symbol_regex,
-    expression="(?:')(?P<expression>[^']+)(?:')")
+# operand = r'(?:(?:(?:\$|0x)(?P<value>[0-9-A-Fa-f]+))|(?P<symbol>{symbol})|{expression})'.format(
+#     symbol=symbol_regex,
+#     expression="(?:')(?P<expression>[^']+)(?:')")
+
+operand = r'(?P<expression>[^,]+)'
 
 indexed = r'\s*,\s*(?P<index>[xXyYSs])'
 

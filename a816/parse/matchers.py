@@ -1,10 +1,11 @@
 import re
+
 from a816.parse.nodes import BinaryNode, WordNode, ByteNode, ScopeNode, PopScopeNode, SymbolNode
 from a816.parse.regexes import include_binary_regex, data_word_regexp, data_byte_regexp, push_context_regexp, \
     pop_context_regexp
 from ..cpu.cpu_65c816 import RomType
-from ..parse.nodes import LabelReferenceNode, ValueNode, LabelNode, CodePositionNode
-from .regexes import label_regexp, pc_change_regexp, rom_type_regexp, define_symbol_regex
+from ..parse.nodes import LabelReferenceNode, LabelNode, CodePositionNode
+from a816.parse.regexes import label_regexp, pc_change_regexp, rom_type_regexp, define_symbol_regex
 
 
 class LabelMatcher(object):
@@ -149,11 +150,14 @@ class AbstractInstructionMatcher(object):
         match = self.compiled_regexp().match(line)
         if match:
             value = None
-            if 'symbol' in match.groupdict().keys() or 'expression' in match.groupdict():
-                if match.group('symbol') or match.group('expression'):
-                    value = LabelReferenceNode(match.group('symbol') or match.group('expression'), self.resolver)
-                else:
-                    value = ValueNode(match.group('value'))
+            # if 'symbol' in match.groupdict().keys() or 'expression' in match.groupdict():
+            #     if match.group('symbol') or match.group('expression'):
+            #         value = LabelReferenceNode(match.group('symbol') or match.group('expression'), self.resolver)
+            #     else:
+            #         value = ValueNode(match.group('value'))
+
+            if 'expression' in match.groupdict().keys():
+                value = LabelReferenceNode(match.group('expression'), self.resolver)
 
             size = match.group('size')
 
