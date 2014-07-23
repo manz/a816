@@ -1,4 +1,5 @@
 from a816.cpu.cpu_65c816 import rom_to_snes, RomType
+from a816.exceptions import SymbolNotDefined
 
 
 class Scope(object):
@@ -17,17 +18,23 @@ class Scope(object):
             raise RuntimeError('Symbol already defined')
         self.symbols[symbol] = value
 
+    def __getitem__(self, item):
+        try:
+            return self.symbols[item]
+        except KeyError as e:
+            raise SymbolNotDefined('%s is not defined.' % item) from e
+
     def value_for(self, symbol):
         if symbol == 'org':
             return self.resolver.snes_pc
 
         if self.parent:
             if symbol in self.symbols:
-                return self.symbols[symbol]
+                return self[symbol]
             else:
                 return self.parent.value_for(symbol)
         else:
-            return self.symbols[symbol]
+            return self[symbol]
 
 
 class Resolver(object):

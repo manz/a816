@@ -1,4 +1,6 @@
+import logging
 import re
+from a816.exceptions import SymbolNotDefined
 
 from a816.parse.nodes import BinaryNode, WordNode, ByteNode, ScopeNode, PopScopeNode, SymbolNode
 from a816.parse.regexes import include_binary_regex, data_word_regexp, data_byte_regexp, push_context_regexp, \
@@ -7,6 +9,7 @@ from ..cpu.cpu_65c816 import RomType
 from ..parse.nodes import LabelReferenceNode, LabelNode, CodePositionNode
 from a816.parse.regexes import label_regexp, pc_change_regexp, rom_type_regexp, define_symbol_regex
 
+logger = logging.getLogger('x816')
 
 class LabelMatcher(object):
     def __init__(self, resolver):
@@ -127,9 +130,9 @@ class RomTypeMatcher(object):
 
     def parse(self, line):
         match = self.regexp.match(line)
-
         if match:
             self.resolver.rom_type = getattr(RomType, match.group('romtype'))
+            return True
 
 
 class AbstractInstructionMatcher(object):
@@ -150,12 +153,6 @@ class AbstractInstructionMatcher(object):
         match = self.compiled_regexp().match(line)
         if match:
             value = None
-            # if 'symbol' in match.groupdict().keys() or 'expression' in match.groupdict():
-            #     if match.group('symbol') or match.group('expression'):
-            #         value = LabelReferenceNode(match.group('symbol') or match.group('expression'), self.resolver)
-            #     else:
-            #         value = ValueNode(match.group('value'))
-
             if 'expression' in match.groupdict().keys():
                 value = LabelReferenceNode(match.group('expression'), self.resolver)
 
@@ -166,5 +163,14 @@ class AbstractInstructionMatcher(object):
                 index = match.group('index').lower()
 
             opcode = match.group('opcode')
+            node = self.node_class(opcode, size=size, value_node=value, index=index, addressing_mode=self.addressing_mode)
 
-            return self.node_class(opcode, size=size, value_node=value, index=index, addressing_mode=self.addressing_mode)
+            try:
+                node.check_opcode()
+            except SymbolNotDefined:
+                if size is None:
+                    logger.warning("'%s' is ambiguous the size of the operand cannot be guessed."
+                                   " If no opcode is found for this operand byte it might"
+                                   " crash when emitting code." % line)
+
+            return node

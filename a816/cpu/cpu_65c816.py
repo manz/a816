@@ -23,6 +23,12 @@ class BaseOpcode(object):
     def supposed_length(self, value_node, size=None):
         return 1
 
+    def check_opcode(self):
+        pass
+
+    def get_opcode_byte(self, value_size):
+        return self.opcode
+
 
 class RelativeJumpOpcode(BaseOpcode):
     def emit(self, value_node, size=None, resolver=None):
@@ -68,9 +74,12 @@ class Opcode(object):
         value_size = self.guess_value_size(value_node, size)
         return 2 + self.size_opcode_map[value_size]
 
+    def get_opcode_byte(self, value_size):
+        return self.opcode[self.size_opcode_map[value_size]]
+
     def emit(self, value_node, size=None, resolver=None):
         value_size = self.guess_value_size(value_node, size)
-        opcode_byte = struct.pack('B', self.opcode[self.size_opcode_map[value_size]])
+        opcode_byte = struct.pack('B', self.get_opcode_byte(value_size))
         operand_bytes = self.emit_value(value_node, value_size)
         node_bytes = opcode_byte + operand_bytes
         return node_bytes

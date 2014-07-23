@@ -2,6 +2,7 @@ import logging
 import re
 
 from a816.cpu.cpu_65c816 import AddressingMode
+from a816.exceptions import SymbolNotDefined
 from a816.parse.matchers import RomTypeMatcher, LabelMatcher, ProgramCounterPositionMatcher, AbstractInstructionMatcher, \
     SymbolDefineMatcher, BinaryIncludeMatcher, DataWordMatcher, DataByteMatcher, StateMatcher
 from a816.parse.nodes import OpcodeNode, CodePositionNode, UnkownOpcodeError
@@ -65,10 +66,14 @@ class Program(object):
                     except UnkownOpcodeError as e:
                         self.logger.error('While parsing "%s" at %d' % (line, line_number))
                         self.logger.error(e)
+                    except SymbolNotDefined as e:
+                        self.logger.error(e)
 
                     if node is not None:
                         if isinstance(node, list):
                             parsed_list = parsed_list + node
+                        elif isinstance(node, bool) and node:
+                            break
                         else:
                             parsed_list.append(node)
                         break
