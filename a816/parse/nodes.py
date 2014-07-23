@@ -39,7 +39,7 @@ class LabelReferenceNode(object):
         try:
             return eval_expr(self.expression, self.resolver)
         except KeyError:
-            raise RuntimeError('The label %s is not defined.' % self.expression)
+            raise SyntaxError('The label %s is not defined.' % self.expression)
 
     def get_value_string_len(self):
         return len(hex(self.get_value())) - 2
@@ -154,10 +154,9 @@ class OpcodeNode(object):
         self.value_node = value_node
         self.size = size.lower() if size else None
 
-        try:
-            self._get_emitter()
-        except KeyError:
-            raise UnkownOpcodeError('%s is unknown for addressing mode' % self.opcode)
+    def check_opcode(self):
+        emitter = self._get_emitter()
+        emitter.emit(self.value_node, self.size)
 
     def _get_emitter(self):
         opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]

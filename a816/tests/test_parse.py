@@ -15,7 +15,6 @@ class ParseTest(unittest.TestCase):
             'lda #$1234'
         ])
 
-        print(nodes)
         self.assertEqual(len(nodes), 1)
 
         node = nodes[0]
@@ -70,7 +69,8 @@ class ParseTest(unittest.TestCase):
         program = Program()
 
         nodes = program.parse(input_program)
-        print(nodes)
+        program.resolve_labels(nodes)
+        # print(nodes)
         self.assertEqual(nodes[-1].emit(program.resolver), b'E\x00')
 
     def test_expressions(self):
@@ -79,7 +79,8 @@ class ParseTest(unittest.TestCase):
             "jmp.w my_symbol",
             "{",
             "my_symbol = 0x1234",
-            "pea.w label",
+            "lda.w label",
+            "pea.w my_symbol",
             'label:',
             "}",
         ]
@@ -87,20 +88,33 @@ class ParseTest(unittest.TestCase):
         program = Program()
 
         nodes = program.parse(input_program)
-        print('Resolve labels')
-        for scope in program.resolver.scopes:
-            print(scope.symbols)
 
         program.resolve_labels(nodes)
-        machine_output = []
-        for node in nodes:
-            machine_output.append(node.emit(program.resolver))
 
-        machine_code = machine_output[-2]
+        class StubWriter(object):
+            def __init__(self):
+                self.data = []
 
-        print(machine_code)
-        unpacked = struct.unpack('<Bh', machine_code)
-        self.assertEqual(unpacked[1], 0x1234)
+            def begin(self):
+                pass
+
+            def write_block(self, block, block_address):
+                self.data.append(block)
+
+            def end(self):
+                pass
+
+        writer = StubWriter()
+        program.emit(nodes, writer)
+
+        machine_code = writer.data[0]
+
+        # program.resolver.dump_symbol_map()
+        unpacked = struct.unpack('<BHBHBH', machine_code)
+
+        self.assertEqual(unpacked[1], 0x4567)
+        self.assertEqual(unpacked[3], 0x8009)
+        self.assertEqual(unpacked[5], 0x1234)
 
     def test_blocks(self):
         input_program = [
@@ -118,6 +132,3 @@ class ParseTest(unittest.TestCase):
 
         nodes = program.parse(input_program)
         program.resolve_labels(nodes)
-
-        for scope in program.resolver.scopes:
-            print(scope.symbols)

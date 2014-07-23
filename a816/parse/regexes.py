@@ -24,7 +24,7 @@ opcode_regexp = r'^(?P<opcode>\w+)(?:\.(?P<size>[Bb]|[Ww]|[Ll]))?'
 #     symbol=symbol_regex,
 #     expression="(?:')(?P<expression>[^']+)(?:')")
 
-operand = r'(?P<expression>[^,]+)'
+operand = r'(?P<expression>[^\[\]\(\),]+)'
 
 indexed = r'\s*,\s*(?P<index>[xXyYSs])'
 
