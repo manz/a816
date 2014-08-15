@@ -1,7 +1,8 @@
 import struct
 
 from a816.expressions import eval_expr
-from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom
+from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom, RelativeJumpOpcode
+from script import Table
 
 
 class ValueNode(object):
@@ -156,7 +157,8 @@ class OpcodeNode(object):
 
     def check_opcode(self):
         emitter = self._get_emitter()
-        emitter.emit(self.value_node, self.size)
+        if not isinstance(emitter, RelativeJumpOpcode):
+            emitter.emit(self.value_node, self.size)
 
     def _get_emitter(self):
         opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
@@ -218,3 +220,42 @@ class PopScopeNode(object):
     def emit(self, current_addr):
         self.resolver.restore_scope()
         return []
+
+
+class TableNode(object):
+    def __init__(self, path, resolver):
+        self.table_path = path
+        self.resolver = resolver
+        resolver.table = Table(self.table_path)
+
+    def pc_after(self, current_pc):
+        return current_pc
+
+    def emit(self, current_addr):
+        return []
+
+
+class TextNode(object):
+    def __init__(self, text, resolver):
+        self.text = text
+        self.resolver = resolver
+
+        self.binary_text = self.resolver.table.to_bytes(self.text)
+
+    def pc_after(self, current_pc):
+        return current_pc + len(self.binary_text)
+
+    def emit(self, current_addr):
+        return self.binary_text
+
+
+class PointerNode(object):
+    def __init__(self, value_node):
+        self.value_node = value_node
+
+    def pc_after(self, current_pc):
+        return current_pc + 3
+
+    def emit(self, current_addr):
+        value = self.value_node.get_value()
+        return struct.pack('<HB', value & 0xFFFF, (value >> 16) & 0xFF)

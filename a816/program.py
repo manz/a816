@@ -4,7 +4,8 @@ import re
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.exceptions import SymbolNotDefined
 from a816.parse.matchers import RomTypeMatcher, LabelMatcher, ProgramCounterPositionMatcher, AbstractInstructionMatcher, \
-    SymbolDefineMatcher, BinaryIncludeMatcher, DataWordMatcher, DataByteMatcher, StateMatcher
+    SymbolDefineMatcher, BinaryIncludeMatcher, DataWordMatcher, DataByteMatcher, StateMatcher, TableMatcher, TextMatcher, \
+    PointerMatcher
 from a816.parse.nodes import OpcodeNode, CodePositionNode, UnkownOpcodeError
 from a816.parse.regexes import none_regexp, immediate_regexp, direct_regexp, direct_indexed_regexp, indirect_regexp, \
     indirect_indexed_regexp, indirect_long_regexp, indirect_indexed_long_regexp, comment_regexp
@@ -25,6 +26,9 @@ class Program(object):
             BinaryIncludeMatcher(self.resolver),
             DataWordMatcher(self.resolver),
             DataByteMatcher(self.resolver),
+            TableMatcher(self.resolver),
+            TextMatcher(self.resolver),
+            PointerMatcher(self.resolver),
             StateMatcher(self.resolver),
             AbstractInstructionMatcher(none_regexp, OpcodeNode, self.resolver, AddressingMode.none),
             AbstractInstructionMatcher(immediate_regexp, OpcodeNode, self.resolver, AddressingMode.immediate),
@@ -116,7 +120,7 @@ class Program(object):
             with open(asm_file, encoding='utf-8') as f:
                 input_program = f.readlines()
                 nodes = self.parse(input_program)
-            print('Resolving labels')
+            self.logger.info('Resolving labels')
             self.resolve_labels(nodes)
             self.resolver.dump_symbol_map()
 

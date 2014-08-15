@@ -2,9 +2,10 @@ import logging
 import re
 from a816.exceptions import SymbolNotDefined
 
-from a816.parse.nodes import BinaryNode, WordNode, ByteNode, ScopeNode, PopScopeNode, SymbolNode
+from a816.parse.nodes import BinaryNode, WordNode, ByteNode, ScopeNode, PopScopeNode, SymbolNode, TableNode, TextNode, \
+    PointerNode
 from a816.parse.regexes import include_binary_regex, data_word_regexp, data_byte_regexp, push_context_regexp, \
-    pop_context_regexp
+    pop_context_regexp, text_table_regexp, text_regexp, pointer_regexp
 from ..cpu.cpu_65c816 import RomType
 from ..parse.nodes import LabelReferenceNode, LabelNode, CodePositionNode
 from a816.parse.regexes import label_regexp, pc_change_regexp, rom_type_regexp, define_symbol_regex
@@ -133,6 +134,42 @@ class RomTypeMatcher(object):
         if match:
             self.resolver.rom_type = getattr(RomType, match.group('romtype'))
             return True
+        
+        
+class TableMatcher(object):
+    def __init__(self, resolver):
+        self.regexp = re.compile(text_table_regexp)
+        self.resolver = resolver
+
+    def parse(self, line):
+        match = self.regexp.match(line)
+        if match:
+            return [TableNode(match.group('table'), self.resolver)]
+
+
+class TextMatcher(object):
+    def __init__(self, resolver):
+        self.regexp = re.compile(text_regexp)
+        self.resolver = resolver
+
+    def parse(self, line):
+        match = self.regexp.match(line)
+        if match:
+            return [TextNode(match.group('text'), self.resolver)]
+
+
+class PointerMatcher(object):
+    def __init__(self, resolver):
+        self.regexp = re.compile(pointer_regexp)
+        self.resolver = resolver
+
+    def parse(self, line):
+        match = self.regexp.match(line)
+
+        if match:
+            value_node = LabelReferenceNode(match.group('expression'), self.resolver)
+
+            return [PointerNode(value_node)]
 
 
 class AbstractInstructionMatcher(object):
