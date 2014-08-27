@@ -123,7 +123,8 @@ class A816Lexer(object):
 
 
     def t_INDEX(self, t):
-        r',\s*[XxYySs]'
+        r',\s*[XxYySs]\s+'
+        t.lexer.lineno += t.value.count('\n')
         t.value = t.value[1:].lower().strip()
         return t
 
