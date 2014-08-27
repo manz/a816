@@ -6,7 +6,7 @@ requirements = parse_requirements('requirements.txt')
 
 setup(
     name="a816",
-    version="0.0.1",
+    version="0.0.2",
     license="BSD",
     url="https://github.com/manz/a816",
     packages=find_packages('.', exclude=['a816.tests']),
