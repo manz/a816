@@ -1,14 +1,6 @@
 import logging
-import re
-
-from a816.cpu.cpu_65c816 import AddressingMode
-from a816.exceptions import SymbolNotDefined
-from a816.parse.matchers import RomTypeMatcher, LabelMatcher, ProgramCounterPositionMatcher, AbstractInstructionMatcher, \
-    SymbolDefineMatcher, BinaryIncludeMatcher, DataWordMatcher, DataByteMatcher, StateMatcher, TableMatcher, TextMatcher, \
-    PointerMatcher
-from a816.parse.nodes import OpcodeNode, CodePositionNode, UnkownOpcodeError
-from a816.parse.regexes import none_regexp, immediate_regexp, direct_regexp, direct_indexed_regexp, indirect_regexp, \
-    indirect_indexed_regexp, indirect_long_regexp, indirect_indexed_long_regexp, comment_regexp
+from a816.parse.lalrparser import LALRParser
+from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode
 from a816.symbols import Resolver
 from a816.writers import IPSWriter
 
@@ -18,29 +10,13 @@ class Program(object):
         self.resolver = Resolver()
         self.logger = logging.getLogger('x816')
 
-        self.matchers = [
-            RomTypeMatcher(self.resolver),
-            ProgramCounterPositionMatcher(self.resolver),
-            SymbolDefineMatcher(self.resolver),
-            LabelMatcher(self.resolver),
-            BinaryIncludeMatcher(self.resolver),
-            DataWordMatcher(self.resolver),
-            DataByteMatcher(self.resolver),
-            TableMatcher(self.resolver),
-            TextMatcher(self.resolver),
-            PointerMatcher(self.resolver),
-            StateMatcher(self.resolver),
-            AbstractInstructionMatcher(none_regexp, OpcodeNode, self.resolver, AddressingMode.none),
-            AbstractInstructionMatcher(immediate_regexp, OpcodeNode, self.resolver, AddressingMode.immediate),
-            AbstractInstructionMatcher(direct_regexp, OpcodeNode, self.resolver, AddressingMode.direct),
-            AbstractInstructionMatcher(direct_indexed_regexp, OpcodeNode, self.resolver, AddressingMode.direct_indexed),
-            AbstractInstructionMatcher(indirect_regexp, OpcodeNode, self.resolver, AddressingMode.indirect),
-            AbstractInstructionMatcher(indirect_indexed_regexp, OpcodeNode, self.resolver,
-                                       AddressingMode.indirect_indexed),
-            AbstractInstructionMatcher(indirect_long_regexp, OpcodeNode, self.resolver, AddressingMode.indirect_long),
-            AbstractInstructionMatcher(indirect_indexed_long_regexp, OpcodeNode, self.resolver,
-                                       AddressingMode.indirect_indexed_long)
-        ]
+        # self.parser = RegexParser(self.resolver)
+        self.parser = LALRParser(self.resolver)
+
+    def resolver_reset(self):
+        self.resolver.pc = 0x000000
+        self.resolver.last_used_scope = 0
+        self.resolver.current_scope = self.resolver.scopes[0]
 
     def resolve_labels(self, program_nodes):
         self.resolver.last_used_scope = 0
@@ -48,51 +24,27 @@ class Program(object):
         previous_pc = self.resolver.pc
 
         for node in program_nodes:
+            if isinstance(node, SymbolNode):
+                continue
             previous_pc = node.pc_after(previous_pc)
 
-        self.resolver.pc = 0x000000
-        self.resolver.last_used_scope = 0
-        self.resolver.current_scope = self.resolver.scopes[0]
+        self.resolver_reset()
 
-    def parse(self, program):
-        parsed_list = []
-        line_number = 0
-        for line in program:
-            line = line.strip()
-            line = re.sub(comment_regexp, '', line)
-            node = None
+        previous_pc = self.resolver.pc
+        for node in program_nodes:
+            if isinstance(node, LabelNode) or isinstance(node, BinaryNode):
+                continue
+            previous_pc += node.pc_after(previous_pc)
+        self.resolver_reset()
 
-            if line:
-                for matcher in self.matchers:
 
-                    try:
-                        node = matcher.parse(line)
-                    except UnkownOpcodeError as e:
-                        self.logger.error('While parsing "%s" at %d' % (line, line_number))
-                        self.logger.error(e)
-                    except SymbolNotDefined as e:
-                        self.logger.error(e)
 
-                    if node is not None:
-                        if isinstance(node, list):
-                            parsed_list = parsed_list + node
-                        elif isinstance(node, bool) and node:
-                            break
-                        else:
-                            parsed_list.append(node)
-                        break
-
-                if node is None:
-                    self.logger.warn('Ignored a non matching line at %d "%s"' % (line_number, line))
-
-            line_number += 1
-        return parsed_list
 
     def emit(self, program, writer):
         current_block = b''
         current_block_addr = self.resolver.pc
         writer.begin()
-
+        # blocks = []
         for node in program:
             node_bytes = node.emit(self.resolver)
 
@@ -103,11 +55,23 @@ class Program(object):
             if isinstance(node, CodePositionNode):
                 if len(current_block) > 0:
                     writer.write_block(current_block, current_block_addr)
+                    # blocks.append((current_block_addr, current_block))
                 current_block_addr = self.resolver.pc
                 current_block = b''
 
         if len(current_block) > 0:
             writer.write_block(current_block, current_block_addr)
+            # blocks.append((current_block_addr, current_block))
+
+        # blocks = sorted(blocks, key=lambda x: x[0])
+        #
+        # current_addr = None
+        # for block in blocks:
+        #     if current_addr:
+        #         if current_addr > block[0]:
+        #             raise Exception('overlapping blocks')
+        #         else:
+        #             current_addr = block[0] + block[1]
 
         writer.end()
 
@@ -118,10 +82,10 @@ class Program(object):
     def assemble_as_patch(self, asm_file, ips_file):
         try:
             with open(asm_file, encoding='utf-8') as f:
-                input_program = f.readlines()
-                nodes = self.parse(input_program)
-            self.logger.info('Resolving labels')
-            self.resolve_labels(nodes)
+                input_program = f.read()
+                nodes = self.parser.parse(input_program)
+                self.logger.info('Resolving labels')
+                self.resolve_labels(nodes)
             self.resolver.dump_symbol_map()
 
             with open(ips_file, 'wb') as f:

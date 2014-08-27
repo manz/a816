@@ -102,6 +102,12 @@ class SymbolNode(object):
         self.resolver.current_scope.add_symbol(self.symbol_name, value)
         return current_pc
 
+    def __repr__(self):
+        return self.__str__()
+
+    def __str__(self):
+        return 'SymbolNode(%s, %s)' % (self.symbol_name, self.expression)
+
 
 class BinaryNode(object):
     def __init__(self, path, resolver):
