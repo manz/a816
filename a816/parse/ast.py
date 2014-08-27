@@ -8,6 +8,7 @@ def code_gen(ast_nodes, resolver):
     macro_defs = {}
     return _code_gen(ast_nodes, resolver, macro_defs)
 
+
 def _code_gen(ast_nodes, resolver, macro_defs):
     code = []
     for node in ast_nodes:
