@@ -1,4 +1,6 @@
 import unittest
+from a816.parse.ast import code_gen
+from a816.parse.lalrparser import LALRParser
 import struct
 
 from a816.cpu.cpu_65c816 import AddressingMode
@@ -11,7 +13,7 @@ from a816.symbols import Resolver
 class ParseTest(unittest.TestCase):
     def test_parse(self):
         program = Program()
-        nodes = program.parse([
+        nodes = program.parser.parse([
             'lda #$1234'
         ])
 
@@ -32,7 +34,7 @@ class ParseTest(unittest.TestCase):
 
         program = Program()
 
-        nodes = program.parse(input_program)
+        nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
 
         program.resolver.pc = 3
@@ -63,31 +65,32 @@ class ParseTest(unittest.TestCase):
         input_program = [
             'symbol=0x12345',
             '.dw 0x0000',
-            '.dw $3450, 0x00, symbol & 0x00FF'
+            '.dw 0x3450, 0x00, symbol & 0x00FF'
         ]
 
         program = Program()
 
-        nodes = program.parse(input_program)
+        nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
         # print(nodes)
         self.assertEqual(nodes[-1].emit(program.resolver), b'E\x00')
 
     def test_expressions(self):
         input_program = [
-            'my_symbol = 0x4567',
+            '{my_symbol = 0x4567',
             "jmp.w my_symbol",
             "{",
             "my_symbol = 0x1234",
             "lda.w label",
             "pea.w my_symbol",
             'label:',
-            "}",
+            "}}",
         ]
 
         program = Program()
+        program.parser = LALRParser(program.resolver)
 
-        nodes = program.parse(input_program)
+        nodes = program.parser.parse('\n'.join(input_program))
 
         program.resolve_labels(nodes)
 
@@ -118,6 +121,7 @@ class ParseTest(unittest.TestCase):
 
     def test_blocks(self):
         input_program = [
+            "{"
             "my = 0x01",
             "{",
             "my = 0x00",
@@ -126,9 +130,109 @@ class ParseTest(unittest.TestCase):
             "my = 0x12",
             "a:",
             "}"
+            "}"
         ]
 
         program = Program()
+        program.parser = LALRParser(program.resolver)
 
-        nodes = program.parse(input_program)
+        nodes = program.parser.parse('\n'.join(input_program))
         program.resolve_labels(nodes)
+
+    def test_bug(self):
+#         input_program = '''
+# .macro dma_transfer_to_vram_call(source, vramptr, count, mode) {
+#     php
+#     pha
+#     phx
+#     pea.w return_addr-1
+#     pea.w source & 0xFFFF
+#     pea.w source >> 16
+#     pea.w vramptr
+#     pea.w count
+#     pea.w mode
+#     jmp.w dma_transfer_to_vram
+#     return_addr:
+#     plx
+#     pla
+#     plp
+# }
+#
+# *=0x108000
+# dma_transfer_to_vram_call(0x112233, 0x1000, 0x1234, 0x3434)
+# *=0x10A999
+# dma_transfer_to_vram:
+# {
+#     ; on the stack:
+#     ; return address
+#     ; source offset
+#     ; source bank
+#     ; vram pointer
+#     ; count
+#     ; mode
+#     arg_count = 5
+#     stack_ptr       = arg_count * 2 - 1
+#
+#     source_offset   = stack_ptr
+#     source_bank     = stack_ptr - 2
+#     vram_pointer    = stack_ptr - 4
+#     count           = stack_ptr - 6
+#     dma_mode        = stack_ptr - 8
+#     channel         = 4
+#
+#     rep #0x20
+#     sep #0x10
+#     ldx #0x80
+#     stx 0x2115
+#
+#     lda.b source_offset, s
+#     sta.w 0x4302 +(channel << 4)
+#
+#     sep #0x10
+#     lda.b source_bank, s
+#     sta.w 0x4304 + (channel << 4)
+#     rep #0x20
+#
+#     lda.b vram_pointer, s
+#     sta.w 0x2116
+#
+#     lda.b count, s
+#     sta.w 0x4305 + (channel << 4)
+#
+#     lda.b dma_mode, s
+#     sta.w 0x4300 + (channel << 4)
+#
+#     ldx.b #1 << channel
+#     stx 0x420B
+#     nop
+#     nop
+#     pla
+#     pla
+#     pla
+#     pla
+#     pla
+#     rts
+# }
+# '''
+
+        input_program = '''.include 'test_include.i'
+        dma_transfer_to_vram_call(binary_file_dat, 0x1000, 0x1234, 0x3434)
+        ;label:
+        .include 'test_include.s'
+        .incbin 'binary_file.dat'
+        lda.b [0x00], y
+        lda.l binary_file_dat, x
+        ;label2:
+        '''
+
+
+        program = Program()
+
+        from pprint import pprint
+        # program.parser = LALRParser(program.resolver)
+        nodes = program.parser.parse(input_program)
+        pprint(nodes)
+        # code_nodes = code_gen(nodes, program.resolver)
+        program.resolve_labels(nodes)
+        program.resolver.dump_symbol_map()
+
