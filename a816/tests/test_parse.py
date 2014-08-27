@@ -1,4 +1,5 @@
 import unittest
+from a816.parse.ast import code_gen
 from a816.parse.lalrparser import LALRParser
 import struct
 
@@ -136,19 +137,31 @@ class ParseTest(unittest.TestCase):
         program.resolve_labels(nodes)
 
     def test_macro(self):
-        input_program = '''.include 'test_include.i'
-        dma_transfer_to_vram_call(binary_file_dat, 0x1000, 0x1234, 0x3434)
-        .include 'test_include.s'
-        .incbin 'binary_file.dat'
-        lda.b [0x00], y
-        lda.l binary_file_dat, x
+        input_program = '''
+        .macro test_macro(a, b, c) {
+            lda.b #a
+            lda.b #b
+            lda.b #c
+        }
+        test_macro(0, 1, 2)
         '''
+
+        expected_ast_nodes = ('block',
+                              ('macro', 'test_macro', ('args', ('a', 'b', 'c')),
+                               ('compound',
+                                ('block',
+                                 ('opcode', AddressingMode.immediate, ['lda', 'b'], 'a'),
+                                 ('opcode', AddressingMode.immediate, ['lda', 'b'], 'b'),
+                                 ('opcode', AddressingMode.immediate, ['lda', 'b'], 'c')))),
+                              ('macro_apply', 'test_macro', ('apply_args', ('0', '1', '2'))))
 
         program = Program()
 
-        from pprint import pprint
-        nodes = program.parser.parse(input_program)
-        pprint(nodes)
+        ast_nodes = program.parser.parse_as_ast(input_program)
+
+        self.assertEqual(ast_nodes, expected_ast_nodes)
+
+        nodes = code_gen(ast_nodes[1:], program.resolver)
         program.resolve_labels(nodes)
         program.resolver.dump_symbol_map()
 
