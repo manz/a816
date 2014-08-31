@@ -165,3 +165,19 @@ class ParseTest(unittest.TestCase):
         program.resolve_labels(nodes)
         program.resolver.dump_symbol_map()
 
+    def test_macro_empty_args(self):
+        input_program = """
+                .macro test() {
+                    sep #0x30
+                }
+
+                test()
+                """
+
+        program = Program()
+
+        ast_nodes = program.parser.parse_as_ast(input_program)
+
+        print(ast_nodes)
+        nodes = code_gen(ast_nodes[1:], program.resolver)
+        print(nodes)

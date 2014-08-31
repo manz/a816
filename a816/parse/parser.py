@@ -31,6 +31,10 @@ class A816Parser(object):
         """program : block_statement"""
         p[0] = p[1]
 
+    def p_empty(self, p):
+        """empty : """
+        pass
+
     def p_statement(self, p):
         """statement : label
                     | direct_instruction
@@ -80,11 +84,12 @@ class A816Parser(object):
     def p_apply_args(self, p):
         """apply_args : apply_args COMMA expression
                     | expression
+                    | empty
                     """
         if len(p) == 4:
             p[0] = p[1] + (p[3],)
         else:
-            p[0] = (p[1],)
+            p[0] = (p[1],) if p[1] else ()
 
     def p_directive_with_string(self, p):
         """directive_with_string : INCBIN QUOTED_STRING
@@ -117,11 +122,12 @@ class A816Parser(object):
     def p_args(self, p):
         """args : args COMMA SYMBOL
                     | SYMBOL
+                    | empty
                     """
         if len(p) == 4:
             p[0] = p[1] + (p[3],)
         else:
-            p[0] = (p[1],)
+            p[0] = (p[1],) if p[1] else ()
 
     def p_expression_list(self, p):
         """expression_list : expression_list COMMA expression

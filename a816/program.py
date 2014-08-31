@@ -6,12 +6,11 @@ from a816.writers import IPSWriter
 
 
 class Program(object):
-    def __init__(self):
+    def __init__(self, parser=None):
         self.resolver = Resolver()
         self.logger = logging.getLogger('x816')
 
-        # self.parser = RegexParser(self.resolver)
-        self.parser = LALRParser(self.resolver)
+        self.parser = parser or LALRParser(self.resolver)
 
     def resolver_reset(self):
         self.resolver.pc = 0x000000
