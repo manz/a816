@@ -19,7 +19,7 @@ class Script(object):
     def read_pointers(self, pointer_file, address, count, length, formula):
         pointer_file.seek(address)
         temporary_pointers = []
-        for i in range(count - 1):
+        for i in range(count):
             ptr_data = pointer_file.read(length)
             pointer = Pointer(i, formula(ptr_data))
             temporary_pointers.append(pointer)
@@ -79,7 +79,7 @@ def write_pointers_addresses_as_binary(pointers, formula, output_file):
             current_position += len(pointer.value)
 
 
-def read_pointers_from_xml(input_file, table):
+def read_pointers_from_xml(input_file, table, formatter=None):
     pointer_table = []
     with open(input_file, encoding='utf-8') as datasource:
         tree = ElementTree.parse(datasource)
@@ -89,7 +89,7 @@ def read_pointers_from_xml(input_file, table):
             pointer_id = int(child.get('id'), 10) - 1
             text = child.text
             pointer = Pointer(pointer_id)
-            pointer.value = table.to_bytes(text)
+            pointer.value = table.to_bytes(formatter(text) if formatter else text)
             pointer_table.append(pointer)
     return pointer_table
 
