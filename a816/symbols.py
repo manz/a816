@@ -10,7 +10,7 @@ class Scope(object):
 
     def add_label(self, label, value):
         if label in self.symbols:
-            raise RuntimeError('Label already defined')
+            raise RuntimeError('Label already defined (%s)' % label)
         self.symbols[label] = rom_to_snes(value, self.resolver.rom_type)
 
     def add_symbol(self, symbol, value):
