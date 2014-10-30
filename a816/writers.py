@@ -20,6 +20,8 @@ class IPSWriter(object):
 
             self.write_block_header(block_slice, block_address)
             self.file.write(block_slice)
+            block_address += slice_size
+
             k += slice_size
 
     def end(self):
