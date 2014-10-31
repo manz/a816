@@ -14,7 +14,17 @@ class Pointer(object):
 class Script(object):
     def __init__(self, rom):
         self.rom = rom
-        # self.pointers = []
+
+    def read_fixed_text_list(self, pointer_file, address, count, bytes_length):
+        pointers = []
+        pointer_file.seek(address)
+        for i in range(count):
+            ptr_data = pointer_file.read(bytes_length)
+            pointer = Pointer(i)
+            pointer.value = ptr_data
+            pointers.append(pointer)
+
+        return pointers
 
     def read_pointers(self, pointer_file, address, count, length, formula):
         pointer_file.seek(address)
@@ -53,7 +63,7 @@ class Script(object):
 
 def write_pointers_as_xml(pointers, table, output_file):
     sorted_pointers_by_id = sorted(pointers, key=lambda p: p.id)
-    with open(output_file, 'wt') as fd:
+    with open(output_file, 'wt', encoding='utf-8') as fd:
         fd.writelines('<?xml version="1.0" encoding="utf-8"?>\n')
         fd.write('<sn:script xmlns:sn="http://snes.ninja/ScriptNS">\n')
         for pointer in sorted_pointers_by_id:
