@@ -18,6 +18,6 @@ setup(
     ],
     scripts = [
         'x816'
-    ]
-    # install_requires=[str(requirement.req) for requirement in requirements]
+    ],
+    install_requires=['ply']
 )
