@@ -181,3 +181,13 @@ class ParseTest(unittest.TestCase):
         print(ast_nodes)
         nodes = code_gen(ast_nodes[1:], program.resolver)
         print(nodes)
+
+    def test_indirect_indexed_addressing(self):
+        input_program = """
+        sta (0x00), y
+        """
+
+        program = Program()
+
+        ast_nodes = program.parser.parse_as_ast(input_program)
+        self.assertEqual(ast_nodes, ('block', ('opcode',AddressingMode.indirect_indexed, 'sta', '0x00', 'y')))
