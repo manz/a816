@@ -40,6 +40,7 @@ class A816Parser(object):
                     | direct_instruction
                     | direct_indexed_instruction
                     | indirect_instruction
+                    | indirect_indexed_instruction
                     | indirect_long_instruction
                     | indirect_long_indexed_instruction
                     | immediate_instruction
@@ -171,6 +172,10 @@ class A816Parser(object):
     def p_indirect_instruction(self, p):
         'indirect_instruction : opcode LPAREN expression RPAREN'
         p[0] = ('opcode', AddressingMode.indirect, p[1], p[3])
+
+    def p_indirect_indexed_instruction(self, p):
+        'indirect_indexed_instruction : opcode LPAREN expression RPAREN INDEX'
+        p[0] = ('opcode', AddressingMode.indirect_indexed, p[1], p[3], p[5])
 
     def p_indirect_long_instruction(self, p):
         'indirect_long_instruction : opcode LBRAKET expression RBRAKET'
