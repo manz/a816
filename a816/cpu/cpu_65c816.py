@@ -293,6 +293,9 @@ snes_opcode_table = {
     'plb': {
         AddressingMode.none: BaseOpcode(0xAB)
     },
+    'phk': {
+        AddressingMode.none: BaseOpcode(0x4B),
+    },
     'rol': {
         AddressingMode.none: BaseOpcode(0x2A),
         AddressingMode.direct: Opcode([0x26, 0x2E]),
