@@ -5,11 +5,15 @@ class Table(object):
     table_line_regex = re.compile(r'(?P<byte>[0-9a-fA-F]+)(?::(?P<ignore>[0-9a-fA-F]+))?\s*=(?P<text>[^\n]+)')
     joker_regex = re.compile(r'^\[0x(?P<byte>[0-9a-fA-F]+)\]')
 
-
     def __init__(self, path):
-        f = open(path, 'rt', encoding='utf-8')
         self.lookup = {}
         self.inverted_lookup = {}
+        self.max_bytes_length = 0
+        self.max_text_length = 0
+        self.include(path)
+
+    def include(self, path):
+        f = open(path, 'rt', encoding='utf-8')
 
         for line in f.readlines():
             matches = self.table_line_regex.match(line)
