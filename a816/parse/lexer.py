@@ -1,32 +1,51 @@
 import os
-from a816.cpu.cpu_65c816 import snes_opcode_table
+from a816.cpu.cpu_65c816 import snes_opcode_table, AddressingMode
 from ply import lex
 from ply.lex import TOKEN
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 
 
+def get_opcodes_with_addressing(addressing_mode):
+    def filter_func(k):
+        keys = snes_opcode_table[k].keys()
+        return addressing_mode in keys
+
+    return list(filter(filter_func, snes_opcode_table.keys()))
+
+
+def get_opcodes_with_no_addressing(addressing_mode):
+    verboten_keys = get_opcodes_with_addressing(addressing_mode)
+    return list(filter(lambda k: k not in verboten_keys, snes_opcode_table.keys()))
+
+print('(?i)' + '(' + '|'.join(snes_opcode_table.keys()) + ')' + '[ \t]*(;[^\n]*)?\n')
+
 class A816Lexer(object):
-    opcodes_pattern = '(?i)' + '(' + '|'.join(snes_opcode_table.keys()) + ')' + '\s+'
-    opcodes_with_size = '(?i)' + '(' + '|'.join(snes_opcode_table.keys()) + ')' + '\.[bwl]\s+'
+    opcodes_pattern = r'(?i)(' + r'|'.join(snes_opcode_table.keys()) + r')' + r'[ \t]+'
+    opcodes_with_size = r'(?i)(' + r'|'.join(snes_opcode_table.keys()) + r')' + r'\.[bwl][ \t]+'
+    opcodes_none = r'(?i)(' + r'|'.join(get_opcodes_with_addressing(AddressingMode.none)) + r')[ \t]*(;[^\n]*)?\n'
+
+    @TOKEN(opcodes_none)
+    def t_OPCODE_NONE(self, t):
+        t.value = t.value.lower()[:3].strip()
+        return t
 
     @TOKEN(opcodes_pattern)
     def t_OPCODE_NAKED(self, t):
-        t.lexer.lineno += t.value.count('\n')
         t.value = t.value.lower().strip()
-
         return t
-
 
     @TOKEN(opcodes_with_size)
     def t_OPCODE_WITH_SIZE(self, t):
-        t.lexer.lineno += t.value.count('\n')
         t.value = t.value.lower().strip().split('.')
         return t
 
     tokens = (
+        "NAMED_SCOPE",
+        "SCOPE_SYMBOL",
         "LABEL",
         "SYMBOL",
+        "OPCODE_NONE",
         "OPCODE_NAKED",
         "OPCODE_WITH_SIZE",
         "SHARP",
@@ -50,6 +69,7 @@ class A816Lexer(object):
         "TEXT",
         "DB",
         "DW",
+        "DL",
         "INCBIN",
         "INCLUDE",
         "PLUS",
@@ -77,18 +97,19 @@ class A816Lexer(object):
     t_BINARYNUMBER = r'0b[01]+'
     # t_NEWLINE = r'\n'
     t_SYMBOL = r'[_a-zA-Z][_a-zA-Z0-9]*'
+    t_SCOPE_SYMBOL = r'[_a-zA-Z][_a-zA-Z0-9]*\.[_a-zA-Z][_a-zA-Z0-9]*'
     t_LABEL = r'[_a-zA-Z][_a-zA-Z0-9]*:'
     t_QUOTED_STRING = r"'[^']*'"
     t_COLON = r':'
     t_COMMA = r','
 
-
-
     t_MACRO = r'\.macro'
+    t_NAMED_SCOPE = r'\.scope'
     t_TABLE = r'\.table'
     t_TEXT = r'\.text'
     t_DB = r'\.db'
     t_DW = r'\.dw'
+    t_DL = r'\.dl'
     t_INCBIN = r'\.incbin'
     t_INCLUDE = r'\.include'
     t_POINTER = r'\.pointer'
@@ -101,7 +122,6 @@ class A816Lexer(object):
     t_LSHIFT = r'<<'
     t_RSHIFT = r'>>'
     t_AND = r'&'
-
 
     t_EQUAL = r'='
 
@@ -141,3 +161,19 @@ class A816Lexer(object):
         new_lexer = self.lexer.clone()
         new_lexer.begin(state='INITIAL')
         return A816Lexer(new_lexer)
+
+
+if __name__ == '__main__':
+    no_none = set(get_opcodes_with_no_addressing(AddressingMode.immediate))
+    none_addressing = set(get_opcodes_with_addressing(AddressingMode.none))
+    lexer = A816Lexer()
+    import re
+    op = re.compile(lexer.opcodes_none)
+    m = op.match('waitforvblank()')
+    print(m)
+
+    print(sorted(none_addressing))
+    print(sorted(no_none))
+    # print('|'.join())
+    # print('|'.join())
+

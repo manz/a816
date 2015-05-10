@@ -1,7 +1,7 @@
 import pprint
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.nodes import ScopeNode, PopScopeNode, SymbolNode, CodePositionNode, TableNode, TextNode, LabelNode, \
-    ByteNode, LabelReferenceNode, WordNode, BinaryNode, PointerNode, OpcodeNode
+    ByteNode, LabelReferenceNode, WordNode, BinaryNode, PointerNode, OpcodeNode, LongNode
 
 
 def code_gen(ast_nodes, resolver):
@@ -14,6 +14,16 @@ def _code_gen(ast_nodes, resolver, macro_defs):
     for node in ast_nodes:
         if node[0] == 'block':
             code += _code_gen(node[1:], resolver, macro_defs)
+        elif node[0] == 'named_scope':
+            name = node[1]
+            resolver.append_named_scope(name)
+            resolver.use_next_scope()
+            code.append(ScopeNode(resolver))
+
+            code += _code_gen(node[2:], resolver, macro_defs)
+            code.append(PopScopeNode(resolver))
+            resolver.restore_scope(exports=False)
+
         elif node[0] == 'compound':
             resolver.append_scope()
             resolver.use_next_scope()
@@ -58,6 +68,9 @@ def _code_gen(ast_nodes, resolver, macro_defs):
         elif node[0] == 'dw':
             for expr in node[1]:
                 code.append(WordNode(LabelReferenceNode(expr, resolver)))
+        elif node[0] == 'dl':
+            for expr in node[1]:
+                code.append(LongNode(LabelReferenceNode(expr, resolver)))
         elif node[0] == 'incbin':
             code.append(BinaryNode(node[1], resolver))
         elif node[0] == 'pointer':
@@ -65,7 +78,7 @@ def _code_gen(ast_nodes, resolver, macro_defs):
         elif node[0] == 'opcode':
             opcode = node[2]
             size = None
-            if isinstance(opcode, list):
+            if isinstance(opcode, list) or isinstance(opcode, tuple):
                 size = opcode[1]
                 opcode = opcode[0]
             mode = node[1]

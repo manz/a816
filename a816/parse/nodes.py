@@ -127,6 +127,18 @@ class BinaryNode(object):
         return retval
 
 
+class LongNode(object):
+    def __init__(self, value_node):
+        self.value_node = value_node
+
+    def emit(self, current_address):
+        value = self.value_node.get_value()
+        return struct.pack('<HB', value & 0xFFFF, (value >> 16) & 0xFF)
+
+    def pc_after(self, current_pc):
+        return current_pc + 3
+
+
 class WordNode(object):
     def __init__(self, value_node):
         self.value_node = value_node
@@ -220,7 +232,7 @@ class PopScopeNode(object):
         self.resolver = resolver
 
     def pc_after(self, current_pc):
-        self.resolver.restore_scope()
+        self.resolver.restore_scope(exports=True)
         return current_pc
 
     def emit(self, current_addr):
