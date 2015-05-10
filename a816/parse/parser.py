@@ -18,7 +18,7 @@ class A816Parser(object):
         self.lexer = lexer or A816Lexer()
         self.filename = filename
         self.tokens = self.lexer.tokens
-        self.parser = parser or yacc.yacc(module=self, tabmodule='ply_generated_rules', outputdir=this_dir)
+        self.parser = parser or yacc.yacc(module=self, method='LALR', tabmodule='ply_generated_rules', outputdir=this_dir)
 
     def clone(self, filename):
         return A816Parser(filename, lexer=self.lexer.clone(), parser=self.parser)
@@ -48,6 +48,7 @@ class A816Parser(object):
                     | symbol_define
                     | macro
                     | macro_apply
+                    | named_scope
                     | directive_with_string
                     | data
                     | include
@@ -72,6 +73,10 @@ class A816Parser(object):
     def p_macro(self, p):
         """macro : MACRO SYMBOL macro_args compound_statement """
         p[0] = ('macro', p[2], p[3], p[4])
+
+    def p_named_scope(self, p):
+        """named_scope : NAMED_SCOPE SYMBOL LBRACE block_statement RBRACE"""
+        p[0] = ('named_scope', p[2], p[4])
 
     def p_macro_apply(self, p):
         """macro_apply : SYMBOL macro_apply_args"""
@@ -141,7 +146,8 @@ class A816Parser(object):
 
     def p_data(self, p):
         """data : DB expression_list
-                | DW expression_list"""
+                | DW expression_list
+                | DL expression_list"""
         p[0] = (p[1][1:], p[2])
 
     def p_compound_statement(self, p):
@@ -154,7 +160,7 @@ class A816Parser(object):
         p[0] = p[1]
 
     def p_none_instruction(self, p):
-        'none_instruction : opcode'
+        'none_instruction : OPCODE_NONE'
         p[0] = ('opcode', AddressingMode.none, p[1])
 
     def p_immediate_instruction(self, p):
@@ -198,6 +204,7 @@ class A816Parser(object):
     def p_expression(self, p):
         """expression : number
                     | SYMBOL
+                    | SCOPE_SYMBOL
                     | paren_expression PLUS paren_expression
                     | paren_expression MINUS paren_expression
                     | paren_expression MULT paren_expression
@@ -224,7 +231,12 @@ class A816Parser(object):
             before = p.lexer.lexdata[p.lexpos-10: p.lexpos]
             after = p.lexer.lexdata[p.lexpos+len(p.value): p.lexpos+10]
 
-            print(before + FAIL + p.value + ENDC + after)
+            if isinstance(p.value, list):
+                value = '.'.join(p.value)
+            else:
+                value = p.value
+
+            print(before + FAIL + value + ENDC + after)
 
         else:
             print('End of input encountered, you may need to check closing braces or parenthesis.')

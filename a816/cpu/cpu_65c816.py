@@ -79,7 +79,12 @@ class Opcode(object):
 
     def emit(self, value_node, size=None, resolver=None):
         value_size = self.guess_value_size(value_node, size)
-        opcode_byte = struct.pack('B', self.get_opcode_byte(value_size))
+        opcode_byte = self.get_opcode_byte(value_size)
+
+        if opcode_byte is None:
+            raise Exception('No opcode for this size', value_size, self.opcode, str(value_node))
+
+        opcode_byte = struct.pack('B', opcode_byte)
         operand_bytes = self.emit_value(value_node, value_size)
         node_bytes = opcode_byte + operand_bytes
         return node_bytes
@@ -117,7 +122,8 @@ snes_opcode_table = {
         },
         AddressingMode.indirect_indexed_long: {
             'y': Opcode([0xB7])
-        }
+        },
+        AddressingMode.indirect_long : Opcode([0xA7])
     },
     'ora': {
         AddressingMode.immediate: Opcode([0x09, 0xA9], is_a=True),
@@ -292,6 +298,12 @@ snes_opcode_table = {
     },
     'plb': {
         AddressingMode.none: BaseOpcode(0xAB)
+    },
+    'phd': {
+        AddressingMode.none: BaseOpcode(0x0B)
+    },
+    'pld': {
+        AddressingMode.none: BaseOpcode(0x2B)
     },
     'phk': {
         AddressingMode.none: BaseOpcode(0x4B),

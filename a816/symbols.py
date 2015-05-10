@@ -9,13 +9,11 @@ class Scope(object):
         self.resolver = resolver
 
     def add_label(self, label, value):
-        if label in self.symbols:
-            raise RuntimeError('Label already defined (%s)' % label)
-        self.symbols[label] = rom_to_snes(value, self.resolver.rom_type)
+        self.add_symbol(label, rom_to_snes(value, self.resolver.rom_type))
 
     def add_symbol(self, symbol, value):
         if symbol in self.symbols:
-            raise RuntimeError('Symbol already defined')
+            raise RuntimeError('Symbol already defined (%s)' % symbol)
         self.symbols[symbol] = value
 
     def __getitem__(self, item):
@@ -37,6 +35,12 @@ class Scope(object):
             return self[symbol]
 
 
+class NamedScope(Scope):
+    def __init__(self, name, resolver, parent=None):
+        super().__init__(resolver, parent)
+        self.name = name
+
+
 class Resolver(object):
     def __init__(self, pc=0x000000):
         self.symbol_map = {}
@@ -49,6 +53,10 @@ class Resolver(object):
         self.current_scope = Scope(self)
         self.scopes = [self.current_scope]
 
+    def append_named_scope(self, name):
+        scope = NamedScope(name, self, self.current_scope)
+        self.scopes.append(scope)
+
     def append_scope(self):
         scope = Scope(self, self.current_scope)
         self.scopes.append(scope)
@@ -57,15 +65,26 @@ class Resolver(object):
         self.last_used_scope += 1
         self.current_scope = self.scopes[self.last_used_scope]
 
-    def restore_scope(self):
+    def restore_scope(self, exports=False):
+        if exports and isinstance(self.current_scope, NamedScope):
+            scope = self.current_scope
+            parent_symbols = scope.parent.symbols
+            parent_symbols[scope.name] = scope.symbols
         self.current_scope = self.current_scope.parent
 
     @property
     def snes_pc(self):
         return rom_to_snes(self.pc, self.rom_type)
 
+    def _dump_symbols(self, symbols):
+        for (key, value) in symbols.items():
+            if isinstance(value, dict):
+                print('namedscope', key)
+                self._dump_symbols(value)
+            else:
+                print('%s 0x%02x' % (key.ljust(32), value))
+
     def dump_symbol_map(self):
         for scope in self.scopes:
             print("Scope\n")
-            for (key, value) in scope.symbols.items():
-                print('%s 0x%02x' % (key.ljust(32), value))
+            self._dump_symbols(scope.symbols)

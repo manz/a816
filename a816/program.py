@@ -2,7 +2,7 @@ import logging
 from a816.parse.lalrparser import LALRParser
 from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode
 from a816.symbols import Resolver
-from a816.writers import IPSWriter
+from a816.writers import IPSWriter, SFCWriter
 
 
 class Program(object):
@@ -35,9 +35,6 @@ class Program(object):
                 continue
             previous_pc += node.pc_after(previous_pc)
         self.resolver_reset()
-
-
-
 
     def emit(self, program, writer):
         current_block = b''
@@ -78,7 +75,7 @@ class Program(object):
         ips = IPSWriter(file)
         self.emit(program, ips)
 
-    def assemble_as_patch(self, asm_file, ips_file):
+    def assemble_with_emitter(self, asm_file, emiter):
         try:
             with open(asm_file, encoding='utf-8') as f:
                 input_program = f.read()
@@ -87,8 +84,7 @@ class Program(object):
                 self.resolve_labels(nodes)
             self.resolver.dump_symbol_map()
 
-            with open(ips_file, 'wb') as f:
-                self.emit_ips(nodes, f)
+            self.emit(nodes, emiter)
 
         except RuntimeError as e:
             self.logger.error(e)
@@ -96,3 +92,13 @@ class Program(object):
 
         self.logger.info('Success !')
         return 0
+
+    def assemble(self, asm_file, sfc_file):
+        with open(sfc_file, 'wb') as f:
+            sfc_emiter = SFCWriter(f)
+            self.assemble_with_emitter(asm_file, sfc_emiter)
+
+    def assemble_as_patch(self, asm_file, ips_file):
+        with open(ips_file, 'wb') as f:
+            ips_emiter = IPSWriter(f)
+            self.assemble_with_emitter(asm_file, ips_emiter)

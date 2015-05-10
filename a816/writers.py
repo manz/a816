@@ -26,3 +26,21 @@ class IPSWriter(object):
 
     def end(self):
         self.file.write(b'EOF')
+
+
+class SFCWriter(object):
+    def __init__(self, file):
+        self.file = file
+
+    def begin(self):
+        pass
+
+    def write_block_header(self, block, block_address):
+        pass
+
+    def write_block(self, block, block_adddress):
+        self.file.seek(block_adddress)
+        self.file.write(block_adddress)
+
+    def end(self):
+        pass
