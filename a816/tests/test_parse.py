@@ -135,7 +135,6 @@ class ParseTest(unittest.TestCase):
         program = Program()
         program.parser = LALRParser(program.resolver)
         ast = program.parser.parse_as_ast('\n'.join(input_program))
-        print(ast)
         nodes = program.parser.parse('\n'.join(input_program))
         program.resolve_labels(nodes)
 
@@ -181,9 +180,7 @@ class ParseTest(unittest.TestCase):
 
         ast_nodes = program.parser.parse_as_ast(input_program)
 
-        print(ast_nodes)
         nodes = code_gen(ast_nodes[1:], program.resolver)
-        print(nodes)
 
     def test_indirect_indexed_addressing(self):
         input_program = """
@@ -217,129 +214,119 @@ class ParseTest(unittest.TestCase):
     def test_label_reference(self):
         resolver = Resolver()
         ref = LabelReferenceNode('0x00', resolver)
-        print(ref.get_value())
 
     def test_push_pull(self):
         input_program = """
         php
         pha
-display_text_in_menus:                  ; CODE XREF: new_game_screen_related+39p
-                                        ; sub_197D3+4Ep ...
-	phb
-	phd
-	phx
-	ldx.w     #0x100
-	phx
-	pld
-; D=100
-	phk
-	plb
-; ds=1000 B=1
+        display_text_in_menus:                  ; CODE XREF: new_game_screen_related+39p
+                                                ; sub_197D3+4Ep ...
+            phb
+            phd
+            phx
+            ldx.w     #0x100
+            phx
+            pld
+        ; D=100
+            phk
+            plb
+        ; ds=1000 B=1
 
-loc_1830B:                              ; CODE XREF: display_text_in_menus+1Fj
-	rep     #0x20 ; ' '
-;.A16
-	lda.w     0x0000 ,y
-	clc
-	adc     0x29
-	tax
-	sep     #0x20 ; ' '
-;.A8
-	iny
-	iny
+        loc_1830B:                              ; CODE XREF: display_text_in_menus+1Fj
+            rep     #0x20 ; ' '
+        ;.A16
+            lda.w     0x0000 ,y
+            clc
+            adc     0x29
+            tax
+            sep     #0x20 ; ' '
+        ;.A8
+            iny
+            iny
 
-loc_18318:                              ; CODE XREF: sub_182CD+15j
-                                        ; .01:82F9j ...
-;	lda     0,Y
-	beq     loc_18332
-	iny
-	cmp     #1
-	beq     loc_1830B
-	jsr     0x8E32
-	sta     0x7E0000,X
-	xba
-	sta     0x7E0040,X
-	inx
-	inx
-	bra     loc_18318
-; ---------------------------------------------------------------------------
+        loc_18318:                              ; CODE XREF: sub_182CD+15j
+                                                ; .01:82F9j ...
+        ;	lda     0,Y
+            beq     loc_18332
+            iny
+            cmp     #1
+            beq     loc_1830B
+            jsr     0x8E32
+            sta     0x7E0000,X
+            xba
+            sta     0x7E0040,X
+            inx
+            inx
+            bra     loc_18318
+        ; ---------------------------------------------------------------------------
 
-loc_18332:                              ; CODE XREF: display_text_in_menus+1Aj
-	plx
-	pld
-	plb
-	rts
+        loc_18332:                              ; CODE XREF: display_text_in_menus+1Aj
+            plx
+            pld
+            plb
+            rts
         """
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        print(ast)
-        # resolver = Resolver()
         nodes = code_gen(ast[1:], program.resolver)
         program.resolve_labels(nodes)
 
         program.emit(nodes, StubWriter())
         print(nodes[-2])
 
-
     def test_nono(self):
         input_program = '''
         .macro waitforvblank(a) {
             pla
         }
-    plb
-    waitforvblank(0x123456)
-'''
+        plb
+        waitforvblank(0x123456)
+        '''
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        print(ast)
 
     def test_nini(self):
         input_program = '''.macro wait_for_vblank_inline() {
-    pha
-negative:
-	lda.l 0x004212
-	bmi negative
-positive:
-	lda.l 0x004212
-	bpl positive
-	pla
-}'''
+            pha
+        negative:
+            lda.l 0x004212
+            bmi negative
+        positive:
+            lda.l 0x004212
+            bpl positive
+            pla
+        }'''
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        print(ast)
-
 
     def test_php_pha(self):
         input_program = '''
-                .macro dma_transfer_to_vram_call(source, vramptr, count, mode)
-{
-    php
-    pha
-    phx
-    pea.w return_addr-1
-    pea.w source & 0xFFFF
-    pea.w  0x00FF & (source >> 16)
-    pea.w vramptr
-    pea.w count
-    pea.w mode
-    jmp.l dma_transfer_to_vram
-return_addr:
-    plx
-    pla
-    plp
-    TAX            ; using math multiplication
-    LDA.L vwf_shift_table,X
-}'''
+        .macro dma_transfer_to_vram_call(source, vramptr, count, mode)
+        {
+            php
+            pha
+            phx
+            pea.w return_addr-1
+            pea.w source & 0xFFFF
+            pea.w  0x00FF & (source >> 16)
+            pea.w vramptr
+            pea.w count
+            pea.w mode
+            jmp.l dma_transfer_to_vram
+        return_addr:
+            plx
+            pla
+            plp
+            TAX            ; using math multiplication
+            LDA.L vwf_shift_table,X
+        }'''
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        print(ast)
-
 
     def test_named_scopes(self):
         input_program = '''
-                *=0x008002
                 .scope newgame {
                     .db 0
                     .db 0
@@ -349,15 +336,16 @@ return_addr:
 
                 }
 
-                .db newgame.empty'''
+                .dw newgame.empty'''
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        print(ast)
         nodes = code_gen(ast[1:], program.resolver)
         program.resolve_labels(nodes)
         program.resolver.dump_symbol_map()
-        program.emit(nodes, StubWriter())
+        writer = StubWriter()
+        program.emit(nodes, writer)
+        self.assertEqual(writer.data[0], b'\x00\x00\x02\x80')
 
     def test_eval(self):
         r = Resolver()
