@@ -18,8 +18,6 @@ def get_opcodes_with_no_addressing(addressing_mode):
     verboten_keys = get_opcodes_with_addressing(addressing_mode)
     return list(filter(lambda k: k not in verboten_keys, snes_opcode_table.keys()))
 
-print('(?i)' + '(' + '|'.join(snes_opcode_table.keys()) + ')' + '[ \t]*(;[^\n]*)?\n')
-
 class A816Lexer(object):
     opcodes_pattern = r'(?i)(' + r'|'.join(snes_opcode_table.keys()) + r')' + r'[ \t]+'
     opcodes_with_size = r'(?i)(' + r'|'.join(snes_opcode_table.keys()) + r')' + r'\.[bwl][ \t]+'
@@ -127,7 +125,6 @@ class A816Lexer(object):
 
     # Define a rule so we can track line numbers
 
-
     def t_newline(self, t):
         r'\n+'
         t.lexer.lineno += len(t.value)
@@ -136,18 +133,15 @@ class A816Lexer(object):
     # A string containing ignored characters (spaces and tabs)
     t_ignore = ' \t'
 
-
     def t_COMMENT(self, t):
         r';[^\n]*'
         pass
-
 
     def t_INDEX(self, t):
         r',\s*[XxYySs]\s+'
         t.lexer.lineno += t.value.count('\n')
         t.value = t.value[1:].lower().strip()
         return t
-
 
     def t_error(self, t):
         print()
@@ -161,19 +155,4 @@ class A816Lexer(object):
         new_lexer = self.lexer.clone()
         new_lexer.begin(state='INITIAL')
         return A816Lexer(new_lexer)
-
-
-if __name__ == '__main__':
-    no_none = set(get_opcodes_with_no_addressing(AddressingMode.immediate))
-    none_addressing = set(get_opcodes_with_addressing(AddressingMode.none))
-    lexer = A816Lexer()
-    import re
-    op = re.compile(lexer.opcodes_none)
-    m = op.match('waitforvblank()')
-    print(m)
-
-    print(sorted(none_addressing))
-    print(sorted(no_none))
-    # print('|'.join())
-    # print('|'.join())
 
