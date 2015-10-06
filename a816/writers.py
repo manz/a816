@@ -38,9 +38,9 @@ class SFCWriter(object):
     def write_block_header(self, block, block_address):
         pass
 
-    def write_block(self, block, block_adddress):
-        self.file.seek(block_adddress)
-        self.file.write(block_adddress)
+    def write_block(self, block, block_address):
+        self.file.seek(block_address)
+        self.file.write(block)
 
     def end(self):
         pass
