@@ -123,7 +123,7 @@ snes_opcode_table = {
         AddressingMode.indirect_indexed_long: {
             'y': Opcode([0xB7])
         },
-        AddressingMode.indirect_long : Opcode([0xA7])
+        AddressingMode.indirect_long: Opcode([0xA7])
     },
     'ora': {
         AddressingMode.immediate: Opcode([0x09, 0xA9], is_a=True),
@@ -364,6 +364,9 @@ snes_opcode_table = {
         AddressingMode.indirect: Opcode([0x92]),
         AddressingMode.indirect_indexed: {
             'y': Opcode([0x91])
+        },
+        AddressingMode.indirect_indexed_long: {
+            'y': Opcode([0x97])
         },
         AddressingMode.direct_indexed: {
             'x': Opcode([0x95, 0x9D, 0x9F]),
