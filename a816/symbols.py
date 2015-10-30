@@ -7,6 +7,7 @@ class Scope(object):
         self.symbols = {}
         self.parent = parent
         self.resolver = resolver
+        self.table = None
 
     def add_label(self, label, value):
         self.add_symbol(label, rom_to_snes(value, self.resolver.rom_type))
@@ -21,6 +22,13 @@ class Scope(object):
             return self.symbols[item]
         except KeyError as e:
             raise SymbolNotDefined('%s is not defined.' % item) from e
+
+    def get_table(self):
+        if self.table is None:
+            if self.parent:
+                return self.parent.get_table()
+        else:
+            return self.table
 
     def value_for(self, symbol):
         if symbol == 'org':
@@ -77,7 +85,9 @@ class Resolver(object):
         return rom_to_snes(self.pc, self.rom_type)
 
     def _dump_symbols(self, symbols):
-        for (key, value) in symbols.items():
+        keys = sorted(symbols.keys())
+        for key in keys:
+            value = symbols[key]
             if isinstance(value, dict):
                 print('namedscope', key)
                 self._dump_symbols(value)
