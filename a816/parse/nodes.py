@@ -244,7 +244,7 @@ class TableNode(object):
     def __init__(self, path, resolver):
         self.table_path = path
         self.resolver = resolver
-        resolver.table = Table(self.table_path)
+        resolver.current_scope.table = Table(self.table_path)
 
     def pc_after(self, current_pc):
         return current_pc
@@ -258,7 +258,9 @@ class TextNode(object):
         self.text = text
         self.resolver = resolver
 
-        self.binary_text = self.resolver.table.to_bytes(self.text)
+        table = self.resolver.current_scope.get_table()
+
+        self.binary_text = table.to_bytes(self.text)
 
     def pc_after(self, current_pc):
         return current_pc + len(self.binary_text)
