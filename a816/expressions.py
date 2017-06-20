@@ -29,7 +29,7 @@ def eval_expr(expr, resolver):
             return named_scope[node.attr]
         else:
             raise TypeError(node)
-    pyast = ast.parse(expr).body[0].value
-    return eval_(pyast)
+    py_ast = ast.parse(expr).body[0].value
+    return eval_(py_ast)
 
 

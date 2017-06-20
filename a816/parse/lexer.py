@@ -18,6 +18,7 @@ def get_opcodes_with_no_addressing(addressing_mode):
     verboten_keys = get_opcodes_with_addressing(addressing_mode)
     return list(filter(lambda k: k not in verboten_keys, snes_opcode_table.keys()))
 
+
 class A816Lexer(object):
     opcodes_pattern = r'(?i)(' + r'|'.join(snes_opcode_table.keys()) + r')' + r'[ \t]+'
     opcodes_with_size = r'(?i)(' + r'|'.join(snes_opcode_table.keys()) + r')' + r'\.[bwl][ \t]+'
@@ -30,6 +31,7 @@ class A816Lexer(object):
 
     @TOKEN(opcodes_pattern)
     def t_OPCODE_NAKED(self, t):
+        t.lexer.lineno += 1
         t.value = t.value.lower().strip()
         return t
 
@@ -49,7 +51,7 @@ class A816Lexer(object):
         "SHARP",
         "LPAREN",
         "RPAREN",
-        "COMMENT",
+        # "COMMENT",
         "HEXNUMBER",
         "BINARYNUMBER",
         "NUMBER",
@@ -57,7 +59,7 @@ class A816Lexer(object):
         "LBRACE",
         "RBRAKET",
         "LBRAKET",
-        "COLON",
+        # "COLON",
         "EQUAL",
         "QUOTED_STRING",
         "COMMA",
@@ -68,6 +70,10 @@ class A816Lexer(object):
         "DB",
         "DW",
         "DL",
+        # "IF",
+        # "ELSE",
+        # "ENDIF",
+        "FOR",
         "INCBIN",
         "INCLUDE",
         "PLUS",
@@ -77,6 +83,8 @@ class A816Lexer(object):
         "RSHIFT",
         "AND",
         "STAREQ",
+        "PLUSEQ",
+        "TILDAEQ",
         "INDEX",
         "NEWLINE"
 
@@ -98,7 +106,7 @@ class A816Lexer(object):
     t_SCOPE_SYMBOL = r'[_a-zA-Z][_a-zA-Z0-9]*\.[_a-zA-Z][_a-zA-Z0-9]*'
     t_LABEL = r'[_a-zA-Z][_a-zA-Z0-9]*:'
     t_QUOTED_STRING = r"'[^']*'"
-    t_COLON = r':'
+    # t_COLON = r':'
     t_COMMA = r','
 
     t_MACRO = r'\.macro'
@@ -112,7 +120,17 @@ class A816Lexer(object):
     t_INCLUDE = r'\.include'
     t_POINTER = r'\.pointer'
 
+    # t_IF = r'\#if'
+    # t_ELSE = r'\#else'
+    # t_ENDIF = r'\#endif'
+
+    t_FOR = r'\#for'
+
+    # t_SIZE_CAST = r'byte|word|long'
+
     t_STAREQ = r'\*='
+    t_PLUSEQ = r'\+='
+    t_TILDAEQ = r'\~='
 
     t_PLUS = r'\+'
     t_MINUS = r'\-'
@@ -125,9 +143,9 @@ class A816Lexer(object):
 
     # Define a rule so we can track line numbers
 
-    def t_newline(self, t):
-        r'\n+'
-        t.lexer.lineno += len(t.value)
+    def t_NEWLINE(self, t):
+        r'\n'
+        t.lexer.lineno += 1
         # return t
 
     # A string containing ignored characters (spaces and tabs)
@@ -155,4 +173,3 @@ class A816Lexer(object):
         new_lexer = self.lexer.clone()
         new_lexer.begin(state='INITIAL')
         return A816Lexer(new_lexer)
-

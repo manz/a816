@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
 set -e
 
-/usr/bin/env python3.4 -m a816.cli.x816 $@
+/usr/bin/env python3 -m a816.cli.x816 $@
 

@@ -31,7 +31,7 @@ class ValueNode(object):
         return 'ValueNode(%s)' % self.value
 
 
-class LabelReferenceNode(object):
+class ExpressionNode(object):
     def __init__(self, expression, resolver):
         self.expression = expression
         self.resolver = resolver
@@ -58,15 +58,6 @@ class LabelReferenceNode(object):
 
     def __str__(self):
         return '%s(%s)' % (self.__class__.__name__, self.expression)
-
-
-class ExpressionNode(object):
-    def __init__(self, expression, resolver):
-        self.expression = expression
-        self.resolver = resolver
-
-    def get_value(self):
-        return eval_expr(self.expression, self.resolver)
 
 
 class LabelNode(object):
@@ -179,7 +170,12 @@ class OpcodeNode(object):
             emitter.emit(self.value_node, self.size)
 
     def _get_emitter(self):
-        opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
+        try:
+            opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
+        except KeyError as e:
+            print(self)
+            raise e
+
         if isinstance(opcode_emitter, dict):
             opcode_emitter = opcode_emitter[self.index]
         return opcode_emitter
@@ -198,19 +194,39 @@ class OpcodeNode(object):
 
 
 class CodePositionNode(object):
-    def __init__(self, code_position, resolver):
-        self.code_position = code_position
+    def __init__(self, value_node, resolver):
+        self.value_node = value_node
         self.resolver = resolver
 
     def pc_after(self, current_pc):
-        return snes_to_rom(int(self.code_position, 16))
+        return snes_to_rom(self.value_node.get_value())
 
     def emit(self, current_addr):
-        self.resolver.pc = snes_to_rom(int(self.code_position, 16))
+        self.resolver.pc = snes_to_rom(self.value_node.get_value())
         return []
 
     def __str__(self):
-        return 'CodePositionNode(%s)' % self.code_position
+        return 'CodePositionNode(%s)' % self.value_node.get_value()
+
+
+class CodeAddressNode(object):
+    pass
+
+
+class CodeRomAddressNode(object):
+    def __init__(self, value_node, resolver):
+        self.value_node = value_node
+        self.resolver = resolver
+
+    def pc_after(self, current_pc):
+        return self.value_node.get_value()
+
+    def emit(self, current_addr):
+        self.resolver.pc = self.value_node.get_value()
+        return []
+
+    def __str__(self):
+        return 'CodeRomAddressNode(%s)' % self.value_node.get_value()
 
 
 class ScopeNode(object):

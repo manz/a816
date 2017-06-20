@@ -23,8 +23,8 @@ class Program(object):
         previous_pc = self.resolver.pc
 
         for node in program_nodes:
-            if isinstance(node, SymbolNode):
-                continue
+            # if isinstance(node, SymbolNode):
+            #     continue
             previous_pc = node.pc_after(previous_pc)
 
         self.resolver_reset()
@@ -39,8 +39,6 @@ class Program(object):
     def emit(self, program, writer):
         current_block = b''
         current_block_addr = self.resolver.pc
-        writer.begin()
-        # blocks = []
         for node in program:
             node_bytes = node.emit(self.resolver)
 
@@ -51,13 +49,11 @@ class Program(object):
             if isinstance(node, CodePositionNode):
                 if len(current_block) > 0:
                     writer.write_block(current_block, current_block_addr)
-                    # blocks.append((current_block_addr, current_block))
                 current_block_addr = self.resolver.pc
                 current_block = b''
 
         if len(current_block) > 0:
             writer.write_block(current_block, current_block_addr)
-            # blocks.append((current_block_addr, current_block))
 
         # blocks = sorted(blocks, key=lambda x: x[0])
         #
@@ -69,11 +65,11 @@ class Program(object):
         #         else:
         #             current_addr = block[0] + block[1]
 
-        writer.end()
-
     def emit_ips(self, program, file):
         ips = IPSWriter(file)
+        ips.begin()
         self.emit(program, ips)
+        ips.end()
 
     def assemble_with_emitter(self, asm_file, emiter):
         try:
