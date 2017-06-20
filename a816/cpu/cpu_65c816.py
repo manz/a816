@@ -273,6 +273,9 @@ snes_opcode_table = {
     'pea': {
         AddressingMode.direct: Opcode([None, 0xF4])
     },
+    'pei': {
+        AddressingMode.indirect: Opcode([0xD4])
+    },
     'pha': {
         AddressingMode.none: BaseOpcode(0x48)
     },
