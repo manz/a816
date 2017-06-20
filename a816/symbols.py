@@ -1,5 +1,9 @@
+import logging
+
 from a816.cpu.cpu_65c816 import rom_to_snes, RomType
 from a816.exceptions import SymbolNotDefined
+
+logger = logging.getLogger('a816')
 
 
 class Scope(object):
@@ -14,7 +18,7 @@ class Scope(object):
 
     def add_symbol(self, symbol, value):
         if symbol in self.symbols:
-            raise RuntimeError('Symbol already defined (%s)' % symbol)
+            logger.warn('Symbol already defined (%s)' % symbol)
         self.symbols[symbol] = value
 
     def __getitem__(self, item):
@@ -31,9 +35,6 @@ class Scope(object):
             return self.table
 
     def value_for(self, symbol):
-        if symbol == 'org':
-            return self.resolver.snes_pc
-
         if self.parent:
             if symbol in self.symbols:
                 return self[symbol]
@@ -41,6 +42,10 @@ class Scope(object):
                 return self.parent.value_for(symbol)
         else:
             return self[symbol]
+
+
+class InternalScope(Scope):
+    pass
 
 
 class NamedScope(Scope):
@@ -67,6 +72,10 @@ class Resolver(object):
 
     def append_scope(self):
         scope = Scope(self, self.current_scope)
+        self.scopes.append(scope)
+
+    def append_internal_scope(self):
+        scope = InternalScope(self, self.current_scope)
         self.scopes.append(scope)
 
     def use_next_scope(self):
@@ -96,5 +105,6 @@ class Resolver(object):
 
     def dump_symbol_map(self):
         for scope in self.scopes:
-            print("Scope\n")
-            self._dump_symbols(scope.symbols)
+            if not isinstance(scope, InternalScope):
+                print("Scope\n")
+                self._dump_symbols(scope.symbols)

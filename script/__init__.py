@@ -12,24 +12,27 @@ class Table(object):
         self.max_text_length = 0
         self.include(path)
 
+    @property
+    def items(self):
+        return self.lookup.items()
+
     def include(self, path):
-        f = open(path, 'rt', encoding='utf-8')
+        with open(path, 'rt', encoding='utf-8') as f:
+            for line in f.readlines():
+                matches = self.table_line_regex.match(line)
+                if matches:
+                    byte = list(map(lambda b: int(''.join(b), 16), zip(*[iter(matches.group('byte'))] * 2)))
+                    text = matches.group('text')
+                    text = text.replace('\\n', '\n')
+                    self.lookup[text] = bytes(byte)
 
-        for line in f.readlines():
-            matches = self.table_line_regex.match(line)
-            if matches:
-                byte = list(map(lambda b: int(''.join(b), 16), zip(*[iter(matches.group('byte'))] * 2)))
-                text = matches.group('text')
-                text = text.replace('\\n', '\n')
-                self.lookup[text] = bytes(byte)
+                    if matches.group('ignore'):
+                        self.inverted_lookup[bytes(byte)] = (text, int(matches.group('ignore')))
+                    else:
+                        self.inverted_lookup[bytes(byte)] = text
 
-                if matches.group('ignore'):
-                    self.inverted_lookup[bytes(byte)] = (text, int(matches.group('ignore')))
-                else:
-                    self.inverted_lookup[bytes(byte)] = text
-
-        self.max_bytes_length = len(max(self.lookup.values(), key=len))
-        self.max_text_length = len(max(self.lookup.keys(), key=len))
+            self.max_bytes_length = len(max(self.lookup.values(), key=len))
+            self.max_text_length = len(max(self.lookup.keys(), key=len))
 
     def to_bytes(self, text):
         binary_text = []
@@ -64,15 +67,16 @@ class Table(object):
 
         while current_position < len(bytes):
             remainder = bytes[current_position:]
-            for i in range(min(len(bytes), self.max_bytes_length), 0, -1):
+            for i in range(min(len(remainder), self.max_bytes_length), 0, -1):
                 lookup_bytes = remainder[:i]
+
                 try:
                     decoded = self.inverted_lookup[lookup_bytes]
                     if isinstance(decoded, tuple):
                         current_position += i
                         text += decoded[0]
                         for k in range(decoded[i]):
-                            text += '[' + hex(bytes[current_position]) + ']'
+                            text += '[' + hex(decoded[i]) + ']'
                             current_position += 1
                     else:
                         current_position += i

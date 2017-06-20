@@ -2,8 +2,17 @@ import struct
 
 
 class IPSWriter(object):
-    def __init__(self, file):
+    def __init__(self, file, check_for_overlap=False):
         self.file = file
+        self._regions = []
+        self._check_for_overlap = check_for_overlap
+
+    def _check_overlap(self, start, end):
+        for region in self._regions:
+            if region[0] >= start >= region[1] or region[0] >= end >= region[1]:
+                raise OverflowError(
+                    'This region was already patched {:#08x}-{:#08x}, {:#08x}-{:#08x}'.format(start, end, region[0],
+                                                                                              region[1]))
 
     def begin(self):
         self.file.write(b'PATCH')
@@ -13,10 +22,15 @@ class IPSWriter(object):
         self.file.write(struct.pack('>H', len(block)))
 
     def write_block(self, block, block_address):
+        if self._check_for_overlap:
+            start, end = block_address, block_address + len(block)
+            self._check_overlap(start, end)
+            self._regions.append([start, end])
+
         k = 0
         while block[k:]:
             slice_size = min(0xFFFF, len(block) - k)
-            block_slice = block[k:k+slice_size]
+            block_slice = block[k:k + slice_size]
 
             self.write_block_header(block_slice, block_address)
             self.file.write(block_slice)
