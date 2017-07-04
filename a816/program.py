@@ -3,6 +3,10 @@ from a816.parse.lalrparser import LALRParser
 from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode
 from a816.symbols import Resolver
 from a816.writers import IPSWriter, SFCWriter
+from a816.parse.nodes import NodeError
+from a816.cpu.cpu_65c816 import RomType
+
+logger = logging.getLogger('a816')
 
 
 class Program(object):
@@ -40,30 +44,37 @@ class Program(object):
         current_block = b''
         current_block_addr = self.resolver.pc
         for node in program:
-            node_bytes = node.emit(self.resolver)
+            try:
+                node_bytes = node.emit(self.resolver)
+            except NodeError as e:
+                logger.error('"{message}" at \n{file}:{line} {data}'.format(
+                    message=e.message,
+                    file=e.file_info[0] if e.file_info[0] else 'input',
+                    line=e.file_info[1],
+                    data=e.file_info[2]))
+            else:
+                if node_bytes:
+                    current_block += node_bytes
+                    self.resolver.pc += len(node_bytes)
 
-            if node_bytes:
-                current_block += node_bytes
-                self.resolver.pc += len(node_bytes)
+                if isinstance(node, CodePositionNode):
+                    if len(current_block) > 0:
+                        writer.write_block(current_block, current_block_addr)
+                    current_block_addr = self.resolver.pc
+                    current_block = b''
 
-            if isinstance(node, CodePositionNode):
-                if len(current_block) > 0:
-                    writer.write_block(current_block, current_block_addr)
-                current_block_addr = self.resolver.pc
-                current_block = b''
+            if len(current_block) > 0:
+                writer.write_block(current_block, current_block_addr)
 
-        if len(current_block) > 0:
-            writer.write_block(current_block, current_block_addr)
-
-        # blocks = sorted(blocks, key=lambda x: x[0])
-        #
-        # current_addr = None
-        # for block in blocks:
-        #     if current_addr:
-        #         if current_addr > block[0]:
-        #             raise Exception('overlapping blocks')
-        #         else:
-        #             current_addr = block[0] + block[1]
+            # blocks = sorted(blocks, key=lambda x: x[0])
+            #
+            # current_addr = None
+            # for block in blocks:
+            #     if current_addr:
+            #         if current_addr > block[0]:
+            #             raise Exception('overlapping blocks')
+            #         else:
+            #             current_addr = block[0] + block[1]
 
     def emit_ips(self, program, file):
         ips = IPSWriter(file)
@@ -71,7 +82,7 @@ class Program(object):
         self.emit(program, ips)
         ips.end()
 
-    def assemble_with_emitter(self, asm_file, emiter):
+    def assemble_with_emitter(self, asm_file, emitter):
         try:
             with open(asm_file, encoding='utf-8') as f:
                 input_program = f.read()
@@ -80,7 +91,7 @@ class Program(object):
                 self.resolve_labels(nodes)
             self.resolver.dump_symbol_map()
 
-            self.emit(nodes, emiter)
+            self.emit(nodes, emitter)
 
         except RuntimeError as e:
             self.logger.error(e)
@@ -94,7 +105,15 @@ class Program(object):
             sfc_emiter = SFCWriter(f)
             self.assemble_with_emitter(asm_file, sfc_emiter)
 
-    def assemble_as_patch(self, asm_file, ips_file):
+    def assemble_as_patch(self, asm_file, ips_file, mapping):
+        address_mapping = {
+            'low': RomType.low_rom,
+            'low2': RomType.low_rom_2,
+            'high': RomType.high_rom
+        }
+        self.resolver.rom_type = address_mapping[mapping]
         with open(ips_file, 'wb') as f:
-            ips_emiter = IPSWriter(f)
-            self.assemble_with_emitter(asm_file, ips_emiter)
+            ips_emitter = IPSWriter(f)
+            ips_emitter.begin()
+            self.assemble_with_emitter(asm_file, ips_emitter)
+            ips_emitter.end()

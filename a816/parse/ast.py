@@ -24,9 +24,7 @@ def __code_gen(ast_nodes, resolver, macro_definitions, file_info_stack):
     for node in ast_nodes:
         file_info = _get_file_info(node)
         if file_info:
-            print(file_info)
-            print('-' * 80)
-            # file_info_stack.append(file_info)
+            file_info_stack.append(file_info)
 
         if node[0] == 'block':
             code += _code_gen(node[1:], resolver, macro_definitions, file_info_stack)
@@ -133,16 +131,17 @@ def __code_gen(ast_nodes, resolver, macro_definitions, file_info_stack):
                 opcode = opcode[0]
             mode = node[1]
             if mode == AddressingMode.none:
-                code.append(OpcodeNode(opcode, addressing_mode=mode))
+                code.append(OpcodeNode(opcode, addressing_mode=mode, file_info=file_info_stack[-1]))
             elif mode in (
                     AddressingMode.direct_indexed, AddressingMode.indirect_indexed,
                     AddressingMode.indirect_indexed_long):
                 code.append(OpcodeNode(opcode, addressing_mode=mode, size=size,
                                        value_node=ExpressionNode(node[3], resolver),
-                                       index=node[4]))
+                                       index=node[4], file_info=file_info_stack[-1]))
             else:
                 code.append(OpcodeNode(opcode, addressing_mode=mode, size=size,
-                                       value_node=ExpressionNode(node[3], resolver)))
+                                       value_node=ExpressionNode(node[3], resolver),
+                                       file_info=file_info_stack[-1]))
         else:
             pprint.pprint('ERR:' + str(node))
             pass
@@ -155,7 +154,5 @@ def display_stack(stack):
 
 
 def _code_gen(ast_nodes, resolver, macro_definitions, _file_info_stack):
-    try:
-        return __code_gen(ast_nodes, resolver, macro_definitions, _file_info_stack)
-    except:
-        display_stack(_file_info_stack)
+    nodes = __code_gen(ast_nodes, resolver, macro_definitions, _file_info_stack)
+    return nodes

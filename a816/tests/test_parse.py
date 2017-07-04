@@ -1,12 +1,24 @@
 import unittest
+import struct
+import logging
+
 from a816.parse.ast import code_gen
 from a816.parse.lalrparser import LALRParser
-import struct
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.expressions import eval_expr
 from a816.parse.nodes import OpcodeNode, ValueNode, ExpressionNode
 from a816.program import Program
 from a816.symbols import Resolver
+from a816.parse.nodes import NodeError
+
+logger = logging.getLogger('a816')
+
+stream_formatter = logging.Formatter('%(levelname)s :: %(message)s')
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(stream_formatter)
+
+logger.addHandler(stream_handler)
+# logger.setLevel(logging.WARNING)
 
 
 class StubWriter(object):
@@ -409,7 +421,6 @@ labelle:
         writer = StubWriter()
         program.emit(nodes, writer)
 
-
     def test_eval(self):
         r = Resolver()
         r.current_scope.add_symbol('name', {'data': 4})
@@ -561,3 +572,30 @@ labelle:
         writer = StubWriter()
         program.emit(nodes, writer)
         self.assertEqual(writer.data[0], b'\x03\x04\x05')
+
+    def test_code_gen_error(self):
+        program = Program()
+        ast = program.parser.parse_as_ast(
+            '''letter_width_table = 0xe00000
+font_addr = 0xff0000
+
+; if item_descriptions are moved it should be modified
+;item_descriptions = 0xD72FD1
+
+copy_char = 0xC80C3C
+lda.l #0xffff
+; repurpose odd / even char flag to store the occupied bits
+;position = 0x2e''')
+        try:
+            nodes = code_gen(ast[1:], program.resolver)
+            program.resolve_labels(nodes)
+            # program.resolver.dump_symbol_map()
+            writer = StubWriter()
+            program.emit(nodes, writer)
+        except NodeError as e:
+
+            logger.error('"{message}" at \n{file}:{line} {data}'.format(
+                message=e.message,
+                file=e.file_info[0] if e.file_info[0] else 'input',
+                line=e.file_info[1],
+                data=e.file_info[2]))

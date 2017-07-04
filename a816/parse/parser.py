@@ -19,20 +19,20 @@ class A816Parser(object):
         self.filename = filename
         self.tokens = self.lexer.tokens
         self.parser = parser or yacc.yacc(module=self, method='LALR', tabmodule='ply_generated_rules',
-                                          outputdir=this_dir, debug=1, write_tables=1)
+                                          outputdir=this_dir, debug=0, write_tables=1, errorlog=yacc.NullLogger())
 
     def clone(self, filename):
         return A816Parser(filename, lexer=self.lexer.clone(), parser=self.parser)
 
     def parse(self, source):
-        ast_nodes = self.parser.parse(source, lexer=self.lexer.lexer)
+        ast_nodes = self.parser.parse(source, lexer=self.lexer.lexer, tracking=True)
         return ast_nodes
 
     def make_node(self, node, p):
         try:
             line = p.lexer.lexdata.split('\n')[p.lineno(1) - 1].strip()
         except:
-            line= 'bogus'
+            line = 'bogus'
         node += (('fileinfo', self.filename, p.lineno(1), line),)
         return node
 
