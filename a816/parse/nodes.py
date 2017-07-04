@@ -1,7 +1,7 @@
 import struct
 
 from a816.expressions import eval_expr
-from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom, RelativeJumpOpcode
+from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom, RelativeJumpOpcode, NoOpcodeForOperandSize
 from script import Table
 
 
@@ -156,13 +156,21 @@ class UnkownOpcodeError(Exception):
     pass
 
 
+class NodeError(Exception):
+    def __init__(self, message: str, file_info: list) -> None:
+        super().__init__(message)
+        self.file_info = file_info
+        self.message = message
+
+
 class OpcodeNode(object):
-    def __init__(self, opcode, size=None, addressing_mode=None, index=None, value_node=None):
+    def __init__(self, opcode, size=None, addressing_mode=None, index=None, value_node=None, file_info=None):
         self.opcode = opcode.lower()
         self.addressing_mode = addressing_mode
         self.index = index
         self.value_node = value_node
         self.size = size.lower() if size else None
+        self.file_info = file_info
 
     def check_opcode(self):
         emitter = self._get_emitter()
@@ -182,8 +190,10 @@ class OpcodeNode(object):
 
     def emit(self, resolver):
         opcode_emitter = self._get_emitter()
-        instruction_bytes = opcode_emitter.emit(self.value_node, self.size, resolver)
-        return instruction_bytes
+        try:
+            return opcode_emitter.emit(self.value_node, self.size, resolver)
+        except NoOpcodeForOperandSize as e:
+            raise NodeError('No opcode for size', self.file_info) from e
 
     def pc_after(self, current_pc):
         opcode_emitter = self._get_emitter()

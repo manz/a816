@@ -18,7 +18,7 @@ class Scope(object):
 
     def add_symbol(self, symbol, value):
         if symbol in self.symbols:
-            logger.warn('Symbol already defined (%s)' % symbol)
+            logger.warning('Symbol already defined (%s)' % symbol)
         self.symbols[symbol] = value
 
     def __getitem__(self, item):

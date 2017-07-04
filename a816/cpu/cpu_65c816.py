@@ -2,6 +2,10 @@ import struct
 from enum import Enum
 
 
+class NoOpcodeForOperandSize(Exception):
+    pass
+
+
 class AddressingMode(Enum):
     none = 0
     immediate = 1
@@ -78,14 +82,14 @@ class Opcode(object):
         return 2 + self.size_opcode_map[value_size]
 
     def get_opcode_byte(self, value_size):
-        return self.opcode[self.size_opcode_map[value_size]]
+        try:
+            return self.opcode[self.size_opcode_map[value_size]]
+        except IndexError as e:
+            raise NoOpcodeForOperandSize() from e
 
     def emit(self, value_node, size=None, resolver=None):
         value_size = self.guess_value_size(value_node, size)
         opcode_byte = self.get_opcode_byte(value_size)
-
-        if opcode_byte is None:
-            raise Exception('No opcode for this size', value_size, self.opcode, str(value_node))
 
         opcode_byte = struct.pack('B', opcode_byte)
         operand_bytes = self.emit_value(value_node, value_size)
@@ -574,21 +578,3 @@ class RomType(Enum):
     low_rom = 0
     low_rom_2 = 1
     high_rom = 2
-
-
-# class RomMode(Enum):
-#     MODE_20 = 0x20
-#     MODE_21 = 0x21
-#     MODE_23 = 0
-#     MODE_25 = 0x25
-#     MODE_20_HI = 0x30
-#     MODE_21_HI = 0x31
-#     MODE_25_HI = 0x35
-
-
-# read_only_memory = ReadOnlyMemory()
-#
-# read_only_memory.register_mapping(RomMode.MODE_20, Mode20Mapper())
-# read_only_memory.register_mapping(RomMode.MODE_21, Mode21Mapper())
-# read_only_memory.register_mapping(RomMode.MODE_25, Mode25Mapper())
-#

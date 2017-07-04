@@ -27,11 +27,11 @@ class A816Lexer(object):
     @TOKEN(opcodes_none)
     def t_OPCODE_NONE(self, t):
         t.value = t.value.lower()[:3].strip()
+        t.lexer.lineno += 1
         return t
 
     @TOKEN(opcodes_pattern)
     def t_OPCODE_NAKED(self, t):
-        t.lexer.lineno += 1
         t.value = t.value.lower().strip()
         return t
 
@@ -144,19 +144,18 @@ class A816Lexer(object):
     # Define a rule so we can track line numbers
 
     def t_NEWLINE(self, t):
-        r'\n'
+        r"""\n"""
         t.lexer.lineno += 1
-        # return t
 
     # A string containing ignored characters (spaces and tabs)
     t_ignore = ' \t'
 
     def t_COMMENT(self, t):
-        r';[^\n]*'
+        r""";[^\n]*"""
         pass
 
     def t_INDEX(self, t):
-        r',\s*[XxYySs]\s+'
+        r""",\s*[XxYySs]\s+"""
         t.lexer.lineno += t.value.count('\n')
         t.value = t.value[1:].lower().strip()
         return t
@@ -167,7 +166,7 @@ class A816Lexer(object):
         t.lexer.skip(1)
 
     def __init__(self, lexer=None):
-        self.lexer = lexer or lex.lex(debug=0, module=self, outputdir=this_dir)
+        self.lexer = lexer or lex.lex(debug=0, module=self, outputdir=this_dir, errorlog=lex.NullLogger())
 
     def clone(self):
         new_lexer = self.lexer.clone()
