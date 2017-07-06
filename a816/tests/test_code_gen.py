@@ -1,9 +1,8 @@
 import unittest
 
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.nodes import OpcodeNode, ValueNode
+from a816.parse.nodes import OpcodeNode, ValueNode, RelocationAddressNode, LabelNode
 from a816.program import Program
-from parse.nodes import RelocationAddressNode, LabelNode
 
 
 class CodeGenTest(unittest.TestCase):

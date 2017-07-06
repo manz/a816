@@ -1,7 +1,7 @@
 import unittest
 
 from a816.cpu.cpu_65c816 import AddressingMode
-from program import Program
+from a816.program import Program
 
 
 class ParseTest(unittest.TestCase):

@@ -5,11 +5,9 @@ import logging
 from a816.parse.ast import code_gen
 from a816.parse.lalrparser import LALRParser
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.expressions import eval_expr
 from a816.parse.nodes import OpcodeNode, ValueNode, ExpressionNode
 from a816.program import Program
 from a816.symbols import Resolver
-from a816.parse.nodes import NodeError
 
 logger = logging.getLogger('a816')
 
