@@ -27,6 +27,8 @@ class Program(object):
         previous_pc = self.resolver.reloc_address
 
         for node in program_nodes:
+            if isinstance(node, SymbolNode):
+                continue
             previous_pc = node.pc_after(previous_pc)
 
         self.resolver_reset()
@@ -108,13 +110,14 @@ class Program(object):
             sfc_emiter = SFCWriter(f)
             self.assemble_with_emitter(asm_file, sfc_emiter)
 
-    def assemble_as_patch(self, asm_file, ips_file, mapping):
-        address_mapping = {
-            'low': RomType.low_rom,
-            'low2': RomType.low_rom_2,
-            'high': RomType.high_rom
-        }
-        self.resolver.rom_type = address_mapping[mapping]
+    def assemble_as_patch(self, asm_file, ips_file, mapping=None):
+        if mapping is not None:
+            address_mapping = {
+                'low': RomType.low_rom,
+                'low2': RomType.low_rom_2,
+                'high': RomType.high_rom
+            }
+            self.resolver.rom_type = address_mapping[mapping]
         with open(ips_file, 'wb') as f:
             ips_emitter = IPSWriter(f)
             ips_emitter.begin()

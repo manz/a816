@@ -123,3 +123,24 @@ class EmitTest(unittest.TestCase):
         self.assertEqual(writer.data[0], b'\xFF\xFF\x03')
         self.assertEqual(writer.data_addresses[0], snes_to_rom(0x03FFFF))
         self.assertEqual(program.resolver.current_scope['label2'], 0x048002)
+
+    def test_symbols_are_globals_in_current_scope(self):
+        writer = StubWriter()
+
+        program = Program()
+        input_program = '''
+         .macro test(pointer) {
+            .pointer pointer
+            }
+            test(newgame.label)
+
+           .scope newgame {
+            label:
+           }
+           
+           '''
+        program.assemble_string_with_emitter(input_program, 'test_macro_application', writer)
+
+        self.assertEqual(writer.data[0], b'\xFF\xFF\x03')
+        self.assertEqual(writer.data_addresses[0], snes_to_rom(0x03FFFF))
+        self.assertEqual(program.resolver.current_scope['label2'], 0x048002)
