@@ -4,9 +4,9 @@ import struct
 
 from a816.program import Program
 from a816.parse.nodes import NodeError
-from cpu.cpu_65c816 import snes_to_rom
-from parse.ast import code_gen
-from tests import StubWriter
+from a816.cpu.cpu_65c816 import snes_to_rom
+from a816.parse.ast import code_gen
+from a816.tests import StubWriter
 
 
 class EmitTest(unittest.TestCase):
