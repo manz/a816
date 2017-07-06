@@ -2,6 +2,7 @@ import unittest
 
 import struct
 
+from a816.expressions import eval_expr
 from a816.program import Program
 from a816.parse.nodes import NodeError
 from a816.cpu.cpu_65c816 import snes_to_rom
@@ -129,18 +130,19 @@ class EmitTest(unittest.TestCase):
 
         program = Program()
         input_program = '''
-         .macro test(pointer) {
+        .macro test(pointer) {
             .pointer pointer
-            }
-            test(newgame.label)
-
-           .scope newgame {
+        }
+        test(newgame.label)
+        .db 0
+       .scope newgame {
             label:
-           }
-           
-           '''
+        }
+        '''
         program.assemble_string_with_emitter(input_program, 'test_macro_application', writer)
 
-        self.assertEqual(writer.data[0], b'\xFF\xFF\x03')
-        self.assertEqual(writer.data_addresses[0], snes_to_rom(0x03FFFF))
-        self.assertEqual(program.resolver.current_scope['label2'], 0x048002)
+        self.assertEqual(writer.data_addresses[0], snes_to_rom(0x008000))
+        self.assertEqual(eval_expr('newgame.label', program.resolver), 0x008004)
+        self.assertEqual(writer.data[0], b'\x04\x80\x00\x00')
+        self.assertEqual(writer.data_addresses[0], 0x000000)
+

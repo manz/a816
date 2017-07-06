@@ -309,55 +309,55 @@ class ParseTest(unittest.TestCase):
 
         print(ast)
 
-    def test_stareq_expr(self):
-        input_program = '''
-        sym=3
-        *=sym+4
-        coucou:
-        .db 0x00
-        '''
-        program = Program()
-        ast = program.parser.parse_as_ast(input_program)
+    # def test_stareq_expr(self):
+    #     input_program = '''
+    #     sym=3
+    #     *=sym+4
+    #     coucou:
+    #     .db 0x00
+    #     '''
+    #     program = Program()
+    #     ast = program.parser.parse_as_ast(input_program)
+    #
+    #     print(ast)
+    #     nodes = code_gen(ast[1:], program.resolver)
+    #     program.resolve_labels(nodes)
+    #     program.resolver.dump_symbol_map()
+    #     writer = StubWriter()
+    #     program.emit(nodes, writer)
 
-        print(ast)
-        nodes = code_gen(ast[1:], program.resolver)
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
-
-    def test_module(self):
-        input_program = '''.scope State {
-    v_idx = 0
-
-__init__:
-    self = 0x00
-    phx
-
-    ldx v_idx
-    plx
-
-    rts
-}
-
-vinx = State.__init__ + 4
-
-*=vinx - 2
-JSR.w State.__init__
-labelle:
-
-        '''
-        program = Program()
-        ast = program.parser.parse_as_ast(input_program)
-
-        from pprint import pprint
-        pprint(ast)
-
-        nodes = code_gen(ast[1:], program.resolver)
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
+#     def test_module(self):
+#         input_program = '''.scope State {
+#     v_idx = 0
+#
+# __init__:
+#     self = 0x00
+#     phx
+#
+#     ldx v_idx
+#     plx
+#
+#     rts
+# }
+#
+# vinx = State.__init__ + 4
+#
+# *=vinx - 2
+# JSR.w State.__init__
+# labelle:
+#
+#         '''
+#         program = Program()
+#         ast = program.parser.parse_as_ast(input_program)
+#
+#         from pprint import pprint
+#         pprint(ast)
+#
+#         nodes = code_gen(ast[1:], program.resolver)
+#         program.resolve_labels(nodes)
+#         program.resolver.dump_symbol_map()
+#         writer = StubWriter()
+#         program.emit(nodes, writer)
 
 
 
