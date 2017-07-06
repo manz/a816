@@ -18,6 +18,8 @@ stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(stream_formatter)
 
 logger.addHandler(stream_handler)
+
+
 # logger.setLevel(logging.WARNING)
 
 
@@ -50,41 +52,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(node.value_node.get_value(), expected_node.value_node.get_value())
         self.assertEqual(node.addressing_mode, expected_node.addressing_mode)
 
-    def test_short_jumps(self):
-        input_program = '''
-            my_label:
-            lda #0x0000
-            bra my_label
-        '''
 
-        program = Program()
-
-        nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
-
-        program.resolver.pc = 3
-        short_jump_node = nodes[-1]
-
-        machine_code = short_jump_node.emit(program.resolver)
-
-        unpacked = struct.unpack('Bb', machine_code)
-
-        self.assertEqual(unpacked, (128, -5))
-
-    def test_math_expr_eval(self):
-        expr = '0x100+toto & 0xFFFF'
-
-        resolver = Resolver()
-        resolver.current_scope.add_symbol('toto', 0x108000)
-
-        self.assertEqual(eval_expr(expr, resolver), 0x8100)
-
-    def test_symbols_resolved_through_eval(self):
-        expr = 'toto'
-        resolver = Resolver()
-        resolver.current_scope.add_symbol('toto', 0x1234)
-
-        self.assertEqual(eval_expr(expr, resolver), 0x1234)
 
     def test_data_word(self):
         input_program = '''
@@ -149,34 +117,34 @@ class ParseTest(unittest.TestCase):
         nodes = program.parser.parse('\n'.join(input_program))
         program.resolve_labels(nodes)
 
-    def test_macro(self):
-        input_program = '''
-        .macro test_macro(a, b, c) {
-            lda.b #a
-            lda.b #b
-            lda.b #c
-        }
-        test_macro(0, 1, 2)
-        '''
-
-        expected_ast_nodes = ('block',
-                              ('macro', 'test_macro', ('args', ('a', 'b', 'c')),
-                               ('compound',
-                                ('block',
-                                 ('opcode', AddressingMode.immediate, ['lda', 'b'], 'a'),
-                                 ('opcode', AddressingMode.immediate, ['lda', 'b'], 'b'),
-                                 ('opcode', AddressingMode.immediate, ['lda', 'b'], 'c')))),
-                              ('macro_apply', 'test_macro', ('apply_args', ('0', '1', '2'))))
-
-        program = Program()
-
-        ast_nodes = program.parser.parse_as_ast(input_program)
-
-        self.assertEqual(ast_nodes, expected_ast_nodes)
-
-        nodes = code_gen(ast_nodes[1:], program.resolver)
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
+    # def test_macro(self):
+    #     input_program = '''
+    #     .macro test_macro(a, b, c) {
+    #         lda.b #a
+    #         lda.b #b
+    #         lda.b #c
+    #     }
+    #     test_macro(0, 1, 2)
+    #     '''
+    #
+    #     expected_ast_nodes = ('block',
+    #                           ('macro', 'test_macro', ('args', ('a', 'b', 'c')),
+    #                            ('compound',
+    #                             ('block',
+    #                              ('opcode', AddressingMode.immediate, ['lda', 'b'], 'a'),
+    #                              ('opcode', AddressingMode.immediate, ['lda', 'b'], 'b'),
+    #                              ('opcode', AddressingMode.immediate, ['lda', 'b'], 'c')))),
+    #                           ('macro_apply', 'test_macro', ('apply_args', ('0', '1', '2'))))
+    #
+    #     program = Program()
+    #
+    #     ast_nodes = program.parser.parse_as_ast(input_program)
+    #
+    #     self.assertEqual(ast_nodes, expected_ast_nodes)
+    #
+    #     nodes = code_gen(ast_nodes[1:], program.resolver)
+    #     program.resolve_labels(nodes)
+    #     program.resolver.dump_symbol_map()
 
     def test_macro_empty_args(self):
         input_program = """
@@ -193,34 +161,6 @@ class ParseTest(unittest.TestCase):
 
         nodes = code_gen(ast_nodes[1:], program.resolver)
 
-    def test_indirect_indexed_addressing(self):
-        input_program = """
-        sta (0x00), y
-        """
-
-        program = Program()
-
-        ast_nodes = program.parser.parse_as_ast(input_program)
-        self.assertEqual(ast_nodes, ('block', ('opcode', AddressingMode.indirect_indexed, 'sta', '0x00', 'y')))
-
-    def test_long_data_node(self):
-        input_program = """
-        .dl 0xf01ac5
-        """
-
-        program = Program()
-        ast = program.parser.parse_as_ast(input_program)
-        self.assertEqual(ast, ('block', ('dl', ('0xf01ac5',))))
-
-        resolver = Resolver()
-        writer = StubWriter()
-
-        nodes = code_gen(ast[1:], resolver)
-        program.resolve_labels(nodes)
-
-        program.emit(nodes, writer)
-
-        self.assertEqual(writer.data[0], b'\xc5\x1a\xf0')
 
     def test_label_reference(self):
         resolver = Resolver()
@@ -360,8 +300,8 @@ class ParseTest(unittest.TestCase):
 
     def test_pluseq(self):
         input_program = '''
-        *=0x8000
-        +=0x7F1001
+        
+        @=0x8000,0x7F1001
         label:
         .dl label
         '''
@@ -421,181 +361,182 @@ labelle:
         writer = StubWriter()
         program.emit(nodes, writer)
 
-    def test_eval(self):
-        r = Resolver()
-        r.current_scope.add_symbol('name', {'data': 4})
 
-        value = eval_expr('name.data', r)
-        self.assertEqual(value, 4)
 
-    def test_if_true(self):
-        program = Program()
-        program.resolver.current_scope.add_symbol('TEST', 1)
-        ast = program.parser.parse_as_ast('''
-            #if TEST
-                .db 1
-            #else
-                .db 0
-            #endif
-        ''')
+    # def test_if_true(self):
+    #     program = Program()
+    #     program.resolver.current_scope.add_symbol('TEST', 1)
+    #     ast = program.parser.parse_as_ast('''
+    #         #if TEST
+    #             .db 1
+    #         #else
+    #             .db 0
+    #         #endif
+    #     ''')
+    #
+    #     print(ast)
+    #     nodes = code_gen(ast[1:], program.resolver)
+    #
+    #     program.resolve_labels(nodes)
+    #     program.resolver.dump_symbol_map()
+    #     writer = StubWriter()
+    #     program.emit(nodes, writer)
+    #     self.assertEqual(writer.data[0], b'\x01')
 
-        print(ast)
-        nodes = code_gen(ast[1:], program.resolver)
+    # def test_if_false(self):
+    #     program = Program()
+    #     program.resolver.current_scope.add_symbol('TEST', 0)
+    #     ast = program.parser.parse_as_ast('''
+    #         #if TEST
+    #             .db 1
+    #         #else
+    #             .db 0
+    #         #endif
+    #     ''')
+    #
+    #     print(ast)
+    #     nodes = code_gen(ast[1:], program.resolver)
+    #
+    #     program.resolve_labels(nodes)
+    #     program.resolver.dump_symbol_map()
+    #     writer = StubWriter()
+    #     program.emit(nodes, writer)
+    #     self.assertEqual(writer.data[0], b'\x00')
 
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
-        self.assertEqual(writer.data[0], b'\x01')
+    # def test_if_no_else(self):
+    #     program = Program()
+    #     program.resolver.current_scope.add_symbol('TEST', 0)
+    #     ast = program.parser.parse_as_ast('''
+    #         #if TEST
+    #             .db 1
+    #         #endif
+    #     ''')
+    #
+    #     print(ast)
+    #     nodes = code_gen(ast[1:], program.resolver)
+    #
+    #     program.resolve_labels(nodes)
+    #     program.resolver.dump_symbol_map()
+    #     writer = StubWriter()
+    #     program.emit(nodes, writer)
+    #     self.assertEqual(len(writer.data), 0)
 
-    def test_if_false(self):
-        program = Program()
-        program.resolver.current_scope.add_symbol('TEST', 0)
-        ast = program.parser.parse_as_ast('''
-            #if TEST
-                .db 1
-            #else
-                .db 0
-            #endif
-        ''')
+    # def test_if_no_else_true(self):
+    #     program = Program()
+    #     program.resolver.current_scope.add_symbol('TEST', 1)
+    #     ast = program.parser.parse_as_ast('''
+    #         #if TEST
+    #             .db 1
+    #         #endif
+    #     ''')
+    #
+    #     print(ast)
+    #     nodes = code_gen(ast[1:], program.resolver)
+    #
+    #     program.resolve_labels(nodes)
+    #     program.resolver.dump_symbol_map()
+    #     writer = StubWriter()
+    #     program.emit(nodes, writer)
+    #     self.assertEqual(writer.data[0], b'\x01')
 
-        print(ast)
-        nodes = code_gen(ast[1:], program.resolver)
+    # def test_for(self):
+    #     program = Program()
+    #     ast = program.parser.parse_as_ast('''
+    #         .macro vwf_char(read_base_address, write_base_address) {
+    #             write_base_address_bank = write_base_address >> 16
+    #             write_base_address_low = write_base_address & 0xFFFF
+    #
+    #             phb
+    #             pha
+    #             lda.b #write_base_address_bank
+    #             pha
+    #             plb
+    #             pla
+    #
+    #             sep #0x20
+    #             #for k 0 16
+    #             {
+    #                 lda read_base_address + k, x
+    #                 sta 0x4016
+    #                 nop
+    #                 nop
+    #                 lda 0x4018
+    #                 ora.w write_base_address_low + k, y
+    #                 sta.w write_base_address_low + k, y
+    #                 lsr
+    #                 sta.w write_base_address_low + k, y
+    #             }
+    #             lda read_base_address + 16, x
+    #             clc
+    #             adc 0x00
+    #             sta 0x00
+    #             rep #0x20
+    #             plb
+    #
+    #         }
+    #
+    #         vwf_char(0xF00000, 0x7FC000)
+    #
+    #
+    #     ''')
+    #
+    #     print(ast)
+    #     nodes = code_gen(ast[1:], program.resolver)
+    #
+    #     program.resolve_labels(nodes)
+    #     program.resolver.dump_symbol_map()
+    #     writer = StubWriter()
+    #     program.emit(nodes, writer)
+    #     self.assertEqual(writer.data[0], b'\xA9\x00\xA9\x01\xA9\x02\xA9\x03\xA9\x04')
+    #
+    # def test_for_with_expressions(self):
+    #     program = Program()
+    #     ast = program.parser.parse_as_ast('''{
+    #         _from=3
+    #         #for k _from _from + 2 {
+    #             .db k
+    #         }
+    #     }
+    #     ''')
+    #
+    #     print(ast)
+    #     nodes = code_gen(ast[1:], program.resolver)
+    #
+    #     program.resolve_labels(nodes)
+    #     program.resolver.dump_symbol_map()
+    #     writer = StubWriter()
+    #     program.emit(nodes, writer)
+    #     self.assertEqual(writer.data[0], b'\x03\x04\x05')
 
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
-        self.assertEqual(writer.data[0], b'\x00')
-
-    def test_if_no_else(self):
-        program = Program()
-        program.resolver.current_scope.add_symbol('TEST', 0)
-        ast = program.parser.parse_as_ast('''
-            #if TEST
-                .db 1
-            #endif
-        ''')
-
-        print(ast)
-        nodes = code_gen(ast[1:], program.resolver)
-
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
-        self.assertEqual(len(writer.data), 0)
-
-    def test_if_no_else_true(self):
-        program = Program()
-        program.resolver.current_scope.add_symbol('TEST', 1)
-        ast = program.parser.parse_as_ast('''
-            #if TEST
-                .db 1
-            #endif
-        ''')
-
-        print(ast)
-        nodes = code_gen(ast[1:], program.resolver)
-
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
-        self.assertEqual(writer.data[0], b'\x01')
-
-    def test_for(self):
-        program = Program()
-        ast = program.parser.parse_as_ast('''
-            .macro vwf_char(read_base_address, write_base_address) {
-                write_base_address_bank = write_base_address >> 16
-                write_base_address_low = write_base_address & 0xFFFF
-
-                phb
-                pha
-                lda.b #write_base_address_bank
-                pha
-                plb
-                pla
-                
-                sep #0x20
-                #for k 0 16
-                {
-                    lda read_base_address + k, x
-                    sta 0x4016
-                    nop
-                    nop
-                    lda 0x4018
-                    ora.w write_base_address_low + k, y
-                    sta.w write_base_address_low + k, y
-                    lsr
-                    sta.w write_base_address_low + k, y
-                }
-                lda read_base_address + 16, x
-                clc
-                adc 0x00
-                sta 0x00
-                rep #0x20
-                plb
-                
-            }
-            
-            vwf_char(0xF00000, 0x7FC000)
-            
-            
-        ''')
-
-        print(ast)
-        nodes = code_gen(ast[1:], program.resolver)
-
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
-        self.assertEqual(writer.data[0], b'\xA9\x00\xA9\x01\xA9\x02\xA9\x03\xA9\x04')
-
-    def test_for_with_expressions(self):
-        program = Program()
-        ast = program.parser.parse_as_ast('''{
-            _from=3
-            #for k _from _from + 2 {
-                .db k
-            }
-        }
-        ''')
-
-        print(ast)
-        nodes = code_gen(ast[1:], program.resolver)
-
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
-        self.assertEqual(writer.data[0], b'\x03\x04\x05')
-
-    def test_code_gen_error(self):
-        program = Program()
-        ast = program.parser.parse_as_ast(
-            '''letter_width_table = 0xe00000
-font_addr = 0xff0000
-
-; if item_descriptions are moved it should be modified
-;item_descriptions = 0xD72FD1
-
-copy_char = 0xC80C3C
-lda.l #0xffff
-; repurpose odd / even char flag to store the occupied bits
-;position = 0x2e''')
-        try:
-            nodes = code_gen(ast[1:], program.resolver)
-            program.resolve_labels(nodes)
-            # program.resolver.dump_symbol_map()
-            writer = StubWriter()
-            program.emit(nodes, writer)
-        except NodeError as e:
-
-            logger.error('"{message}" at \n{file}:{line} {data}'.format(
-                message=e.message,
-                file=e.file_info[0] if e.file_info[0] else 'input',
-                line=e.file_info[1],
-                data=e.file_info[2]))
+#     def test_code_gen_error(self):
+#         program = Program()
+#         ast = program.parser.parse_as_ast(
+#             '''letter_width_table = 0xe00000
+# font_addr = 0xff0000
+#
+# ; if item_descriptions are moved it should be modified
+# ;item_descriptions = 0xD72FD1
+#
+# copy_char = 0xC80C3C
+# lda.l #0xffff
+# ; repurpose odd / even char flag to store the occupied bits
+# ;position = 0x2e''')
+#         try:
+#             nodes = code_gen(ast[1:], program.resolver)
+#             program.resolve_labels(nodes)
+#             # program.resolver.dump_symbol_map()
+#             writer = StubWriter()
+#             program.emit(nodes, writer)
+#         except NodeError as e:
+#
+#             logger.error('"{message}" at \n{file}:{line} {data}'.format(
+#                 message=e.message,
+#                 file=e.file_info[0] if e.file_info[0] else 'input',
+#                 line=e.file_info[1],
+#                 data=e.file_info[2]))
+#
+#     def test_tildaeq(self):
+#         program = Program()
+#         ast = program.parser.parse_as_ast('@=0x7e0000, 0xc00000')
+#         self.assertEqual(ast,
+#                           ('block', ('tildaeq', '0x7e0000', '0xc00000', ('fileinfo', '', 1, '@=0x7e0000, 0xc00000'))))

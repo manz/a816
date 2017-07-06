@@ -2,6 +2,7 @@ import logging
 
 from a816.cpu.cpu_65c816 import rom_to_snes, RomType
 from a816.exceptions import SymbolNotDefined
+from cpu.cpu_65c816 import snes_to_rom
 
 logger = logging.getLogger('a816')
 
@@ -14,7 +15,10 @@ class Scope(object):
         self.table = None
 
     def add_label(self, label, value):
-        self.add_symbol(label, rom_to_snes(value, self.resolver.rom_type))
+        if self.resolver.reloc:
+            self.add_symbol(label, value)
+        else:
+            self.add_symbol(label, rom_to_snes(value, self.resolver.rom_type))
 
     def add_symbol(self, symbol, value):
         if symbol in self.symbols:
@@ -58,6 +62,8 @@ class Resolver(object):
     def __init__(self, pc=0x000000):
         self.symbol_map = {}
         self.pc = pc
+        self.reloc_address = pc
+        self.reloc = False
         self.a = False
         self.x = False
         self.rom_type = RomType.low_rom
@@ -65,6 +71,16 @@ class Resolver(object):
         self.last_used_scope = 0
         self.current_scope = Scope(self)
         self.scopes = [self.current_scope]
+
+    def set_position(self, pc, reloc_address=None):
+        if reloc_address is not None:
+            self.pc = pc
+            self.reloc_address = reloc_address
+            self.reloc = True
+        else:
+            self.pc = snes_to_rom(pc)
+            self.reloc_address = pc
+            self.reloc = False
 
     def append_named_scope(self, name):
         scope = NamedScope(name, self, self.current_scope)

@@ -5,6 +5,8 @@ from ply import yacc as yacc
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 
+files_stack = []
+
 
 class A816Parser(object):
     precedence = (
@@ -25,7 +27,9 @@ class A816Parser(object):
         return A816Parser(filename, lexer=self.lexer.clone(), parser=self.parser)
 
     def parse(self, source):
+        files_stack.append(self.filename)
         ast_nodes = self.parser.parse(source, lexer=self.lexer.lexer, tracking=True)
+        files_stack.pop()
         return ast_nodes
 
     def make_node(self, node, p):
@@ -33,7 +37,7 @@ class A816Parser(object):
             line = p.lexer.lexdata.split('\n')[p.lineno(1) - 1].strip()
         except:
             line = 'bogus'
-        node += (('fileinfo', self.filename, p.lineno(1), line),)
+        node += (('fileinfo', files_stack[-1], p.lineno(1), line),)
         return node
 
     def p_program(self, p):
@@ -64,7 +68,7 @@ class A816Parser(object):
                     | include
                     | pointer
                     | stareq
-                    | pluseq
+                    | ateq
                     | compound_statement
                     """
         p[0] = p[1]
@@ -144,9 +148,9 @@ class A816Parser(object):
         """pluseq : PLUSEQ expression"""
         p[0] = self.make_node(('pluseq', p[2]), p)
 
-    def p_tildaeq(self, p):
-        """tildaeq : TILDAEQ expression"""
-        p[0] = self.make_node(('tildaeq', p[2]), p)
+    def p_ateq(self, p):
+        """ateq : ATEQ expression COMMA expression"""
+        p[0] = self.make_node(('ateq', p[2], p[4]), p)
 
     def p_pointer(self, p):
         """pointer : POINTER expression"""

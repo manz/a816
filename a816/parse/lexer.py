@@ -84,7 +84,7 @@ class A816Lexer(object):
         "AND",
         "STAREQ",
         "PLUSEQ",
-        "TILDAEQ",
+        "ATEQ",
         "INDEX",
         "NEWLINE"
 
@@ -130,7 +130,7 @@ class A816Lexer(object):
 
     t_STAREQ = r'\*='
     t_PLUSEQ = r'\+='
-    t_TILDAEQ = r'\~='
+    t_ATEQ = r'@='
 
     t_PLUS = r'\+'
     t_MINUS = r'\-'

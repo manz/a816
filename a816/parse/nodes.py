@@ -209,34 +209,33 @@ class CodePositionNode(object):
         self.resolver = resolver
 
     def pc_after(self, current_pc):
+        self.resolver.reloc = False
         return snes_to_rom(self.value_node.get_value())
 
     def emit(self, current_addr):
-        self.resolver.pc = snes_to_rom(self.value_node.get_value())
+        self.resolver.set_position(self.value_node.get_value())
         return []
 
     def __str__(self):
         return 'CodePositionNode(%s)' % self.value_node.get_value()
 
 
-class CodeAddressNode(object):
-    pass
-
-
-class CodeRomAddressNode(object):
-    def __init__(self, value_node, resolver):
-        self.value_node = value_node
+class RelocationAddressNode(object):
+    def __init__(self, pc_value_node, reloc_value_node, resolver):
+        self.pc_value_node = pc_value_node
+        self.reloc_value_node = reloc_value_node
         self.resolver = resolver
 
     def pc_after(self, current_pc):
-        return self.value_node.get_value()
+        self.resolver.reloc = True
+        return self.reloc_value_node.get_value()
 
     def emit(self, current_addr):
-        self.resolver.pc = self.value_node.get_value()
+        self.resolver.set_position(self.pc_value_node.get_value(), self.reloc_value_node.get_value())
         return []
 
     def __str__(self):
-        return 'CodeRomAddressNode(%s)' % self.value_node.get_value()
+        return 'RelocationAddressNode(%s, %s)' % (self.pc_value_node.get_value(), self.reloc_value_node.get_value())
 
 
 class ScopeNode(object):

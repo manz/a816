@@ -5,9 +5,7 @@ from a816.parse.nodes import *
 
 def code_gen(ast_nodes, resolver):
     macro_definitions = {}
-    file_info_stack = []
-
-    return _code_gen(ast_nodes, resolver, macro_definitions, file_info_stack)
+    return _code_gen(ast_nodes, resolver, macro_definitions)
 
 
 def _get_file_info(node):
@@ -18,23 +16,20 @@ def _get_file_info(node):
     return None
 
 
-def __code_gen(ast_nodes, resolver, macro_definitions, file_info_stack):
-    # file_info_stack = _file_info_stack[:]
+def _code_gen(ast_nodes, resolver, macro_definitions):
     code = []
     for node in ast_nodes:
         file_info = _get_file_info(node)
-        if file_info:
-            file_info_stack.append(file_info)
 
         if node[0] == 'block':
-            code += _code_gen(node[1:], resolver, macro_definitions, file_info_stack)
+            code += _code_gen(node[1:], resolver, macro_definitions)
         elif node[0] == 'named_scope':
             name = node[1]
             resolver.append_named_scope(name)
             resolver.use_next_scope()
             code.append(ScopeNode(resolver))
 
-            code += _code_gen(node[2:], resolver, macro_definitions, file_info_stack)
+            code += _code_gen(node[2:], resolver, macro_definitions)
             code.append(PopScopeNode(resolver))
             resolver.restore_scope(exports=False)
 
@@ -43,11 +38,13 @@ def __code_gen(ast_nodes, resolver, macro_definitions, file_info_stack):
             resolver.use_next_scope()
             code.append(ScopeNode(resolver))
 
-            code += _code_gen(node[1:], resolver, macro_definitions, file_info_stack)
+            code += _code_gen(node[1:], resolver, macro_definitions)
             code.append(PopScopeNode(resolver))
             resolver.restore_scope()
         elif node[0] == 'macro':
+
             macro_definitions[node[1]] = node[2:]
+            continue
         elif node[0] == 'macro_apply':
             macro_def = macro_definitions[node[1]]
 
@@ -62,7 +59,7 @@ def __code_gen(ast_nodes, resolver, macro_definitions, file_info_stack):
             for index, arg in enumerate(macro_args):
                 code.append(SymbolNode(arg, macro_args_values[index], resolver))
 
-            code += _code_gen(macro_code, resolver, macro_definitions, file_info_stack)
+            code += _code_gen(macro_code, resolver, macro_definitions)
 
             code.append(PopScopeNode(resolver))
             resolver.restore_scope()
@@ -80,9 +77,9 @@ def __code_gen(ast_nodes, resolver, macro_definitions, file_info_stack):
                 condition = False
 
             if condition:
-                code += _code_gen(if_branch_true, resolver, macro_definitions, file_info_stack)
+                code += _code_gen(if_branch_true, resolver, macro_definitions)
             elif if_branch_false:
-                code += _code_gen(if_branch_false, resolver, macro_definitions, file_info_stack)
+                code += _code_gen(if_branch_false, resolver, macro_definitions)
         elif node[0] == 'for':
             symbol, from_raw_val, to_raw_val, code_block, file_info = node[1:]
             from_val = eval_expr(from_raw_val, resolver)
@@ -92,15 +89,18 @@ def __code_gen(ast_nodes, resolver, macro_definitions, file_info_stack):
                 resolver.use_next_scope()
                 code.append(ScopeNode(resolver))
                 code.append(SymbolNode(symbol, str(k), resolver))
-                code += _code_gen(code_block, resolver, macro_definitions, file_info_stack)
+                code += _code_gen(code_block, resolver, macro_definitions)
                 code.append(PopScopeNode(resolver))
                 resolver.restore_scope()
         elif node[0] == 'stareq':
             code.append(CodePositionNode(ExpressionNode(node[1], resolver), resolver))
         elif node[0] == 'pluseq':
             continue
-        elif node[0] == 'tildaeq':
-            continue
+        elif node[0] == 'ateq':
+            code.append(RelocationAddressNode(ExpressionNode(node[1], resolver),
+                                              ExpressionNode(node[2], resolver),
+                                              resolver
+                                              ))
             # code.append(CodePositionNode(LabelReferenceNode(node[1], resolver), resolver))
         elif node[0] == 'table':
             code.append(TableNode(node[1], resolver))
@@ -131,28 +131,17 @@ def __code_gen(ast_nodes, resolver, macro_definitions, file_info_stack):
                 opcode = opcode[0]
             mode = node[1]
             if mode == AddressingMode.none:
-                code.append(OpcodeNode(opcode, addressing_mode=mode, file_info=file_info_stack[-1]))
+                code.append(OpcodeNode(opcode, addressing_mode=mode, file_info=file_info))
             elif mode in (
                     AddressingMode.direct_indexed, AddressingMode.indirect_indexed,
                     AddressingMode.indirect_indexed_long):
                 code.append(OpcodeNode(opcode, addressing_mode=mode, size=size,
                                        value_node=ExpressionNode(node[3], resolver),
-                                       index=node[4], file_info=file_info_stack[-1]))
+                                       index=node[4], file_info=file_info))
             else:
                 code.append(OpcodeNode(opcode, addressing_mode=mode, size=size,
                                        value_node=ExpressionNode(node[3], resolver),
-                                       file_info=file_info_stack[-1]))
-        else:
-            pprint.pprint('ERR:' + str(node))
-            pass
+                                       file_info=file_info))
+
     return code
 
-
-def display_stack(stack):
-    for element in stack:
-        print('%s: %s %s' % element)
-
-
-def _code_gen(ast_nodes, resolver, macro_definitions, _file_info_stack):
-    nodes = __code_gen(ast_nodes, resolver, macro_definitions, _file_info_stack)
-    return nodes
