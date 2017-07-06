@@ -2,7 +2,7 @@ import logging
 
 from a816.cpu.cpu_65c816 import rom_to_snes, RomType
 from a816.exceptions import SymbolNotDefined
-from cpu.cpu_65c816 import snes_to_rom
+from a816.cpu.cpu_65c816 import snes_to_rom
 
 logger = logging.getLogger('a816')
 
