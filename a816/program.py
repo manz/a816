@@ -1,6 +1,6 @@
 import logging
 from a816.parse.lalrparser import LALRParser
-from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode
+from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode, RelocationAddressNode
 from a816.symbols import Resolver
 from a816.writers import IPSWriter, SFCWriter
 from a816.parse.nodes import NodeError
@@ -24,16 +24,14 @@ class Program(object):
     def resolve_labels(self, program_nodes):
         self.resolver.last_used_scope = 0
 
-        previous_pc = self.resolver.pc
+        previous_pc = self.resolver.reloc_address
 
         for node in program_nodes:
-            # if isinstance(node, SymbolNode):
-            #     continue
             previous_pc = node.pc_after(previous_pc)
 
         self.resolver_reset()
 
-        previous_pc = self.resolver.pc
+        previous_pc = self.resolver.reloc_address
         for node in program_nodes:
             if isinstance(node, LabelNode) or isinstance(node, BinaryNode):
                 continue
@@ -49,22 +47,23 @@ class Program(object):
             except NodeError as e:
                 logger.error('"{message}" at \n{file}:{line} {data}'.format(
                     message=e.message,
-                    file=e.file_info[0] if e.file_info[0] else 'input',
+                    file=e.file_info[0] if e.file_info[0] else 'stdin',
                     line=e.file_info[1],
                     data=e.file_info[2]))
             else:
                 if node_bytes:
                     current_block += node_bytes
                     self.resolver.pc += len(node_bytes)
+                    self.resolver.reloc_address += len(node_bytes)
 
-                if isinstance(node, CodePositionNode):
+                if isinstance(node, CodePositionNode) or isinstance(node, RelocationAddressNode):
                     if len(current_block) > 0:
                         writer.write_block(current_block, current_block_addr)
                     current_block_addr = self.resolver.pc
                     current_block = b''
 
-            if len(current_block) > 0:
-                writer.write_block(current_block, current_block_addr)
+        if len(current_block) > 0:
+            writer.write_block(current_block, current_block_addr)
 
             # blocks = sorted(blocks, key=lambda x: x[0])
             #
@@ -82,16 +81,20 @@ class Program(object):
         self.emit(program, ips)
         ips.end()
 
+    def assemble_string_with_emitter(self, input_program, filename, emitter):
+        nodes = self.parser.parse(input_program, filename)
+        self.logger.info('Resolving labels')
+        self.resolve_labels(nodes)
+
+        self.resolver.dump_symbol_map()
+
+        self.emit(nodes, emitter)
+
     def assemble_with_emitter(self, asm_file, emitter):
         try:
             with open(asm_file, encoding='utf-8') as f:
                 input_program = f.read()
-                nodes = self.parser.parse(input_program)
-                self.logger.info('Resolving labels')
-                self.resolve_labels(nodes)
-            self.resolver.dump_symbol_map()
-
-            self.emit(nodes, emitter)
+                self.assemble_string_with_emitter(input_program, asm_file, emitter)
 
         except RuntimeError as e:
             self.logger.error(e)
