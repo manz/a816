@@ -83,9 +83,13 @@ class Opcode(object):
 
     def get_opcode_byte(self, value_size):
         try:
-            return self.opcode[self.size_opcode_map[value_size]]
-        except IndexError as e:
-            raise NoOpcodeForOperandSize() from e
+            opcode = self.opcode[self.size_opcode_map[value_size]]
+        except IndexError:
+            raise NoOpcodeForOperandSize()
+        else:
+            if opcode is None:
+                raise NoOpcodeForOperandSize()
+            return opcode
 
     def emit(self, value_node, size=None, resolver=None):
         value_size = self.guess_value_size(value_node, size)

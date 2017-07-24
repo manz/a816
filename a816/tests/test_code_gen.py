@@ -27,6 +27,5 @@ class CodeGenTest(unittest.TestCase):
             LabelNode('miaou', program.resolver)
         ])
 
-        print(hex(program.resolver.current_scope['miaou']), '?= 0x7f0000')
         self.assertEqual(program.resolver.current_scope['miaou'], 0x7f0000)
 

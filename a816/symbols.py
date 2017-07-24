@@ -29,7 +29,7 @@ class Scope(object):
         try:
             return self.symbols[item]
         except KeyError as e:
-            raise SymbolNotDefined('%s is not defined.' % item) from e
+            raise SymbolNotDefined(item) from e
 
     def get_table(self):
         if self.table is None:

@@ -1,5 +1,6 @@
 import struct
 
+from a816.exceptions import SymbolNotDefined
 from a816.expressions import eval_expr
 from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom, RelativeJumpOpcode, NoOpcodeForOperandSize
 from script import Table
@@ -162,6 +163,13 @@ class NodeError(Exception):
         self.file_info = file_info
         self.message = message
 
+    def __str__(self):
+        return '"{message}" at \n{file}:{line} {data}'.format(
+            message=self.message,
+            file=self.file_info[0] if self.file_info[0] else 'stdin',
+            line=self.file_info[1],
+            data=self.file_info[2])
+
 
 class OpcodeNode(object):
     def __init__(self, opcode, size=None, addressing_mode=None, index=None, value_node=None, file_info=None):
@@ -181,8 +189,10 @@ class OpcodeNode(object):
         try:
             opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
         except KeyError as e:
-            print(self)
-            raise e
+            raise NodeError('Addressing mode ({}) for opcode ({}) is not defined.'.format(
+                self.addressing_mode.name,
+                self.opcode
+            ), file_info=self.file_info)
 
         if isinstance(opcode_emitter, dict):
             opcode_emitter = opcode_emitter[self.index]
@@ -193,7 +203,15 @@ class OpcodeNode(object):
         try:
             return opcode_emitter.emit(self.value_node, self.size, resolver)
         except NoOpcodeForOperandSize as e:
-            raise NodeError('No opcode for size', self.file_info) from e
+            raise NodeError('{} does not supports size ({}).'.format(
+                self.opcode,
+                opcode_emitter.guess_value_size(self.value_node, self.size)
+            ), self.file_info) from e
+        except SymbolNotDefined as e:
+            raise NodeError('{} ({}) is not defined in the current scope.'.format(
+                e,
+                self.value_node
+            ), self.file_info)
 
     def pc_after(self, current_pc):
         opcode_emitter = self._get_emitter()
