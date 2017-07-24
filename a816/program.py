@@ -44,38 +44,21 @@ class Program(object):
         current_block = b''
         current_block_addr = self.resolver.pc
         for node in program:
-            try:
-                node_bytes = node.emit(self.resolver)
-            except NodeError as e:
-                logger.error('"{message}" at \n{file}:{line} {data}'.format(
-                    message=e.message,
-                    file=e.file_info[0] if e.file_info[0] else 'stdin',
-                    line=e.file_info[1],
-                    data=e.file_info[2]))
-            else:
-                if node_bytes:
-                    current_block += node_bytes
-                    self.resolver.pc += len(node_bytes)
-                    self.resolver.reloc_address += len(node_bytes)
+            node_bytes = node.emit(self.resolver)
 
-                if isinstance(node, CodePositionNode) or isinstance(node, RelocationAddressNode):
-                    if len(current_block) > 0:
-                        writer.write_block(current_block, current_block_addr)
-                    current_block_addr = self.resolver.pc
-                    current_block = b''
+            if node_bytes:
+                current_block += node_bytes
+                self.resolver.pc += len(node_bytes)
+                self.resolver.reloc_address += len(node_bytes)
+
+            if isinstance(node, CodePositionNode) or isinstance(node, RelocationAddressNode):
+                if len(current_block) > 0:
+                    writer.write_block(current_block, current_block_addr)
+                current_block_addr = self.resolver.pc
+                current_block = b''
 
         if len(current_block) > 0:
             writer.write_block(current_block, current_block_addr)
-
-            # blocks = sorted(blocks, key=lambda x: x[0])
-            #
-            # current_addr = None
-            # for block in blocks:
-            #     if current_addr:
-            #         if current_addr > block[0]:
-            #             raise Exception('overlapping blocks')
-            #         else:
-            #             current_addr = block[0] + block[1]
 
     def emit_ips(self, program, file):
         ips = IPSWriter(file)
@@ -96,7 +79,10 @@ class Program(object):
         try:
             with open(asm_file, encoding='utf-8') as f:
                 input_program = f.read()
-                self.assemble_string_with_emitter(input_program, asm_file, emitter)
+                try:
+                    self.assemble_string_with_emitter(input_program, asm_file, emitter)
+                except NodeError as e:
+                    logger.error(str(e))
 
         except RuntimeError as e:
             self.logger.error(e)

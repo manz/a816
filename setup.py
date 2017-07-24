@@ -6,7 +6,7 @@ requirements = parse_requirements('requirements.txt')
 
 setup(
     name="a816",
-    version="0.0.2",
+    version="0.0.4",
     license="BSD",
     url="https://github.com/manz/a816",
     packages=find_packages('.', exclude=['a816.tests']),
@@ -16,7 +16,7 @@ setup(
         "Intended Audience :: Developers",
         "Programming Language :: Python :: 3.4"
     ],
-    scripts = [
+    scripts=[
         'x816'
     ],
     install_requires=['ply']
