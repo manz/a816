@@ -50,6 +50,8 @@ class A816Parser(object):
 
     def p_statement(self, p):
         """statement : label
+                    | dp_or_sr_indirect_indexed
+                    | stack_indexed_indirect_indexed
                     | direct_instruction
                     | direct_indexed_instruction
                     | indirect_instruction
@@ -226,6 +228,14 @@ class A816Parser(object):
     def p_indirect_long_indexed_instruction(self, p):
         """indirect_long_indexed_instruction : opcode LBRAKET expression RBRAKET INDEX"""
         p[0] = self.make_node(('opcode', AddressingMode.indirect_indexed_long, p[1], p[3], p[5]), p)
+
+    def p_dp_or_sr_indirect_indexed(self, p):
+        """dp_or_sr_indirect_indexed : opcode LPAREN expression INNER_INDEX"""
+        p[0] = self.make_node(('opcode', AddressingMode.dp_or_sr_indirect_indexed, p[1], p[3], p[4]), p)
+
+    def p_stack_indexed_indirect_indexed(self, p):
+        """stack_indexed_indirect_indexed : opcode LPAREN expression INNER_INDEX INDEX"""
+        p[0] = self.make_node(('opcode', AddressingMode.stack_indexed_indirect_indexed, p[1], p[3], p[5]), p)
 
     def p_label(self, p):
         """label : LABEL"""

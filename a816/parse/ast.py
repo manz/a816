@@ -134,7 +134,8 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
                 code.append(OpcodeNode(opcode, addressing_mode=mode, file_info=file_info))
             elif mode in (
                     AddressingMode.direct_indexed, AddressingMode.indirect_indexed,
-                    AddressingMode.indirect_indexed_long):
+                    AddressingMode.indirect_indexed_long, AddressingMode.dp_or_sr_indirect_indexed,
+                    AddressingMode.stack_indexed_indirect_indexed):
                 code.append(OpcodeNode(opcode, addressing_mode=mode, size=size,
                                        value_node=ExpressionNode(node[3], resolver),
                                        index=node[4], file_info=file_info))

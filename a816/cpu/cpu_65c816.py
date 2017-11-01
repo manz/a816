@@ -15,6 +15,8 @@ class AddressingMode(Enum):
     indirect_indexed = 5
     indirect_long = 6
     indirect_indexed_long = 7
+    dp_or_sr_indirect_indexed = 8
+    stack_indexed_indirect_indexed = 9
 
 
 class BaseOpcode(object):
@@ -134,8 +136,17 @@ snes_opcode_table = {
         AddressingMode.indirect_indexed_long: {
             'y': Opcode([0xB7])
         },
+        AddressingMode.indirect_indexed: {
+            'y': Opcode([0xB1])
+        },
         AddressingMode.indirect_long: Opcode([0xA7]),
-        AddressingMode.indirect: Opcode([0xB2])
+        AddressingMode.indirect: Opcode([0xB2]),
+        AddressingMode.dp_or_sr_indirect_indexed: {
+            'x': Opcode([0xA1]),
+        },
+        AddressingMode.stack_indexed_indirect_indexed: {
+            'y': Opcode([0xB3])
+        }
     },
     'ora': {
         AddressingMode.immediate: Opcode([0x09, 0xA9], is_a=True),
@@ -147,6 +158,31 @@ snes_opcode_table = {
         AddressingMode.indirect_indexed_long: {
             'y': Opcode([0x17])
         }
+    },
+    'eor': {
+        AddressingMode.immediate: Opcode([0x49]),
+        AddressingMode.direct: Opcode([0x45, 0x4D, 0x4F]),
+        AddressingMode.direct_indexed: {
+            'x': Opcode([None, 0x5D, 0x5F]),
+            'y': Opcode([None, 0x59, None]),
+            's': Opcode([0x43, None, None])
+        },
+        AddressingMode.indirect: Opcode([0x52]),
+        AddressingMode.indirect_long: Opcode([0x47]),
+        AddressingMode.indirect_indexed: {
+            'y': Opcode([0x51])
+        },
+        AddressingMode.indirect_indexed_long: {
+            'y': Opcode([0x57])
+        },
+        AddressingMode.dp_or_sr_indirect_indexed: {
+            'x': Opcode([0x41])
+        },
+        AddressingMode.stack_indexed_indirect_indexed: {
+            'y': Opcode([0x53])
+        }
+
+
     },
     'ldx': {
         AddressingMode.immediate: Opcode([0xA2, 0xA2], is_x=True),
