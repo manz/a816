@@ -5,7 +5,7 @@ import struct
 from a816.expressions import eval_expr
 from a816.program import Program
 from a816.parse.nodes import NodeError
-from a816.cpu.cpu_65c816 import snes_to_rom
+from a816.cpu.cpu_65c816 import snes_to_rom, AddressingMode
 from a816.parse.ast import code_gen
 from a816.tests import StubWriter
 
@@ -146,3 +146,24 @@ class EmitTest(unittest.TestCase):
         self.assertEqual(writer.data[0], b'\x04\x80\x00\x00')
         self.assertEqual(writer.data_addresses[0], 0x000000)
 
+    def test_eor_dp_sr(self):
+        input_program = """
+        eor (0x12,x)
+        """
+
+        program = Program()
+        ast = program.parser.parse_as_ast(input_program)
+        self.assertEqual(ast, ('block', ('opcode',
+                                         AddressingMode.dp_or_sr_indirect_indexed,
+                                         'eor',
+                                         '0x12',
+                                         'x', ('fileinfo', '', 2, 'eor (0x12,x)'))))
+
+        writer = StubWriter()
+
+        nodes = code_gen(ast[1:], program.resolver)
+        program.resolve_labels(nodes)
+
+        program.emit(nodes, writer)
+
+        self.assertEqual(writer.data[0], b'\x41\x12')

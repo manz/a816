@@ -1,10 +1,10 @@
-import unittest
+from unittest.case import TestCase
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.program import Program
 
 
-class ParseTest(unittest.TestCase):
+class TestParse(TestCase):
     maxDiff = None
 
     @staticmethod
@@ -144,3 +144,43 @@ class ParseTest(unittest.TestCase):
         ast = self._get_ast_for('@=0x7e0000, 0xc00000')
         self.assertEqual(ast,
                          ('block', ('ateq', '0x7e0000', '0xc00000', ('fileinfo', '', 1, '@=0x7e0000, 0xc00000'))))
+
+    def test_dp_or_sr_indirect_indexed(self):
+        ast = self._get_ast_for('lda (0x00,x)\n')
+        self.assertEqual(ast,
+                         ('block', ('opcode', AddressingMode.dp_or_sr_indirect_indexed, 'lda', '0x00', 'x',
+                                    ('fileinfo', '', 1, 'lda (0x00,x)'))))
+
+    def test_eor_addressing_modes(self):
+        program = '''
+        EOR (0x01,x)
+        EOR 0x01, s
+        EOR 0x01
+        EOR [0x01]
+        EOR #0x01
+        EOR (0x01), y
+        EOR (0x01,s),y
+        EOR 0x01, x
+        EOR [0x02], y
+        EOR 0x02, y
+        EOR 0x02, x
+        EOR 0x010203, x
+        '''
+        ast = self._get_ast_for(program)
+        expected = ('block',
+                    ('opcode', AddressingMode.dp_or_sr_indirect_indexed, 'eor', '0x01', 'x', ('fileinfo', '', 2, 'EOR (0x01,x)')),
+                    ('opcode', AddressingMode.direct_indexed, 'eor', '0x01', 's', ('fileinfo', '', 3, 'EOR 0x01, s')),
+                    ('opcode', AddressingMode.direct, 'eor', '0x01', ('fileinfo', '', 4, 'EOR 0x01')),
+                    ('opcode', AddressingMode.indirect_long, 'eor', '0x01', ('fileinfo', '', 5, 'EOR [0x01]')),
+                    ('opcode', AddressingMode.immediate, 'eor', '0x01', ('fileinfo', '', 6, 'EOR #0x01')),
+                    ('opcode', AddressingMode.indirect_indexed, 'eor', '0x01', 'y', ('fileinfo', '', 7, 'EOR (0x01), y')),
+                    ('opcode', AddressingMode.stack_indexed_indirect_indexed, 'eor', '0x01', 'y',
+                     ('fileinfo', '', 8, 'EOR (0x01,s),y')),
+
+                    ('opcode', AddressingMode.direct_indexed, 'eor', '0x01', 'x', ('fileinfo', '', 9, 'EOR 0x01, x')),
+                    ('opcode', AddressingMode.indirect_indexed_long, 'eor', '0x02', 'y', ('fileinfo', '', 10, 'EOR [0x02], y')),
+                    ('opcode', AddressingMode.direct_indexed, 'eor', '0x02', 'y', ('fileinfo', '', 11, 'EOR 0x02, y')),
+                    ('opcode', AddressingMode.direct_indexed, 'eor', '0x02', 'x', ('fileinfo', '', 12, 'EOR 0x02, x')),
+                    ('opcode', AddressingMode.direct_indexed, 'eor', '0x010203', 'x',
+                     ('fileinfo', '', 13, 'EOR 0x010203, x')))
+        self.assertEqual(ast, expected)

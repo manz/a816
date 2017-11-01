@@ -50,20 +50,24 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(node.value_node.get_value(), expected_node.value_node.get_value())
         self.assertEqual(node.addressing_mode, expected_node.addressing_mode)
 
-
-
     def test_data_word(self):
-        input_program = '''
+        input_program = '''{
             symbol=0x12345
             .dw 0x0000
             .dw 0x3450, 0x00, symbol & 0x00FF
+            }
         '''
 
         program = Program()
 
         nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
-        self.assertEqual(nodes[-1].emit(program.resolver), b'E\x00')
+        emitted_nodes = []
+        for node in nodes:
+            node_data = node.emit(program.resolver)
+            if node_data:
+                emitted_nodes.append(node_data)
+        self.assertEqual(emitted_nodes, [b'\x00\x00', b'\x50\x34', b'\x00\x00', b'\x45\x00'])
 
     def test_expressions(self):
         input_program = [
@@ -158,7 +162,6 @@ class ParseTest(unittest.TestCase):
         ast_nodes = program.parser.parse_as_ast(input_program)
 
         nodes = code_gen(ast_nodes[1:], program.resolver)
-
 
     def test_label_reference(self):
         resolver = Resolver()
@@ -309,55 +312,55 @@ class ParseTest(unittest.TestCase):
 
         print(ast)
 
-    # def test_stareq_expr(self):
-    #     input_program = '''
-    #     sym=3
-    #     *=sym+4
-    #     coucou:
-    #     .db 0x00
-    #     '''
-    #     program = Program()
-    #     ast = program.parser.parse_as_ast(input_program)
-    #
-    #     print(ast)
-    #     nodes = code_gen(ast[1:], program.resolver)
-    #     program.resolve_labels(nodes)
-    #     program.resolver.dump_symbol_map()
-    #     writer = StubWriter()
-    #     program.emit(nodes, writer)
+        # def test_stareq_expr(self):
+        #     input_program = '''
+        #     sym=3
+        #     *=sym+4
+        #     coucou:
+        #     .db 0x00
+        #     '''
+        #     program = Program()
+        #     ast = program.parser.parse_as_ast(input_program)
+        #
+        #     print(ast)
+        #     nodes = code_gen(ast[1:], program.resolver)
+        #     program.resolve_labels(nodes)
+        #     program.resolver.dump_symbol_map()
+        #     writer = StubWriter()
+        #     program.emit(nodes, writer)
 
-#     def test_module(self):
-#         input_program = '''.scope State {
-#     v_idx = 0
-#
-# __init__:
-#     self = 0x00
-#     phx
-#
-#     ldx v_idx
-#     plx
-#
-#     rts
-# }
-#
-# vinx = State.__init__ + 4
-#
-# *=vinx - 2
-# JSR.w State.__init__
-# labelle:
-#
-#         '''
-#         program = Program()
-#         ast = program.parser.parse_as_ast(input_program)
-#
-#         from pprint import pprint
-#         pprint(ast)
-#
-#         nodes = code_gen(ast[1:], program.resolver)
-#         program.resolve_labels(nodes)
-#         program.resolver.dump_symbol_map()
-#         writer = StubWriter()
-#         program.emit(nodes, writer)
+    #     def test_module(self):
+    #         input_program = '''.scope State {
+    #     v_idx = 0
+    #
+    # __init__:
+    #     self = 0x00
+    #     phx
+    #
+    #     ldx v_idx
+    #     plx
+    #
+    #     rts
+    # }
+    #
+    # vinx = State.__init__ + 4
+    #
+    # *=vinx - 2
+    # JSR.w State.__init__
+    # labelle:
+    #
+    #         '''
+    #         program = Program()
+    #         ast = program.parser.parse_as_ast(input_program)
+    #
+    #         from pprint import pprint
+    #         pprint(ast)
+    #
+    #         nodes = code_gen(ast[1:], program.resolver)
+    #         program.resolve_labels(nodes)
+    #         program.resolver.dump_symbol_map()
+    #         writer = StubWriter()
+    #         program.emit(nodes, writer)
 
 
 
@@ -506,7 +509,7 @@ class ParseTest(unittest.TestCase):
     #     program.emit(nodes, writer)
     #     self.assertEqual(writer.data[0], b'\x03\x04\x05')
 
-#     def test_code_gen_error(self):
+# def test_code_gen_error(self):
 #         program = Program()
 #         ast = program.parser.parse_as_ast(
 #             '''letter_width_table = 0xe00000

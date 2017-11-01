@@ -85,6 +85,7 @@ class A816Lexer(object):
         "STAREQ",
         "PLUSEQ",
         "ATEQ",
+        "INNER_INDEX",
         "INDEX",
         "NEWLINE"
 
@@ -158,6 +159,12 @@ class A816Lexer(object):
         r""",\s*[XxYySs]\s+"""
         t.lexer.lineno += t.value.count('\n')
         t.value = t.value[1:].lower().strip()
+        return t
+
+    def t_INNER_INDEX(self, t):
+        r""",\s*[XxYySs]\s*\)"""
+        t.lexer.lineno += t.value.count('\n')
+        t.value = t.value[1:-1].lower().strip()
         return t
 
     def t_error(self, t):
