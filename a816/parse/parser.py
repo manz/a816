@@ -67,6 +67,7 @@ class A816Parser(object):
                     | directive_with_string
                     | data
                     | for
+                    | include_ips
                     | include
                     | pointer
                     | stareq
@@ -131,16 +132,24 @@ class A816Parser(object):
         """directive_with_string : INCBIN QUOTED_STRING
                                  | TABLE QUOTED_STRING
                                  | TEXT QUOTED_STRING"""
-        p[0] = self.make_node((p[1][1:], p[2][1:-1]), p)
+        p[0] = self.make_node((p[1][1:], p[2]), p)
 
     def p_include(self, p):
         """include : INCLUDE QUOTED_STRING"""
 
-        filename = p[2][1:-1]
+        filename = p[2]
         with open(filename, encoding='utf-8') as fd:
             source = fd.read()
             new_parser = self.clone(filename)
             p[0] = new_parser.parse(source)
+
+    def p_include_ips(self, p):
+        """include_ips : INCLUDE_IPS QUOTED_STRING
+                       | INCLUDE_IPS QUOTED_STRING COMMA expression"""
+        if len(p) > 3:
+            p[0] = self.make_node(('include_ips', p[2], p[4]), p)
+        else:
+            p[0] = self.make_node(('include_ips', p[2], None), p)
 
     def p_stareq(self, p):
         """stareq : STAREQ expression"""
@@ -251,6 +260,7 @@ class A816Parser(object):
         """expression : number
                     | SYMBOL
                     | SCOPE_SYMBOL
+                    | MINUS paren_expression
                     | paren_expression PLUS paren_expression
                     | paren_expression MINUS paren_expression
                     | paren_expression MULT paren_expression

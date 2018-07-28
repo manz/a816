@@ -76,6 +76,7 @@ class A816Lexer(object):
         "FOR",
         "INCBIN",
         "INCLUDE",
+        "INCLUDE_IPS",
         "PLUS",
         "MINUS",
         "MULT",
@@ -106,7 +107,6 @@ class A816Lexer(object):
     t_SYMBOL = r'[_a-zA-Z][_a-zA-Z0-9]*'
     t_SCOPE_SYMBOL = r'[_a-zA-Z][_a-zA-Z0-9]*\.[_a-zA-Z][_a-zA-Z0-9]*'
     t_LABEL = r'[_a-zA-Z][_a-zA-Z0-9]*:'
-    t_QUOTED_STRING = r"'[^']*'"
     # t_COLON = r':'
     t_COMMA = r','
 
@@ -119,6 +119,7 @@ class A816Lexer(object):
     t_DL = r'\.dl'
     t_INCBIN = r'\.incbin'
     t_INCLUDE = r'\.include'
+    t_INCLUDE_IPS = r'\.include_ips'
     t_POINTER = r'\.pointer'
 
     # t_IF = r'\#if'
@@ -165,6 +166,11 @@ class A816Lexer(object):
         r""",\s*[XxYySs]\s*\)"""
         t.lexer.lineno += t.value.count('\n')
         t.value = t.value[1:-1].lower().strip()
+        return t
+
+    def t_QUOTED_STRING(self, t):
+        r"""  '([^'\n]|(?:\'))*'"""
+        t.value = t.value[1:-1].replace("\\'", "'").replace('\\n', '\n')
         return t
 
     def t_error(self, t):

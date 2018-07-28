@@ -168,19 +168,43 @@ class TestParse(TestCase):
         '''
         ast = self._get_ast_for(program)
         expected = ('block',
-                    ('opcode', AddressingMode.dp_or_sr_indirect_indexed, 'eor', '0x01', 'x', ('fileinfo', '', 2, 'EOR (0x01,x)')),
+                    ('opcode', AddressingMode.dp_or_sr_indirect_indexed, 'eor', '0x01', 'x',
+                     ('fileinfo', '', 2, 'EOR (0x01,x)')),
                     ('opcode', AddressingMode.direct_indexed, 'eor', '0x01', 's', ('fileinfo', '', 3, 'EOR 0x01, s')),
                     ('opcode', AddressingMode.direct, 'eor', '0x01', ('fileinfo', '', 4, 'EOR 0x01')),
                     ('opcode', AddressingMode.indirect_long, 'eor', '0x01', ('fileinfo', '', 5, 'EOR [0x01]')),
                     ('opcode', AddressingMode.immediate, 'eor', '0x01', ('fileinfo', '', 6, 'EOR #0x01')),
-                    ('opcode', AddressingMode.indirect_indexed, 'eor', '0x01', 'y', ('fileinfo', '', 7, 'EOR (0x01), y')),
+                    ('opcode', AddressingMode.indirect_indexed, 'eor', '0x01', 'y',
+                     ('fileinfo', '', 7, 'EOR (0x01), y')),
                     ('opcode', AddressingMode.stack_indexed_indirect_indexed, 'eor', '0x01', 'y',
                      ('fileinfo', '', 8, 'EOR (0x01,s),y')),
 
                     ('opcode', AddressingMode.direct_indexed, 'eor', '0x01', 'x', ('fileinfo', '', 9, 'EOR 0x01, x')),
-                    ('opcode', AddressingMode.indirect_indexed_long, 'eor', '0x02', 'y', ('fileinfo', '', 10, 'EOR [0x02], y')),
+                    ('opcode', AddressingMode.indirect_indexed_long, 'eor', '0x02', 'y',
+                     ('fileinfo', '', 10, 'EOR [0x02], y')),
                     ('opcode', AddressingMode.direct_indexed, 'eor', '0x02', 'y', ('fileinfo', '', 11, 'EOR 0x02, y')),
                     ('opcode', AddressingMode.direct_indexed, 'eor', '0x02', 'x', ('fileinfo', '', 12, 'EOR 0x02, x')),
                     ('opcode', AddressingMode.direct_indexed, 'eor', '0x010203', 'x',
                      ('fileinfo', '', 13, 'EOR 0x010203, x')))
         self.assertEqual(ast, expected)
+
+    def test_string_quote_escape(self):
+        ast = self._get_ast_for(".text 'I\\'m hungry'")
+        self.assertEqual(ast,
+                         ('block', ('text', 'I\'m hungry',
+                                    ('fileinfo', '', 1, ".text 'I\\'m hungry'"))))
+
+    def test_multiple_include(self):
+        ast = self._get_ast_for(
+            """
+            .include 'a_file.s'
+            .include 'b_file.s'
+            """)
+        self.assertEqual(ast,
+                         ('block', [
+                             ('include', 'a_file.s',
+                              ('fileinfo', '', 2, ".include 'a_file.s'")),
+                             ('include', 'b_file.s',
+                              ('fileinfo', '', 3, ".include 'b_file.s'")),
+                         ]
+                          ))

@@ -1,6 +1,6 @@
 import logging
 from a816.parse.lalrparser import LALRParser
-from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode, RelocationAddressNode
+from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode, RelocationAddressNode, IncludeIpsNode
 from a816.symbols import Resolver
 from a816.writers import IPSWriter, SFCWriter
 from a816.parse.nodes import NodeError
@@ -56,6 +56,10 @@ class Program(object):
                     writer.write_block(current_block, current_block_addr)
                 current_block_addr = self.resolver.pc
                 current_block = b''
+
+            if isinstance(node, IncludeIpsNode):
+                for block_addr, block in node.blocks:
+                    writer.write_block(block, block_addr)
 
         if len(current_block) > 0:
             writer.write_block(current_block, current_block_addr)

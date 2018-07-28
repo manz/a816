@@ -1,4 +1,5 @@
 #!/usr/bin/env python3.4
+
 import sys
 import argparse
 import logging
@@ -7,7 +8,7 @@ from a816.program import Program
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='a816 Arguments parser', epilog='')
+    parser = argparse.ArgumentParser(description='a816 usage', epilog='')
     parser.add_argument('--verbose', action='store_true', help='Displays all log levels.')
     parser.add_argument('-o', '--output', dest='output_file', default='a.out', help='Output file')
     parser.add_argument('input_file', help='The asm file to assemble.')

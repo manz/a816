@@ -121,6 +121,8 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
                 code.append(LongNode(ExpressionNode(expr, resolver)))
         elif node[0] == 'incbin':
             code.append(BinaryNode(node[1], resolver))
+        elif node[0] == 'include_ips':
+            code.append(IncludeIpsNode(node[1], resolver, node[2]))
         elif node[0] == 'pointer':
             code.append(PointerNode(ExpressionNode(node[1], resolver)))
         elif node[0] == 'opcode':
