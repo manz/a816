@@ -1,9 +1,12 @@
+import logging
 import struct
 
 from a816.exceptions import SymbolNotDefined
 from a816.expressions import eval_expr
 from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom, RelativeJumpOpcode, NoOpcodeForOperandSize
 from script import Table
+
+logger = logging.getLogger('a816.nodes')
 
 
 class ValueNode(object):
@@ -136,7 +139,7 @@ class WordNode(object):
         self.value_node = value_node
 
     def emit(self, current_address):
-        return struct.pack('<H', self.value_node.get_value())
+        return struct.pack('<H', self.value_node.get_value() & 0xffff)
 
     def pc_after(self, current_pc):
         return current_pc + 2
@@ -147,7 +150,7 @@ class ByteNode(object):
         self.value_node = value_node
 
     def emit(self, current_address):
-        return struct.pack('B', self.value_node.get_value())
+        return struct.pack('B', self.value_node.get_value() & 0xff)
 
     def pc_after(self, current_pc):
         return current_pc + 1
@@ -254,6 +257,36 @@ class RelocationAddressNode(object):
 
     def __str__(self):
         return 'RelocationAddressNode(%s, %s)' % (self.pc_value_node.get_value(), self.reloc_value_node.get_value())
+
+
+class IncludeIpsNode(object):
+    def __init__(self, file_path, resolver, delta_expression=None):
+        self.ips_file_path = file_path
+        self.delta = eval_expr(delta_expression, resolver)
+        self.blocks = []
+        with open(self.ips_file_path, 'rb') as ips_file:
+            if ips_file.read(5) != b'PATCH':
+                raise RuntimeError(f'{self.ips_file_path} is missing "PATCH" header')
+
+            while ips_file.peek(3)[:3] != b'EOF':
+                block_addr = struct.unpack('>BH', ips_file.read(3))
+                block_addr = (block_addr[0] << 16) | block_addr[1]
+                block_size = struct.unpack('>H', ips_file.read(2))[0]
+                block = ips_file.read(block_size)
+                logger.error(f'{block_addr:06x} : {block_size:04x}')
+                if self.delta is not None:
+                    block_addr += self.delta
+
+                self.blocks.append((block_addr, block))
+
+    def pc_after(self, current_pc):
+        return current_pc
+
+    def emit(self, current_addr):
+        return []
+
+    def __str__(self):
+        return
 
 
 class ScopeNode(object):

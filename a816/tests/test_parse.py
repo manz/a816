@@ -29,7 +29,7 @@ class StubWriter(object):
         pass
 
     def write_block(self, block, block_address):
-        self.data.append(block)
+        self.data.append((block_address, block))
 
     def end(self):
         pass
@@ -302,7 +302,7 @@ class ParseTest(unittest.TestCase):
     def test_pluseq(self):
         input_program = '''
         
-        @=0x8000,0x7F1001
+        @=0x9f8100,0x7F1001
         label:
         .dl label
         '''
@@ -311,7 +311,13 @@ class ParseTest(unittest.TestCase):
         ast = program.parser.parse_as_ast(input_program)
 
         print(ast)
-
+        nodes = code_gen(ast[1:], program.resolver)
+        program.resolve_labels(nodes)
+        program.resolver.dump_symbol_map()
+        writer = StubWriter()
+        program.emit(nodes, writer)
+        first_patch = writer.data[0]
+        print(hex(first_patch[0]), first_patch[1])
         # def test_stareq_expr(self):
         #     input_program = '''
         #     sym=3
