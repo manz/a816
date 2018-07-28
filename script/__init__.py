@@ -76,7 +76,7 @@ class Table(object):
                         current_position += i
                         text += decoded[0]
                         for k in range(decoded[i]):
-                            text += '[' + hex(decoded[i]) + ']'
+                            text += '[' + hex(bytes[current_position]) + ']'
                             current_position += 1
                     else:
                         current_position += i
