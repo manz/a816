@@ -273,7 +273,7 @@ class IncludeIpsNode(object):
                 block_addr = (block_addr[0] << 16) | block_addr[1]
                 block_size = struct.unpack('>H', ips_file.read(2))[0]
                 block = ips_file.read(block_size)
-                logger.error(f'{block_addr:06x} : {block_size:04x}')
+
                 if self.delta is not None:
                     block_addr += self.delta
 

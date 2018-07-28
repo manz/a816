@@ -193,18 +193,3 @@ class TestParse(TestCase):
         self.assertEqual(ast,
                          ('block', ('text', 'I\'m hungry',
                                     ('fileinfo', '', 1, ".text 'I\\'m hungry'"))))
-
-    def test_multiple_include(self):
-        ast = self._get_ast_for(
-            """
-            .include 'a_file.s'
-            .include 'b_file.s'
-            """)
-        self.assertEqual(ast,
-                         ('block', [
-                             ('include', 'a_file.s',
-                              ('fileinfo', '', 2, ".include 'a_file.s'")),
-                             ('include', 'b_file.s',
-                              ('fileinfo', '', 3, ".include 'b_file.s'")),
-                         ]
-                          ))
