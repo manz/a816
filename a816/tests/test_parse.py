@@ -89,7 +89,7 @@ class ParseTest(unittest.TestCase):
         writer = StubWriter()
         program.emit(nodes, writer)
 
-        machine_code = writer.data[0]
+        machine_code = writer.data[0][1]
 
         # program.resolver.dump_symbol_map()
         unpacked = struct.unpack('<BHBHBH', machine_code)
@@ -297,7 +297,7 @@ class ParseTest(unittest.TestCase):
         program.resolver.dump_symbol_map()
         writer = StubWriter()
         program.emit(nodes, writer)
-        self.assertEqual(writer.data[0], b'\x00\x00\x02\x80')
+        self.assertEqual(writer.data[0][1], b'\x00\x00\x02\x80')
 
     def test_pluseq(self):
         input_program = '''
