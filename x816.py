@@ -13,7 +13,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output', dest='output_file', default='a.out', help='Output file')
     parser.add_argument('input_file', help='The asm file to assemble.')
     parser.add_argument('-f', dest='format', default='ips', help='Output format')
-    parser.add_argument('-m', dest='mapping', default='lo', help='Address Mapping')
+    parser.add_argument('-m', dest='mapping', default='low', help='Address Mapping')
 
     args = parser.parse_args()
 
