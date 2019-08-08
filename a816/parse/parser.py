@@ -3,8 +3,6 @@ from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.lexer import A816Lexer
 from ply import yacc as yacc
 
-this_dir = os.path.dirname(os.path.abspath(__file__))
-
 files_stack = []
 
 
@@ -21,7 +19,7 @@ class A816Parser(object):
         self.filename = filename
         self.tokens = self.lexer.tokens
         self.parser = parser or yacc.yacc(module=self, method='LALR', tabmodule='ply_generated_rules',
-                                          outputdir=this_dir, debug=0, write_tables=1, errorlog=yacc.NullLogger())
+                                          debug=0, write_tables=1, errorlog=yacc.NullLogger())
 
     def clone(self, filename):
         return A816Parser(filename, lexer=self.lexer.clone(), parser=self.parser)
