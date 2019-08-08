@@ -3,8 +3,6 @@ from a816.cpu.cpu_65c816 import snes_opcode_table, AddressingMode
 from ply import lex
 from ply.lex import TOKEN
 
-this_dir = os.path.dirname(os.path.abspath(__file__))
-
 
 def get_opcodes_with_addressing(addressing_mode):
     def filter_func(k):
@@ -179,7 +177,7 @@ class A816Lexer(object):
         t.lexer.skip(1)
 
     def __init__(self, lexer=None):
-        self.lexer = lexer or lex.lex(debug=0, module=self, outputdir=this_dir, errorlog=lex.NullLogger())
+        self.lexer = lexer or lex.lex(debug=0, module=self, errorlog=lex.NullLogger())
 
     def clone(self):
         new_lexer = self.lexer.clone()
