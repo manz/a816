@@ -1,7 +1,6 @@
+from typing import List
 from xml.etree import ElementTree
-from a816.cpu.cpu_65c816 import snes_to_rom
 from script import Table
-from script.formulas import base_relative_16bits_pointer_formula, long_low_rom_pointer
 
 
 class Pointer(object):
@@ -50,7 +49,7 @@ class Script(object):
 
         return pointers
 
-    def append_pointers(self, pointer_table_1, pointer_table_2):
+    def append_pointers(self, pointer_table_1: List[Pointer], pointer_table_2: List[Pointer]):
         pointers_1 = sorted(pointer_table_1, key=lambda x: x.id)
         pointers_2 = sorted(pointer_table_2, key=lambda x: x.id)
         last_id = pointers_1[-1].id
@@ -61,7 +60,7 @@ class Script(object):
         return pointers_1 + pointers_2
 
 
-def write_pointers_as_xml(pointers, table, output_file):
+def write_pointers_as_xml(pointers: List[Pointer], table: Table, output_file):
     sorted_pointers_by_id = sorted(pointers, key=lambda p: p.id)
     with open(output_file, 'wt', encoding='utf-8') as fd:
         fd.writelines('<?xml version="1.0" encoding="utf-8"?>\n')
@@ -73,14 +72,14 @@ def write_pointers_as_xml(pointers, table, output_file):
         fd.write('</sn:script>\n')
 
 
-def write_pointers_value_as_binary(pointers, output_file):
+def write_pointers_value_as_binary(pointers: List[Pointer], output_file):
     sorted_pointers = sorted(pointers, key=lambda x: x.id)
     with open(output_file, 'wb') as fd:
         for pointer in sorted_pointers:
             fd.write(pointer.value)
 
 
-def write_pointers_addresses_as_binary(pointers, formula, output_file):
+def write_pointers_addresses_as_binary(pointers: List[Pointer], formula, output_file):
     sorted_pointers = sorted(pointers, key=lambda x: x.id)
     current_position = 0
     with open(output_file, 'wb') as fd:
@@ -89,10 +88,10 @@ def write_pointers_addresses_as_binary(pointers, formula, output_file):
             current_position += len(pointer.value)
 
 
-def read_pointers_from_xml(input_file, table, formatter=None):
+def read_pointers_from_xml(input_file, table: Table, formatter=None):
     pointer_table = []
-    with open(input_file, encoding='utf-8') as datasource:
-        tree = ElementTree.parse(datasource)
+    with open(input_file, encoding='utf-8') as data_source:
+        tree = ElementTree.parse(data_source)
         root = tree.getroot()
 
         for child in root:
@@ -104,6 +103,6 @@ def read_pointers_from_xml(input_file, table, formatter=None):
     return pointer_table
 
 
-def recode_pointer_values(pointers, from_table, to_table):
+def recode_pointer_values(pointers: List[Pointer], from_table: Table, to_table: Table):
     for pointer in pointers:
         pointer.value = to_table.to_bytes(from_table.to_text(pointer.value))

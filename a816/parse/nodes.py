@@ -1,9 +1,11 @@
 import logging
+import os
 import struct
 
 from a816.exceptions import SymbolNotDefined
 from a816.expressions import eval_expr
 from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom, RelativeJumpOpcode, NoOpcodeForOperandSize
+from a816.symbols import Resolver
 from script import Table
 
 logger = logging.getLogger('a816.nodes')
@@ -191,7 +193,7 @@ class OpcodeNode(object):
     def _get_emitter(self):
         try:
             opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
-        except KeyError as e:
+        except KeyError:
             raise NodeError('Addressing mode ({}) for opcode ({}) is not defined.'.format(
                 self.addressing_mode.name,
                 self.opcode
@@ -227,11 +229,11 @@ class OpcodeNode(object):
 class CodePositionNode(object):
     def __init__(self, value_node, resolver):
         self.value_node = value_node
-        self.resolver = resolver
+        self.resolver: Resolver = resolver
 
     def pc_after(self, current_pc):
         self.resolver.reloc = False
-        return snes_to_rom(self.value_node.get_value())
+        return self.resolver.get_bus().get_address(self.value_node.get_value())
 
     def emit(self, current_addr):
         self.resolver.set_position(self.value_node.get_value())
@@ -242,21 +244,21 @@ class CodePositionNode(object):
 
 
 class RelocationAddressNode(object):
-    def __init__(self, pc_value_node, reloc_value_node, resolver):
+    def __init__(self, pc_value_node, resolver):
         self.pc_value_node = pc_value_node
-        self.reloc_value_node = reloc_value_node
         self.resolver = resolver
 
     def pc_after(self, current_pc):
         self.resolver.reloc = True
-        return self.reloc_value_node.get_value()
+        return self.resolver.get_bus().get_address(self.pc_value_node.get_value())
 
     def emit(self, current_addr):
-        self.resolver.set_position(self.pc_value_node.get_value(), self.reloc_value_node.get_value())
+        self.resolver.set_position(self.pc_value_node.get_value())
+        # self.resolver.set_position(self.pc_value_node.get_value(), reloc=True)
         return []
 
     def __str__(self):
-        return 'RelocationAddressNode(%s, %s)' % (self.pc_value_node.get_value(), self.reloc_value_node.get_value())
+        return 'RelocationAddressNode(%s)' % self.pc_value_node.get_value()
 
 
 class IncludeIpsNode(object):

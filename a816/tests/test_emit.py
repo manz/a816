@@ -6,7 +6,7 @@ from a816.expressions import eval_expr
 from a816.program import Program
 from a816.parse.nodes import NodeError
 from a816.cpu.cpu_65c816 import snes_to_rom, AddressingMode
-from a816.parse.ast import code_gen
+from a816.parse.codegen import code_gen
 from a816.tests import StubWriter
 
 
@@ -51,30 +51,34 @@ class EmitTest(unittest.TestCase):
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        self.assertEqual(ast, ('block', ('dl', ('0xf01ac5',))))
+        self.assertEqual(ast, [('dl', ['0xf01ac5'])])
 
         writer = StubWriter()
 
-        nodes = code_gen(ast[1:], program.resolver)
+        nodes = code_gen(ast, program.resolver)
         program.resolve_labels(nodes)
 
         program.emit(nodes, writer)
 
         self.assertEqual(writer.data[0], b'\xc5\x1a\xf0')
 
-    def test_ateq(self):
+    def test_ateq_using_map(self):
         writer = StubWriter()
 
         program = Program()
         input_program = '''
-        @=0x200000, 0x7e4000
+        .map identifier=1 bank_range=0x00, 0x6f addr_range=0x8000, 0xffff mask=0x8000 mirror_bank_range=0x80, 0xcf
+        .map identifier=2 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=0
+
+        *=0x208000
+        @=0x7e4000
         label:
         .pointer label
         '''
-        program.assemble_string_with_emitter(input_program, 'test_macro_application', writer)
+        program.assemble_string_with_emitter(input_program, 'test_at_eq', writer)
 
         self.assertEqual(writer.data[0], b'\x00\x40\x7e')
-        self.assertEqual(writer.data_addresses[0], 0x200000)
+        self.assertEqual(writer.data_addresses[0], 0x100000)
 
     # FIXME: ateq should not support RAM reloc this by design is more for bank mapping
     # FIXME: should properly support 32k banks
@@ -106,8 +110,8 @@ class EmitTest(unittest.TestCase):
         '''
         program.assemble_string_with_emitter(input_program, 'test_macro_application', writer)
 
-        self.assertEqual(writer.data[0], b'\x00\x80\x03')
         self.assertEqual(writer.data_addresses[0], snes_to_rom(0x038000))
+        self.assertEqual(writer.data[0], b'\x00\x80\x03')
 
     def test_stareq_bank_boundaries(self):
         writer = StubWriter()
@@ -130,6 +134,7 @@ class EmitTest(unittest.TestCase):
 
         program = Program()
         input_program = '''
+        *=0x008000
         .macro test(pointer) {
             .pointer pointer
         }
@@ -153,15 +158,15 @@ class EmitTest(unittest.TestCase):
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        self.assertEqual(ast, ('block', ('opcode',
-                                         AddressingMode.dp_or_sr_indirect_indexed,
-                                         'eor',
-                                         '0x12',
-                                         'x', ('fileinfo', '', 2, 'eor (0x12,x)'))))
+        self.assertEqual(ast, [('opcode',
+                                AddressingMode.dp_or_sr_indirect_indexed,
+                                'eor',
+                                '0x12',
+                                'x')])
 
         writer = StubWriter()
 
-        nodes = code_gen(ast[1:], program.resolver)
+        nodes = code_gen(ast, program.resolver)
         program.resolve_labels(nodes)
 
         program.emit(nodes, writer)

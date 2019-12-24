@@ -2,6 +2,7 @@ import ast
 import operator as op
 
 # supported operators
+
 operators = {ast.Add: op.add,
              ast.Sub: op.sub,
              ast.Mult: op.mul,
@@ -14,7 +15,15 @@ operators = {ast.Add: op.add,
              ast.USub: op.neg}
 
 
+def expr_to_str(expr):
+    if isinstance(expr, tuple):
+        return '(' + expr_to_str(expr[1]) + expr[0] + expr_to_str(expr[2]) + ')'
+    else:
+        return expr
+
+
 def eval_expr(expr, resolver):
+    expr = expr_to_str(expr)
     expr = expr.replace('$', '0x')
 
     def eval_(node):

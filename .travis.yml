@@ -1,6 +1,13 @@
 language: python
 sudo: false
 python:
-- '3.6'
+  - '3.6'
 install: pip install -r requirements.txt
 script: nosetests
+deploy:
+  provider: releases
+  api_key:
+    secure: KQtej4vTqQ79HbrUnXbnNXQmfa3fQsjhqlKapv3+G7MmXI4nsy+0GY+KRd3bOshmn80ncaHyAl4we1FFJ2/QIBwbz2319zoE6S+z4M0zmjixcJvf94lAI/r00MxpreM2gN8ZevMKfflsEJK8wBwTARwqzBpROaelUnTLKSI1+XQ=
+  file: dist/x816.zip
+  on:
+    repo: manz/a816
