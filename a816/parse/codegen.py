@@ -1,5 +1,5 @@
-import pprint
 from a816.cpu.cpu_65c816 import AddressingMode
+from a816.cpu.mapping import Bus
 from a816.parse.nodes import *
 
 
@@ -22,33 +22,41 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
         file_info = _get_file_info(node)
 
         if node[0] == 'block':
-            code += _code_gen(node[1:], resolver, macro_definitions)
-        elif node[0] == 'named_scope':
+            code += _code_gen(node[1], resolver, macro_definitions)
+        elif node[0] == 'scope':
             name = node[1]
             resolver.append_named_scope(name)
             resolver.use_next_scope()
             code.append(ScopeNode(resolver))
 
-            code += _code_gen(node[2:], resolver, macro_definitions)
+            code += _code_gen(node[2], resolver, macro_definitions)
             code.append(PopScopeNode(resolver))
             resolver.restore_scope(exports=False)
+        elif node[0] == 'map':
+            attributes = node[1]
 
+            # def map(self, identifier, bank_range, address_range, mask, writeable=False, mirror_bank_range=None):
+            resolver.bus.map(
+                attributes['identifier'],
+                attributes['bank_range'],
+                attributes['addr_range'],
+                attributes['mask'],
+                writeable=attributes.get('writable', False),
+                mirror_bank_range=attributes.get('mirror_bank_range'))
         elif node[0] == 'compound':
             resolver.append_scope()
             resolver.use_next_scope()
             code.append(ScopeNode(resolver))
 
-            code += _code_gen(node[1:], resolver, macro_definitions)
+            code += _code_gen(node[1], resolver, macro_definitions)
             code.append(PopScopeNode(resolver))
             resolver.restore_scope()
         elif node[0] == 'macro':
-
             macro_definitions[node[1]] = node[2:]
-            continue
         elif node[0] == 'macro_apply':
             macro_def = macro_definitions[node[1]]
 
-            macro_code = macro_def[1][1:]
+            macro_code = [macro_def[1]]
             macro_args = macro_def[0][1]
 
             macro_args_values = node[2][1:][0]
@@ -57,12 +65,23 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
             code.append(ScopeNode(resolver))
 
             for index, arg in enumerate(macro_args):
-                code.append(SymbolNode(arg, macro_args_values[index], resolver))
+                value = macro_args_values[index]
+                try:
+                    if isinstance(value, tuple):
+                        resolver.current_scope.add_symbol(arg, value)
+                    else:
+                        resolver.current_scope.add_symbol(arg, eval_expr(value, resolver))
+                except SymbolNotDefined:
+                    # defer the resolve to the emit part.
+                    code.append(SymbolNode(arg, value, resolver))
 
             code += _code_gen(macro_code, resolver, macro_definitions)
 
             code.append(PopScopeNode(resolver))
             resolver.restore_scope()
+        elif node[0] == 'code_lookup':
+            code += _code_gen(resolver.current_scope.value_for(node[1]), resolver, macro_definitions)
+        # FIXME unused
         elif node[0] == 'if':
             symbol = node[1]
             if_branch_true = node[2]
@@ -80,6 +99,7 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
                 code += _code_gen(if_branch_true, resolver, macro_definitions)
             elif if_branch_false:
                 code += _code_gen(if_branch_false, resolver, macro_definitions)
+        # FIXME: unused
         elif node[0] == 'for':
             symbol, from_raw_val, to_raw_val, code_block, file_info = node[1:]
             from_val = eval_expr(from_raw_val, resolver)
@@ -92,16 +112,12 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
                 code += _code_gen(code_block, resolver, macro_definitions)
                 code.append(PopScopeNode(resolver))
                 resolver.restore_scope()
-        elif node[0] == 'stareq':
+        elif node[0] == 'star_eq':
             code.append(CodePositionNode(ExpressionNode(node[1], resolver), resolver))
         elif node[0] == 'pluseq':
             continue
-        elif node[0] == 'ateq':
-            code.append(RelocationAddressNode(ExpressionNode(node[1], resolver),
-                                              ExpressionNode(node[2], resolver),
-                                              resolver
-                                              ))
-            # code.append(CodePositionNode(LabelReferenceNode(node[1], resolver), resolver))
+        elif node[0] == 'at_eq':
+            code.append(RelocationAddressNode(ExpressionNode(node[1], resolver), resolver))
         elif node[0] == 'table':
             code.append(TableNode(node[1], resolver))
         elif node[0] == 'text':
@@ -109,6 +125,9 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
         elif node[0] == 'label':
             code.append(LabelNode(node[1], resolver))
         elif node[0] == 'symbol':
+            code.append(SymbolNode(node[1], node[2], resolver))
+        # FIXME: unused
+        elif node[0] == 'assign':
             code.append(SymbolNode(node[1], node[2], resolver))
         elif node[0] == 'db':
             for expr in node[1]:
@@ -124,7 +143,8 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
         elif node[0] == 'include_ips':
             code.append(IncludeIpsNode(node[1], resolver, node[2]))
         elif node[0] == 'pointer':
-            code.append(PointerNode(ExpressionNode(node[1], resolver)))
+            for expr in node[1]:
+                code.append(LongNode(ExpressionNode(expr, resolver)))
         elif node[0] == 'opcode':
             opcode = node[2]
             size = None
@@ -145,6 +165,7 @@ def _code_gen(ast_nodes, resolver, macro_definitions):
                 code.append(OpcodeNode(opcode, addressing_mode=mode, size=size,
                                        value_node=ExpressionNode(node[3], resolver),
                                        file_info=file_info))
+        else:
+            raise RuntimeError('Left over node')
 
     return code
-

@@ -1,4 +1,0 @@
-winebuild:
-  build: .
-  volumes:
-    - ../:/usr/src/app
