@@ -182,7 +182,6 @@ snes_opcode_table = {
             'y': Opcode([0x53])
         }
 
-
     },
     'ldx': {
         AddressingMode.immediate: Opcode([0xA2, 0xA2], is_x=True),
@@ -516,89 +515,6 @@ def rom_to_snes(address, mode):
     return snes_address
 
 
-#
-# def mode_25_to_rom(bank, addr):
-#     if bank <= 0x3f or (0x80 <= bank <= 0xbf):
-#         bank = bank & 0x7f
-#         if addr >= 0x8000:
-#             return (bank * 0x8000) + (addr & 0x7fff)
-#
-#     elif bank >= 0x40 or bank <= 0x7f:
-#         return (bank - 0x20) << 16 + addr
-#
-#
-# def mode_20_to_rom(bank, addr):
-#     bank = bank & 0x7f
-#     return bank * 0x8000 + (addr & 0x7FFF)
-
-
-# def mode_21_to_rom(address):
-#     return address & 0x3fffff
-
-# def explode(address):
-#     return address >> 16, address & 0xffff
-#
-#
-# class Mode20Mapper(object):
-#     @staticmethod
-#     def map(address):
-#         bank, addr = explode(address)
-#         bank = bank & 0x7f
-#         return bank * 0x8000 + (addr & 0x7FFF)
-#
-#     @staticmethod
-#     def unmap(address):
-#         bank = int(address / 0x8000)
-#         remainder = (address % 0x8000) + 0x8000
-#         return bank << 16 | remainder
-#
-#
-# class Mode21Mapper(object):
-#     @staticmethod
-#     def map(address):
-#         return address - 0xc00000
-#
-#     @staticmethod
-#     def unmap(address):
-#         return address + 0xc00000
-#
-#
-# class Mode25Mapper(object):
-#     @staticmethod
-#     def map(address):
-#         bank, addr = explode(address)
-#
-#         if bank >= 0xc0:
-#             return address - 0xc00000
-#
-#         if bank <= 0x3f or (0x80 <= bank <= 0xbf):
-#             bank = bank & 0x7f
-#             if addr >= 0x8000:
-#                 return (bank * 0x8000) + (addr & 0x7fff)
-#
-#
-#     @staticmethod
-#     def unmap(address):
-#         pass
-#
-#
-# class ReadOnlyMemory(object):
-#     def __init__(self):
-#         self._mappers = {}
-#
-#     def map(self, address, mode=None):
-#         if mode is None:
-#             return snes_to_rom(address)
-#         else:
-#             return self._mappers[mode].map(address)
-#
-#     def unmap(self, address, mode):
-#         return self._mappers[mode].unmap(address)
-#
-#     def register_mapping(self, mode, func):
-#         self._mappers[mode] = func
-
-
 def snes_to_rom(address):
     """Legacy mapping"""
     if address >= 0xC00000:
@@ -618,3 +534,16 @@ class RomType(Enum):
     low_rom = 0
     low_rom_2 = 1
     high_rom = 2
+
+
+def get_opcodes_with_addressing(addressing_mode):
+    def filter_func(k):
+        keys = snes_opcode_table[k].keys()
+        return addressing_mode in keys
+
+    return list(filter(filter_func, snes_opcode_table.keys()))
+
+
+def get_opcodes_with_no_addressing(addressing_mode):
+    verboten_keys = get_opcodes_with_addressing(addressing_mode)
+    return list(filter(lambda k: k not in verboten_keys, snes_opcode_table.keys()))
