@@ -2,10 +2,11 @@ import struct
 
 
 class IPSWriter(object):
-    def __init__(self, file, check_for_overlap=False):
+    def __init__(self, file, copier_header=False, check_for_overlap=False):
         self.file = file
         self._regions = []
         self._check_for_overlap = check_for_overlap
+        self._copier_header = copier_header
 
     def _check_overlap(self, start, end):
         for region in self._regions:
@@ -18,6 +19,8 @@ class IPSWriter(object):
         self.file.write(b'PATCH')
 
     def write_block_header(self, block, block_address):
+        if self._copier_header:
+            block_address += 0x200
         self.file.write(struct.pack('>BH', block_address >> 16, block_address & 0xFFFF))
         self.file.write(struct.pack('>H', len(block)))
 
@@ -43,8 +46,9 @@ class IPSWriter(object):
 
 
 class SFCWriter(object):
-    def __init__(self, file):
+    def __init__(self, file, copier_header=False):
         self.file = file
+        self.copier_header = copier_header
 
     def begin(self):
         pass
