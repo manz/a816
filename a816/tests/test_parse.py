@@ -1,11 +1,12 @@
+import os
 import unittest
 import struct
 import logging
 
 from a816.parse.codegen import code_gen
-from a816.parse.mzparser import MZParser as LALRParser
+from a816.parse.mzparser import MZParser as LALRParser, MZParser
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.nodes import OpcodeNode, ValueNode, ExpressionNode
+from a816.parse.nodes import OpcodeNode, ValueNode, ExpressionNode, ScopeNode, PopScopeNode
 from a816.program import Program
 from a816.symbols import Resolver
 
@@ -16,7 +17,6 @@ stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(stream_formatter)
 
 logger.addHandler(stream_handler)
-
 
 # logger.setLevel(logging.WARNING)
 
@@ -73,12 +73,12 @@ class ParseTest(unittest.TestCase):
         input_program = '''
             {
                 my_symbol = 0x4567
-            jmp.w my_symbol
+                jmp.w my_symbol
             {
-            my_symbol = 0x1234
-            lda.w label
-            pea.w my_symbol
-            label:
+                my_symbol = 0x1234
+                lda.w label
+                pea.w my_symbol
+                label:
             }
         }
         '''
@@ -135,9 +135,9 @@ class ParseTest(unittest.TestCase):
     #                           ('macro', 'test_macro', ('args', ('a', 'b', 'c')),
     #                            ('compound',
     #                             ('block',
-    #                              ('opcode', AddressingMode.immediate, ['lda', 'b'], 'a'),
-    #                              ('opcode', AddressingMode.immediate, ['lda', 'b'], 'b'),
-    #                              ('opcode', AddressingMode.immediate, ['lda', 'b'], 'c')))),
+    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'a'),
+    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'b'),
+    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'c')))),
     #                           ('macro_apply', 'test_macro', ('apply_args', ('0', '1', '2'))))
     #
     #     program = Program()
@@ -162,8 +162,13 @@ class ParseTest(unittest.TestCase):
         program = Program()
 
         ast_nodes = program.parser.parse_as_ast(input_program)
+        self.assertEqual(ast_nodes.ast, [('macro',
+                                      'test',
+                                      ('args', []),
+                                      ('block', [('opcode', AddressingMode.immediate, 'sep', '0x30', None)])),
+                                     ('macro_apply', 'test', ('apply_args', []))])
 
-        nodes = code_gen(ast_nodes, program.resolver)
+        code_gen(ast_nodes.ast, program.resolver)
 
     def test_label_reference(self):
         resolver = Resolver()
@@ -222,8 +227,8 @@ class ParseTest(unittest.TestCase):
         """
 
         program = Program()
-        ast = program.parser.parse_as_ast(input_program)
-        nodes = code_gen(ast, program.resolver)
+        result = program.parser.parse_as_ast(input_program)
+        nodes = code_gen(result.ast, program.resolver)
         program.resolve_labels(nodes)
 
         program.emit(nodes, StubWriter())
@@ -294,7 +299,7 @@ class ParseTest(unittest.TestCase):
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        nodes = code_gen(ast, program.resolver)
+        nodes = code_gen(ast.ast, program.resolver)
         program.resolve_labels(nodes)
         program.resolver.dump_symbol_map()
         writer = StubWriter()

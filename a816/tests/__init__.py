@@ -4,6 +4,7 @@ class StubWriter(object):
         self.data_addresses = []
 
     def begin(self):
+        # not needed by StubWriter
         pass
 
     def write_block(self, block, block_address):
@@ -11,4 +12,5 @@ class StubWriter(object):
         self.data.append(block)
 
     def end(self):
+        # not needed by StubWriter
         pass
