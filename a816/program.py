@@ -1,4 +1,6 @@
 import logging
+from pathlib import Path
+
 from a816.parse.mzparser import MZParser
 from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode, RelocationAddressNode, IncludeIpsNode
 from a816.symbols import Resolver
@@ -15,6 +17,9 @@ class Program(object):
         self.logger = logging.getLogger('x816')
         self.dump_symbols = dump_symbols
         self.parser = parser or MZParser(self.resolver)
+
+    def get_physical_address(self, logical_address):
+        return self.resolver.get_bus().get_address(logical_address).physical
 
     def resolver_reset(self):
         self.resolver.pc = 0x000000
@@ -96,12 +101,12 @@ class Program(object):
         self.logger.info('Success !')
         return 0
 
-    def assemble(self, asm_file, sfc_file):
+    def assemble(self, asm_file: Path, sfc_file: Path):
         with open(sfc_file, 'wb') as f:
-            sfc_emiter = SFCWriter(f)
-            self.assemble_with_emitter(asm_file, sfc_emiter)
+            sfc_emitter = SFCWriter(f)
+            self.assemble_with_emitter(asm_file, sfc_emitter)
 
-    def assemble_as_patch(self, asm_file, ips_file, mapping=None, copier_header=False):
+    def assemble_as_patch(self, asm_file: Path, ips_file: Path, mapping=None, copier_header=False):
         if mapping is not None:
             address_mapping = {
                 'low': RomType.low_rom,
@@ -114,3 +119,12 @@ class Program(object):
             ips_emitter.begin()
             self.assemble_with_emitter(asm_file, ips_emitter)
             ips_emitter.end()
+
+    def exports_symbol_file(self, filename):
+        with open(filename, 'wt', encoding='utf-8') as output_file:
+            labels = self.resolver.get_all_labels()
+            output_file.write('[labels]\n')
+            for name, value in labels:
+                bank = value >> 16 & 0xff
+                offset = value & 0xffff
+                output_file.write(f'{bank:2x}:{offset:4x} {name}\n')

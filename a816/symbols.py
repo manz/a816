@@ -1,6 +1,6 @@
 import logging
 
-from a816.cpu.cpu_65c816 import rom_to_snes, RomType
+from a816.cpu.cpu_65c816 import RomType
 from a816.cpu.mapping import Bus
 from a816.exceptions import SymbolNotDefined
 
@@ -13,9 +13,14 @@ class Scope(object):
         self.parent = parent
         self.resolver: Resolver = resolver
         self.table = None
+        self.labels = {}
 
     def add_label(self, label, value):
+        self.labels[label] = value.logical_value
         self.add_symbol(label, value.logical_value)
+
+    def get_labels(self):
+        return self.labels.items()
 
     def add_symbol(self, symbol, value):
         if symbol in self.symbols:
@@ -131,10 +136,6 @@ class Resolver(object):
             parent_symbols[scope.name] = scope.symbols
         self.current_scope = self.current_scope.parent
 
-    @property
-    def snes_pc(self):
-        return rom_to_snes(self.pc, self.rom_type)
-
     def _dump_symbols(self, symbols):
         keys = sorted(symbols.keys())
         for key in keys:
@@ -153,3 +154,11 @@ class Resolver(object):
             if not isinstance(scope, InternalScope):
                 print("Scope\n")
                 self._dump_symbols(scope.symbols)
+
+    def get_all_labels(self):
+        labels = []
+        for scope in self.scopes:
+            if not isinstance(scope, InternalScope):
+                labels += scope.get_labels()
+
+        return labels
