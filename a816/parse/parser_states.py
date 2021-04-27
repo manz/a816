@@ -60,17 +60,16 @@ def parse_expression_list_inner(p: Parser):
     while True:
         if accept_token(p.current(), TokenType.RPAREN):
             break
-        if accept_token(p.current(), TokenType.COMMA):
-            p.next()
-            continue
         if accept_token(p.current(), TokenType.LBRACE):
             p.next()
-            expressions.append((('block', parse_block(p)),))
+            expressions.append(('block', parse_block(p)))
         else:
             expressions.append(parse_expression(p))
-
-        if not accept_tokens(p.current(), [TokenType.IDENTIFIER, TokenType.NUMBER, TokenType.LPAREN, TokenType.COMMA]):
+        if accept_tokens(p.current(), [TokenType.COMMA]):
+            p.next()
+        else:
             break
+
     return expressions
 
 
@@ -101,7 +100,6 @@ def parse_macro(p: Parser):
     expect_token(p.next(), TokenType.LBRACE)
     block = parse_block(p)
 
-    # FIXME: cleanup AST
     return 'macro', macro_identifier.value, ('args', args), ('block', block)
 
 
@@ -131,6 +129,33 @@ def parse_map(p: Parser):
     return 'map', args
 
 
+def parse_if(p: Parser):
+    condition = parse_expression(p)
+    expect_token(p.next(), TokenType.LBRACE)
+    body = ('compound', parse_block(p))
+    else_body = None
+    if p.current().value == 'else':
+        p.next()
+        expect_token(p.next(), TokenType.LBRACE)
+        else_body = ('compound', parse_block(p))
+
+    return 'if', condition, body, else_body
+
+
+def parse_for(p: Parser):
+    variable = p.next()
+    expect_token(variable, TokenType.IDENTIFIER)
+    expect_token(p.next(), TokenType.ASSIGN)
+    start = parse_expression(p)
+    expect_token(p.next(), TokenType.COMMA)
+    end = parse_expression(p)
+
+    expect_token(p.next(), TokenType.LBRACE)
+    block = ('compound', parse_block(p))
+
+    return 'for', variable.value, start, end, block
+
+
 def parse_directive_with_quoted_string(p: Parser):
     string = p.next()
     expect_token(string, TokenType.QUOTED_STRING)
@@ -152,8 +177,8 @@ def parse_keyword(p: Parser):
 
     if keyword.value == 'scope':
         return parse_scope(p)
-    elif keyword.value == 'text':
-        return parse_text(p)
+    elif keyword.value in ('text', 'ascii'):
+        return keyword.value, parse_directive_with_quoted_string(p)
     elif keyword.value == 'dw':
         expressions = parse_expression_list_inner(p)
         return 'dw', expressions
@@ -189,6 +214,12 @@ def parse_keyword(p: Parser):
         return parse_macro(p)
     elif keyword.value == 'map':
         return parse_map(p)
+    elif keyword.value == 'if':
+        return parse_if(p)
+    elif keyword.value == 'for':
+        return parse_for(p)
+    else:
+        raise ParserSyntaxError(f'Unexpected token {keyword}', keyword)
 
 
 def parse_label(p: Parser):
@@ -219,10 +250,6 @@ def parse_code_position_keyword(p: Parser):
 def parse_code_relocation_keyword(p: Parser):
     code_position = parse_expression(p)
     return 'at_eq', code_position
-
-
-def parse_unary(p: Parser):
-    pass
 
 
 def parse_expression(p: Parser):
@@ -256,6 +283,7 @@ def __parse_expression(p: Parser):
             return nodes + __parse_expression(p)
         else:
             return nodes
+    return nodes
 
 
 def _parse_expression(p: Parser):
@@ -268,7 +296,6 @@ def _parse_expression(p: Parser):
         expect_token(p.next(), TokenType.RPAREN)
 
     elif accept_tokens(current_token, [TokenType.NUMBER, TokenType.IDENTIFIER]):
-        # current_node = UnaryNode(current_token)
         current_node = current_token.value
 
     if current_node:
@@ -295,12 +322,19 @@ def parse_symbol_affectation(p):
     return node_type, symbol.value, expression
 
 
+index_map = {
+    AddressingMode.indirect: AddressingMode.indirect_indexed,
+    AddressingMode.indirect_long: AddressingMode.indirect_indexed_long,
+    AddressingMode.direct: AddressingMode.direct_indexed,
+    AddressingMode.dp_or_sr_indirect_indexed: AddressingMode.stack_indexed_indirect_indexed
+}
+
+
 def parse_opcode(p):
     opcode = p.next()
     size = None
     operand = None
     index = None
-    inner_index = None
 
     if accept_token(opcode, TokenType.OPCODE_NAKED):
         addressing_mode = AddressingMode.none
@@ -311,13 +345,30 @@ def parse_opcode(p):
         size = p.current().value
         p.next()
 
+    addressing_mode, inner_index, operand = parse_operand_and_addressing(
+        addressing_mode, opcode, operand, p)
+
+    if accept_token(p.current(), TokenType.ADDRESSING_MODE_INDEX):
+        index = p.next().value.lower()
+        addressing_mode = index_map[addressing_mode]
+
+    if size is not None:
+        opcode_value = (opcode.value, size.lower())
+    else:
+        opcode_value = opcode.value
+
+    return 'opcode', addressing_mode, opcode_value, operand, index or inner_index
+
+
+def parse_operand_and_addressing(addressing_mode, opcode, operand, p):
+    inner_index = None
+
     if accept_token(p.current(), TokenType.SHARP):
         addressing_mode = AddressingMode.immediate
         p.next()
         if accept_token(p.current(), TokenType.EOF):
             raise ParserSyntaxError(f'Unexpected end of input.', p.current(), None)
         operand = parse_expression(p)
-
     elif accept_token(p.current(), TokenType.LPAREN):
         saved_position = p.pos
         try:
@@ -346,25 +397,7 @@ def parse_opcode(p):
         addressing_mode = AddressingMode.indirect_long
     elif accept_token(opcode, TokenType.OPCODE):
         operand = parse_expression(p)
-
-    if accept_token(p.current(), TokenType.ADDRESSING_MODE_INDEX):
-        index = p.next().value.lower()
-        index_map = {
-            AddressingMode.indirect: AddressingMode.indirect_indexed,
-            AddressingMode.indirect_long: AddressingMode.indirect_indexed_long,
-            AddressingMode.direct: AddressingMode.direct_indexed,
-            AddressingMode.dp_or_sr_indirect_indexed: AddressingMode.stack_indexed_indirect_indexed
-        }
-        addressing_mode = index_map[addressing_mode]
-
-    # FIXME: Sanitize AST
-
-    if size is not None:
-        opcode_value = (opcode.value, size.lower())
-    else:
-        opcode_value = opcode.value
-
-    return 'opcode', addressing_mode, opcode_value, operand, index or inner_index
+    return addressing_mode, inner_index, operand
 
 
 def parse_code_lookup(p: Parser):
@@ -392,7 +425,7 @@ def parse_decl(p: Parser):
         if accept_token(p.peek(), TokenType.LPAREN):
             return parse_macro_application(p)
         else:
-            # FIXME might be another thing but we check for equal inside parse_symbol_affectation
+            # might be another thing but we check for equal inside parse_symbol_affectation
             return parse_symbol_affectation(p)
     elif accept_token(current_token, TokenType.LABEL):
         return parse_label(p)

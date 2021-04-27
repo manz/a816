@@ -1,7 +1,10 @@
+import logging
 from typing import List
 
 from a816.parse.errors import ParserSyntaxError
 from a816.parse.tokens import Token, TokenType
+
+logger = logging.getLogger('a816.parser')
 
 
 class Parser:
@@ -14,8 +17,8 @@ class Parser:
         try:
             return self.initial_state(self)
         except ParserSyntaxError as e:
-            # print(str(e))
-            # e.token.display()
+            logger.exception(e)
+            e.token.display()
             raise e
 
     def current(self) -> Token:

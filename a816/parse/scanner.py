@@ -22,7 +22,6 @@ class Scanner:
         self.errors = []
 
     def add_error(self, scanner_exception):
-        # FIXME: should be handled more beautifully
         print(str(scanner_exception))
         position = scanner_exception.position
         position_str = str(position)
@@ -34,6 +33,7 @@ class Scanner:
         self.file = File(filename)
         self.input = input_
         self.state = self.initial_state
+        self.tokens = []
         while self.pos < len(self.input):
             if self.state is not None:
                 try:
@@ -96,6 +96,7 @@ class Scanner:
 
     def accept_run(self, candidates, negate=False):
         while self.accept(candidates, negate):
+            # Accepts candidates until a non matching char is found.
             pass
 
     def ignore(self):

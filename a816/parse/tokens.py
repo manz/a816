@@ -67,6 +67,9 @@ class TokenType(Enum):
     DOUBLE_LBRACE = auto()
     DOUBLE_RBRACE = auto()
 
+    MULTILINE_COMMENT_START = auto()
+    MULTILINE_COMMENT_END = auto()
+
 
 class Token:
     type = ''
@@ -83,21 +86,20 @@ class Token:
         return f'Token({self.type}, {self.value})'  # {self.position}'
 
     def display(self):
+        print(self.trace())
+
+    def trace(self):
+        trace = None
         if self.position is not None:
             if self.type == TokenType.EOF:
-                print(self.position.file.lines[-1])
+                line = self.position.file.lines[-1]
             else:
-                print(str(self.position), self.type)
-                print(self.position.get_line())
-                print(' ' * self.position.column + '~' * len(self.value))
-
-
-class TokenContext:
-    def __init__(self, tokens):
-        self.tokens = tokens
-
-    def display(self):
-        start_position = self.start_token
+                line = self.position.get_line()
+            trace = f'''
+{self.position} {self.type}
+{line}
+{' ' * self.position.column}{'~' * len(self.value)}'''
+        return trace
 
 
 EOF = '\0'
