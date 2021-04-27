@@ -1,11 +1,12 @@
 import unittest
 
 import struct
+from unittest import skip
 
 from a816.expressions import eval_expr
 from a816.program import Program
 from a816.parse.nodes import NodeError
-from a816.cpu.cpu_65c816 import snes_to_rom, AddressingMode
+from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.codegen import code_gen
 from a816.tests import StubWriter
 
@@ -50,7 +51,7 @@ class EmitTest(unittest.TestCase):
         """
 
         program = Program()
-        ast = program.parser.parse_as_ast(input_program)
+        ast = program.parser.parse_as_ast(input_program).ast
         self.assertEqual(ast, [('dl', ['0xf01ac5'])])
 
         writer = StubWriter()
@@ -110,7 +111,7 @@ class EmitTest(unittest.TestCase):
         '''
         program.assemble_string_with_emitter(input_program, 'test_macro_application', writer)
 
-        self.assertEqual(writer.data_addresses[0], snes_to_rom(0x038000))
+        self.assertEqual(writer.data_addresses[0], program.get_physical_address(0x038000))
         self.assertEqual(writer.data[0], b'\x00\x80\x03')
 
     def test_stareq_bank_boundaries(self):
@@ -126,7 +127,7 @@ class EmitTest(unittest.TestCase):
         program.assemble_string_with_emitter(input_program, 'test_macro_application', writer)
 
         self.assertEqual(writer.data[0], b'\xFF\xFF\x03')
-        self.assertEqual(writer.data_addresses[0], snes_to_rom(0x03FFFF))
+        self.assertEqual(writer.data_addresses[0], program.get_physical_address(0x03FFFF))
         self.assertEqual(program.resolver.current_scope['label2'], 0x048002)
 
     def test_symbols_are_globals_in_current_scope(self):
@@ -146,7 +147,7 @@ class EmitTest(unittest.TestCase):
         '''
         program.assemble_string_with_emitter(input_program, 'test_macro_application', writer)
 
-        self.assertEqual(writer.data_addresses[0], snes_to_rom(0x008000))
+        self.assertEqual(writer.data_addresses[0], program.get_physical_address(0x008000))
         self.assertEqual(eval_expr('newgame.label', program.resolver), 0x008004)
         self.assertEqual(writer.data[0], b'\x04\x80\x00\x00')
         self.assertEqual(writer.data_addresses[0], 0x000000)
@@ -157,7 +158,7 @@ class EmitTest(unittest.TestCase):
         """
 
         program = Program()
-        ast = program.parser.parse_as_ast(input_program)
+        ast = program.parser.parse_as_ast(input_program).ast
         self.assertEqual(ast, [('opcode',
                                 AddressingMode.dp_or_sr_indirect_indexed,
                                 'eor',
@@ -172,3 +173,41 @@ class EmitTest(unittest.TestCase):
         program.emit(nodes, writer)
 
         self.assertEqual(writer.data[0], b'\x41\x12')
+
+    def test_ascii(self):
+        input_program = """
+           .ascii 'Final Fantasy VI    '
+           """
+
+        program = Program()
+        ast = program.parser.parse_as_ast(input_program).ast
+        self.assertEqual(ast, [('ascii', 'Final Fantasy VI    ')])
+
+        writer = StubWriter()
+
+        nodes = code_gen(ast, program.resolver)
+        program.resolve_labels(nodes)
+
+        program.emit(nodes, writer)
+
+        self.assertEqual(writer.data[0], b'Final Fantasy VI    ')
+
+    @skip
+    def test_tr(self):
+        input_program = """
+           .ascii t'Final Fantasy VI    '
+           """
+
+        program = Program()
+        ast = program.parser.parse_as_ast(input_program).ast
+        self.assertEqual(ast, [('ascii', 'Final Fantasy VI    ')])
+
+        writer = StubWriter()
+
+        nodes = code_gen(ast, program.resolver)
+        program.resolve_labels(nodes)
+
+        program.emit(nodes, writer)
+
+        self.assertEqual(writer.data[0], b'Final Fantasy VI    ')
+
