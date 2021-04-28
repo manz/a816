@@ -1,10 +1,9 @@
 import logging
-import os
 import struct
 
 from a816.exceptions import SymbolNotDefined
 from a816.expressions import eval_expr
-from a816.cpu.cpu_65c816 import snes_opcode_table, snes_to_rom, RelativeJumpOpcode, NoOpcodeForOperandSize
+from a816.cpu.cpu_65c816 import snes_opcode_table, RelativeJumpOpcode, NoOpcodeForOperandSize
 from a816.symbols import Resolver
 from script import Table
 
@@ -194,10 +193,9 @@ class OpcodeNode(object):
         try:
             opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
         except KeyError:
-            raise NodeError('Addressing mode ({}) for opcode ({}) is not defined.'.format(
-                self.addressing_mode.name,
-                self.opcode
-            ), file_info=self.file_info)
+            raise NodeError(
+                f'Addressing mode ({self.addressing_mode.name}) for opcode_def ({self.opcode}) is not defined.',
+                file_info=self.file_info)
 
         if isinstance(opcode_emitter, dict):
             opcode_emitter = opcode_emitter[self.index]
@@ -208,15 +206,10 @@ class OpcodeNode(object):
         try:
             return opcode_emitter.emit(self.value_node, self.size, resolver)
         except NoOpcodeForOperandSize as e:
-            raise NodeError('{} does not supports size ({}).'.format(
-                self.opcode,
-                opcode_emitter.guess_value_size(self.value_node, self.size)
-            ), self.file_info) from e
+            guessed_size = opcode_emitter.guess_value_size(self.value_node, self.size)
+            raise NodeError(f'{self.opcode} does not supports size ({guessed_size}).', self.file_info) from e
         except SymbolNotDefined as e:
-            raise NodeError('{} ({}) is not defined in the current scope.'.format(
-                e,
-                self.value_node
-            ), self.file_info)
+            raise NodeError(f'{e} ({self.value_node}) is not defined in the current scope.', self.file_info)
 
     def pc_after(self, current_pc):
         opcode_emitter = self._get_emitter()
@@ -331,20 +324,36 @@ class TableNode(object):
         return []
 
 
-class TextNode(object):
+class AbstractTextNode(object):
     def __init__(self, text, resolver):
         self.text = text
         self.resolver = resolver
 
-        table = self.resolver.current_scope.get_table()
-
-        self.binary_text = table.to_bytes(self.text)
+    @property
+    def binary_text(self):
+        raise NotImplementedError('You should implement binary_text property.')
 
     def pc_after(self, current_pc):
         return current_pc + len(self.binary_text)
 
     def emit(self, current_addr):
         return self.binary_text
+
+
+class TextNode(AbstractTextNode):
+    def __init__(self, text, resolver):
+        super().__init__(text, resolver)
+        self.table = self.resolver.current_scope.get_table()
+
+    @property
+    def binary_text(self):
+        return self.table.to_bytes(self.text)
+
+
+class AsciiNode(AbstractTextNode):
+    @property
+    def binary_text(self):
+        return self.text.encode('ascii', errors='ignore')
 
 
 class PointerNode(object):

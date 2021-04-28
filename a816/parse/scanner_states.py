@@ -11,7 +11,7 @@ def lex_identifier(s: 'Scanner'):
     identifier_chars = '_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz0123456789'
     s.accept_run(identifier_chars)
 
-    if s.peek() == ':':
+    if s.peek() == ':' and s.peek(1) != '=':
         s.emit(TokenType.LABEL)
 
         s.next()
@@ -31,9 +31,8 @@ def lex_quoted_string(l):
         if c == '\n' or c is None:
             raise ScannerException('Unterminated String', l.get_position())
 
-        if c == '\\':
-            if l.peek() == '\'':
-                l.next()
+        if c == '\\' and l.peek() == '\'':
+            l.next()
 
         c = l.next()
 
@@ -157,11 +156,15 @@ KEYWORDS = {
     'incbin': TokenType.KEYWORD,
     'pointer': TokenType.KEYWORD,
     'text': TokenType.KEYWORD,
+    'ascii': TokenType.KEYWORD,
     'db': TokenType.KEYWORD,
     'dw': TokenType.KEYWORD,
     'dl': TokenType.KEYWORD,
     'macro': TokenType.KEYWORD,
-    'map': TokenType.KEYWORD
+    'map': TokenType.KEYWORD,
+    'if': TokenType.KEYWORD,
+    'else': TokenType.KEYWORD,
+    'for': TokenType.KEYWORD
 }
 
 
@@ -191,15 +194,16 @@ def lex_keyword(l):
         raise ScannerException(f'Unknown Keyword {l.current_token_text()}', l.get_position())
 
 
-def lex_number(l):
+def lex_number(l: Scanner):
+    acceptable_values = {
+        'b': '01',
+        'o': '012345678',
+        'x': '0123456789ABCDEFabcdef'
+    }
+
     l.backup()
 
     ch = l.next()
-    prefixes = {
-        'o': 8,
-        'x': 16,
-        'b': 2
-    }
 
     if l.peek() in ['\n', EOF]:
         l.emit(TokenType.NUMBER)
@@ -209,7 +213,7 @@ def lex_number(l):
         base_prefix = l.next()
 
         if base_prefix in ('b', 'o', 'x'):
-            l.accept_run('0123456789ABCDEFabcdef')
+            l.accept_run(acceptable_values[base_prefix])
         else:
             l.backup()
     else:
@@ -224,6 +228,7 @@ def lex_initial(l: 'Scanner'):
     l.ignore_run(' \t\n')
     if l.accept(';'):
         while l.next() not in ['\n', None]:
+            # eat the comment until end of  line.
             pass
 
         l.emit(TokenType.COMMENT)
@@ -231,10 +236,6 @@ def lex_initial(l: 'Scanner'):
         lex_number(l)
     elif l.accept('+-&'):
         l.emit(TokenType.OPERATOR)
-    elif l.accept('('):
-        l.emit(TokenType.LPAREN)
-    elif l.accept(')'):
-        l.emit(TokenType.RPAREN)
     elif l.accept('_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz'):
         l.backup()
         # check if not an opcode
@@ -281,6 +282,10 @@ def lex_initial(l: 'Scanner'):
         l.emit(TokenType.LEFT_SHIFT)
     elif l.accept_prefix('<<'):
         l.emit(TokenType.RIGHT_SHIFT)
+    elif l.accept_prefix('/*'):
+        while not l.accept_prefix('*/'):
+            l.next()
+        l.emit(TokenType.COMMENT)
     else:
         if l.next() is not None:
             raise ScannerException(f'Invalid Input {l.input[l.start:]}', l.get_position())

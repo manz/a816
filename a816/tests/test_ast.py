@@ -1,16 +1,24 @@
+import struct
 from unittest.case import TestCase
 
 from a816.cpu.cpu_65c816 import AddressingMode
+from a816.parse import codegen
+from a816.parse.codegen import code_gen
+from a816.parse.mzparser import MZParser
 from a816.program import Program
+from a816.symbols import Resolver
+from a816.tests import StubWriter
 
 
 class TestParse(TestCase):
     maxDiff = None
 
     @staticmethod
-    def _get_ast_for(program_text):
-        program = Program()
-        return program.parser.parse_as_ast(program_text, 'memory.s')
+    def _get_result_for(program_text):
+        return MZParser.parse_as_ast(program_text, 'memory.s')
+
+    def _get_ast_for(self, program_text):
+        return self._get_result_for(program_text).ast
 
     def test_label(self):
         ast = self._get_ast_for('my_cute_label:')
@@ -153,3 +161,98 @@ class TestParse(TestCase):
     def test_string_quote_escape(self):
         ast = self._get_ast_for(".text 'I\\'m hungry'")
         self.assertEqual([('text', 'I\\\'m hungry')], ast)
+
+    def test_scan_error(self):
+        result = self._get_result_for('a')
+        self.assertEqual(result.error, '\nmemory.s:0:1 TokenType.EOF\na\n ')
+
+    def test_recursive_macros(self):
+        program = """
+.macro recursive(length) {
+    .if length  {
+        .db length
+        recursive(length - 1)
+    } .else {
+        .db 0
+    }
+}
+        recursive(4)
+        """
+
+        ast = self._get_ast_for(program)
+        self.assertEqual(ast, [('macro',
+                                'recursive',
+                                ('args', ['length']),
+                                ('block',
+                                 [('if',
+                                   'length',
+                                   ('compound', [('db', ['length']),
+                                                 ('macro_apply', 'recursive', ('apply_args', ['length - 1']))]),
+                                   ('compound', [('db', ['0'])]))])),
+                               ('macro_apply', 'recursive', ('apply_args', ['4']))])
+        nodes = code_gen(ast, Resolver())
+
+        # self.assertEqual(nodes, [])
+
+    def test_dw(self):
+        program = """
+.dw 0x00
+mac(0)
+"""
+        ast = self._get_ast_for(program)
+        self.assertEqual(
+            ast,
+            [('dw', ['0x00']), ('macro_apply', 'mac', ('apply_args', ['0']))])
+
+    def test_if(self):
+        program = """
+DEBUG := 1
+.if DEBUG {
+    .db 0x00
+}
+        """
+
+        ast = self._get_ast_for(program)
+        self.assertEqual(ast, [
+            ('assign', 'DEBUG', '1'),
+            ('if', 'DEBUG', ('compound', [('db', ['0x00'])
+                                          ]), None)])
+
+    def test_if_else(self):
+        program = """
+    DEBUG := 1
+    .if DEBUG {
+    .db 0x00
+    } .else {
+    .db 0x85
+    }
+        """
+
+        ast = self._get_ast_for(program)
+        self.assertEqual(ast, [
+            ('assign', 'DEBUG', '1'),
+            ('if', 'DEBUG', ('compound', [('db', ['0x00'])]), ('compound', [('db', ['0x85'])]))])
+
+    def test_for(self):
+        program = """
+        .macro generate_power_of_twos_table(min, max) {
+            .for k := min, max  {
+                .dw 1 << k
+            }
+        }
+        generate_power_of_twos_table(0, 8)
+        """
+
+        ast = self._get_ast_for(program)
+        #      self.assertEqual(ast, [
+        #          ('for', 'k', '0', '5', ('compound', [('db', ['k'])]))
+        #      ])
+        p = Program()
+
+        nodes = code_gen(ast, p.resolver)
+        #   self.assertEqual(nodes, [])
+        writer = StubWriter()
+        p.resolve_labels(nodes)
+        p.emit(nodes, writer)
+
+        self.assertEqual(struct.unpack('<8H', writer.data[0]), (1, 2, 4, 8, 16, 32, 64, 128))
