@@ -6,13 +6,6 @@ class Mapping(object):
         self.mask = mask
         self.writable = writeable
 
-    def _resolve_address(self, value):
-        bank = value >> 16
-        if self.writable is False:
-            return (bank - self.bank_range[0]) * self.mask + (value & ~self.mask & 0xffff)
-        else:
-            return None
-
     def physical_address(self, value):
         bank = value >> 16
         if self.writable is False:
@@ -44,8 +37,7 @@ class Bus(object):
 
     def map(self, identifier, bank_range, address_range, mask, writeable=False, mirror_bank_range=None):
         if self.editable is not True:
-            raise Exception('Bus cannot be edited.')
-        # identifier = identifier or ++self.internal_id
+            raise RuntimeError('Bus cannot be edited.')
 
         self.mappings[identifier] = Mapping(bank_range,
                                             address_range,
@@ -67,7 +59,7 @@ class Bus(object):
 
     def unmap(self, identifier):
         if self.editable is not True:
-            raise Exception('Bus cannot be edited.')
+            raise RuntimeError('Bus cannot be edited.')
 
         if identifier in self.mappings.keys():
             del self.mappings[identifier]

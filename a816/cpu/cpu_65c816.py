@@ -30,7 +30,7 @@ class BaseOpcode(object):
         return 1
 
     def check_opcode(self):
-        pass
+        raise NotImplementedError('check_opcode method should be implemented.')
 
     def get_opcode_byte(self, value_size):
         return self.opcode
@@ -43,7 +43,7 @@ class RelativeJumpOpcode(BaseOpcode):
 
         if isinstance(value_node, ExpressionNode):
             pc = resolver.pc
-            delta = snes_to_rom(value) - pc
+            delta = resolver.get_bus().get_address(value).physical - pc
             delta -= 2
         else:
             delta = value
@@ -58,8 +58,8 @@ class RelativeJumpOpcode(BaseOpcode):
 
 
 class Opcode(object):
-    def __init__(self, opcode, is_a=False, is_x=False):
-        self.opcode = opcode
+    def __init__(self, opcode_def, is_a=False, is_x=False):
+        self.opcode_def = opcode_def
         self.is_a = is_a
         self.is_x = is_x
         self.size_opcode_map = {'b': 0, 'w': 1, 'l': 2}
@@ -85,13 +85,13 @@ class Opcode(object):
 
     def get_opcode_byte(self, value_size):
         try:
-            opcode = self.opcode[self.size_opcode_map[value_size]]
+            opcode_byte = self.opcode_def[self.size_opcode_map[value_size]]
         except IndexError:
             raise NoOpcodeForOperandSize()
         else:
-            if opcode is None:
+            if opcode_byte is None:
                 raise NoOpcodeForOperandSize()
-            return opcode
+            return opcode_byte
 
     def emit(self, value_node, size=None, resolver=None):
         value_size = self.guess_value_size(value_node, size)
@@ -542,8 +542,3 @@ def get_opcodes_with_addressing(addressing_mode):
         return addressing_mode in keys
 
     return list(filter(filter_func, snes_opcode_table.keys()))
-
-
-def get_opcodes_with_no_addressing(addressing_mode):
-    verboten_keys = get_opcodes_with_addressing(addressing_mode)
-    return list(filter(lambda k: k not in verboten_keys, snes_opcode_table.keys()))

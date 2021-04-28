@@ -51,9 +51,11 @@ class SFCWriter(object):
         self.copier_header = copier_header
 
     def begin(self):
+        # SFC is contiguous it only needs to implement write_block.
         pass
 
     def write_block_header(self, block, block_address):
+        # SFC is contiguous it only needs to implement write_block.
         pass
 
     def write_block(self, block, block_address):
@@ -61,4 +63,5 @@ class SFCWriter(object):
         self.file.write(block)
 
     def end(self):
+        # SFC is contiguous it only needs to implement write_block.
         pass
