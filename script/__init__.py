@@ -40,12 +40,13 @@ class Table(object):
                 self.add_inverted_lookup(byte, text)
         return matches is not None
 
-    def transform_byte_matches_to_int(self, bytes_iterator):
+    @staticmethod
+    def transform_byte_matches_to_int(bytes_iterator):
         return list(map(lambda b: int(''.join(b), 16), zip(*[bytes_iterator] * 2)))
 
-    def add_inverted_lookup(self, byte: bytes, text: str, ignore: int =None):
+    def add_inverted_lookup(self, byte: list, text: str, ignore: int =None):
         if ignore is not None:
-            self.inverted_lookup[byte] = (text, ignore)
+            self.inverted_lookup[bytes(byte)] = (text, ignore)
         else:
             self.inverted_lookup[bytes(byte)] = text
 
