@@ -6,25 +6,25 @@ from a816.program import Program
 
 
 class CodeGenTest(unittest.TestCase):
-    def test_immediate_code_gen(self):
+    def test_immediate_code_gen(self) -> None:
         program = Program()
-        nodes = program.parser.parse(
-            'lda #0x1234'
-        )
+        nodes = program.parser.parse("lda #0x1234")
 
         self.assertEqual(len(nodes), 1)
 
         node = nodes[0]
-        expected_node = OpcodeNode('lda', addressing_mode=AddressingMode.immediate, value_node=ValueNode('1234'))
-        self.assertEqual(node.opcode, expected_node.opcode)
-        self.assertEqual(node.value_node.get_value(), expected_node.value_node.get_value())
-        self.assertEqual(node.addressing_mode, expected_node.addressing_mode)
 
-    def test_ateq_reslove(self):
+        assert isinstance(node, OpcodeNode)
+
+        self.assertEqual(node.opcode, "lda")
+        assert node.value_node is not None
+        self.assertEqual(node.value_node.get_value(), 0x1234)
+        self.assertEqual(node.addressing_mode, AddressingMode.immediate)
+
+    def test_ateq_reslove(self) -> None:
         program = Program()
-        program.resolve_labels([
-            RelocationAddressNode(ValueNode('0x7f0000'), program.resolver),
-            LabelNode('miaou', program.resolver)
-        ])
+        program.resolve_labels(
+            [RelocationAddressNode(ValueNode("0x7f0000"), program.resolver), LabelNode("miaou", program.resolver)]
+        )
 
-        self.assertEqual(program.resolver.current_scope['miaou'], 0x7f0000)
+        self.assertEqual(program.resolver.current_scope["miaou"], 0x7F0000)
