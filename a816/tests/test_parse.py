@@ -29,13 +29,13 @@ class StubWriter(Writer):
         self.data: List[Tuple[int, bytes]] = []
 
     def begin(self) -> None:
-        pass
+        """StubWriter only implements write_block."""
 
     def write_block(self, block: bytes, block_address: int) -> None:
         self.data.append((block_address, block))
 
     def end(self) -> None:
-        pass
+        """StubWriter only implements write_block."""
 
 
 class ParseTest(unittest.TestCase):
@@ -95,7 +95,6 @@ class ParseTest(unittest.TestCase):
 
         machine_code = writer.data[0][1]
 
-        # program.resolver.dump_symbol_map()
         unpacked = struct.unpack("<BHBHBH", machine_code)
 
         self.assertEqual(unpacked[1], 0x4567)
@@ -123,34 +122,41 @@ class ParseTest(unittest.TestCase):
         nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
 
-    # def test_macro(self):
-    #     input_program = '''
-    #     .macro test_macro(a, b, c) {
-    #         lda.b #a
-    #         lda.b #b
-    #         lda.b #c
-    #     }
-    #     test_macro(0, 1, 2)
-    #     '''
-    #
-    #     expected_ast_nodes = ('block',
-    #                           ('macro', 'test_macro', ('args', ('a', 'b', 'c')),
-    #                            ('compound',
-    #                             ('block',
-    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'a'),
-    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'b'),
-    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'c')))),
-    #                           ('macro_apply', 'test_macro', ('apply_args', ('0', '1', '2'))))
-    #
-    #     program = Program()
-    #
-    #     ast_nodes = program.parser.parse_as_ast(input_program)
-    #
-    #     self.assertEqual(ast_nodes, expected_ast_nodes)
-    #
-    #     nodes = code_gen(ast_nodes[1:], program.resolver)
-    #     program.resolve_labels(nodes)
-    #     program.resolver.dump_symbol_map()
+    def test_macro(self):
+        input_program = """
+        .macro test_macro(a, b, c) {
+            lda.b #a
+            lda.b #b
+            lda.b #c
+        }
+        test_macro(0, 1, 2)
+        """
+
+        expected_ast_nodes = [
+            (
+                "macro",
+                "test_macro",
+                ("args", ["a", "b", "c"]),
+                (
+                    "block",
+                    [
+                        ("opcode", AddressingMode.immediate, ("lda", "b"), "a", None),
+                        ("opcode", AddressingMode.immediate, ("lda", "b"), "b", None),
+                        ("opcode", AddressingMode.immediate, ("lda", "b"), "c", None),
+                    ],
+                ),
+            ),
+            ("macro_apply", "test_macro", ("apply_args", ["0", "1", "2"])),
+        ]
+
+        program = Program()
+
+        result = program.parser.parse_as_ast(input_program)
+        self.assertEqual(expected_ast_nodes, result.ast)
+
+        nodes = code_gen(result.nodes, program.resolver)
+        program.resolve_labels(nodes)
+        program.resolver.dump_symbol_map()
 
     def test_macro_empty_args(self) -> None:
         input_program = """
@@ -173,10 +179,6 @@ class ParseTest(unittest.TestCase):
         )
 
         code_gen(ast_nodes.nodes, program.resolver)
-
-    # def test_label_reference(self) -> None:
-    #     resolver = Resolver()
-    #     ref = ExpressionNode("0x00", resolver, file_info=None)
 
     def test_push_pull(self) -> None:
         input_program = """

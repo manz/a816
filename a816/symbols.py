@@ -145,8 +145,7 @@ class Resolver(object):
         if exports and isinstance(self.current_scope, NamedScope):
             scope = self.current_scope
             if scope.parent is not None:
-                parent_symbols = scope.parent.symbols
-                parent_symbols |= {f"{scope.name}.{k}": v for k, v in scope.symbols.items()}
+                scope.parent.symbols |= {f"{scope.name}.{k}": v for k, v in scope.symbols.items()}
         if self.current_scope.parent is not None:
             self.current_scope = self.current_scope.parent
         else:

@@ -116,7 +116,6 @@ def generate_opcode(
     code: List[NodeProtocol] = []
     opcode = node.opcode_value
     size = None
-    operand = node.operand
 
     if isinstance(node.operand, BlockAstNode):
         raise NodeError("Opcode operand must not be code", file_info)

@@ -17,7 +17,6 @@ class Scanner:
         self.tokens: List[Token] = []
         self.line_offset = 0
         self.current_line = 0
-        # self.errors = []
 
     def add_error(self, scanner_exception: ScannerException) -> None:
         print(str(scanner_exception))
@@ -119,7 +118,4 @@ class Scanner:
         self.start = self.pos
 
 
-# class ScannerStateFunc(Protocol):
-#     def __call__(self, scanner: Scanner) -> None:
-#         ...
 ScannerStateFunc = Callable[[Scanner], None]

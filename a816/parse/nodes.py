@@ -229,11 +229,6 @@ class OpcodeNode(NodeProtocol):
         self.file_info = file_info
         self.resolver = resolver
 
-    # def check_opcode(self) -> None:
-    #     emitter = self._get_emitter()
-    #     if not isinstance(emitter, RelativeJumpOpcode):
-    #         emitter.emit(self.value_node, self.size)
-
     def _get_emitter(self) -> OpcodeProtocol:
         try:
             opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]

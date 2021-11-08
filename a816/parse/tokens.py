@@ -61,9 +61,6 @@ class TokenType(Enum):
 
     ASSIGN = auto()
 
-    # LEFT_SHIFT = auto()
-    # RIGHT_SHIFT = auto()
-
     DOUBLE_LBRACE = auto()
     DOUBLE_RBRACE = auto()
 
@@ -79,8 +76,6 @@ class Token:
         self.value: str = value
         self.position: Optional[Position] = position
 
-    # def __str__(self) -> str:
-    #     return f"Token({self.type}, {self.value})"  # {self.position}'
     def __repr__(self) -> str:
         return f"Token({self.type}, {self.value})"
 
