@@ -56,14 +56,6 @@ def parse_scope(p: Parser) -> ScopeAstNode:
     return ScopeAstNode(keyword.value, BlockAstNode(block, next_token), current)
 
 
-# def parse_text(p: Parser) -> TextAstNode:
-#     text = p.next()
-#
-#     expect_token(text, TokenType.QUOTED_STRING)
-#
-#     return TextAstNode(text.value[1:-1])
-
-
 def parse_macro_definition_args(p: Parser) -> List[str]:
     args = []
 
@@ -335,28 +327,6 @@ def _parse_expression(p: Parser) -> List[ExprNode]:
         else:
             return tokens
     return tokens
-
-
-# def _parse_expression(p: Parser) -> Any:
-#     current_node = None
-#     current_token = p.next()
-#
-#     if accept_token(current_token, TokenType.LPAREN):
-#         current_node = parse_expression(p)
-#         # consumes the closing parenthesis
-#         expect_token(p.next(), TokenType.RPAREN)
-#
-#     elif accept_tokens(current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.IDENTIFIER]):
-#         current_node = current_token.value
-#
-#     if current_node:
-#         operator = p.current()
-#
-#         if accept_token(p.current(), TokenType.OPERATOR):
-#             p.next()
-#             return operator.value, current_node, parse_expression(p)
-#         else:
-#             return current_node
 
 
 def parse_symbol_affectation(p: Parser) -> Union[SymbolAffectationAstNode, AssignAstNode]:

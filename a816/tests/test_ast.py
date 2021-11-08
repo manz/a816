@@ -245,9 +245,7 @@ class TestParse(TestCase):
             ],
             result.ast,
         )
-        nodes = code_gen(result.nodes, Resolver())
-
-        # self.assertEqual(nodes, [])
+        _ = code_gen(result.nodes, Resolver())
 
     def test_dw(self) -> None:
         program = """
@@ -354,7 +352,6 @@ DEBUG := 1
         assign_value = eval_expression(root_node.value, Resolver())
         self.assertEqual(-1, assign_value)
 
-
     def test_code_variable(self) -> None:
         program = """
         .macro ram_patch(address, code) {
@@ -379,12 +376,3 @@ ram_patch(0x7E5CFB, {
         p = Program()
         writer = StubWriter()
         p.assemble_string_with_emitter(program, "memory.s", writer)
-
-    # def test_bool(self) -> None:
-    #     program = """
-    #     a := True
-    #     """
-    #
-    #     ast = self._get_ast_for(program)
-    #
-    #     self.assertEqual([('assign', 'a', 'True')], ast)

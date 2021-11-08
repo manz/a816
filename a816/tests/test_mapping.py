@@ -59,4 +59,4 @@ class MappingTest(unittest.TestCase):
         rom_address = self.bus.get_address(0x008000)
 
         with self.assertRaises(ValueError):
-            addr = rom_address + "coin"  # type: ignore
+            _ = rom_address + "coin"  # type: ignore
