@@ -122,7 +122,7 @@ class ParseTest(unittest.TestCase):
         nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
 
-    def test_macro(self):
+    def test_macro(self) -> None:
         input_program = """
         .macro test_macro(a, b, c) {
             lda.b #a
