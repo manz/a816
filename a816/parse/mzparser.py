@@ -1,39 +1,51 @@
-from collections import namedtuple
+from dataclasses import dataclass
+from typing import List, Tuple, Any, Optional
 
 from a816.parse.codegen import code_gen
 from a816.parse.errors import ScannerException, ParserSyntaxError
+from a816.parse.nodes import NodeProtocol
 from a816.parse.parser import Parser
 from a816.parse.parser_states import parse_initial
+from a816.parse.ast.nodes import AstNode
 from a816.parse.scanner import Scanner
 from a816.parse.scanner_states import lex_initial
+from a816.symbols import Resolver
 
-ParserResult = namedtuple('ParserResult', ['ast', 'error'])
+
+@dataclass
+class ParserResult:
+    nodes: List[AstNode]
+    error: Optional[str]
+
+    @property
+    def ast(self) -> List[Tuple[Any, ...]]:
+        return [node.to_representation() for node in self.nodes]
 
 
 class MZParser(object):
-    def __init__(self, resolver):
+    def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
 
-    def parse(self, program, filename=''):
+    def parse(self, program: str, filename: str = "") -> List[NodeProtocol]:
         ast = self.parse_as_ast(program, filename)
-        return code_gen(ast.ast, self.resolver)
+        return code_gen(ast.nodes, self.resolver)
 
     @staticmethod
-    def parse_as_ast(program, filename='') -> ParserResult:
+    def parse_as_ast(program: str, filename: str = "") -> ParserResult:
         scanner = Scanner(lex_initial)
-        ast = None
-        error = None
+        ast: List[AstNode] = []
+        error: Optional[str]
 
         try:
             tokens = scanner.scan(filename, program)
             parser = Parser(tokens, parse_initial)
             ast = parser.parse()
+            error = None
         except ScannerException as e:
             position = e.position
             position_str = str(position)
             line = position.get_line()
-            error = f'{position_str} :\n{line}\n ' * position.column + '~'
+            error = f"{position_str} :\n{line}\n " * position.column + "~"
         except ParserSyntaxError as e:
             error = e.token.trace()
-        print(error)
-        return ParserResult(ast=ast, error=error)
+        return ParserResult(nodes=ast, error=error)

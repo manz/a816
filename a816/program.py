@@ -1,32 +1,45 @@
 import logging
 from pathlib import Path
+from typing import Optional, List
 
 from a816.parse.mzparser import MZParser
-from a816.parse.nodes import CodePositionNode, LabelNode, SymbolNode, BinaryNode, RelocationAddressNode, IncludeIpsNode
+from a816.parse.nodes import (
+    CodePositionNode,
+    LabelNode,
+    SymbolNode,
+    BinaryNode,
+    RelocationAddressNode,
+    IncludeIpsNode,
+    NodeProtocol,
+)
 from a816.symbols import Resolver
-from a816.writers import IPSWriter, SFCWriter
+from a816.writers import IPSWriter, SFCWriter, Writer
 from a816.parse.nodes import NodeError
 from a816.cpu.cpu_65c816 import RomType
 
-logger = logging.getLogger('a816')
+logger = logging.getLogger("a816")
 
 
 class Program(object):
-    def __init__(self, parser=None, dump_symbols=False):
+    def __init__(self, parser: Optional[MZParser] = None, dump_symbols: bool = False):
         self.resolver = Resolver()
-        self.logger = logging.getLogger('x816')
+        self.logger = logging.getLogger("x816")
         self.dump_symbols = dump_symbols
         self.parser = parser or MZParser(self.resolver)
 
-    def get_physical_address(self, logical_address):
-        return self.resolver.get_bus().get_address(logical_address).physical
+    def get_physical_address(self, logical_address: int) -> int:
+        physical_address = self.resolver.get_bus().get_address(logical_address).physical
+        if physical_address is not None:
+            return physical_address
+        else:
+            raise RuntimeError(f"{logical_address} has no physical address.")
 
-    def resolver_reset(self):
+    def resolver_reset(self) -> None:
         self.resolver.pc = 0x000000
         self.resolver.last_used_scope = 0
         self.resolver.current_scope = self.resolver.scopes[0]
 
-    def resolve_labels(self, program_nodes):
+    def resolve_labels(self, program_nodes: List[NodeProtocol]) -> None:
         self.resolver.last_used_scope = 0
 
         previous_pc = self.resolver.reloc_address
@@ -45,11 +58,11 @@ class Program(object):
             previous_pc = node.pc_after(previous_pc)
         self.resolver_reset()
 
-    def emit(self, program, writer):
-        current_block = b''
+    def emit(self, program: List[NodeProtocol], writer: Writer) -> None:
+        current_block = b""
         current_block_addr = self.resolver.pc
         for node in program:
-            node_bytes = node.emit(self.resolver)
+            node_bytes = node.emit(self.resolver.reloc_address)
 
             if node_bytes:
                 current_block += node_bytes
@@ -60,7 +73,7 @@ class Program(object):
                 if len(current_block) > 0:
                     writer.write_block(current_block, current_block_addr)
                 current_block_addr = self.resolver.pc
-                current_block = b''
+                current_block = b""
 
             if isinstance(node, IncludeIpsNode):
                 for block_addr, block in node.blocks:
@@ -69,15 +82,9 @@ class Program(object):
         if len(current_block) > 0:
             writer.write_block(current_block, current_block_addr)
 
-    def emit_ips(self, program, file):
-        ips = IPSWriter(file)
-        ips.begin()
-        self.emit(program, ips)
-        ips.end()
-
-    def assemble_string_with_emitter(self, input_program, filename, emitter):
+    def assemble_string_with_emitter(self, input_program: str, filename: str, emitter: Writer) -> None:
         nodes = self.parser.parse(input_program, filename)
-        self.logger.info('Resolving labels')
+        self.logger.info("Resolving labels")
         self.resolve_labels(nodes)
 
         if self.dump_symbols:
@@ -85,9 +92,9 @@ class Program(object):
 
         self.emit(nodes, emitter)
 
-    def assemble_with_emitter(self, asm_file, emitter):
+    def assemble_with_emitter(self, asm_file: str, emitter: Writer) -> int:
         try:
-            with open(asm_file, encoding='utf-8') as f:
+            with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
                 try:
                     self.assemble_string_with_emitter(input_program, asm_file, emitter)
@@ -98,33 +105,32 @@ class Program(object):
             self.logger.error(e)
             return -1
 
-        self.logger.info('Success !')
+        self.logger.info("Success !")
         return 0
 
-    def assemble(self, asm_file: Path, sfc_file: Path):
-        with open(sfc_file, 'wb') as f:
+    def assemble(self, asm_file: str, sfc_file: Path) -> int:
+        with open(sfc_file, "wb") as f:
             sfc_emitter = SFCWriter(f)
-            self.assemble_with_emitter(asm_file, sfc_emitter)
+            return self.assemble_with_emitter(asm_file, sfc_emitter)
 
-    def assemble_as_patch(self, asm_file: Path, ips_file: Path, mapping=None, copier_header=False):
+    def assemble_as_patch(
+        self, asm_file: str, ips_file: Path, mapping: Optional[str] = None, copier_header: bool = False
+    ) -> int:
         if mapping is not None:
-            address_mapping = {
-                'low': RomType.low_rom,
-                'low2': RomType.low_rom_2,
-                'high': RomType.high_rom
-            }
+            address_mapping = {"low": RomType.low_rom, "low2": RomType.low_rom_2, "high": RomType.high_rom}
             self.resolver.rom_type = address_mapping[mapping]
-        with open(ips_file, 'wb') as f:
+        with open(ips_file, "wb") as f:
             ips_emitter = IPSWriter(f, copier_header)
             ips_emitter.begin()
-            self.assemble_with_emitter(asm_file, ips_emitter)
+            exit_code = self.assemble_with_emitter(asm_file, ips_emitter)
             ips_emitter.end()
+            return exit_code
 
-    def exports_symbol_file(self, filename):
-        with open(filename, 'wt', encoding='utf-8') as output_file:
+    def exports_symbol_file(self, filename: str) -> None:
+        with open(filename, "wt", encoding="utf-8") as output_file:
             labels = self.resolver.get_all_labels()
-            output_file.write('[labels]\n')
+            output_file.write("[labels]\n")
             for name, value in labels:
-                bank = value >> 16 & 0xff
-                offset = value & 0xffff
-                output_file.write(f'{bank:2x}:{offset:4x} {name}\n')
+                bank = value >> 16 & 0xFF
+                offset = value & 0xFFFF
+                output_file.write(f"{bank:2x}:{offset:4x} {name}\n")

@@ -2,6 +2,7 @@ import os
 import unittest
 import struct
 import logging
+from typing import List, Tuple
 
 from a816.parse.codegen import code_gen
 from a816.parse.mzparser import MZParser as LALRParser, MZParser
@@ -9,54 +10,55 @@ from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.nodes import OpcodeNode, ValueNode, ExpressionNode, ScopeNode, PopScopeNode
 from a816.program import Program
 from a816.symbols import Resolver
+from a816.writers import Writer
 
-logger = logging.getLogger('a816')
+logger = logging.getLogger("a816")
 
-stream_formatter = logging.Formatter('%(levelname)s :: %(message)s')
+stream_formatter = logging.Formatter("%(levelname)s :: %(message)s")
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(stream_formatter)
 
 logger.addHandler(stream_handler)
 
+
 # logger.setLevel(logging.WARNING)
 
 
-class StubWriter(object):
-    def __init__(self):
-        self.data = []
+class StubWriter(Writer):
+    def __init__(self) -> None:
+        self.data: List[Tuple[int, bytes]] = []
 
-    def begin(self):
-        pass
+    def begin(self) -> None:
+        """StubWriter only implements write_block."""
 
-    def write_block(self, block, block_address):
+    def write_block(self, block: bytes, block_address: int) -> None:
         self.data.append((block_address, block))
 
-    def end(self):
-        pass
+    def end(self) -> None:
+        """StubWriter only implements write_block."""
 
 
 class ParseTest(unittest.TestCase):
-    def test_parse(self):
+    def test_parse(self) -> None:
         program = Program()
-        nodes = program.parser.parse(
-            'lda #0x1234'
-        )
+        nodes = program.parser.parse("lda #0x1234")
 
         self.assertEqual(len(nodes), 1)
 
         node = nodes[0]
-        expected_node = OpcodeNode('lda', addressing_mode=AddressingMode.immediate, value_node=ValueNode('1234'))
-        self.assertEqual(node.opcode, expected_node.opcode)
-        self.assertEqual(node.value_node.get_value(), expected_node.value_node.get_value())
-        self.assertEqual(node.addressing_mode, expected_node.addressing_mode)
+        assert isinstance(node, OpcodeNode)
+        self.assertEqual(node.opcode, "lda")
+        assert node.value_node is not None
+        self.assertEqual(node.value_node.get_value(), 0x1234)
+        self.assertEqual(node.addressing_mode, AddressingMode.immediate)
 
-    def test_data_word(self):
-        input_program = '''{
+    def test_data_word(self) -> None:
+        input_program = """{
             symbol=0x12345
             .dw 0x0000
             .dw 0x3450, 0x00, symbol & 0x00FF
             }
-        '''
+        """
 
         program = Program()
 
@@ -64,13 +66,13 @@ class ParseTest(unittest.TestCase):
         program.resolve_labels(nodes)
         emitted_nodes = []
         for node in nodes:
-            node_data = node.emit(program.resolver)
+            node_data = node.emit(program.resolver.reloc_address)
             if node_data:
                 emitted_nodes.append(node_data)
-        self.assertEqual(emitted_nodes, [b'\x00\x00', b'\x50\x34', b'\x00\x00', b'\x45\x00'])
+        self.assertEqual(emitted_nodes, [b"\x00\x00", b"\x50\x34", b"\x00\x00", b"\x45\x00"])
 
-    def test_expressions(self):
-        input_program = '''
+    def test_expressions(self) -> None:
+        input_program = """
             {
                 my_symbol = 0x4567
                 jmp.w my_symbol
@@ -81,7 +83,7 @@ class ParseTest(unittest.TestCase):
                 label:
             }
         }
-        '''
+        """
 
         program = Program()
         nodes = program.parser.parse(input_program)
@@ -93,15 +95,14 @@ class ParseTest(unittest.TestCase):
 
         machine_code = writer.data[0][1]
 
-        # program.resolver.dump_symbol_map()
-        unpacked = struct.unpack('<BHBHBH', machine_code)
+        unpacked = struct.unpack("<BHBHBH", machine_code)
 
         self.assertEqual(unpacked[1], 0x4567)
         self.assertEqual(unpacked[3], 0x8009)
         self.assertEqual(unpacked[5], 0x1234)
 
-    def test_blocks(self):
-        input_program = '''
+    def test_blocks(self) -> None:
+        input_program = """
         {
             my = 0x01
             {
@@ -113,7 +114,7 @@ class ParseTest(unittest.TestCase):
             a:
             }
             }
-        '''
+        """
 
         program = Program()
         program.parser = LALRParser(program.resolver)
@@ -121,36 +122,43 @@ class ParseTest(unittest.TestCase):
         nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
 
-    # def test_macro(self):
-    #     input_program = '''
-    #     .macro test_macro(a, b, c) {
-    #         lda.b #a
-    #         lda.b #b
-    #         lda.b #c
-    #     }
-    #     test_macro(0, 1, 2)
-    #     '''
-    #
-    #     expected_ast_nodes = ('block',
-    #                           ('macro', 'test_macro', ('args', ('a', 'b', 'c')),
-    #                            ('compound',
-    #                             ('block',
-    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'a'),
-    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'b'),
-    #                              ('opcode_def', AddressingMode.immediate, ['lda', 'b'], 'c')))),
-    #                           ('macro_apply', 'test_macro', ('apply_args', ('0', '1', '2'))))
-    #
-    #     program = Program()
-    #
-    #     ast_nodes = program.parser.parse_as_ast(input_program)
-    #
-    #     self.assertEqual(ast_nodes, expected_ast_nodes)
-    #
-    #     nodes = code_gen(ast_nodes[1:], program.resolver)
-    #     program.resolve_labels(nodes)
-    #     program.resolver.dump_symbol_map()
+    def test_macro(self) -> None:
+        input_program = """
+        .macro test_macro(a, b, c) {
+            lda.b #a
+            lda.b #b
+            lda.b #c
+        }
+        test_macro(0, 1, 2)
+        """
 
-    def test_macro_empty_args(self):
+        expected_ast_nodes = [
+            (
+                "macro",
+                "test_macro",
+                ("args", ["a", "b", "c"]),
+                (
+                    "block",
+                    [
+                        ("opcode", AddressingMode.immediate, ("lda", "b"), "a", None),
+                        ("opcode", AddressingMode.immediate, ("lda", "b"), "b", None),
+                        ("opcode", AddressingMode.immediate, ("lda", "b"), "c", None),
+                    ],
+                ),
+            ),
+            ("macro_apply", "test_macro", ("apply_args", ["0", "1", "2"])),
+        ]
+
+        program = Program()
+
+        result = program.parser.parse_as_ast(input_program)
+        self.assertEqual(expected_ast_nodes, result.ast)
+
+        nodes = code_gen(result.nodes, program.resolver)
+        program.resolve_labels(nodes)
+        program.resolver.dump_symbol_map()
+
+    def test_macro_empty_args(self) -> None:
         input_program = """
                 .macro test() {
                     sep #0x30
@@ -162,19 +170,17 @@ class ParseTest(unittest.TestCase):
         program = Program()
 
         ast_nodes = program.parser.parse_as_ast(input_program)
-        self.assertEqual(ast_nodes.ast, [('macro',
-                                      'test',
-                                      ('args', []),
-                                      ('block', [('opcode', AddressingMode.immediate, 'sep', '0x30', None)])),
-                                     ('macro_apply', 'test', ('apply_args', []))])
+        self.assertEqual(
+            ast_nodes.ast,
+            [
+                ("macro", "test", ("args", []), ("block", [("opcode", AddressingMode.immediate, "sep", "0x30", None)])),
+                ("macro_apply", "test", ("apply_args", [])),
+            ],
+        )
 
-        code_gen(ast_nodes.ast, program.resolver)
+        code_gen(ast_nodes.nodes, program.resolver)
 
-    def test_label_reference(self):
-        resolver = Resolver()
-        ref = ExpressionNode('0x00', resolver)
-
-    def test_push_pull(self):
+    def test_push_pull(self) -> None:
         input_program = """
         php
         pha
@@ -228,26 +234,26 @@ class ParseTest(unittest.TestCase):
 
         program = Program()
         result = program.parser.parse_as_ast(input_program)
-        nodes = code_gen(result.ast, program.resolver)
+        nodes = code_gen(result.nodes, program.resolver)
         program.resolve_labels(nodes)
 
         program.emit(nodes, StubWriter())
         print(nodes[-2])
 
-    def test_macro_definition_should_parse(self):
-        input_program = '''
+    def test_macro_definition_should_parse(self) -> None:
+        input_program = """
         .macro waitforvblank(a) {
             pla
         }
         plb
         waitforvblank(0x123456)
-        '''
+        """
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
 
-    def test_nini(self):
-        input_program = '''.macro wait_for_vblank_inline() {
+    def test_nini(self) -> None:
+        input_program = """.macro wait_for_vblank_inline() {
             pha
         negative:
             lda.l 0x004212
@@ -256,12 +262,12 @@ class ParseTest(unittest.TestCase):
             lda.l 0x004212
             bpl positive
             pla
-        }'''
+        }"""
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
 
-    def test_php_pha(self):
-        input_program = '''
+    def test_php_pha(self) -> None:
+        input_program = """
         .macro dma_transfer_to_vram_call(source, vramptr, count, mode)
         {
             php
@@ -280,12 +286,12 @@ class ParseTest(unittest.TestCase):
             plp
             TAX            ; using math multiplication
             LDA.L vwf_shift_table,X
-        }'''
+        }"""
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
 
-    def test_named_scopes(self):
-        input_program = '''
+    def test_named_scopes(self) -> None:
+        input_program = """
                 .scope newgame {
                     .db 0
                     .db 0
@@ -295,13 +301,13 @@ class ParseTest(unittest.TestCase):
 
                 }
 
-                .dw newgame.empty'''
+                .dw newgame.empty"""
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        nodes = code_gen(ast.ast, program.resolver)
+        nodes = code_gen(ast.nodes, program.resolver)
         program.resolve_labels(nodes)
         program.resolver.dump_symbol_map()
         writer = StubWriter()
         program.emit(nodes, writer)
-        self.assertEqual(writer.data[0][1], b'\x00\x00\x02\x80')
+        self.assertEqual(writer.data[0][1], b"\x00\x00\x02\x80")
