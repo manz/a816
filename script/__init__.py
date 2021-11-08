@@ -97,7 +97,7 @@ class Table:
                     if isinstance(decoded, tuple):
                         current_position += i
                         text += decoded[0]
-                        for k in range(decoded[1]):
+                        for _ in range(decoded[1]):
                             text += "[" + hex(binary[current_position]) + "]"
                             current_position += 1
                     else:
