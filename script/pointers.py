@@ -28,7 +28,7 @@ class Script(object):
         self.rom = rom
 
     def read_fixed_text_list(
-            self, pointer_file: BinaryIO, address: int, count: int, bytes_length: int
+        self, pointer_file: BinaryIO, address: int, count: int, bytes_length: int
     ) -> List[Pointer]:
         pointers = []
         pointer_file.seek(address)
@@ -41,7 +41,7 @@ class Script(object):
         return pointers
 
     def read_pointers(
-            self, pointer_file: BinaryIO, address: int, count: int, length: int, formula: FormulaProtocol
+        self, pointer_file: BinaryIO, address: int, count: int, length: int, formula: FormulaProtocol
     ) -> List[Pointer]:
         pointer_file.seek(address)
         temporary_pointers = []
@@ -62,7 +62,6 @@ class Script(object):
                 next_pointer = pointers[index + 1]
 
                 self.rom.seek(pointer.get_address())
-
 
                 pointer.value = self.rom.read(next_pointer.get_address() - pointer.get_address())
 
@@ -103,8 +102,9 @@ def write_pointers_value_as_binary(pointers: List[Pointer], output_file: str) ->
             fd.write(pointer.get_value())
 
 
-def write_pointers_addresses_as_binary(pointers: List[Pointer], formula: Callable[[int], bytes],
-                                       output_file: str) -> None:
+def write_pointers_addresses_as_binary(
+    pointers: List[Pointer], formula: Callable[[int], bytes], output_file: str
+) -> None:
     sorted_pointers = sorted(pointers, key=lambda x: x.id)
     current_position = 0
     with open(output_file, "wb") as fd:
@@ -113,8 +113,9 @@ def write_pointers_addresses_as_binary(pointers: List[Pointer], formula: Callabl
             current_position += len(pointer.get_value())
 
 
-def read_pointers_from_xml(input_file: str, table: Table, formatter: Optional[Callable[[str], str]] = None) -> List[
-    Pointer]:
+def read_pointers_from_xml(
+    input_file: str, table: Table, formatter: Optional[Callable[[str], str]] = None
+) -> List[Pointer]:
     pointer_table = []
     with open(input_file, encoding="utf-8") as data_source:
         tree = ElementTree.parse(data_source)
