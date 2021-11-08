@@ -1,35 +1,70 @@
 import ast
-import os
+from dataclasses import dataclass
+from typing import Tuple, Literal, List, Any, Union, Optional, cast, Type
 
 from a816.cpu.cpu_65c816 import AddressingMode
+from a816.parse.ast.nodes import (
+    AstNode,
+    BinOp,
+    BlockAstNode,
+    CompoundAstNode,
+    ExprNode,
+    LabelAstNode,
+    Parenthesis,
+    Term,
+    TextAstNode,
+    AsciiAstNode,
+    ScopeAstNode,
+    CodePositionAstNode,
+    CodeRelocationAstNode,
+    MapArgs,
+    MapAstNode,
+    IfAstNode,
+    MacroAstNode,
+    MacroApplyAstNode,
+    DataNode,
+    TableAstNode,
+    IncludeIpsAstNode,
+    IncludeBinaryAstNode,
+    SymbolAffectationAstNode,
+    AssignAstNode,
+    CodeLookupAstNode,
+    ForAstNode,
+    KeywordAstNode,
+    OpcodeAstNode,
+    UnaryOp,
+    index_map,
+    ExpressionAstNode,
+)
 
-from a816.parse.scanner import Scanner
+from a816.parse.scanner import Scanner, ScannerStateFunc
 from a816.parse.scanner_states import lex_initial
-from a816.parse.parser import Parser
+from a816.parse.parser import Parser, StateFunc
 from a816.parse.errors import ParserSyntaxError
-from a816.parse.tokens import TokenType
+from a816.parse.tokens import TokenType, Token
 from a816.parse.parser import expect_token, accept_token, expect_tokens, accept_tokens
 
 
-def parse_scope(p: Parser):
+def parse_scope(p: Parser) -> ScopeAstNode:
+    current = p.current()
     keyword = p.next()
     expect_token(keyword, TokenType.IDENTIFIER)
 
     next_token = p.next()
     expect_token(next_token, TokenType.LBRACE)
     block = parse_block(p)
-    return 'scope', keyword.value, (('block', block),)
+    return ScopeAstNode(keyword.value, BlockAstNode(block, next_token), current)
 
 
-def parse_text(p: Parser):
-    text = p.next()
+# def parse_text(p: Parser) -> TextAstNode:
+#     text = p.next()
+#
+#     expect_token(text, TokenType.QUOTED_STRING)
+#
+#     return TextAstNode(text.value[1:-1])
 
-    expect_token(text, TokenType.QUOTED_STRING)
 
-    return 'text', text.value[1:-1]
-
-
-def parse_macro_definition_args(p):
+def parse_macro_definition_args(p: Parser) -> List[str]:
     args = []
 
     first_arg = p.next()
@@ -55,14 +90,15 @@ def parse_macro_definition_args(p):
     return args
 
 
-def parse_expression_list_inner(p: Parser):
-    expressions = []
+def parse_expression_list_inner(p: Parser) -> List[Union[ExpressionAstNode, BlockAstNode]]:
+    expressions: List[Union[ExpressionAstNode, BlockAstNode]] = []
     while True:
         if accept_token(p.current(), TokenType.RPAREN):
             break
         if accept_token(p.current(), TokenType.LBRACE):
+            current = p.current()
             p.next()
-            expressions.append(('block', parse_block(p)))
+            expressions.append(BlockAstNode(parse_block(p), current))
         else:
             expressions.append(parse_expression(p))
         if accept_tokens(p.current(), [TokenType.COMMA]):
@@ -73,23 +109,22 @@ def parse_expression_list_inner(p: Parser):
     return expressions
 
 
-def parse_expression_list(p: Parser):
+def parse_expression_list(p: Parser) -> List[Union[ExpressionAstNode, BlockAstNode]]:
     expect_token(p.next(), TokenType.LPAREN)
     expressions = parse_expression_list_inner(p)
 
     expect_token(p.next(), TokenType.RPAREN)
 
-    return 'apply_args', expressions
+    return expressions
 
 
-def parse_macro_application(p: Parser):
+def parse_macro_application(p: Parser) -> MacroApplyAstNode:
     macro_identifier = p.next()
     expect_token(macro_identifier, TokenType.IDENTIFIER)
+    return MacroApplyAstNode(macro_identifier.value, parse_expression_list(p), macro_identifier)
 
-    return 'macro_apply', macro_identifier.value, parse_expression_list(p)
 
-
-def parse_macro(p: Parser):
+def parse_macro(p: Parser) -> MacroAstNode:
     macro_identifier = p.next()
     expect_token(macro_identifier, TokenType.IDENTIFIER)
 
@@ -97,52 +132,59 @@ def parse_macro(p: Parser):
 
     args = parse_macro_definition_args(p)
     expect_token(p.next(), TokenType.RPAREN)
+    block_token = p.current()
     expect_token(p.next(), TokenType.LBRACE)
     block = parse_block(p)
 
-    return 'macro', macro_identifier.value, ('args', args), ('block', block)
+    return MacroAstNode(macro_identifier.value, args, BlockAstNode(block, block_token), macro_identifier)
 
 
-def parse_map(p: Parser):
-    args = {}
+def parse_map(p: Parser) -> MapAstNode:
+    args: MapArgs = {}
 
     while p.current().type == TokenType.IDENTIFIER:
         identifier = p.next()
 
         expect_token(identifier, TokenType.IDENTIFIER)
+        key = identifier.value
 
-        if identifier.value not in {'identifier', 'writable', 'bank_range', 'addr_range', 'mask', 'mirror_bank_range'}:
-            raise ParserSyntaxError(f'Unknown attribute for map directive. {identifier.value}', identifier)
+        if key in {"identifier", "writable", "bank_range", "addr_range", "mask", "mirror_bank_range"}:
+            map_key = cast(
+                Literal["identifier", "writable", "bank_range", "addr_range", "mask", "mirror_bank_range"], key
+            )
+            expect_token(p.next(), TokenType.EQUAL)
+            number1 = p.next()
+            expect_token(number1, TokenType.NUMBER)
+            if accept_token(p.current(), TokenType.COMMA):
+                p.next()
+                number2 = p.next()
+                expect_token(number2, TokenType.NUMBER)
 
-        expect_token(p.next(), TokenType.EQUAL)
-        number1 = p.next()
-        expect_token(number1, TokenType.NUMBER)
-        if accept_token(p.current(), TokenType.COMMA):
-            p.next()
-            number2 = p.next()
-            expect_token(number2, TokenType.NUMBER)
-
-            args[identifier.value] = (ast.literal_eval(number1.value), ast.literal_eval(number2.value))
+                args[map_key] = (ast.literal_eval(number1.value), ast.literal_eval(number2.value))
+            else:
+                args[map_key] = ast.literal_eval(number1.value)
         else:
-            args[identifier.value] = ast.literal_eval(number1.value)
+            raise ParserSyntaxError(f"Unknown attribute for map directive. {identifier.value}", identifier)
 
-    return 'map', args
+    return MapAstNode(args, identifier)
 
 
-def parse_if(p: Parser):
+def parse_if(p: Parser) -> IfAstNode:
+    current = p.current()
     condition = parse_expression(p)
     expect_token(p.next(), TokenType.LBRACE)
-    body = ('compound', parse_block(p))
+    body = CompoundAstNode(parse_block(p), p.current())
     else_body = None
-    if p.current().value == 'else':
+    if p.current().value == "else":
         p.next()
         expect_token(p.next(), TokenType.LBRACE)
-        else_body = ('compound', parse_block(p))
+        else_body = CompoundAstNode(parse_block(p), p.current())
 
-    return 'if', condition, body, else_body
+    return IfAstNode(condition, body, else_body, current)
 
 
-def parse_for(p: Parser):
+def parse_for(p: Parser) -> ForAstNode:
+    current = p.current()
     variable = p.next()
     expect_token(variable, TokenType.IDENTIFIER)
     expect_token(p.next(), TokenType.ASSIGN)
@@ -151,85 +193,88 @@ def parse_for(p: Parser):
     end = parse_expression(p)
 
     expect_token(p.next(), TokenType.LBRACE)
-    block = ('compound', parse_block(p))
+    block = CompoundAstNode(parse_block(p), p.current())
 
-    return 'for', variable.value, start, end, block
+    return ForAstNode(variable.value, start, end, block, current)
 
 
-def parse_directive_with_quoted_string(p: Parser):
+def parse_directive_with_quoted_string(p: Parser) -> str:
     string = p.next()
     expect_token(string, TokenType.QUOTED_STRING)
 
     return string.value[1:-1]
 
 
-def parse_include_ips(p: Parser):
+def parse_include_ips(p: Parser) -> IncludeIpsAstNode:
+    current = p.current()
     string = parse_directive_with_quoted_string(p)
 
     expect_token(p.next(), TokenType.COMMA)
     expression = parse_expression(p)
 
-    return 'include_ips', string, expression
+    return IncludeIpsAstNode(string, expression, current)
 
 
-def parse_keyword(p: Parser):
+def parse_keyword(p: Parser) -> KeywordAstNode:
     keyword = p.next()
 
-    if keyword.value == 'scope':
+    if keyword.value == "scope":
         return parse_scope(p)
-    elif keyword.value in ('text', 'ascii'):
-        return keyword.value, parse_directive_with_quoted_string(p)
-    elif keyword.value == 'dw':
+    elif keyword.value == "ascii":
+        return AsciiAstNode(parse_directive_with_quoted_string(p), keyword)
+    elif keyword.value == "text":
+        return TextAstNode(parse_directive_with_quoted_string(p), keyword)
+    elif keyword.value == "dw":
         expressions = parse_expression_list_inner(p)
-        return 'dw', expressions
-    elif keyword.value == 'dl':
+        return DataNode("dw", expressions, keyword)
+    elif keyword.value == "dl":
         expressions = parse_expression_list_inner(p)
-        return 'dl', expressions
-    elif keyword.value == 'db':
+        return DataNode("dl", expressions, keyword)
+    elif keyword.value == "db":
         expressions = parse_expression_list_inner(p)
-        return 'db', expressions
-    elif keyword.value == 'pointer':
+        return DataNode("db", expressions, keyword)
+    elif keyword.value == "pointer":
         expressions = parse_expression_list_inner(p)
-        return 'pointer', expressions
-    elif keyword.value == 'include':
+        return DataNode("pointer", expressions, keyword)
+    elif keyword.value == "include":
         filename = parse_directive_with_quoted_string(p)
 
-        with open(filename, encoding='utf-8') as fd:
+        with open(filename, encoding="utf-8") as fd:
             source = fd.read()
 
-            scanner = Scanner(lex_initial)
+            scanner = Scanner(cast(ScannerStateFunc, lex_initial))
             tokens = scanner.scan(filename, source)
 
-            parser = Parser(tokens, parse_initial)
+            parser = Parser(tokens, cast(StateFunc, parse_initial))
             sub_ast = parser.parse()
 
-        return 'block', sub_ast
-    elif keyword.value == 'include_ips':
+        return BlockAstNode(sub_ast, keyword)
+    elif keyword.value == "include_ips":
         return parse_include_ips(p)
-    elif keyword.value == 'incbin':
-        return 'incbin', parse_directive_with_quoted_string(p)
-    elif keyword.value == 'table':
-        return 'table', parse_directive_with_quoted_string(p)
-    elif keyword.value == 'macro':
+    elif keyword.value == "incbin":
+        return IncludeBinaryAstNode(parse_directive_with_quoted_string(p), p.current())
+    elif keyword.value == "table":
+        return TableAstNode(parse_directive_with_quoted_string(p), p.current())
+    elif keyword.value == "macro":
         return parse_macro(p)
-    elif keyword.value == 'map':
+    elif keyword.value == "map":
         return parse_map(p)
-    elif keyword.value == 'if':
+    elif keyword.value == "if":
         return parse_if(p)
-    elif keyword.value == 'for':
+    elif keyword.value == "for":
         return parse_for(p)
     else:
-        raise ParserSyntaxError(f'Unexpected token {keyword}', keyword)
+        raise ParserSyntaxError(f"Unexpected token {keyword}", keyword)
 
 
-def parse_label(p: Parser):
+def parse_label(p: Parser) -> LabelAstNode:
     p.backup()
     current_token = p.next()
 
-    return 'label', current_token.value
+    return LabelAstNode(current_token.value, current_token)
 
 
-def parse_block(p: Parser):
+def parse_block(p: Parser) -> List[AstNode]:
     decl = []
     while p.current().type != TokenType.EOF:
         if p.current().type == TokenType.RBRACE:
@@ -242,99 +287,97 @@ def parse_block(p: Parser):
     return decl
 
 
-def parse_code_position_keyword(p: Parser):
-    value = p.next()
-    return value.value
-
-
-def parse_code_relocation_keyword(p: Parser):
+def parse_code_position_keyword(p: Parser) -> CodePositionAstNode:
+    current = p.current()
     code_position = parse_expression(p)
-    return 'at_eq', code_position
+    return CodePositionAstNode(code_position, current)
 
 
-def parse_expression(p: Parser):
-    nodes = __parse_expression(p)
-
-    nodes = [token.value for token in nodes]
-
-    return ' '.join(nodes)
+def parse_code_relocation_keyword(p: Parser) -> CodeRelocationAstNode:
+    current = p.current()
+    code_position = parse_expression(p)
+    return CodeRelocationAstNode(code_position, current)
 
 
-def __parse_expression(p: Parser):
-    nodes = []
+def parse_expression(p: Parser) -> ExpressionAstNode:
+    nodes = _parse_expression(p)
+
+    return ExpressionAstNode(nodes)
+
+
+def parse_expression_ep(p: Parser) -> List[AstNode]:
+    return [parse_expression(p)]
+
+
+def _parse_expression(p: Parser) -> List[ExprNode]:
+    tokens: List[ExprNode] = []
     current_token = p.next()
     if accept_token(current_token, TokenType.LPAREN):
-        nodes.append(current_token)
-        nodes += __parse_expression(p)
+        tokens.append(Parenthesis(current_token))
+        tokens += _parse_expression(p)
         expect_token(p.current(), TokenType.RPAREN)
-        nodes.append(p.next())
-    elif accept_tokens(current_token, [TokenType.NUMBER, TokenType.IDENTIFIER]):
-        nodes.append(current_token)
-    elif accept_token(current_token, TokenType.OPERATOR) and current_token.value == '-':
-        nodes.append(current_token)
-        nodes += __parse_expression(p)
+        tokens.append(Parenthesis(p.next()))
+    elif accept_tokens(current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.IDENTIFIER]):
+        tokens.append(Term(current_token))
+    elif accept_token(current_token, TokenType.OPERATOR) and current_token.value == "-":
+        tokens.append(UnaryOp(current_token))
+        tokens += _parse_expression(p)
+    else:
+        raise RuntimeError("Invalid expression")
 
-    if nodes:
+    if tokens:
         operator = p.current()
 
-        if accept_tokens(operator, [TokenType.OPERATOR, TokenType.RIGHT_SHIFT, TokenType.LEFT_SHIFT]):
+        if accept_token(operator, TokenType.OPERATOR):
             p.next()
-            nodes.append(operator)
-            return nodes + __parse_expression(p)
+            tokens.append(BinOp(operator))
+            return tokens + _parse_expression(p)
         else:
-            return nodes
-    return nodes
+            return tokens
+    return tokens
 
 
-def _parse_expression(p: Parser):
-    current_node = None
-    current_token = p.next()
+# def _parse_expression(p: Parser) -> Any:
+#     current_node = None
+#     current_token = p.next()
+#
+#     if accept_token(current_token, TokenType.LPAREN):
+#         current_node = parse_expression(p)
+#         # consumes the closing parenthesis
+#         expect_token(p.next(), TokenType.RPAREN)
+#
+#     elif accept_tokens(current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.IDENTIFIER]):
+#         current_node = current_token.value
+#
+#     if current_node:
+#         operator = p.current()
+#
+#         if accept_token(p.current(), TokenType.OPERATOR):
+#             p.next()
+#             return operator.value, current_node, parse_expression(p)
+#         else:
+#             return current_node
 
-    if accept_token(current_token, TokenType.LPAREN):
-        current_node = parse_expression(p)
-        # consumes the closing parenthesis
-        expect_token(p.next(), TokenType.RPAREN)
 
-    elif accept_tokens(current_token, [TokenType.NUMBER, TokenType.IDENTIFIER]):
-        current_node = current_token.value
-
-    if current_node:
-        operator = p.current()
-
-        if accept_tokens(p.current(), [TokenType.OPERATOR, TokenType.RIGHT_SHIFT, TokenType.LEFT_SHIFT]):
-            p.next()
-            return operator.value, current_node, parse_expression(p)
-        else:
-            return current_node
-
-
-def parse_symbol_affectation(p):
+def parse_symbol_affectation(p: Parser) -> Union[SymbolAffectationAstNode, AssignAstNode]:
+    current = p.current()
     symbol = p.next()
     expect_tokens(p.next(), [TokenType.EQUAL, TokenType.ASSIGN])
-
-    if p.current() == TokenType.EQUAL:
-        node_type = 'symbol'
+    node_type: Union[Type[SymbolAffectationAstNode], Type[AssignAstNode]]
+    if p.current().type == TokenType.EQUAL:
+        node_type = SymbolAffectationAstNode
     else:
-        node_type = 'assign'
+        node_type = AssignAstNode
 
     expression = parse_expression(p)
 
-    return node_type, symbol.value, expression
+    return node_type(symbol.value, expression, current)
 
 
-index_map = {
-    AddressingMode.indirect: AddressingMode.indirect_indexed,
-    AddressingMode.indirect_long: AddressingMode.indirect_indexed_long,
-    AddressingMode.direct: AddressingMode.direct_indexed,
-    AddressingMode.dp_or_sr_indirect_indexed: AddressingMode.stack_indexed_indirect_indexed
-}
-
-
-def parse_opcode(p):
-    opcode = p.next()
-    size = None
-    operand = None
-    index = None
+def parse_opcode(p: Parser) -> OpcodeAstNode:
+    opcode: Token = p.next()
+    size: Optional[str] = None
+    index: Optional[str] = None
 
     if accept_token(opcode, TokenType.OPCODE_NAKED):
         addressing_mode = AddressingMode.none
@@ -345,29 +388,38 @@ def parse_opcode(p):
         size = p.current().value
         p.next()
 
-    addressing_mode, inner_index, operand = parse_operand_and_addressing(
-        addressing_mode, opcode, operand, p)
+    addressing_mode, inner_index, operand = parse_operand_and_addressing(addressing_mode, opcode, p)
 
     if accept_token(p.current(), TokenType.ADDRESSING_MODE_INDEX):
         index = p.next().value.lower()
         addressing_mode = index_map[addressing_mode]
+
+    opcode_value: Union[Tuple[str, str], str]
 
     if size is not None:
         opcode_value = (opcode.value, size.lower())
     else:
         opcode_value = opcode.value
 
-    return 'opcode', addressing_mode, opcode_value, operand, index or inner_index
+    return OpcodeAstNode(
+        addressing_mode=addressing_mode,
+        opcode_value=opcode_value,
+        operand=operand,
+        index=index or inner_index,
+        file_info=opcode,
+    )
 
 
-def parse_operand_and_addressing(addressing_mode, opcode, operand, p):
+def parse_operand_and_addressing(
+    addressing_mode: AddressingMode, opcode: Token, p: Parser
+) -> Tuple[AddressingMode, Optional[str], Optional[ExpressionAstNode]]:
     inner_index = None
-
+    operand = None
     if accept_token(p.current(), TokenType.SHARP):
         addressing_mode = AddressingMode.immediate
         p.next()
         if accept_token(p.current(), TokenType.EOF):
-            raise ParserSyntaxError(f'Unexpected end of input.', p.current(), None)
+            raise ParserSyntaxError(f"Unexpected end of input.", p.current(), None)
         operand = parse_expression(p)
     elif accept_token(p.current(), TokenType.LPAREN):
         saved_position = p.pos
@@ -383,7 +435,7 @@ def parse_operand_and_addressing(addressing_mode, opcode, operand, p):
 
             expect_token(p.current(), TokenType.RPAREN)
 
-            if accept_tokens(p.peek(), [TokenType.OPERATOR, TokenType.RIGHT_SHIFT, TokenType.LEFT_SHIFT]):
+            if accept_token(p.peek(), TokenType.OPERATOR):
                 raise SyntaxError()
             p.next()
         except SyntaxError:
@@ -400,18 +452,21 @@ def parse_operand_and_addressing(addressing_mode, opcode, operand, p):
     return addressing_mode, inner_index, operand
 
 
-def parse_code_lookup(p: Parser):
+def parse_code_lookup(p: Parser) -> CodeLookupAstNode:
+    current = p.current()
     identifier = p.next()
     expect_token(identifier, TokenType.IDENTIFIER)
     expect_token(p.next(), TokenType.DOUBLE_RBRACE)
 
-    return 'code_lookup', identifier.value
+    return CodeLookupAstNode(identifier.value, current)
 
 
-def parse_decl(p: Parser):
+def parse_decl(
+    p: Parser,
+) -> Optional[AstNode]:
     current_token = p.next()
     if accept_token(current_token, TokenType.COMMENT):
-        return
+        return None
     elif accept_token(current_token, TokenType.DOUBLE_LBRACE):
         return parse_code_lookup(p)
     elif accept_tokens(current_token, [TokenType.OPCODE, TokenType.OPCODE_NAKED]):
@@ -430,17 +485,17 @@ def parse_decl(p: Parser):
     elif accept_token(current_token, TokenType.LABEL):
         return parse_label(p)
     elif accept_token(current_token, TokenType.LBRACE):
-        return 'compound', parse_block(p)
+        return CompoundAstNode(parse_block(p), current_token)
     elif accept_token(current_token, TokenType.STAR_EQ):
-        return 'star_eq', parse_code_position_keyword(p)
+        return parse_code_position_keyword(p)
     elif accept_token(current_token, TokenType.AT_EQ):
         return parse_code_relocation_keyword(p)
     else:
-        raise ParserSyntaxError(f'Unexpected Keyword {current_token}', current_token, None)
+        raise ParserSyntaxError(f"Unexpected Keyword {current_token}", current_token, None)
 
 
-def parse_initial(p: 'Parser'):
-    statements = []
+def parse_initial(p: Parser) -> List[AstNode]:
+    statements: List[AstNode] = []
     while p.current().type != TokenType.EOF:
 
         statement = parse_decl(p)

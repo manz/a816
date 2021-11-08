@@ -2,7 +2,7 @@ import unittest
 
 
 class MacroTests(unittest.TestCase):
-    def test_recursive_macros(self):
+    def test_recursive_macros(self) -> None:
         program = """
         .macro recursive(length) {
         .if length > 0 {

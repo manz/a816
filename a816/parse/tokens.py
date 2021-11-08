@@ -1,33 +1,33 @@
 from enum import Enum, auto
+from typing import List, Optional
+
+
+class File:
+    def __init__(self, filename: str):
+        self.filename = filename
+        self.lines: List[str] = []
+
+    def append(self, line: str) -> None:
+        self.lines.append(line)
+
+    def get(self, lineno: int) -> str:
+        return self.lines[lineno]
 
 
 class Position:
     line = 0
     column = 0
-    filename = None
 
-    def __init__(self, line, column, file):
+    def __init__(self, line: int, column: int, file: File) -> None:
         self.line = line
         self.column = column
         self.file = file
 
-    def __str__(self):
-        return f'{self.file.filename}:{self.line}:{self.column}'
+    def __str__(self) -> str:
+        return f"{self.file.filename}:{self.line}:{self.column}"
 
-    def get_line(self):
+    def get_line(self) -> str:
         return self.file.get(self.line)
-
-
-class File:
-    def __init__(self, filename):
-        self.filename = filename
-        self.lines = []
-
-    def append(self, line):
-        self.lines.append(line)
-
-    def get(self, lineno):
-        return self.lines[lineno]
 
 
 class TokenType(Enum):
@@ -61,8 +61,8 @@ class TokenType(Enum):
 
     ASSIGN = auto()
 
-    LEFT_SHIFT = auto()
-    RIGHT_SHIFT = auto()
+    # LEFT_SHIFT = auto()
+    # RIGHT_SHIFT = auto()
 
     DOUBLE_LBRACE = auto()
     DOUBLE_RBRACE = auto()
@@ -70,36 +70,35 @@ class TokenType(Enum):
     MULTILINE_COMMENT_START = auto()
     MULTILINE_COMMENT_END = auto()
 
+    BOOLEAN = auto()
+
 
 class Token:
-    type = ''
-    value = ''
-    position = None
-    int_value = None
+    def __init__(self, type_: TokenType, value: str, position: Optional[Position] = None) -> None:
+        self.type: TokenType = type_
+        self.value: str = value
+        self.position: Optional[Position] = position
 
-    def __init__(self, type_, value=None, position=None):
-        self.type = type_
-        self.value = value
-        self.position = position
+    # def __str__(self) -> str:
+    #     return f"Token({self.type}, {self.value})"  # {self.position}'
+    def __repr__(self) -> str:
+        return f"Token({self.type}, {self.value})"
 
-    def __str__(self):
-        return f'Token({self.type}, {self.value})'  # {self.position}'
-
-    def display(self):
+    def display(self) -> None:
         print(self.trace())
 
-    def trace(self):
+    def trace(self) -> Optional[str]:
         trace = None
         if self.position is not None:
             if self.type == TokenType.EOF:
                 line = self.position.file.lines[-1]
             else:
                 line = self.position.get_line()
-            trace = f'''
+            trace = f"""
 {self.position} {self.type}
 {line}
-{' ' * self.position.column}{'~' * len(self.value)}'''
+{' ' * self.position.column}{'~' * len(self.value)}"""
         return trace
 
 
-EOF = '\0'
+EOF = "\0"
