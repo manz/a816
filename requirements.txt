@@ -1,0 +1,5 @@
+black
+tox
+mypy
+pytest
+pytest-cov
