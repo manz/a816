@@ -59,8 +59,8 @@ def shunting_yard(expr_nodes: List[ExprNode]) -> List[ExprNode]:
                 output_queue.append(op)
             operator_stack.pop()
 
-    for operator_token in operator_stack:
-        output_queue.append(operator_token)
+    while len(operator_stack) > 0:
+        output_queue.append(operator_stack.pop())
 
     return output_queue
 
@@ -121,7 +121,7 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int:
     return values_stack.pop()
 
 
-def eval_expression_str(expr_str: str, resolver: Resolver) -> int:
+def expr_to_ast(expr_str: str) -> ExpressionAstNode:
     from a816.parse.scanner import Scanner
     from a816.parse.scanner_states import lex_expression
 
@@ -134,4 +134,9 @@ def eval_expression_str(expr_str: str, resolver: Resolver) -> int:
     nodes = parser.parse()
     first_node = nodes[0]
     assert isinstance(first_node, ExpressionAstNode)
-    return eval_expression(first_node, resolver)
+    return first_node
+
+
+def eval_expression_str(expr_str: str, resolver: Resolver) -> int:
+    expr_node = expr_to_ast(expr_str)
+    return eval_expression(expr_node, resolver)
