@@ -1,16 +1,21 @@
-class StubWriter(object):
-    def __init__(self):
-        self.data = []
-        self.data_addresses = []
+from typing import List
 
-    def begin(self):
+from a816.writers import Writer
+
+
+class StubWriter(Writer):
+    def __init__(self) -> None:
+        self.data: List[bytes] = []
+        self.data_addresses: List[int] = []
+
+    def begin(self) -> None:
         # not needed by StubWriter
         pass
 
-    def write_block(self, block, block_address):
+    def write_block(self, block: bytes, block_address: int) -> None:
         self.data_addresses.append(block_address)
         self.data.append(block)
 
-    def end(self):
+    def end(self) -> None:
         # not needed by StubWriter
         pass
