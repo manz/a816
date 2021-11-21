@@ -1,6 +1,6 @@
 import unittest
 
-from a816.cpu.mapping import Bus, Address
+from a816.cpu.mapping import Bus
 
 
 # mapping.yml
