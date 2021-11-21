@@ -1,7 +1,7 @@
 import struct
 import typing
 from enum import Enum
-from typing import Any, Optional, Dict, Protocol, Literal, Union, List
+from typing import Optional, Dict, Protocol, Union, List
 
 if typing.TYPE_CHECKING:
     from a816.parse.nodes import ValueNodeProtocol

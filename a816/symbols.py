@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, ItemsView, Dict, List, Tuple, Any, Union, overload
+from typing import Optional, ItemsView, Dict, List, Tuple, Any, Union
 
 from a816.cpu.cpu_65c816 import RomType
 from a816.cpu.mapping import Bus, Address
@@ -10,7 +10,7 @@ from script import Table
 logger = logging.getLogger("a816")
 
 
-class Scope(object):
+class Scope:
     def __init__(self, resolver: "Resolver", parent: Optional["Scope"] = None) -> None:
         self.symbols: Dict[str, int] = {}
         self.code_symbols: Dict[str, BlockAstNode] = {}
@@ -93,7 +93,7 @@ high_rom_bus.editable = False
 BUS_MAPPING = {RomType.low_rom: low_rom_bus, RomType.high_rom: high_rom_bus}
 
 
-class Resolver(object):
+class Resolver:
     def __init__(self, pc: int = 0x000000):
         self.reloc = False
         self.a = False

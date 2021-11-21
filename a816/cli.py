@@ -40,3 +40,7 @@ def cli_main() -> None:
     else:
         exit_code = program.assemble(args.input_file, args.output_file)
     sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    cli_main()

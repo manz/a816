@@ -1,5 +1,4 @@
 import struct
-from io import BytesIO
 from typing import Protocol, List, Tuple, BinaryIO
 
 
@@ -18,20 +17,10 @@ class Writer(Protocol):
 
 
 class IPSWriter(Writer):
-    def __init__(self, file: BinaryIO, copier_header: bool = False, check_for_overlap: bool = False) -> None:
+    def __init__(self, file: BinaryIO, copier_header: bool = False) -> None:
         self.file = file
         self._regions: List[Tuple[int, int]] = []
-        self._check_for_overlap = check_for_overlap
         self._copier_header = copier_header
-
-    def _check_overlap(self, start: int, end: int) -> None:
-        for region in self._regions:
-            if region[0] >= start >= region[1] or region[0] >= end >= region[1]:
-                raise OverflowError(
-                    "This region was already patched {:#08x}-{:#08x}, {:#08x}-{:#08x}".format(
-                        start, end, region[0], region[1]
-                    )
-                )
 
     def begin(self) -> None:
         self.file.write(b"PATCH")
@@ -43,11 +32,6 @@ class IPSWriter(Writer):
         self.file.write(struct.pack(">H", len(block)))
 
     def write_block(self, block: bytes, block_address: int) -> None:
-        if self._check_for_overlap:
-            start, end = block_address, block_address + len(block)
-            self._check_overlap(start, end)
-            self._regions.append((start, end))
-
         k = 0
         while block[k:]:
             slice_size = min(0xFFFF, len(block) - k)
