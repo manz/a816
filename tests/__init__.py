@@ -9,13 +9,11 @@ class StubWriter(Writer):
         self.data_addresses: List[int] = []
 
     def begin(self) -> None:
-        # not needed by StubWriter
-        pass
+        """not needed by StubWriter"""
 
     def write_block(self, block: bytes, block_address: int) -> None:
         self.data_addresses.append(block_address)
         self.data.append(block)
 
     def end(self) -> None:
-        # not needed by StubWriter
-        pass
+        """not needed by StubWriter"""
