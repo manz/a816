@@ -16,5 +16,5 @@ jobs:
     - name: Type check
       run: mypy -p a816 --strict
     - name: Run tests
-      run: pytest  --cov-report=term --cov-branch --cov=a816
+      run: pytest --cov-report=term --cov-branch --cov=a816
 
