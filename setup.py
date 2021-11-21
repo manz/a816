@@ -14,5 +14,9 @@ setup(
         "Intended Audience :: Developers",
         "Programming Language :: Python :: 3.6",
     ],
-    scripts=["x816"],
+    entry_points={
+        "console_scripts": [
+            "x816 = a816.cli:cli_main",
+        ]
+    },
 )

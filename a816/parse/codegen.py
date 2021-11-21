@@ -1,33 +1,12 @@
-from typing import List, Tuple, Any, Dict, Union, Protocol, Optional, Type
+from typing import List, Any, Dict, Union, Protocol
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
-from a816.parse.nodes import (
-    ScopeNode,
-    PopScopeNode,
-    SymbolNode,
-    CodePositionNode,
-    ExpressionNode,
-    RelocationAddressNode,
-    TableNode,
-    TextNode,
-    LabelNode,
-    ByteNode,
-    WordNode,
-    LongNode,
-    BinaryNode,
-    IncludeIpsNode,
-    OpcodeNode,
-    AsciiNode,
-    NodeProtocol,
-    NodeError,
-)
 from a816.parse.ast.nodes import (
     AstNode,
     BlockAstNode,
     CompoundAstNode,
-    ExprNode,
     LabelAstNode,
     Term,
     TextAstNode,
@@ -47,6 +26,26 @@ from a816.parse.ast.nodes import (
     ForAstNode,
     OpcodeAstNode,
     ExpressionAstNode,
+)
+from a816.parse.nodes import (
+    ScopeNode,
+    PopScopeNode,
+    SymbolNode,
+    CodePositionNode,
+    ExpressionNode,
+    RelocationAddressNode,
+    TableNode,
+    TextNode,
+    LabelNode,
+    ByteNode,
+    WordNode,
+    LongNode,
+    BinaryNode,
+    IncludeIpsNode,
+    OpcodeNode,
+    AsciiNode,
+    NodeProtocol,
+    NodeError,
 )
 from a816.parse.tokens import Token, TokenType
 from a816.symbols import Resolver
@@ -98,7 +97,7 @@ def generate_map(
     node: MapAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
 ) -> GenNodes:
     attributes = node.args
-    # def map(self, identifier, bank_range, address_range, mask, writeable=False, mirror_bank_range=None):
+
     resolver.bus.map(
         attributes["identifier"],
         attributes["bank_range"],

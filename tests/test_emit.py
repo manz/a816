@@ -1,17 +1,15 @@
-import unittest
-
 import struct
+import unittest
 from unittest import skip
 
+from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.expression import eval_expression
-from a816.parse.ast.nodes import ExpressionAstNode, ExprNode, Term
-from a816.parse.scanner_states import lex_initial
+from a816.parse.ast.nodes import ExpressionAstNode, Term
+from a816.parse.codegen import code_gen
+from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token, TokenType
 from a816.program import Program
-from a816.parse.nodes import NodeError
-from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.codegen import code_gen
-from a816.tests import StubWriter
+from tests import StubWriter
 
 
 class EmitTest(unittest.TestCase):

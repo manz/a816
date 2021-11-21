@@ -1,15 +1,13 @@
-import os
-import unittest
-import struct
 import logging
+import struct
+import unittest
 from typing import List, Tuple
 
-from a816.parse.codegen import code_gen
-from a816.parse.mzparser import MZParser as LALRParser, MZParser
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.nodes import OpcodeNode, ValueNode, ExpressionNode, ScopeNode, PopScopeNode
+from a816.parse.codegen import code_gen
+from a816.parse.mzparser import MZParser as LALRParser
+from a816.parse.nodes import OpcodeNode
 from a816.program import Program
-from a816.symbols import Resolver
 from a816.writers import Writer
 
 logger = logging.getLogger("a816")

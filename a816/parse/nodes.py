@@ -3,14 +3,14 @@ import struct
 from io import BufferedReader
 from typing import Optional, Protocol, List, Tuple, Union, cast
 
-from a816.cpu.mapping import Address
-from a816.exceptions import SymbolNotDefined
 from a816.cpu.cpu_65c816 import (
     NoOpcodeForOperandSize,
     OpcodeProtocol,
     AddressingMode,
     snes_opcode_table,
 )
+from a816.cpu.mapping import Address
+from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.tokens import Token

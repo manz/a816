@@ -1,15 +1,15 @@
 import struct
 from typing import List, Tuple, Any
-from unittest.case import TestCase, skip
+from unittest.case import TestCase
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.expression import eval_expression
-from a816.parse.ast.nodes import SymbolAffectationAstNode, AssignAstNode
+from a816.parse.ast.nodes import AssignAstNode
 from a816.parse.codegen import code_gen
 from a816.parse.mzparser import MZParser, ParserResult
 from a816.program import Program
 from a816.symbols import Resolver
-from a816.tests import StubWriter
+from tests import StubWriter
 
 
 class TestParse(TestCase):
