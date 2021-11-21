@@ -1,0 +1,20 @@
+on:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Setup Python 3.9
+      uses: actions/setup-python@v1
+      with:
+        python-version: '3.9'
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+    - name: Type check
+      run: mypy -p a816 --strict
+    - name: Run tests
+      run: pytest --cov-report=term --cov-branch --cov=a816
+
