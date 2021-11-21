@@ -1,7 +1,7 @@
 from typing import List
 
 from a816.parse.ast.nodes import BinOp, ExprNode, ExpressionAstNode, Term, UnaryOp
-from a816.parse.tokens import TokenType, Token
+from a816.parse.tokens import TokenType
 from a816.symbols import Resolver
 
 OPERATOR_PRECEDENCE = {

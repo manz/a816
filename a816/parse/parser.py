@@ -1,10 +1,9 @@
 import logging
-import typing
-from typing import List, Protocol, Any, Callable
+from typing import List, Callable
 
+from a816.parse.ast.nodes import AstNode
 from a816.parse.errors import ParserSyntaxError
 from a816.parse.tokens import Token, TokenType
-from a816.parse.ast.nodes import AstNode
 
 logger = logging.getLogger("a816.parser")
 

@@ -1,4 +1,5 @@
-from typing import List, Optional, Protocol, Callable
+from typing import List, Optional, Callable
+
 from a816.parse.errors import ScannerException
 from a816.parse.tokens import Position, TokenType, Token, EOF, File
 
