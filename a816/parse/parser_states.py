@@ -1,6 +1,5 @@
 import ast
-from dataclasses import dataclass
-from typing import Tuple, Literal, List, Any, Union, Optional, cast, Type
+from typing import Tuple, Literal, List, Union, Optional, cast, Type
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.nodes import (
@@ -36,13 +35,12 @@ from a816.parse.ast.nodes import (
     index_map,
     ExpressionAstNode,
 )
-
+from a816.parse.errors import ParserSyntaxError
+from a816.parse.parser import Parser, StateFunc
+from a816.parse.parser import expect_token, accept_token, expect_tokens, accept_tokens
 from a816.parse.scanner import Scanner, ScannerStateFunc
 from a816.parse.scanner_states import lex_initial
-from a816.parse.parser import Parser, StateFunc
-from a816.parse.errors import ParserSyntaxError
 from a816.parse.tokens import TokenType, Token
-from a816.parse.parser import expect_token, accept_token, expect_tokens, accept_tokens
 
 
 def parse_scope(p: Parser) -> ScopeAstNode:
@@ -315,7 +313,7 @@ def _parse_expression(p: Parser) -> List[ExprNode]:
         tokens.append(UnaryOp(current_token))
         tokens += _parse_expression(p)
     else:
-        raise RuntimeError("Invalid expression")
+        raise ParserSyntaxError("Invalid expression", token=current_token)
 
     if tokens:
         operator = p.current()

@@ -1,6 +1,6 @@
 from a816.cpu.cpu_65c816 import snes_opcode_table, AddressingMode, get_opcodes_with_addressing
-from a816.parse.scanner import Scanner
 from a816.parse.errors import ScannerException
+from a816.parse.scanner import Scanner
 from a816.parse.tokens import TokenType, EOF
 
 opcodes = snes_opcode_table.keys()
@@ -55,7 +55,7 @@ def lex_expression(l: "Scanner") -> None:
             lex_number(l)
         elif l.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
             lex_identifier(l)
-        elif l.accept("+-*/&") or l.accept_prefix("<<") or l.accept_prefix(">>"):
+        elif l.accept("+-*/&|") or l.accept_prefix("<<") or l.accept_prefix(">>"):
             l.emit(TokenType.OPERATOR)
         elif l.accept("("):
             l.emit(TokenType.LPAREN)

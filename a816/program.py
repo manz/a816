@@ -2,25 +2,24 @@ import logging
 from pathlib import Path
 from typing import Optional, List
 
+from a816.cpu.cpu_65c816 import RomType
 from a816.parse.mzparser import MZParser
 from a816.parse.nodes import (
     CodePositionNode,
     LabelNode,
     SymbolNode,
     BinaryNode,
-    RelocationAddressNode,
     IncludeIpsNode,
     NodeProtocol,
 )
+from a816.parse.nodes import NodeError
 from a816.symbols import Resolver
 from a816.writers import IPSWriter, SFCWriter, Writer
-from a816.parse.nodes import NodeError
-from a816.cpu.cpu_65c816 import RomType
 
 logger = logging.getLogger("a816")
 
 
-class Program(object):
+class Program:
     def __init__(self, parser: Optional[MZParser] = None, dump_symbols: bool = False):
         self.resolver = Resolver()
         self.logger = logging.getLogger("x816")
@@ -35,11 +34,17 @@ class Program(object):
             raise RuntimeError(f"{logical_address} has no physical address.")
 
     def resolver_reset(self) -> None:
+        """resets the resolver"""
         self.resolver.pc = 0x000000
         self.resolver.last_used_scope = 0
         self.resolver.current_scope = self.resolver.scopes[0]
 
     def resolve_labels(self, program_nodes: List[NodeProtocol]) -> None:
+        """
+        Resolves the labels
+        :param program_nodes:
+        :return:
+        """
         self.resolver.last_used_scope = 0
 
         previous_pc = self.resolver.reloc_address
@@ -109,6 +114,12 @@ class Program(object):
         return 0
 
     def assemble(self, asm_file: str, sfc_file: Path) -> int:
+        """
+        Compile asmfile.
+        :param asm_file:
+        :param sfc_file:
+        :return: error code
+        """
         with open(sfc_file, "wb") as f:
             sfc_emitter = SFCWriter(f)
             return self.assemble_with_emitter(asm_file, sfc_emitter)
@@ -127,6 +138,11 @@ class Program(object):
             return exit_code
 
     def exports_symbol_file(self, filename: str) -> None:
+        """
+        Exports the symbols into a file suited for bsnes sym debugger.
+        :param filename:
+        :return:
+        """
         with open(filename, "wt", encoding="utf-8") as output_file:
             labels = self.resolver.get_all_labels()
             output_file.write("[labels]\n")

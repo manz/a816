@@ -1,7 +1,7 @@
 from typing import Tuple, Optional, Dict
 
 
-class Mapping(object):
+class Mapping:
     def __init__(
         self,
         bank_range: Tuple[int, int],
@@ -29,7 +29,7 @@ class Mapping(object):
         return (bank + self.bank_range[0]) << 16 | (self.mask & 0xFFFF) + value % self.mask
 
 
-class Bus(object):
+class Bus:
     def __init__(self, name: Optional[str] = None) -> None:
         self.name = name
         self.lookup: Dict[int, str] = {}
@@ -82,7 +82,7 @@ class Bus(object):
         return Address(self, addr)
 
 
-class Address(object):
+class Address:
     def __init__(self, bus: Bus, logical_value: int) -> None:
         self.bus: Bus = bus
         self.logical_value: int = logical_value

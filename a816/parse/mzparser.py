@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 from typing import List, Tuple, Any, Optional
 
+from a816.parse.ast.nodes import AstNode
 from a816.parse.codegen import code_gen
 from a816.parse.errors import ScannerException, ParserSyntaxError
 from a816.parse.nodes import NodeProtocol
 from a816.parse.parser import Parser
 from a816.parse.parser_states import parse_initial
-from a816.parse.ast.nodes import AstNode
 from a816.parse.scanner import Scanner
 from a816.parse.scanner_states import lex_initial
 from a816.symbols import Resolver
@@ -22,7 +22,7 @@ class ParserResult:
         return [node.to_representation() for node in self.nodes]
 
 
-class MZParser(object):
+class MZParser:
     def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
 
