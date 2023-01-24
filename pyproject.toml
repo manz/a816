@@ -1,0 +1,96 @@
+[project]
+name = "a816"
+version = "1.0.0.dev0"
+description = "65c816 patching assembler (Super Famicom)"
+authors = [
+    { name = "Emmanuel Peralta", email = "manz@ringum.net" },
+]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.10"
+
+keywords = ["super famicom", "supernes", "assembly", "romhack"]
+
+classifiers = [
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+]
+
+dependencies = []
+
+[project.urls]
+homepage = "https://a816.ringum.net"
+repository = "https://github.com/manz/a816"
+
+[project.scripts]
+x816 = "a816.cli:cli_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.black]
+line-length = 120
+target_version = ['py38']
+include = '\.pyi?$'
+exclude = '''
+(
+  /(
+      \.eggs         # exclude a few common directories in the
+    | \.git          # root of the project
+    | \.hg
+    | \.mypy_cache
+    | \.hatch
+    | \.fleet
+    | \.github
+    | \.coverage
+    | build
+    | dist
+  )
+)
+'''
+
+[tool.isort]
+profile = "black"
+
+# Environments
+
+[tool.hatch.envs.tests]
+detached = true
+dependencies = [
+    "pytest", "pytest-cov", "mypy", "black", "flake8", "isort"
+]
+
+[tool.hatch.envs.tests.scripts]
+coverage = "pytest --cov-report term --cov=a816 --cov-branch tests"
+
+tests = "pytest tests"
+check = [
+    "black --check a816 tests",
+    "isort --check-only a816 tests",
+]
+format = [
+    "isort a816 tests",
+    "black a816 tests",
+    "check",
+]
+type = "mypy -p a816 -p tests --strict --show-error-codes"
+
+all = ["check", "type", "coverage"]
+
+[tool.hatch.envs.binary]
+detached = true
+dependencies = [
+    "nuitka",
+    "ordered-set",
+    "pyoxidizer"
+]
+
+[tool.hatch.envs.binary.scripts]
+build = [
+    "nuitka3 --standalone a816/cli.py"
+]
+oxydizer = [
+    "pyoxidizer build --release"
+]

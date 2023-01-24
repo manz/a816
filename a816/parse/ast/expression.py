@@ -1,6 +1,6 @@
 from typing import List
 
-from a816.parse.ast.nodes import BinOp, ExprNode, ExpressionAstNode, Term, UnaryOp
+from a816.parse.ast.nodes import BinOp, ExpressionAstNode, ExprNode, Term, UnaryOp
 from a816.parse.tokens import TokenType
 from a816.symbols import Resolver
 
@@ -65,6 +65,17 @@ def shunting_yard(expr_nodes: List[ExprNode]) -> List[ExprNode]:
     return output_queue
 
 
+def eval_number(number: str) -> int:
+    if number.startswith("0x"):
+        base = 16
+    elif number.startswith("0b"):
+        base = 2
+    else:
+        base = 10
+
+    return int(number, base)
+
+
 def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int:
     tokens = expression.tokens
     ordered = shunting_yard(tokens)
@@ -74,14 +85,7 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int:
 
     for current in ordered:
         if current.token.type == TokenType.NUMBER:
-            if current.token.value.startswith("0x"):
-                base = 16
-            elif current.token.value.startswith("0b"):
-                base = 2
-            else:
-                base = 10
-
-            values_stack.append(int(current.token.value, base))
+            values_stack.append(eval_number(current.token.value))
         elif current.token.type == TokenType.IDENTIFIER:
             resolved_value = resolver.current_scope.value_for(current.token.value)
             if isinstance(resolved_value, int):
@@ -122,11 +126,10 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int:
 
 
 def expr_to_ast(expr_str: str) -> ExpressionAstNode:
-    from a816.parse.scanner import Scanner
-    from a816.parse.scanner_states import lex_expression
-
     from a816.parse.parser import Parser
     from a816.parse.parser_states import parse_expression_ep
+    from a816.parse.scanner import Scanner
+    from a816.parse.scanner_states import lex_expression
 
     scanner = Scanner(lex_expression)
     tokens = scanner.scan("memory", expr_str)

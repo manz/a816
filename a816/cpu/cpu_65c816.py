@@ -1,9 +1,10 @@
 import struct
 import typing
+import warnings
 from enum import Enum
-from typing import Optional, Dict, Protocol, Union, List
+from typing import Dict, List, Optional, Protocol, Union
 
-if typing.TYPE_CHECKING:
+if typing.TYPE_CHECKING:  # pragma: nocover
     from a816.parse.nodes import ValueNodeProtocol
     from a816.symbols import Resolver
 
@@ -29,19 +30,16 @@ class OpcodeProtocol(Protocol):
     def emit(
         self, value_node: "Optional[ValueNodeProtocol]", resolver: "Resolver", size: Optional[str] = None
     ) -> bytes:
-        ...
+        """"""
 
     def supposed_length(self, value_node: "Optional[ValueNodeProtocol]", size: Optional[str] = None) -> int:
-        ...
-
-    def check_opcode(self) -> None:
-        ...
+        """"""
 
     def get_opcode_byte(self, value_size: str) -> int:
-        ...
+        """"""
 
     def guess_value_size(self, value_node: "ValueNodeProtocol", size: Optional[str]) -> str:
-        ...
+        """"""
 
 
 class BaseOpcode(OpcodeProtocol):
@@ -53,14 +51,14 @@ class BaseOpcode(OpcodeProtocol):
     ) -> bytes:
         return struct.pack("B", self.opcode)
 
+    def get_opcode_byte(self, value_size: str) -> int:
+        return self.opcode
+
     def supposed_length(self, value_node: "Optional[ValueNodeProtocol]", size: Optional[str] = None) -> int:
         return 1
 
-    def check_opcode(self) -> None:
-        raise NotImplementedError("check_opcode method should be implemented.")
-
-    def get_opcode_byte(self, value_size: str) -> int:
-        return self.opcode
+    def guess_value_size(self, value_node: "ValueNodeProtocol", size: Optional[str]) -> str:
+        return ""
 
 
 class RelativeJumpOpcode(BaseOpcode):
@@ -365,6 +363,7 @@ class RomType(Enum):
 
 
 def rom_to_snes(address: int, mode: RomType) -> int:
+    warnings.warn("Kept for compatibility, see Address class for more information.", DeprecationWarning)
     if mode == RomType.low_rom:
         bank = int(address / 0x8000)
         remainder = (address % 0x8000) + 0x8000
@@ -382,6 +381,8 @@ def rom_to_snes(address: int, mode: RomType) -> int:
 
 def snes_to_rom(address: int) -> int:
     """Legacy mapping"""
+    warnings.warn("Kept for compatibility, see Address class for more information.", DeprecationWarning)
+
     if address >= 0xC00000:
         rom_address = address - 0xC00000
     elif address >= 0x808000:

@@ -1,12 +1,12 @@
 import logging
 import struct
 from io import BufferedReader
-from typing import Optional, Protocol, List, Tuple, Union, cast
+from typing import List, Optional, Protocol, Tuple, Union, cast
 
 from a816.cpu.cpu_65c816 import (
+    AddressingMode,
     NoOpcodeForOperandSize,
     OpcodeProtocol,
-    AddressingMode,
     snes_opcode_table,
 )
 from a816.cpu.mapping import Address
@@ -22,13 +22,22 @@ logger = logging.getLogger("a816.nodes")
 
 class ValueNodeProtocol(Protocol):
     def get_value(self) -> int:
-        ...
+        """Returns the value of the node as an int."""
 
     def get_value_string_len(self) -> int:
-        ...
+        """Returns the length in bytes of the value."""
 
     def get_operand_size(self) -> str:
-        ...
+        """Returns the operand size as b w l"""
+        value_length = self.get_value_string_len()
+        if value_length <= 2:
+            retval = "b"
+        elif value_length <= 4:
+            retval = "w"
+        else:
+            retval = "l"
+
+        return retval
 
 
 class ValueNode(ValueNodeProtocol):
@@ -41,17 +50,6 @@ class ValueNode(ValueNodeProtocol):
     def get_value_string_len(self) -> int:
         value_length = len(self.value)
         return value_length
-
-    def get_operand_size(self) -> str:
-        value_length = self.get_value_string_len()
-        if value_length <= 2:
-            retval = "b"
-        elif value_length <= 4:
-            retval = "w"
-        else:
-            retval = "l"
-
-        return retval
 
     def __str__(self) -> str:
         return "ValueNode(%s)" % self.value
@@ -71,17 +69,6 @@ class ExpressionNode(ValueNodeProtocol):
 
     def get_value_string_len(self) -> int:
         return len(hex(self.get_value())) - 2
-
-    def get_operand_size(self) -> str:
-        value_length = self.get_value_string_len()
-        if value_length <= 2:
-            retval = "b"
-        elif value_length <= 4:
-            retval = "w"
-        else:
-            retval = "l"
-
-        return retval
 
     def __str__(self) -> str:
         return "%s(%s)" % (self.__class__.__name__, self.expression.to_representation()[0])
@@ -108,10 +95,10 @@ class LabelNode:
 
 class NodeProtocol(Protocol):
     def emit(self, current_addr: Address) -> bytes:
-        ...
+        """Emits the node as bytes"""
 
     def pc_after(self, current_pc: Address) -> Address:
-        ...
+        """Returns the program counter address after the node was emitted."""
 
 
 class SymbolNode(NodeProtocol):
@@ -309,7 +296,7 @@ class IncludeIpsNode(NodeProtocol):
         self.ips_file_path = file_path
         self.delta = eval_expression(delta_expression, resolver) if delta_expression else 0
         self.blocks: List[Tuple[int, bytes]] = []
-        with cast(BufferedReader, open(self.ips_file_path, "rb")) as ips_file:
+        with open(self.ips_file_path, "rb") as ips_file:
             if ips_file.read(5) != b"PATCH":
                 raise RuntimeError(f'{self.ips_file_path} is missing "PATCH" header')
 

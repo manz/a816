@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from typing import List, Tuple, Any, Optional
+from typing import Any, List, Optional, Tuple
 
 from a816.parse.ast.nodes import AstNode
 from a816.parse.codegen import code_gen
-from a816.parse.errors import ScannerException, ParserSyntaxError
+from a816.parse.errors import ParserSyntaxError, ScannerException
 from a816.parse.nodes import NodeProtocol
 from a816.parse.parser import Parser
 from a816.parse.parser_states import parse_initial
@@ -45,7 +45,7 @@ class MZParser:
             position = e.position
             position_str = str(position)
             line = position.get_line()
-            error = f"{position_str} :\n{line}\n " * position.column + "~"
+            error = f"{position_str} : {e}\n{line}\n" + (" " * position.column + "^")
         except ParserSyntaxError as e:
             error = e.token.trace()
         return ParserResult(nodes=ast, error=error)

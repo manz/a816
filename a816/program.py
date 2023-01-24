@@ -1,18 +1,18 @@
 import logging
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 from a816.cpu.cpu_65c816 import RomType
 from a816.parse.mzparser import MZParser
 from a816.parse.nodes import (
-    CodePositionNode,
-    LabelNode,
-    SymbolNode,
     BinaryNode,
+    CodePositionNode,
     IncludeIpsNode,
+    LabelNode,
+    NodeError,
     NodeProtocol,
+    SymbolNode,
 )
-from a816.parse.nodes import NodeError
 from a816.symbols import Resolver
 from a816.writers import IPSWriter, SFCWriter, Writer
 
