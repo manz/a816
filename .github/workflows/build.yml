@@ -14,9 +14,9 @@ jobs:
     - name: Install hatch
       run: pip install hatch
     - name: Type check
-      run: hatch run type:run
+      run: hatch run tests:type
     - name: Style check
-      run: hatch run style:check
+      run: hatch run tests:check
     - name: Run tests
-      run: hatch run test:run
+      run: hatch run test:coverage
 
