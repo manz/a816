@@ -63,7 +63,7 @@ dependencies = [
 ]
 
 [tool.hatch.envs.tests.scripts]
-coverage = "pytest --cov-report term --cov=a816 --cov-branch tests"
+coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov-branch tests"
 
 tests = "pytest tests"
 check = [
