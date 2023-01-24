@@ -1,8 +1,8 @@
 import logging
-from typing import Optional, ItemsView, Dict, List, Tuple, Any, Union
+from typing import Any, Dict, ItemsView, List, Optional, Tuple, Union
 
 from a816.cpu.cpu_65c816 import RomType
-from a816.cpu.mapping import Bus, Address
+from a816.cpu.mapping import Address, Bus
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.nodes import BlockAstNode
 from script import Table

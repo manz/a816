@@ -1,7 +1,11 @@
-from a816.cpu.cpu_65c816 import snes_opcode_table, AddressingMode, get_opcodes_with_addressing
+from a816.cpu.cpu_65c816 import (
+    AddressingMode,
+    get_opcodes_with_addressing,
+    snes_opcode_table,
+)
 from a816.parse.errors import ScannerException
 from a816.parse.scanner import Scanner
-from a816.parse.tokens import TokenType, EOF
+from a816.parse.tokens import EOF, TokenType
 
 opcodes = snes_opcode_table.keys()
 opcodes_without_operand = get_opcodes_with_addressing(AddressingMode.none)
@@ -149,22 +153,24 @@ def lex_opcode(l: "Scanner") -> None:
 
 
 KEYWORDS = {
-    "scope": TokenType.KEYWORD,
-    "table": TokenType.KEYWORD,
-    "include": TokenType.KEYWORD,
-    "include_ips": TokenType.KEYWORD,
-    "incbin": TokenType.KEYWORD,
-    "pointer": TokenType.KEYWORD,
-    "text": TokenType.KEYWORD,
-    "ascii": TokenType.KEYWORD,
-    "db": TokenType.KEYWORD,
-    "dw": TokenType.KEYWORD,
-    "dl": TokenType.KEYWORD,
-    "macro": TokenType.KEYWORD,
-    "map": TokenType.KEYWORD,
-    "if": TokenType.KEYWORD,
-    "else": TokenType.KEYWORD,
-    "for": TokenType.KEYWORD,
+    "scope",
+    "table",
+    "include",
+    "include_ips",
+    "incbin",
+    "pointer",
+    "text",
+    "ascii",
+    "db",
+    "dw",
+    "dl",
+    "macro",
+    "map",
+    "if",
+    "else",
+    "for",
+    "struct",
+    "istruct",
 }
 
 
@@ -187,9 +193,8 @@ def lex_macro_args_def(l: "Scanner") -> None:
 def lex_keyword(l: "Scanner") -> None:
     l.ignore()
     l.accept_run("abcdefghijklmnopqrstuvwxyz_")
-    if l.current_token_text() in KEYWORDS.keys():
-        key = l.current_token_text()
-        l.emit(KEYWORDS[key])
+    if l.current_token_text() in KEYWORDS:
+        l.emit(TokenType.KEYWORD)
     else:
         raise ScannerException(f"Unknown Keyword {l.current_token_text()}", l.get_position())
 
@@ -244,6 +249,8 @@ def lex_initial(l: Scanner) -> None:
         l.emit(TokenType.OPERATOR)
     # elif l.accept_prefix('True') or l.accept_prefix('False'):
     #     l.emit(TokenType.BOOLEAN)
+    elif l.accept_prefix("byte") or l.accept_prefix("word") or l.accept_prefix("long"):
+        l.emit(TokenType.TYPE)
     elif l.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
         l.backup()
         # check if not an opcode

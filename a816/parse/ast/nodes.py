@@ -1,17 +1,20 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Tuple, Any, List, TypedDict, Optional, Union, Literal
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, Union
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.tokens import Token
 
 
-class AstNode:
+class AstNode(ABC):
     kind: str
 
     def __init__(self, kind: str, file_info: Token) -> None:
+
         self.kind = kind
         self.file_info = file_info
 
+    @abstractmethod
     def to_representation(self) -> Tuple[Any, ...]:
         """Returns the tuple representation of the node."""
 
@@ -20,21 +23,27 @@ class AstNode:
 class ExprNode:
     token: Token
 
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, ExprNode):
+            return False
+
+        return self.token == other.token
+
 
 class BinOp(ExprNode):
-    ...
+    """Represents a Binary expression operation"""
 
 
 class UnaryOp(ExprNode):
-    ...
+    """Represents a Unary expression operation"""
 
 
 class Term(ExprNode):
-    ...
+    """Represents a expression term"""
 
 
 class Parenthesis(ExprNode):
-    ...
+    """Represents a Parenthesis expression"""
 
 
 class ExpressionAstNode(AstNode):
@@ -137,7 +146,7 @@ class CodeRelocationAstNode(AstNode):
 MapArgs = TypedDict(
     "MapArgs",
     {
-        "identifier": str,
+        "identifier": Union[str, int],
         "writable": bool,
         "bank_range": Tuple[int, int],
         "addr_range": Tuple[int, int],
@@ -315,6 +324,16 @@ class CodeLookupAstNode(AstNode):
         return self.kind, self.symbol
 
 
+class StructAstNode(AstNode):
+    def __init__(self, name: str, fields: Dict[str, str], file_info: Token) -> None:
+        super().__init__("struct", file_info)
+        self.name = name
+        self.fields = fields
+
+    def to_representation(self) -> Tuple[Any, ...]:
+        return self.kind, self.name, self.fields
+
+
 class ForAstNode(AstNode):
     def __init__(
         self,
@@ -354,6 +373,7 @@ KeywordAstNode = Union[
     IncludeBinaryAstNode,
     BlockAstNode,
     TableAstNode,
+    StructAstNode,
 ]
 FileInfoAstNode = Tuple[Literal["file_info"], Token]
 
