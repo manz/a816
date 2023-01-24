@@ -7,14 +7,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Setup Python 3.9
+    - name: Setup Python 3.10
       uses: actions/setup-python@v1
       with:
-        python-version: '3.9'
-    - name: Install dependencies
-      run: pip install -r requirements.txt
+        python-version: '3.10'
+    - name: Install hatch
+      run: pip install hatch
     - name: Type check
-      run: mypy -p a816 --strict
+      run: hatch run type:run
+    - name: Style check
+      run: hatch run style:check
     - name: Run tests
-      run: pytest --cov-report=term --cov-branch --cov=a816
+      run: hatch run test:run
 
