@@ -54,6 +54,9 @@ exclude = '''
 [tool.isort]
 profile = "black"
 
+[tool.coverage.run]
+relative_files = true
+
 # Environments
 
 [tool.hatch.envs.tests]
