@@ -5,19 +5,25 @@ Another 65c816 assembler
 
 ### Command line
 ```
-$ ./x816 --help
-usage: x816.py [-h] [--verbose] [-o OUTPUT_FILE] input_file
+$ x816 --help
+usage: x816 [-h] [--verbose] [-o OUTPUT_FILE] [-f FORMAT] [-m MAPPING] [--copier-header] [--dump-symbols] [-D KEY=VALUE [KEY=VALUE ...]] input_file
 
-a816 Arguments parser
+x816 usage
 
 positional arguments:
   input_file            The asm file to assemble.
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --verbose             Displays all log levels.
   -o OUTPUT_FILE, --output OUTPUT_FILE
                         Output file
+  -f FORMAT             Output format
+  -m MAPPING            Address Mapping
+  --copier-header       Adds 0x200 address delta corresponding to copier header in ips writer.
+  --dump-symbols        Dumps symbol table
+  -D KEY=VALUE [KEY=VALUE ...], --defines KEY=VALUE [KEY=VALUE ...]
+                        Defines symbols.
 ```
 
 or directly from python code:
