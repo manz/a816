@@ -10,7 +10,7 @@ def make_exe():
     # Obtain the default PythonDistribution for our build target. We link
     # this distribution into our produced executable and extract the Python
     # standard library from it.
-    dist = default_python_distribution()
+    dist = default_python_distribution(flavor="standalone_static")
 
     # This function creates a `PythonPackagingPolicy` instance, which
     # influences how executables are built and how resources are added to
@@ -40,7 +40,7 @@ def make_exe():
     # to run a Python interpreter. Various functionality from the Python
     # standard library won't work with this setting! But it can be used to
     # reduce the size of generated executables by omitting unused extensions.
-#    policy.extension_module_filter = "minimal"
+    # policy.extension_module_filter = "minimal"
 
     # Package Python extensions in the distribution not having additional
     # library dependencies. This will exclude working support for SSL,
