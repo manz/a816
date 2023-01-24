@@ -13,7 +13,7 @@
           run: pip install hatch
         - name: Build binary
           run: make binary
-        - uses: actions/upload-artifact@v2
+        - uses: actions/upload-artifact@v3
           with:
             name: binaries
             path: build/*
