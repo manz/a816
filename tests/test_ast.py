@@ -1,5 +1,5 @@
 import struct
-from typing import List, Tuple, Any
+from typing import Any, List, Tuple
 from unittest.case import TestCase
 
 from a816.cpu.cpu_65c816 import AddressingMode
