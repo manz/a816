@@ -18,5 +18,5 @@ jobs:
     - name: Style check
       run: hatch run tests:check
     - name: Run tests
-      run: hatch run test:coverage
+      run: hatch run tests:coverage
 
