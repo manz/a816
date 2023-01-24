@@ -1,46 +1,53 @@
 import ast
-from typing import Tuple, Literal, List, Union, Optional, cast, Type
+from typing import List, Literal, Optional, Tuple, Type, Union, cast
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.nodes import (
+    AsciiAstNode,
+    AssignAstNode,
     AstNode,
     BinOp,
     BlockAstNode,
-    CompoundAstNode,
-    ExprNode,
-    LabelAstNode,
-    Parenthesis,
-    Term,
-    TextAstNode,
-    AsciiAstNode,
-    ScopeAstNode,
+    CodeLookupAstNode,
     CodePositionAstNode,
     CodeRelocationAstNode,
+    CompoundAstNode,
+    DataNode,
+    ExpressionAstNode,
+    ExprNode,
+    ForAstNode,
+    IfAstNode,
+    IncludeBinaryAstNode,
+    IncludeIpsAstNode,
+    KeywordAstNode,
+    LabelAstNode,
+    MacroApplyAstNode,
+    MacroAstNode,
     MapArgs,
     MapAstNode,
-    IfAstNode,
-    MacroAstNode,
-    MacroApplyAstNode,
-    DataNode,
-    TableAstNode,
-    IncludeIpsAstNode,
-    IncludeBinaryAstNode,
-    SymbolAffectationAstNode,
-    AssignAstNode,
-    CodeLookupAstNode,
-    ForAstNode,
-    KeywordAstNode,
     OpcodeAstNode,
+    Parenthesis,
+    ScopeAstNode,
+    StructAstNode,
+    SymbolAffectationAstNode,
+    TableAstNode,
+    Term,
+    TextAstNode,
     UnaryOp,
     index_map,
-    ExpressionAstNode,
 )
 from a816.parse.errors import ParserSyntaxError
-from a816.parse.parser import Parser, StateFunc
-from a816.parse.parser import expect_token, accept_token, expect_tokens, accept_tokens
+from a816.parse.parser import (
+    Parser,
+    StateFunc,
+    accept_token,
+    accept_tokens,
+    expect_token,
+    expect_tokens,
+)
 from a816.parse.scanner import Scanner, ScannerStateFunc
 from a816.parse.scanner_states import lex_initial
-from a816.parse.tokens import TokenType, Token
+from a816.parse.tokens import Token, TokenType
 
 
 def parse_scope(p: Parser) -> ScopeAstNode:
@@ -131,6 +138,8 @@ def parse_macro(p: Parser) -> MacroAstNode:
 
 def parse_map(p: Parser) -> MapAstNode:
     args: MapArgs = {}
+    first_identifier = p.current()
+    expect_token(first_identifier, TokenType.IDENTIFIER)
 
     while p.current().type == TokenType.IDENTIFIER:
         identifier = p.next()
@@ -156,7 +165,7 @@ def parse_map(p: Parser) -> MapAstNode:
         else:
             raise ParserSyntaxError(f"Unknown attribute for map directive. {identifier.value}", identifier)
 
-    return MapAstNode(args, identifier)
+    return MapAstNode(args, first_identifier)
 
 
 def parse_if(p: Parser) -> IfAstNode:
@@ -186,6 +195,35 @@ def parse_for(p: Parser) -> ForAstNode:
     block = CompoundAstNode(parse_block(p), p.current())
 
     return ForAstNode(variable.value, start, end, block, current)
+
+
+def parse_struct(p: Parser) -> StructAstNode:
+    current = p.current()
+
+    variable = p.next()
+    expect_token(variable, TokenType.IDENTIFIER)
+
+    expect_token(p.next(), TokenType.LBRACE)
+    fields = {}
+    while p.current().type != TokenType.EOF:
+        if p.current().type == TokenType.COMMENT:
+            p.next()
+            continue
+        if p.current().type == TokenType.RBRACE:
+            break
+
+        expect_token(p.current(), TokenType.TYPE)
+        field_type = p.next()
+        expect_token(p.current(), TokenType.IDENTIFIER)
+        field_identifier = p.current()
+
+        fields[field_identifier.value] = field_type.value
+
+        p.next()
+
+    expect_token(p.next(), TokenType.RBRACE)
+
+    return StructAstNode(variable.value, fields, current)
 
 
 def parse_directive_with_quoted_string(p: Parser) -> str:
@@ -253,6 +291,8 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
         return parse_if(p)
     elif keyword.value == "for":
         return parse_for(p)
+    elif keyword.value == "struct":
+        return parse_struct(p)
     else:
         raise ParserSyntaxError(f"Unexpected token {keyword}", keyword)
 

@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from typing import List, Optional
+from typing import Any, List, Optional
 
 
 class File:
@@ -69,6 +69,8 @@ class TokenType(Enum):
 
     BOOLEAN = auto()
 
+    TYPE = auto()
+
 
 class Token:
     def __init__(self, type_: TokenType, value: str, position: Optional[Position] = None) -> None:
@@ -78,6 +80,12 @@ class Token:
 
     def __repr__(self) -> str:
         return f"Token({self.type}, {self.value})"
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, Token):
+            return False
+
+        return self.type == other.type and self.value == other.value
 
     def display(self) -> None:
         print(self.trace())
@@ -92,7 +100,7 @@ class Token:
             trace = f"""
 {self.position} {self.type}
 {line}
-{' ' * self.position.column}{'~' * len(self.value)}"""
+{' ' * self.position.column}{'^' * len(self.value)}"""
         return trace
 
 

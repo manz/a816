@@ -1,51 +1,53 @@
-from typing import List, Any, Dict, Union, Protocol
+from typing import Any, Dict, List, Protocol, Union
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import (
+    AsciiAstNode,
+    AssignAstNode,
     AstNode,
     BlockAstNode,
-    CompoundAstNode,
-    LabelAstNode,
-    Term,
-    TextAstNode,
-    ScopeAstNode,
+    CodeLookupAstNode,
     CodePositionAstNode,
     CodeRelocationAstNode,
-    MapAstNode,
-    IfAstNode,
-    MacroAstNode,
-    MacroApplyAstNode,
+    CompoundAstNode,
     DataNode,
-    TableAstNode,
-    IncludeIpsAstNode,
-    IncludeBinaryAstNode,
-    SymbolAffectationAstNode,
-    CodeLookupAstNode,
-    ForAstNode,
-    OpcodeAstNode,
     ExpressionAstNode,
+    ForAstNode,
+    IfAstNode,
+    IncludeBinaryAstNode,
+    IncludeIpsAstNode,
+    LabelAstNode,
+    MacroApplyAstNode,
+    MacroAstNode,
+    MapAstNode,
+    OpcodeAstNode,
+    ScopeAstNode,
+    SymbolAffectationAstNode,
+    TableAstNode,
+    Term,
+    TextAstNode,
 )
 from a816.parse.nodes import (
-    ScopeNode,
-    PopScopeNode,
-    SymbolNode,
+    AsciiNode,
+    BinaryNode,
+    ByteNode,
     CodePositionNode,
     ExpressionNode,
+    IncludeIpsNode,
+    LabelNode,
+    LongNode,
+    NodeError,
+    NodeProtocol,
+    OpcodeNode,
+    PopScopeNode,
     RelocationAddressNode,
+    ScopeNode,
+    SymbolNode,
     TableNode,
     TextNode,
-    LabelNode,
-    ByteNode,
     WordNode,
-    LongNode,
-    BinaryNode,
-    IncludeIpsNode,
-    OpcodeNode,
-    AsciiNode,
-    NodeProtocol,
-    NodeError,
 )
 from a816.parse.tokens import Token, TokenType
 from a816.symbols import Resolver
@@ -58,7 +60,7 @@ class CodeGenFuncProtocol(Protocol):
     def __call__(
         self, node: AstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
     ) -> GenNodes:
-        ...
+        """Protocol for codegen functions."""
 
 
 def code_gen(ast_nodes: List[AstNode], resolver: Resolver) -> GenNodes:
@@ -99,7 +101,7 @@ def generate_map(
     attributes = node.args
 
     resolver.bus.map(
-        attributes["identifier"],
+        str(attributes["identifier"]),
         attributes["bank_range"],
         attributes["addr_range"],
         attributes["mask"],
@@ -199,7 +201,10 @@ def generate_db(node: DataNode, resolver: Resolver, macro_definitions: MacroDefi
 
 
 def generate_symbol(
-    node: SymbolAffectationAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: Union[SymbolAffectationAstNode, AssignAstNode],
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [SymbolNode(node.symbol, node.value, resolver)]
 
@@ -217,7 +222,7 @@ def generate_text(
 
 
 def generate_ascii(
-    node: AsciiNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: AsciiAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
 ) -> GenNodes:
     return [AsciiNode(node.text, resolver)]
 

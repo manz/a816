@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Dict
+from typing import Dict, Optional, Tuple
 
 
 class Mapping:

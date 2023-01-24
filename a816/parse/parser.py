@@ -1,5 +1,5 @@
 import logging
-from typing import List, Callable
+from typing import Callable, List
 
 from a816.parse.ast.nodes import AstNode
 from a816.parse.errors import ParserSyntaxError
