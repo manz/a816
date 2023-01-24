@@ -1,5 +1,5 @@
 import struct
-from typing import Protocol, List, Tuple, BinaryIO
+from typing import BinaryIO, List, Protocol, Tuple
 
 
 class Writer(Protocol):

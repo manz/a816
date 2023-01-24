@@ -15,5 +15,8 @@ class StubWriter(Writer):
         self.data_addresses.append(block_address)
         self.data.append(block)
 
+    def write_block_header(self, block: bytes, block_address: int) -> None:
+        return None
+
     def end(self) -> None:
         """not needed by StubWriter"""

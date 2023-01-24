@@ -1,0 +1,14 @@
+.idea
+build
+dist
+cli.build
+cli.dist
+*.pyc
+__pycache__
+.coverage
+coverage.xml
+.mypy_cache
+.pytest_cache
+.tox
+.hatch
+.fleet

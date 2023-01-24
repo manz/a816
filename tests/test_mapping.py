@@ -2,7 +2,6 @@ import unittest
 
 from a816.cpu.mapping import Bus
 
-
 # mapping.yml
 #   rom name=program.rom size=0x180000
 #   ram name=save.ram size=0x2000

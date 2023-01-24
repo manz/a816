@@ -80,24 +80,23 @@ class EmitTest(unittest.TestCase):
         self.assertEqual(writer.data[0], b"\x00\x40\x7e")
         self.assertEqual(writer.data_addresses[0], 0x100000)
 
-    # FIXME: ateq should not support RAM reloc this by design is more for bank mapping
-    # FIXME: should properly support 32k banks
-    # def test_ateq_bank_boundaries(self) -> None:
-    #     writer = StubWriter()
-    #
-    #     program = Program()
-    #
-    #     input_program = '''
-    #     @=0x200000, 0x03ffff
-    #     label:
-    #     .pointer label
-    #     label2:
-    #     '''
-    #     program.assemble_string_with_emitter(input_program, 'test_macro_application', writer)
-    #
-    #     self.assertEqual(writer.data[0], b'\x00\x40\x7e')
-    #     self.assertEqual(writer.data_addresses[0], 0x200000)
-    #     self.assertEqual(program.resolver.current_scope['label2'], 0x048002)
+    def test_ateq_bank_boundaries(self) -> None:
+        writer = StubWriter()
+
+        program = Program()
+
+        input_program = """
+        *=0x008000
+        @=0x7effff
+        label:
+        .pointer label
+        label2:
+        """
+        program.assemble_string_with_emitter(input_program, "test_macro_application", writer)
+
+        self.assertEqual(writer.data[0], b"\xff\xff\x7e")
+        self.assertEqual(writer.data_addresses[0], 0x000000)
+        self.assertEqual(program.resolver.current_scope["label2"], 0x7F0002)
 
     def test_stareq(self) -> None:
         writer = StubWriter()
