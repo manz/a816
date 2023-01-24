@@ -34,35 +34,35 @@ class ExpressionsTest(TestCase):
         value = eval_expression_str("a + 3", resolver)
         self.assertEqual(value, 4 + 3)
 
-    def test_plus(self):
+    def test_plus(self) -> None:
         resolver = Resolver()
         value = eval_expression_str("2 + 3", resolver)
         self.assertEqual(value, 2 + 3)
 
-    def test_minus(self):
+    def test_minus(self) -> None:
         resolver = Resolver()
         value = eval_expression_str("3 - 3", resolver)
-        self.assertEqual(value, 3 - 3)
+        self.assertEqual(value, 0)
 
-    def test_or(self):
+    def test_or(self) -> None:
         resolver = Resolver()
 
         value = eval_expression_str("0x00ff | 0xff00", resolver)
         self.assertEqual(0x00FF | 0xFF00, value)
 
-    def test_lshift(self):
+    def test_lshift(self) -> None:
         resolver = Resolver()
 
         value = eval_expression_str("1 << 16", resolver)
         self.assertEqual(1 << 16, value)
 
-    def test_rshift(self):
+    def test_rshift(self) -> None:
         resolver = Resolver()
 
         value = eval_expression_str("1 >> 16", resolver)
         self.assertEqual(1 >> 16, value)
 
-    def test_parenthesis(self):
+    def test_parenthesis(self) -> None:
         resolver = Resolver()
 
         value = eval_expression_str("(1 + 3) * 5", resolver)

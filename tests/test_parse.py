@@ -1,12 +1,20 @@
 import logging
 import struct
 import unittest
-from typing import List, Tuple
+from typing import List, Tuple, cast
 
 from a816.cpu.cpu_65c816 import AddressingMode
+from a816.parse.ast.nodes import (
+    ExpressionAstNode,
+    ExprNode,
+    IncludeIpsAstNode,
+    Term,
+    UnaryOp,
+)
 from a816.parse.codegen import code_gen
-from a816.parse.mzparser import MZParser as LALRParser
+from a816.parse.mzparser import MZParser
 from a816.parse.nodes import OpcodeNode
+from a816.parse.tokens import Token, TokenType
 from a816.program import Program
 from a816.writers import Writer
 
@@ -32,6 +40,9 @@ class StubWriter(Writer):
     def write_block(self, block: bytes, block_address: int) -> None:
         self.data.append((block_address, block))
 
+    def write_block_header(self, block: bytes, block_address: int) -> None:
+        return None
+
     def end(self) -> None:
         """StubWriter only implements write_block."""
 
@@ -49,6 +60,38 @@ class ParseTest(unittest.TestCase):
         assert node.value_node is not None
         self.assertEqual(node.value_node.get_value(), 0x1234)
         self.assertEqual(node.addressing_mode, AddressingMode.immediate)
+
+    def test_parse_comments(self) -> None:
+        program = Program()
+        nodes = program.parser.parse("; comment\nlda #0x1234\n; another comment")
+
+        self.assertEqual(len(nodes), 1)
+
+        node = nodes[0]
+        assert isinstance(node, OpcodeNode)
+        self.assertEqual(node.opcode, "lda")
+
+    def test_unterminated_string(self) -> None:
+        input_program = "'coucou"
+        program = Program()
+
+        result = program.parser.parse_as_ast(input_program, "memory.s")
+
+        self.assertEqual("memory.s:0:0 : Unterminated String\n'coucou\n^", result.error)
+
+    def test_invalid_size_specifier(self) -> None:
+        input_program = "lda.Q #0x00"
+        program = Program()
+
+        result = program.parser.parse_as_ast(input_program, "memory.s")
+        self.assertEqual("memory.s:0:4 : Invalid Size Specifier\nlda.Q #0x00\n    ^", result.error)
+
+    def test_invalid_index(self) -> None:
+        input_program = "lda 0x00, O"
+        program = Program()
+
+        result = program.parser.parse_as_ast(input_program, "memory.s")
+        self.assertEqual("memory.s:0:10 : Invalid index\nlda 0x00, O\n          ^", result.error)
 
     def test_data_word(self) -> None:
         input_program = """{
@@ -115,7 +158,7 @@ class ParseTest(unittest.TestCase):
         """
 
         program = Program()
-        program.parser = LALRParser(program.resolver)
+        program.parser = MZParser(program.resolver)
         ast = program.parser.parse_as_ast(input_program)
         nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
@@ -309,3 +352,31 @@ class ParseTest(unittest.TestCase):
         writer = StubWriter()
         program.emit(nodes, writer)
         self.assertEqual(writer.data[0][1], b"\x00\x00\x02\x80")
+
+    def test_include_ips(self) -> None:
+        input_program = """.include_ips 'whee.ips', -0x200"""
+        program = Program()
+        ast = program.parser.parse_as_ast(input_program)
+        nodes = ast.nodes
+
+        self.assertEqual(len(nodes), 1)
+        node = nodes[0]
+        self.assertTrue(isinstance(node, IncludeIpsAstNode))
+        ips_node = cast(IncludeIpsAstNode, node)
+        self.assertEqual("whee.ips", ips_node.file_path)
+        self.assertEqual(
+            [UnaryOp(token=Token(TokenType.OPERATOR, "-")), Term(token=Token(TokenType.NUMBER, "0x200"))],
+            ips_node.expression.tokens,
+        )
+
+    def test_parse_struct(self) -> None:
+        input_program = """
+        .struct a_struct {
+            byte id
+            word offset
+            long pointer
+        }"""
+
+        program = Program()
+        ast = program.parser.parse_as_ast(input_program)
+        self.assertEqual([("struct", "a_struct", {"id": "byte", "offset": "word", "pointer": "long"})], ast.ast)
