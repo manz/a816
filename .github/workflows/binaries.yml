@@ -19,3 +19,4 @@
             HATCH_INDEX_AUTH: ${{ secrets.HATCH_INDEX_AUTH }}
             HATCH_INDEX_USER: ${{ secrets.HATCH_INDEX_USER }}
             VERSION: ${{ github.ref_name }}
+            GH_TOKEN: ${{ github.token }}
