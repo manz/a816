@@ -1,5 +1,7 @@
   on:
     push:
+      tags:
+        - 'v*'
   jobs:
     binaries:
       runs-on: windows-latest
@@ -13,7 +15,9 @@
           run: pip install hatch
         - name: Build binary
           run: make binary
-        - uses: actions/upload-artifact@v3
-          with:
-            name: binaries
-            path: build/*
+        - name: Make release
+          run: make release
+          env:
+            HATCH_INDEX_AUTH: ${{ secrets.HATCH_INDEX_AUTH }}
+            HATCH_INDEX_USER: ${{ secrets.HATCH_INDEX_USER }}
+            VERSION: ${{ github.ref_name }}
