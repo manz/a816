@@ -38,11 +38,7 @@ env: ## Builds development virtualenv
 .PHONY: binary
 binary: ## Builds a standalone binary using pyoxydizer
 	$(Q) hatch run binary:oxydizer
-	ifeq ($(OS),Windows_NT)
-		Get-ChildItem -Path build/*/release/install/ | Compress-Archive -DestinationPath a816.zip
-	else
-		$(Q) zip -j a816 build/*/release/install/*
-	endif
+	$(Q) python3 zip_release.py
 
 .PHONY: binary-nuitka
 binary-nuitka: ## Builds a standalone binary using nuitka
@@ -51,7 +47,6 @@ binary-nuitka: ## Builds a standalone binary using nuitka
 .PHONY: publish
 publish: wheels ## Publish wheels on pypi
 	$(Q) HATCH_INDEX_USER=$(HATCH_INDEX_USER) HATCH_INDEX_AUTH=$(HATCH_INDEX_AUTH) hatch publish
-
 
 .PHONY: release
 release: publish binary ## Builds a windows binary and creates a release
