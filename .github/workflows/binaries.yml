@@ -1,0 +1,23 @@
+  on:
+    push:
+      tags:
+        - 'v*'
+  jobs:
+    binaries:
+      runs-on: windows-latest
+      steps:
+        - uses: actions/checkout@v3
+        - name: Setup Python 3.10
+          uses: actions/setup-python@v4
+          with:
+            python-version: '3.10'
+        - name: Install hatch
+          run: pip install hatch
+        - name: Build binary
+          run: make binary
+        - name: Make release
+          run: make release
+          env:
+            HATCH_INDEX_AUTH: ${{ secrets.HATCH_INDEX_AUTH }}
+            HATCH_INDEX_USER: ${{ secrets.HATCH_INDEX_USER }}
+            VERSION: ${{ github.ref_name }}
