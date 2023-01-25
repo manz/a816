@@ -11,5 +11,7 @@ if __name__ == "__main__":
     
     with open("patch.ips", "wb") as f:
         ips_writer = IPSWriter(f)
-        p.assemble_string_with_emitter("lda.l external_symbol", "test.s", ips_writer)
+        p.assemble_string_with_emitter("""
+        *=0x009C21
+        lda.l external_symbol""", "test.s", ips_writer)
 ```
