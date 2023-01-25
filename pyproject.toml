@@ -1,6 +1,5 @@
 [project]
 name = "a816"
-version = "1.0.0.dev0"
 description = "65c816 patching assembler (Super Famicom)"
 authors = [
     { name = "Emmanuel Peralta", email = "manz@ringum.net" },
@@ -18,6 +17,14 @@ classifiers = [
 ]
 
 dependencies = []
+
+dynamic = [
+    "version",
+]
+
+[tool.hatch.version]
+source = "env"
+variable = "VERSION"
 
 [project.urls]
 homepage = "https://a816.ringum.net"

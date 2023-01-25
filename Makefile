@@ -18,6 +18,7 @@ format: ## Runs black to format the python code
 
 .PHONY: wheels
 wheels:  ## Build python wheels
+	$(Q) rm -Rf build
 	$(Q) hatch build -t wheel
 
 .PHONY: tests
@@ -39,8 +40,14 @@ binary: ## Builds a standalone binary using pyoxydizer
 	$(Q) hatch run binary:oxydizer
 
 .PHONY: binary-nuitka
-binary-nuitka: ## Bulds a standalone binary using nuitka
+binary-nuitka: ## Builds a standalone binary using nuitka
 	$(Q) hatch run binary:build
+
+.PHONY: release
+release: wheels binary ## Builds a windows binary and creates a release
+	$(Q) hatch release
+	$(Q) zip -j a816 build/x86_64-pc-windows-msvc/release/install/*
+	$(Q) gh release create $(VERSION) --generate-notes a816.zip
 
 .PHONY: help
 help: ## Display help
