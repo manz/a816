@@ -45,7 +45,7 @@ binary-nuitka: ## Builds a standalone binary using nuitka
 
 .PHONY: release
 release: wheels binary ## Builds a windows binary and creates a release
-	$(Q) hatch release
+	$(Q) hatch publish
 	$(Q) zip -j a816 build/x86_64-pc-windows-msvc/release/install/*
 	$(Q) gh release create $(VERSION) --generate-notes a816.zip
 
