@@ -45,7 +45,7 @@ binary-nuitka: ## Builds a standalone binary using nuitka
 
 .PHONY: release
 release: wheels binary ## Builds a windows binary and creates a release
-	HATCH_INDEX_USER=$(HATCH_INDEX_USER) HATCH_INDEX_AUTH=$(HATCH_INDEX_AUTH) $(Q) hatch publish
+	$(Q) HATCH_INDEX_USER=$(HATCH_INDEX_USER) HATCH_INDEX_AUTH=$(HATCH_INDEX_AUTH) hatch publish
 	$(Q) zip -j a816 build/x86_64-pc-windows-msvc/release/install/*
 	$(Q) gh release create $(VERSION) --generate-notes a816.zip
 
