@@ -13,8 +13,6 @@
             python-version: '3.10'
         - name: Install hatch
           run: pip install hatch
-        - name: Build binary
-          run: make binary
         - name: Make release
           run: make release
           env:
