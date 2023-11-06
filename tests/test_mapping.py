@@ -13,7 +13,13 @@ class MappingTest(unittest.TestCase):
     def setUp(self) -> None:
         self.bus = Bus()
         # map rom
-        self.bus.map("1", (0x00, 0x6F), (0x8000, 0xFFFF), mask=0x8000, mirror_bank_range=(0x80, 0xCF))
+        self.bus.map(
+            "1",
+            (0x00, 0x6F),
+            (0x8000, 0xFFFF),
+            mask=0x8000,
+            mirror_bank_range=(0x80, 0xCF),
+        )
         # map ram
         self.bus.map("2", (0x7E, 0x7F), (0, 0xFFFF), mask=0x10_000, writeable=True)
 
@@ -29,12 +35,21 @@ class MappingTest(unittest.TestCase):
 
     def test_unmap(self) -> None:
         self.bus.unmap("1")
-        self.assertFalse("1" in self.bus.mappings, "Mapping with identifier 1 should have been removed.")
+        self.assertFalse(
+            "1" in self.bus.mappings,
+            "Mapping with identifier 1 should have been removed.",
+        )
         self.assertTrue("2" in self.bus.mappings, "Mapping with identifier 2 should have been kept.")
 
     def test_unmap_not_editable_bus_should_raise(self) -> None:
         bus = Bus("test ro")
-        bus.map("1", (0x00, 0x6F), (0x8000, 0xFFFF), mask=0x8000, mirror_bank_range=(0x80, 0xCF))
+        bus.map(
+            "1",
+            (0x00, 0x6F),
+            (0x8000, 0xFFFF),
+            mask=0x8000,
+            mirror_bank_range=(0x80, 0xCF),
+        )
         bus.editable = False
 
         self.assertRaises(RuntimeError, bus.unmap, 1)
@@ -44,7 +59,13 @@ class MappingTest(unittest.TestCase):
         bus.editable = False
 
         with self.assertRaises(RuntimeError):
-            bus.map("1", (0x00, 0x6F), (0x8000, 0xFFFF), mask=0x8000, mirror_bank_range=(0x80, 0xCF))
+            bus.map(
+                "1",
+                (0x00, 0x6F),
+                (0x8000, 0xFFFF),
+                mask=0x8000,
+                mirror_bank_range=(0x80, 0xCF),
+            )
 
     def test_ram_should_be_writable(self) -> None:
         ram_address = self.bus.get_address(0x7E0000)

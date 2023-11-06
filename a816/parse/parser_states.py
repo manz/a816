@@ -87,7 +87,9 @@ def parse_macro_definition_args(p: Parser) -> List[str]:
     return args
 
 
-def parse_expression_list_inner(p: Parser) -> List[Union[ExpressionAstNode, BlockAstNode]]:
+def parse_expression_list_inner(
+    p: Parser,
+) -> List[Union[ExpressionAstNode, BlockAstNode]]:
     expressions: List[Union[ExpressionAstNode, BlockAstNode]] = []
     while True:
         if accept_token(p.current(), TokenType.RPAREN):
@@ -147,9 +149,24 @@ def parse_map(p: Parser) -> MapAstNode:
         expect_token(identifier, TokenType.IDENTIFIER)
         key = identifier.value
 
-        if key in {"identifier", "writable", "bank_range", "addr_range", "mask", "mirror_bank_range"}:
+        if key in {
+            "identifier",
+            "writable",
+            "bank_range",
+            "addr_range",
+            "mask",
+            "mirror_bank_range",
+        }:
             map_key = cast(
-                Literal["identifier", "writable", "bank_range", "addr_range", "mask", "mirror_bank_range"], key
+                Literal[
+                    "identifier",
+                    "writable",
+                    "bank_range",
+                    "addr_range",
+                    "mask",
+                    "mirror_bank_range",
+                ],
+                key,
             )
             expect_token(p.next(), TokenType.EQUAL)
             number1 = p.next()
@@ -159,7 +176,10 @@ def parse_map(p: Parser) -> MapAstNode:
                 number2 = p.next()
                 expect_token(number2, TokenType.NUMBER)
 
-                args[map_key] = (ast.literal_eval(number1.value), ast.literal_eval(number2.value))
+                args[map_key] = (
+                    ast.literal_eval(number1.value),
+                    ast.literal_eval(number2.value),
+                )
             else:
                 args[map_key] = ast.literal_eval(number1.value)
         else:
@@ -367,7 +387,9 @@ def _parse_expression(p: Parser) -> List[ExprNode]:
     return tokens
 
 
-def parse_symbol_affectation(p: Parser) -> Union[SymbolAffectationAstNode, AssignAstNode]:
+def parse_symbol_affectation(
+    p: Parser,
+) -> Union[SymbolAffectationAstNode, AssignAstNode]:
     current = p.current()
     symbol = p.next()
     expect_tokens(p.next(), [TokenType.EQUAL, TokenType.ASSIGN])

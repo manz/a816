@@ -37,29 +37,24 @@ x816 = "a816.cli:cli_main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.black]
-line-length = 120
-target_version = ['py38']
-include = '\.pyi?$'
-exclude = '''
-(
-  /(
-      \.eggs         # exclude a few common directories in the
-    | \.git          # root of the project
-    | \.hg
-    | \.mypy_cache
-    | \.hatch
-    | \.fleet
-    | \.github
-    | \.coverage
-    | build
-    | dist
-  )
-)
-'''
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".hatch",
+    ".github",
+    ".coverage",
+    "build",
+    "dist"
+]
 
-[tool.isort]
-profile = "black"
+# Same as Black.
+line-length = 120
+indent-width = 4
+
+# Assume Python 3.8
+target-version = "py310"
 
 [tool.coverage.run]
 relative_files = true
@@ -69,7 +64,7 @@ relative_files = true
 [tool.hatch.envs.tests]
 detached = true
 dependencies = [
-    "pytest", "pytest-cov", "mypy", "black", "flake8", "isort"
+    "pytest", "pytest-cov", "mypy", "ruff"
 ]
 
 [tool.hatch.envs.tests.scripts]
@@ -77,12 +72,12 @@ coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov-branch te
 
 tests = "pytest tests"
 check = [
-    "black --check a816 tests",
-    "isort --check-only a816 tests",
+    "ruff format --check a816 tests",
+    "ruff a816 tests",
 ]
 format = [
-    "isort a816 tests",
-    "black a816 tests",
+    "ruff --fix a816 tests",
+    "ruff format a816 tests",
     "check",
 ]
 type = "mypy -p a816 -p tests --strict --show-error-codes"

@@ -58,7 +58,11 @@ GenNodes = List[NodeProtocol]
 
 class CodeGenFuncProtocol(Protocol):
     def __call__(
-        self, node: AstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+        self,
+        node: AstNode,
+        resolver: Resolver,
+        macro_definitions: MacroDefinitions,
+        file_info: Token,
     ) -> GenNodes:
         """Protocol for codegen functions."""
 
@@ -82,7 +86,10 @@ def generate_block(
 
 
 def generate_scope(
-    node: ScopeAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: ScopeAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     name = node.name
     resolver.append_named_scope(name)
@@ -96,7 +103,10 @@ def generate_scope(
 
 
 def generate_map(
-    node: MapAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: MapAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     attributes = node.args
 
@@ -112,7 +122,10 @@ def generate_map(
 
 
 def generate_opcode(
-    node: OpcodeAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: OpcodeAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     code: List[NodeProtocol] = []
     opcode = node.opcode_value
@@ -165,18 +178,29 @@ def generate_opcode(
 
 
 def generate_include_ips(
-    node: IncludeIpsAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: IncludeIpsAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [IncludeIpsNode(node.file_path, resolver, node.expression)]
 
 
 def generate_incbin(
-    node: IncludeBinaryAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: IncludeBinaryAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [BinaryNode(node.file_path, resolver)]
 
 
-def generate_dl(node: DataNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token) -> GenNodes:
+def generate_dl(
+    node: DataNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
     code: List[NodeProtocol] = []
     for expr in node.data:
         assert isinstance(expr, ExpressionAstNode)
@@ -184,7 +208,12 @@ def generate_dl(node: DataNode, resolver: Resolver, macro_definitions: MacroDefi
     return code
 
 
-def generate_dw(node: DataNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token) -> GenNodes:
+def generate_dw(
+    node: DataNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
     code: GenNodes = []
     for expr in node.data:
         assert isinstance(expr, ExpressionAstNode)
@@ -192,7 +221,12 @@ def generate_dw(node: DataNode, resolver: Resolver, macro_definitions: MacroDefi
     return code
 
 
-def generate_db(node: DataNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token) -> GenNodes:
+def generate_db(
+    node: DataNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
     code: GenNodes = []
     for expr in node.data:
         assert isinstance(expr, ExpressionAstNode)
@@ -210,43 +244,64 @@ def generate_symbol(
 
 
 def generate_label(
-    node: LabelAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: LabelAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [LabelNode(node.label, resolver)]
 
 
 def generate_text(
-    node: TextAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: TextAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [TextNode(node.text, resolver, file_info)]
 
 
 def generate_ascii(
-    node: AsciiAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: AsciiAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [AsciiNode(node.text, resolver)]
 
 
 def generate_table(
-    node: TableAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: TableAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [TableNode(node.file_path, resolver)]
 
 
 def generate_at_eq(
-    node: CodeRelocationAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: CodeRelocationAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [RelocationAddressNode(ExpressionNode(node.expression, resolver, file_info), resolver)]
 
 
 def generate_star_eq(
-    node: CodePositionAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: CodePositionAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     return [CodePositionNode(ExpressionNode(node.expression, resolver, file_info), resolver)]
 
 
 def generate_for(
-    node: ForAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: ForAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     code: GenNodes = []
     from_val = eval_expression(node.min_value, resolver)
@@ -255,14 +310,25 @@ def generate_for(
         resolver.append_internal_scope()
         resolver.use_next_scope()
         code.append(ScopeNode(resolver))
-        code.append(SymbolNode(node.symbol, ExpressionAstNode([Term(Token(TokenType.NUMBER, str(k)))]), resolver))
+        code.append(
+            SymbolNode(
+                node.symbol,
+                ExpressionAstNode([Term(Token(TokenType.NUMBER, str(k)))]),
+                resolver,
+            )
+        )
         code += _code_gen(node.body.body, resolver, macro_definitions)
         code.append(PopScopeNode(resolver))
         resolver.restore_scope()
     return code
 
 
-def generate_if(node: IfAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token) -> GenNodes:
+def generate_if(
+    node: IfAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
     code = []
     if_branch_true = node.block
     if_branch_false = node.else_block
@@ -279,7 +345,10 @@ def generate_if(node: IfAstNode, resolver: Resolver, macro_definitions: MacroDef
 
 
 def generate_code_lookup(
-    node: CodeLookupAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: CodeLookupAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     value = resolver.current_scope.value_for(node.symbol)
 
@@ -290,7 +359,10 @@ def generate_code_lookup(
 
 
 def generate_macro_application(
-    node: MacroApplyAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: MacroApplyAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     code: GenNodes = []
     macro_def: MacroAstNode = macro_definitions[node.name]
@@ -317,14 +389,20 @@ def generate_macro_application(
 
 
 def generate_macro(
-    node: MacroAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: MacroAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     macro_definitions[node.name] = node
     return []
 
 
 def generate_compound(
-    node: CompoundAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+    node: CompoundAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     code: GenNodes = []
     resolver.append_scope()

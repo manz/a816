@@ -213,7 +213,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(
             ast_nodes.ast,
             [
-                ("macro", "test", ("args", []), ("block", [("opcode", AddressingMode.immediate, "sep", "0x30", None)])),
+                (
+                    "macro",
+                    "test",
+                    ("args", []),
+                    (
+                        "block",
+                        [("opcode", AddressingMode.immediate, "sep", "0x30", None)],
+                    ),
+                ),
                 ("macro_apply", "test", ("apply_args", [])),
             ],
         )
@@ -369,7 +377,10 @@ class ParseTest(unittest.TestCase):
         ips_node = cast(IncludeIpsAstNode, node)
         self.assertEqual("whee.ips", ips_node.file_path)
         self.assertEqual(
-            [UnaryOp(token=Token(TokenType.OPERATOR, "-")), Term(token=Token(TokenType.NUMBER, "0x200"))],
+            [
+                UnaryOp(token=Token(TokenType.OPERATOR, "-")),
+                Term(token=Token(TokenType.NUMBER, "0x200")),
+            ],
             ips_node.expression.tokens,
         )
 
@@ -383,4 +394,13 @@ class ParseTest(unittest.TestCase):
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        self.assertEqual([("struct", "a_struct", {"id": "byte", "offset": "word", "pointer": "long"})], ast.ast)
+        self.assertEqual(
+            [
+                (
+                    "struct",
+                    "a_struct",
+                    {"id": "byte", "offset": "word", "pointer": "long"},
+                )
+            ],
+            ast.ast,
+        )
