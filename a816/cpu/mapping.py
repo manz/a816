@@ -103,7 +103,7 @@ class Address:
         return self.mapping.writable
 
     def __add__(self, other: int) -> "Address":
-        if type(other) == int:
+        if isinstance(other, int):
             mapping = self._get_mapping()
             physical_address = mapping.physical_address(self.logical_value)
             if physical_address is not None:

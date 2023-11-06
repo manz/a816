@@ -10,7 +10,6 @@ class AstNode(ABC):
     kind: str
 
     def __init__(self, kind: str, file_info: Token) -> None:
-
         self.kind = kind
         self.file_info = file_info
 

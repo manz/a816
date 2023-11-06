@@ -1,7 +1,6 @@
 import logging
 import struct
-from io import BufferedReader
-from typing import List, Optional, Protocol, Tuple, Union, cast
+from typing import List, Optional, Protocol, Tuple, Union
 
 from a816.cpu.cpu_65c816 import (
     AddressingMode,
@@ -45,7 +44,8 @@ class ValueNode(ValueNodeProtocol):
         self.value = value
 
     def get_value(self) -> int:
-        return int(self.value, 16)
+        return None
+        # return int(self.value, 16)
 
     def get_value_string_len(self) -> int:
         value_length = len(self.value)

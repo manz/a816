@@ -427,7 +427,7 @@ def parse_operand_and_addressing(
         addressing_mode = AddressingMode.immediate
         p.next()
         if accept_token(p.current(), TokenType.EOF):
-            raise ParserSyntaxError(f"Unexpected end of input.", p.current(), None)
+            raise ParserSyntaxError("Unexpected end of input.", p.current(), None)
         operand = parse_expression(p)
     elif accept_token(p.current(), TokenType.LPAREN):
         saved_position = p.pos
@@ -505,7 +505,6 @@ def parse_decl(
 def parse_initial(p: Parser) -> List[AstNode]:
     statements: List[AstNode] = []
     while p.current().type != TokenType.EOF:
-
         statement = parse_decl(p)
         if statement:
             statements.append(statement)

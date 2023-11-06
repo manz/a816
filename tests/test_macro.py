@@ -11,4 +11,4 @@ class MacroTests(unittest.TestCase):
         } else {
             .db length
         }
-        """
+        """  # noqa

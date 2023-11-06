@@ -1,4 +1,3 @@
-import unittest
 from unittest import TestCase, skip
 
 from a816.parse.ast.expression import eval_expression_str

@@ -1,8 +1,6 @@
 import unittest
 
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.ast.nodes import ExpressionAstNode
-from a816.parse.codegen import code_gen
 from a816.parse.nodes import LabelNode, OpcodeNode, RelocationAddressNode, ValueNode
 from a816.program import Program
 

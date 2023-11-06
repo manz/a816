@@ -29,127 +29,127 @@ def lex_identifier(s: "Scanner") -> None:
         s.emit(TokenType.IDENTIFIER)
 
 
-def lex_quoted_string(l: "Scanner") -> None:
-    c = l.next()
+def lex_quoted_string(s: "Scanner") -> None:
+    c = s.next()
     while c != "'":
         if c == "\n" or c is None:
-            raise ScannerException("Unterminated String", l.get_position())
+            raise ScannerException("Unterminated String", s.get_position())
 
-        if c == "\\" and l.peek() == "'":
-            l.next()
+        if c == "\\" and s.peek() == "'":
+            s.next()
 
-        c = l.next()
+        c = s.next()
 
-    l.emit(TokenType.QUOTED_STRING)
+    s.emit(TokenType.QUOTED_STRING)
 
 
-def accept_opcode(l: "Scanner") -> bool:
-    opcode_candidate = l.input[l.start : l.pos + 3].lower()
-    is_ws = l.peek(3)
+def accept_opcode(s: "Scanner") -> bool:
+    opcode_candidate = s.input[s.start : s.pos + 3].lower()
+    is_ws = s.peek(3)
     if opcode_candidate in snes_opcode_table.keys() and is_ws in (" ", "\n", "\t", ".", EOF):
-        l.pos += 3
+        s.pos += 3
         return True
     return False
 
 
-def lex_expression(l: "Scanner") -> None:
-    while l.pos < len(l.input):
-        l.ignore_run(" ")
-        if l.accept("0123456789"):
-            lex_number(l)
-        elif l.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
-            lex_identifier(l)
-        elif l.accept("+-*/&|") or l.accept_prefix("<<") or l.accept_prefix(">>"):
-            l.emit(TokenType.OPERATOR)
-        elif l.accept("("):
-            l.emit(TokenType.LPAREN)
-        elif l.accept(")"):
-            l.emit(TokenType.RPAREN)
+def lex_expression(s: "Scanner") -> None:
+    while s.pos < len(s.input):
+        s.ignore_run(" ")
+        if s.accept("0123456789"):
+            lex_number(s)
+        elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
+            lex_identifier(s)
+        elif s.accept("+-*/&|") or s.accept_prefix("<<") or s.accept_prefix(">>"):
+            s.emit(TokenType.OPERATOR)
+        elif s.accept("("):
+            s.emit(TokenType.LPAREN)
+        elif s.accept(")"):
+            s.emit(TokenType.RPAREN)
         else:
             break
 
 
-def lex_operand(l: "Scanner") -> None:
-    p = l.peek()
+def lex_operand(s: "Scanner") -> None:
+    p = s.peek()
 
     if p == "#":
-        l.next()
-        l.emit(TokenType.SHARP)
+        s.next()
+        s.emit(TokenType.SHARP)
     elif p == "(":
-        l.next()
-        l.emit(TokenType.LPAREN)
+        s.next()
+        s.emit(TokenType.LPAREN)
     elif p == "[":
-        l.next()
-        l.emit(TokenType.LBRAKET)
+        s.next()
+        s.emit(TokenType.LBRAKET)
 
-    l.ignore_run(" ")
+    s.ignore_run(" ")
 
-    lex_expression(l)
+    lex_expression(s)
 
-    l.ignore_run(" ")
+    s.ignore_run(" ")
 
-    if l.accept(","):
-        lex_opcode_index(l)
+    if s.accept(","):
+        lex_opcode_index(s)
 
-    p = l.peek()
+    p = s.peek()
 
     if p == ")":
-        l.next()
-        l.emit(TokenType.RPAREN)
+        s.next()
+        s.emit(TokenType.RPAREN)
     elif p == "]":
-        l.next()
-        l.emit(TokenType.RBRAKET)
+        s.next()
+        s.emit(TokenType.RBRAKET)
 
-    l.ignore_run(" ")
-    if l.accept(","):
-        lex_opcode_index(l)
+    s.ignore_run(" ")
+    if s.accept(","):
+        lex_opcode_index(s)
 
 
-def lex_opcode_index(l: "Scanner") -> None:
-    l.ignore()
-    l.ignore_run(" ")
-    if l.accept("xXyYsS"):
-        l.emit(TokenType.ADDRESSING_MODE_INDEX)
+def lex_opcode_index(s: "Scanner") -> None:
+    s.ignore()
+    s.ignore_run(" ")
+    if s.accept("xXyYsS"):
+        s.emit(TokenType.ADDRESSING_MODE_INDEX)
     else:
-        raise ScannerException("Invalid index", l.get_position())
+        raise ScannerException("Invalid index", s.get_position())
 
 
-def lex_opcode_size(l: "Scanner") -> None:
-    l.ignore()
-    if l.accept("bBwWlL"):
-        l.emit(TokenType.OPCODE_SIZE)
-        l.ignore_run(" ")
+def lex_opcode_size(s: "Scanner") -> None:
+    s.ignore()
+    if s.accept("bBwWlL"):
+        s.emit(TokenType.OPCODE_SIZE)
+        s.ignore_run(" ")
 
-        return lex_operand(l)
+        return lex_operand(s)
     else:
-        l.next()
-        raise ScannerException("Invalid Size Specifier", l.get_position())
+        s.next()
+        raise ScannerException("Invalid Size Specifier", s.get_position())
 
 
-def lex_opcode(l: "Scanner") -> None:
-    opcode_candidate = l.input[l.start : l.pos].lower()
-    if opcode_candidate in opcodes_without_operand and l.peek() != ".":
-        saved_pos = l.pos
+def lex_opcode(s: "Scanner") -> None:
+    opcode_candidate = s.input[s.start : s.pos].lower()
+    if opcode_candidate in opcodes_without_operand and s.peek() != ".":
+        saved_pos = s.pos
 
-        l.accept_run(" \t")
-        if l.accept(";"):
-            l.accept_run("\n\0", negate=True)
+        s.accept_run(" \t")
+        if s.accept(";"):
+            s.accept_run("\n\0", negate=True)
 
-        if l.peek() == "\n" or l.peek() == EOF:
-            l.pos = saved_pos
-            l.emit(TokenType.OPCODE_NAKED)
+        if s.peek() == "\n" or s.peek() == EOF:
+            s.pos = saved_pos
+            s.emit(TokenType.OPCODE_NAKED)
             return
         else:
-            l.pos = saved_pos
-            l.emit(TokenType.OPCODE)
+            s.pos = saved_pos
+            s.emit(TokenType.OPCODE)
     else:
-        l.emit(TokenType.OPCODE)
+        s.emit(TokenType.OPCODE)
 
-    if l.accept("."):
-        lex_opcode_size(l)
+    if s.accept("."):
+        lex_opcode_size(s)
 
-    l.ignore_run(" ")
-    lex_operand(l)
+    s.ignore_run(" ")
+    lex_operand(s)
 
 
 KEYWORDS = {
@@ -174,129 +174,129 @@ KEYWORDS = {
 }
 
 
-def lex_macro_arg(l: "Scanner") -> None:
-    l.ignore_run(" ")
+def lex_macro_arg(s: "Scanner") -> None:
+    s.ignore_run(" ")
 
-    if l.next() == ",":
-        l.emit(TokenType.COMMA)
-    lex_identifier(l)
-
-
-def lex_macro_args_def(l: "Scanner") -> None:
-    l.emit(TokenType.LPAREN)
-    while l.peek() != ")":
-        lex_macro_arg(l)
-
-    l.emit(TokenType.RPAREN)
+    if s.next() == ",":
+        s.emit(TokenType.COMMA)
+    lex_identifier(s)
 
 
-def lex_keyword(l: "Scanner") -> None:
-    l.ignore()
-    l.accept_run("abcdefghijklmnopqrstuvwxyz_")
-    if l.current_token_text() in KEYWORDS:
-        l.emit(TokenType.KEYWORD)
+def lex_macro_args_def(s: "Scanner") -> None:
+    s.emit(TokenType.LPAREN)
+    while s.peek() != ")":
+        lex_macro_arg(s)
+
+    s.emit(TokenType.RPAREN)
+
+
+def lex_keyword(s: "Scanner") -> None:
+    s.ignore()
+    s.accept_run("abcdefghijklmnopqrstuvwxyz_")
+    if s.current_token_text() in KEYWORDS:
+        s.emit(TokenType.KEYWORD)
     else:
-        raise ScannerException(f"Unknown Keyword {l.current_token_text()}", l.get_position())
+        raise ScannerException(f"Unknown Keyword {s.current_token_text()}", s.get_position())
 
 
-def lex_number(l: Scanner) -> None:
+def lex_number(s: Scanner) -> None:
     acceptable_values = {"b": "01", "o": "012345678", "x": "0123456789ABCDEFabcdef"}
 
-    l.backup()
+    s.backup()
 
-    ch = l.next()
+    ch = s.next()
 
-    if l.peek() in ["\n", EOF]:
-        l.emit(TokenType.NUMBER)
+    if s.peek() in ["\n", EOF]:
+        s.emit(TokenType.NUMBER)
         return
 
     if ch == "0":
-        base_prefix = l.next()
+        base_prefix = s.next()
 
         if base_prefix in ("b", "o", "x"):
-            l.accept_run(acceptable_values[base_prefix])
+            s.accept_run(acceptable_values[base_prefix])
         else:
-            l.backup()
+            s.backup()
     else:
-        l.accept_run("0123456789")
+        s.accept_run("0123456789")
 
-    l.emit(TokenType.NUMBER)
+    s.emit(TokenType.NUMBER)
 
 
-def lex_initial(l: Scanner) -> None:
+def lex_initial(s: Scanner) -> None:
     """Scanner initial state"""
 
-    l.ignore_run(" \t\n")
-    if l.accept(";"):
-        while l.next() not in ["\n", None]:
+    s.ignore_run(" \t\n")
+    if s.accept(";"):
+        while s.next() not in ["\n", None]:
             # eat the comment until end of  line.
             pass
 
-        l.emit(TokenType.COMMENT)
-    elif l.accept("0123456789"):
-        lex_number(l)
-    elif l.accept("+-&"):
-        l.emit(TokenType.OPERATOR)
-    elif l.accept_prefix("=="):
-        l.emit(TokenType.OPERATOR)
-    elif l.accept_prefix("!="):
-        l.emit(TokenType.OPERATOR)
-    elif l.accept_prefix(">>"):
-        l.emit(TokenType.OPERATOR)
-    elif l.accept_prefix("<<"):
-        l.emit(TokenType.OPERATOR)
-    elif l.accept_prefix(">") or l.accept_prefix("<") or l.accept_prefix(">=") or l.accept_prefix("<="):
-        l.emit(TokenType.OPERATOR)
+        s.emit(TokenType.COMMENT)
+    elif s.accept("0123456789"):
+        lex_number(s)
+    elif s.accept("+-&"):
+        s.emit(TokenType.OPERATOR)
+    elif s.accept_prefix("=="):
+        s.emit(TokenType.OPERATOR)
+    elif s.accept_prefix("!="):
+        s.emit(TokenType.OPERATOR)
+    elif s.accept_prefix(">>"):
+        s.emit(TokenType.OPERATOR)
+    elif s.accept_prefix("<<"):
+        s.emit(TokenType.OPERATOR)
+    elif s.accept_prefix(">") or s.accept_prefix("<") or s.accept_prefix(">=") or s.accept_prefix("<="):
+        s.emit(TokenType.OPERATOR)
     # elif l.accept_prefix('True') or l.accept_prefix('False'):
     #     l.emit(TokenType.BOOLEAN)
-    elif l.accept_prefix("byte") or l.accept_prefix("word") or l.accept_prefix("long"):
-        l.emit(TokenType.TYPE)
-    elif l.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
-        l.backup()
+    elif s.accept_prefix("byte") or s.accept_prefix("word") or s.accept_prefix("long"):
+        s.emit(TokenType.TYPE)
+    elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
+        s.backup()
         # check if not an opcode
-        if accept_opcode(l):
-            lex_opcode(l)
+        if accept_opcode(s):
+            lex_opcode(s)
         else:
-            lex_identifier(l)
-    elif l.accept("."):
-        lex_keyword(l)
-    elif l.accept(","):
-        l.emit(TokenType.COMMA)
-    elif l.accept_prefix(":="):
-        l.emit(TokenType.ASSIGN)
-    elif l.accept_prefix("@="):
-        l.emit(TokenType.AT_EQ)
-    elif l.accept("*"):
-        if l.accept("="):
-            l.emit(TokenType.STAR_EQ)
+            lex_identifier(s)
+    elif s.accept("."):
+        lex_keyword(s)
+    elif s.accept(","):
+        s.emit(TokenType.COMMA)
+    elif s.accept_prefix(":="):
+        s.emit(TokenType.ASSIGN)
+    elif s.accept_prefix("@="):
+        s.emit(TokenType.AT_EQ)
+    elif s.accept("*"):
+        if s.accept("="):
+            s.emit(TokenType.STAR_EQ)
         else:
-            l.emit(TokenType.OPERATOR)
-    elif l.accept("'"):
-        lex_quoted_string(l)
-    elif l.accept("("):
-        l.emit(TokenType.LPAREN)
-    elif l.accept(")"):
-        l.emit(TokenType.RPAREN)
-    elif l.accept("["):
-        l.emit(TokenType.LBRAKET)
-    elif l.accept("]"):
-        l.emit(TokenType.RBRAKET)
-    elif l.accept("{"):
-        if l.accept("{"):
-            l.emit(TokenType.DOUBLE_LBRACE)
+            s.emit(TokenType.OPERATOR)
+    elif s.accept("'"):
+        lex_quoted_string(s)
+    elif s.accept("("):
+        s.emit(TokenType.LPAREN)
+    elif s.accept(")"):
+        s.emit(TokenType.RPAREN)
+    elif s.accept("["):
+        s.emit(TokenType.LBRAKET)
+    elif s.accept("]"):
+        s.emit(TokenType.RBRAKET)
+    elif s.accept("{"):
+        if s.accept("{"):
+            s.emit(TokenType.DOUBLE_LBRACE)
         else:
-            l.emit(TokenType.LBRACE)
-    elif l.accept("}"):
-        if l.accept("}"):
-            l.emit(TokenType.DOUBLE_RBRACE)
+            s.emit(TokenType.LBRACE)
+    elif s.accept("}"):
+        if s.accept("}"):
+            s.emit(TokenType.DOUBLE_RBRACE)
         else:
-            l.emit(TokenType.RBRACE)
-    elif l.accept("="):
-        l.emit(TokenType.EQUAL)
-    elif l.accept_prefix("/*"):
-        while not l.accept_prefix("*/"):
-            l.next()
-        l.emit(TokenType.COMMENT)
+            s.emit(TokenType.RBRACE)
+    elif s.accept("="):
+        s.emit(TokenType.EQUAL)
+    elif s.accept_prefix("/*"):
+        while not s.accept_prefix("*/"):
+            s.next()
+        s.emit(TokenType.COMMENT)
     else:
-        if l.next() is not None:
-            raise ScannerException(f"Invalid Input {l.input[l.start:]}", l.get_position())
+        if s.next() is not None:
+            raise ScannerException(f"Invalid Input {s.input[s.start:]}", s.get_position())
