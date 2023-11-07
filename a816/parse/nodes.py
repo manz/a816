@@ -1,7 +1,6 @@
 import logging
 import struct
-from io import BufferedReader
-from typing import List, Optional, Protocol, Tuple, Union, cast
+from typing import List, Optional, Protocol, Tuple, Union
 
 from a816.cpu.cpu_65c816 import (
     AddressingMode,
@@ -71,7 +70,10 @@ class ExpressionNode(ValueNodeProtocol):
         return len(hex(self.get_value())) - 2
 
     def __str__(self) -> str:
-        return "%s(%s)" % (self.__class__.__name__, self.expression.to_representation()[0])
+        return "%s(%s)" % (
+            self.__class__.__name__,
+            self.expression.to_representation()[0],
+        )
 
 
 class LabelNode:
@@ -103,7 +105,10 @@ class NodeProtocol(Protocol):
 
 class SymbolNode(NodeProtocol):
     def __init__(
-        self, symbol_name: str, expression: Union[ExpressionAstNode, BlockAstNode], resolver: Resolver
+        self,
+        symbol_name: str,
+        expression: Union[ExpressionAstNode, BlockAstNode],
+        resolver: Resolver,
     ) -> None:
         self.symbol_name = symbol_name
         self.expression = expression
@@ -242,16 +247,27 @@ class OpcodeNode(NodeProtocol):
         except NoOpcodeForOperandSize as e:
             assert self.value_node is not None
             guessed_size = opcode_emitter.guess_value_size(self.value_node, self.size)
-            raise NodeError(f"{self.opcode} does not supports size ({guessed_size}).", self.file_info) from e
+            raise NodeError(
+                f"{self.opcode} does not supports size ({guessed_size}).",
+                self.file_info,
+            ) from e
         except SymbolNotDefined as e:
-            raise NodeError(f"{e} ({self.value_node}) is not defined in the current scope.", self.file_info)
+            raise NodeError(
+                f"{e} ({self.value_node}) is not defined in the current scope.",
+                self.file_info,
+            )
 
     def pc_after(self, current_pc: Address) -> Address:
         opcode_emitter = self._get_emitter()
         return current_pc + opcode_emitter.supposed_length(self.value_node, self.size)
 
     def __str__(self) -> str:
-        return "OpcodeNode(%s, %s, %s, %s)" % (self.opcode, self.addressing_mode, self.index, self.value_node)
+        return "OpcodeNode(%s, %s, %s, %s)" % (
+            self.opcode,
+            self.addressing_mode,
+            self.index,
+            self.value_node,
+        )
 
 
 class CodePositionNode(NodeProtocol):
@@ -291,7 +307,10 @@ class RelocationAddressNode(NodeProtocol):
 
 class IncludeIpsNode(NodeProtocol):
     def __init__(
-        self, file_path: str, resolver: Resolver, delta_expression: Optional[ExpressionAstNode] = None
+        self,
+        file_path: str,
+        resolver: Resolver,
+        delta_expression: Optional[ExpressionAstNode] = None,
     ) -> None:
         self.ips_file_path = file_path
         self.delta = eval_expression(delta_expression, resolver) if delta_expression else 0
@@ -384,7 +403,10 @@ class TextNode(AbstractTextNode):
     @property
     def binary_text(self) -> bytes:
         if self.table is None:
-            raise NodeError(f"table_is_not_defined ({self}) is not defined in the current scope.", self.file_info)
+            raise NodeError(
+                f"table_is_not_defined ({self}) is not defined in the current scope.",
+                self.file_info,
+            )
         return self.table.to_bytes(self.text)
 
 

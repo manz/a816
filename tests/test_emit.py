@@ -158,7 +158,10 @@ class EmitTest(unittest.TestCase):
 
         program = Program()
         result = program.parser.parse_as_ast(input_program)
-        self.assertEqual([("opcode", AddressingMode.dp_or_sr_indirect_indexed, "eor", "0x12", "x")], result.ast)
+        self.assertEqual(
+            [("opcode", AddressingMode.dp_or_sr_indirect_indexed, "eor", "0x12", "x")],
+            result.ast,
+        )
 
         writer = StubWriter()
 

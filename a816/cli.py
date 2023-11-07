@@ -12,7 +12,14 @@ logger = logging.getLogger("x816")
 def cli_main() -> None:
     parser = argparse.ArgumentParser(prog="x816", description="x816 usage", epilog="")
     parser.add_argument("--verbose", action="store_true", help="Displays all log levels.")
-    parser.add_argument("-o", "--output", type=Path, dest="output_file", default="a.out", help="Output file")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        dest="output_file",
+        default="a.out",
+        help="Output file",
+    )
     parser.add_argument("input_file", type=Path, help="The asm file to assemble.")
     parser.add_argument("-f", dest="format", default="ips", help="Output format")
     parser.add_argument("-m", dest="mapping", default="low", help="Address Mapping")

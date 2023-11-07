@@ -125,10 +125,18 @@ class Program:
             return self.assemble_with_emitter(asm_file, sfc_emitter)
 
     def assemble_as_patch(
-        self, asm_file: str, ips_file: Path, mapping: Optional[str] = None, copier_header: bool = False
+        self,
+        asm_file: str,
+        ips_file: Path,
+        mapping: Optional[str] = None,
+        copier_header: bool = False,
     ) -> int:
         if mapping is not None:
-            address_mapping = {"low": RomType.low_rom, "low2": RomType.low_rom_2, "high": RomType.high_rom}
+            address_mapping = {
+                "low": RomType.low_rom,
+                "low2": RomType.low_rom_2,
+                "high": RomType.high_rom,
+            }
             self.resolver.rom_type = address_mapping[mapping]
         with open(ips_file, "wb") as f:
             ips_emitter = IPSWriter(f, copier_header)

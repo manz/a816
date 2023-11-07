@@ -10,7 +10,6 @@ class AstNode(ABC):
     kind: str
 
     def __init__(self, kind: str, file_info: Token) -> None:
-
         self.kind = kind
         self.file_info = file_info
 
@@ -213,7 +212,12 @@ class MacroApplyAstNode(AstNode):
     name: str
     args: List[Union[ExpressionAstNode, BlockAstNode]]
 
-    def __init__(self, name: str, args: List[Union[ExpressionAstNode, BlockAstNode]], file_info: Token):
+    def __init__(
+        self,
+        name: str,
+        args: List[Union[ExpressionAstNode, BlockAstNode]],
+        file_info: Token,
+    ):
         super().__init__("macro_apply", file_info)
         self.name = name
         self.args = args
@@ -237,7 +241,12 @@ class MacroApplyAstNode(AstNode):
 class DataNode(AstNode):
     data: List[ExpressionAstNode]
 
-    def __init__(self, kind: str, data: List[Union[ExpressionAstNode, BlockAstNode]], file_info: Token):
+    def __init__(
+        self,
+        kind: str,
+        data: List[Union[ExpressionAstNode, BlockAstNode]],
+        file_info: Token,
+    ):
         super().__init__(kind, file_info)
 
         self.data = []

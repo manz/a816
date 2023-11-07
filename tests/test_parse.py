@@ -5,8 +5,6 @@ from typing import List, Tuple, cast
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.nodes import (
-    ExpressionAstNode,
-    ExprNode,
     IncludeIpsAstNode,
     Term,
     UnaryOp,
@@ -160,6 +158,7 @@ class ParseTest(unittest.TestCase):
         program = Program()
         program.parser = MZParser(program.resolver)
         ast = program.parser.parse_as_ast(input_program)
+        print(ast)
         nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
 
@@ -214,7 +213,15 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(
             ast_nodes.ast,
             [
-                ("macro", "test", ("args", []), ("block", [("opcode", AddressingMode.immediate, "sep", "0x30", None)])),
+                (
+                    "macro",
+                    "test",
+                    ("args", []),
+                    (
+                        "block",
+                        [("opcode", AddressingMode.immediate, "sep", "0x30", None)],
+                    ),
+                ),
                 ("macro_apply", "test", ("apply_args", [])),
             ],
         )
@@ -292,6 +299,7 @@ class ParseTest(unittest.TestCase):
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
+        print(ast)
 
     def test_nini(self) -> None:
         input_program = """.macro wait_for_vblank_inline() {
@@ -306,6 +314,7 @@ class ParseTest(unittest.TestCase):
         }"""
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
+        print(ast)
 
     def test_php_pha(self) -> None:
         input_program = """
@@ -330,6 +339,7 @@ class ParseTest(unittest.TestCase):
         }"""
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
+        print(ast)
 
     def test_named_scopes(self) -> None:
         input_program = """
@@ -346,6 +356,7 @@ class ParseTest(unittest.TestCase):
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
+        print(ast)
         nodes = code_gen(ast.nodes, program.resolver)
         program.resolve_labels(nodes)
         program.resolver.dump_symbol_map()
@@ -357,6 +368,7 @@ class ParseTest(unittest.TestCase):
         input_program = """.include_ips 'whee.ips', -0x200"""
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
+        print(ast)
         nodes = ast.nodes
 
         self.assertEqual(len(nodes), 1)
@@ -365,7 +377,10 @@ class ParseTest(unittest.TestCase):
         ips_node = cast(IncludeIpsAstNode, node)
         self.assertEqual("whee.ips", ips_node.file_path)
         self.assertEqual(
-            [UnaryOp(token=Token(TokenType.OPERATOR, "-")), Term(token=Token(TokenType.NUMBER, "0x200"))],
+            [
+                UnaryOp(token=Token(TokenType.OPERATOR, "-")),
+                Term(token=Token(TokenType.NUMBER, "0x200")),
+            ],
             ips_node.expression.tokens,
         )
 
@@ -379,4 +394,13 @@ class ParseTest(unittest.TestCase):
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
-        self.assertEqual([("struct", "a_struct", {"id": "byte", "offset": "word", "pointer": "long"})], ast.ast)
+        self.assertEqual(
+            [
+                (
+                    "struct",
+                    "a_struct",
+                    {"id": "byte", "offset": "word", "pointer": "long"},
+                )
+            ],
+            ast.ast,
+        )

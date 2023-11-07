@@ -39,7 +39,7 @@ class Scope:
     def __getitem__(self, item: str) -> Union[int, BlockAstNode]:
         try:
             return self.code_symbols[item]
-        except KeyError as e:
+        except KeyError:
             pass
 
         try:
