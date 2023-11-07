@@ -26,6 +26,10 @@ dynamic = [
 source = "env"
 variable = "VERSION"
 
+[tool.hatch.build.targets.wheel]
+only-include = ["a816", "script"]
+sources = ["."]
+
 [project.urls]
 homepage = "https://a816.ringum.net"
 repository = "https://github.com/manz/a816"
