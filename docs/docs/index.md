@@ -5,7 +5,7 @@ Another 65c816 assembler
 
 ### Command line
 ```
-$ x816 --help
+$ a816 --help
 usage: x816 [-h] [--verbose] [-o OUTPUT_FILE] [-f FORMAT] [-m MAPPING] [--copier-header] [--dump-symbols] [-D KEY=VALUE [KEY=VALUE ...]] input_file
 
 x816 usage
