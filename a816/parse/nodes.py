@@ -1,11 +1,13 @@
 import logging
 import struct
-from typing import List, Optional, Protocol, Tuple, Union
+from typing import Literal, Protocol
 
 from a816.cpu.cpu_65c816 import (
     AddressingMode,
     NoOpcodeForOperandSize,
     OpcodeProtocol,
+    ValueSize,
+    guess_value_size,
     snes_opcode_table,
 )
 from a816.cpu.mapping import Address
@@ -26,8 +28,10 @@ class ValueNodeProtocol(Protocol):
     def get_value_string_len(self) -> int:
         """Returns the length in bytes of the value."""
 
-    def get_operand_size(self) -> str:
+    def get_operand_size(self) -> Literal["b", "w", "l"]:
         """Returns the operand size as b w l"""
+        retval: Literal["b", "w", "l"]
+
         value_length = self.get_value_string_len()
         if value_length <= 2:
             retval = "b"
@@ -64,19 +68,24 @@ class ExpressionNode(ValueNodeProtocol):
         try:
             return eval_expression(self.expression, self.resolver)
         except SymbolNotDefined as e:
-            raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info)
+            raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
 
     def get_value_string_len(self) -> int:
         return len(hex(self.get_value())) - 2
 
     def __str__(self) -> str:
-        return "%s(%s)" % (
-            self.__class__.__name__,
-            self.expression.to_representation()[0],
-        )
+        return f"{self.__class__.__name__}({self.expression.to_representation()[0]})"
 
 
-class LabelNode:
+class NodeProtocol(Protocol):
+    def emit(self, current_addr: Address) -> bytes:
+        """Emits the node as bytes"""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        """Returns the program counter address after the node was emitted."""
+
+
+class LabelNode(NodeProtocol):
     def __init__(self, symbol_name: str, resolver: Resolver) -> None:
         self.symbol_name = symbol_name
         self.resolver = resolver
@@ -95,19 +104,11 @@ class LabelNode:
         return "LabelNode(%s)" % self.symbol_name
 
 
-class NodeProtocol(Protocol):
-    def emit(self, current_addr: Address) -> bytes:
-        """Emits the node as bytes"""
-
-    def pc_after(self, current_pc: Address) -> Address:
-        """Returns the program counter address after the node was emitted."""
-
-
 class SymbolNode(NodeProtocol):
     def __init__(
         self,
         symbol_name: str,
-        expression: Union[ExpressionAstNode, BlockAstNode],
+        expression: ExpressionAstNode | BlockAstNode,
         resolver: Resolver,
     ) -> None:
         self.symbol_name = symbol_name
@@ -124,7 +125,7 @@ class SymbolNode(NodeProtocol):
         return current_pc
 
     def __str__(self) -> str:
-        return "SymbolNode(%s, %s)" % (self.symbol_name, self.expression)
+        return f"SymbolNode({self.symbol_name}, {self.expression})"
 
 
 class BinaryNode(NodeProtocol):
@@ -179,7 +180,7 @@ class ByteNode(NodeProtocol):
         return current_pc + 1
 
 
-class UnkownOpcodeError(Exception):
+class UnknownOpcodeError(Exception):
     pass
 
 
@@ -190,9 +191,9 @@ class NodeError(Exception):
         self.message = message
 
     def __str__(self) -> str:
-        error_message = '"{message}"'.format(message=self.message)
+        error_message = f'"{self.message}"'
         if self.file_info is not None and self.file_info.position is not None:
-            error_message += " at \n{file}:{line} {data}".format(
+            error_message += " at\n{file}:{line} {data}".format(
                 file=self.file_info.position.file.filename,
                 line=self.file_info.position.line,
                 data=self.file_info.position.get_line(),
@@ -206,10 +207,10 @@ class OpcodeNode(NodeProtocol):
         self,
         opcode: str,
         *,
-        size: Optional[str] = None,
+        size: ValueSize | None = None,
         addressing_mode: AddressingMode,
-        index: Optional[str] = None,
-        value_node: Optional[ValueNodeProtocol] = None,
+        index: str | None = None,
+        value_node: ValueNodeProtocol | None = None,
         file_info: Token,
         resolver: Resolver,
     ) -> None:
@@ -217,18 +218,18 @@ class OpcodeNode(NodeProtocol):
         self.addressing_mode = addressing_mode
         self.index = index
         self.value_node = value_node
-        self.size = size.lower() if size else None
+        self.size = size
         self.file_info = file_info
         self.resolver = resolver
 
     def _get_emitter(self) -> OpcodeProtocol:
         try:
             opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
-        except KeyError:
+        except KeyError as e:
             raise NodeError(
                 f"Addressing mode ({self.addressing_mode.name}) for opcode_def ({self.opcode}) is not defined.",
                 file_info=self.file_info,
-            )
+            ) from e
 
         if isinstance(opcode_emitter, dict):
             if self.index is not None:
@@ -246,7 +247,7 @@ class OpcodeNode(NodeProtocol):
             return opcode_emitter.emit(self.value_node, self.resolver, self.size)
         except NoOpcodeForOperandSize as e:
             assert self.value_node is not None
-            guessed_size = opcode_emitter.guess_value_size(self.value_node, self.size)
+            guessed_size = guess_value_size(self.value_node, self.size)
             raise NodeError(
                 f"{self.opcode} does not supports size ({guessed_size}).",
                 self.file_info,
@@ -255,19 +256,14 @@ class OpcodeNode(NodeProtocol):
             raise NodeError(
                 f"{e} ({self.value_node}) is not defined in the current scope.",
                 self.file_info,
-            )
+            ) from e
 
     def pc_after(self, current_pc: Address) -> Address:
         opcode_emitter = self._get_emitter()
         return current_pc + opcode_emitter.supposed_length(self.value_node, self.size)
 
     def __str__(self) -> str:
-        return "OpcodeNode(%s, %s, %s, %s)" % (
-            self.opcode,
-            self.addressing_mode,
-            self.index,
-            self.value_node,
-        )
+        return f"OpcodeNode({self.opcode}, {self.addressing_mode}, {self.index}, {self.value_node})"
 
 
 class CodePositionNode(NodeProtocol):
@@ -310,11 +306,11 @@ class IncludeIpsNode(NodeProtocol):
         self,
         file_path: str,
         resolver: Resolver,
-        delta_expression: Optional[ExpressionAstNode] = None,
+        delta_expression: ExpressionAstNode | None = None,
     ) -> None:
         self.ips_file_path = file_path
         self.delta = eval_expression(delta_expression, resolver) if delta_expression else 0
-        self.blocks: List[Tuple[int, bytes]] = []
+        self.blocks: list[tuple[int, bytes]] = []
         with open(self.ips_file_path, "rb") as ips_file:
             if ips_file.read(5) != b"PATCH":
                 raise RuntimeError(f'{self.ips_file_path} is missing "PATCH" header')

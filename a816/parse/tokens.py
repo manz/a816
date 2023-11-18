@@ -1,11 +1,11 @@
 from enum import Enum, auto
-from typing import Any, List, Optional
+from typing import Any
 
 
 class File:
     def __init__(self, filename: str):
         self.filename = filename
-        self.lines: List[str] = []
+        self.lines: list[str] = []
 
     def append(self, line: str) -> None:
         self.lines.append(line)
@@ -73,10 +73,10 @@ class TokenType(Enum):
 
 
 class Token:
-    def __init__(self, type_: TokenType, value: str, position: Optional[Position] = None) -> None:
+    def __init__(self, type_: TokenType, value: str, position: Position | None = None) -> None:
         self.type: TokenType = type_
         self.value: str = value
-        self.position: Optional[Position] = position
+        self.position: Position | None = position
 
     def __repr__(self) -> str:
         return f"Token({self.type}, {self.value})"
@@ -90,7 +90,7 @@ class Token:
     def display(self) -> None:
         print(self.trace())
 
-    def trace(self) -> Optional[str]:
+    def trace(self) -> str | None:
         trace = None
         if self.position is not None:
             if self.type == TokenType.EOF:

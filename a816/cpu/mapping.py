@@ -1,14 +1,14 @@
-from typing import Dict, Optional, Tuple
+from typing import Any
 
 
 class Mapping:
     def __init__(
         self,
-        bank_range: Tuple[int, int],
-        address_range: Tuple[int, int],
+        bank_range: tuple[int, int],
+        address_range: tuple[int, int],
         mask: int,
         writeable: bool = False,
-        mirror: Optional[Tuple[int, int]] = None,
+        mirror: tuple[int, int] | None = None,
     ) -> None:
         self.bank_range = bank_range
         self.mirror = mirror
@@ -16,7 +16,7 @@ class Mapping:
         self.mask = mask
         self.writable = writeable
 
-    def physical_address(self, value: int) -> Optional[int]:
+    def physical_address(self, value: int) -> int | None:
         bank = value >> 16
         if self.writable is False:
             return (bank - self.bank_range[0]) * self.mask + (value & ~self.mask & 0xFFFF)
@@ -30,11 +30,11 @@ class Mapping:
 
 
 class Bus:
-    def __init__(self, name: Optional[str] = None) -> None:
+    def __init__(self, name: str | None = None) -> None:
         self.name = name
-        self.lookup: Dict[int, str] = {}
-        self.inverse_lookup: Dict[str, int] = {}
-        self.mappings: Dict[str, Mapping] = {}
+        self.lookup: dict[int, str] = {}
+        self.inverse_lookup: dict[str, int] = {}
+        self.mappings: dict[str, Mapping] = {}
         self.editable = True
         self.internal_id = 0
 
@@ -47,11 +47,11 @@ class Bus:
     def map(
         self,
         identifier: str,
-        bank_range: Tuple[int, int],
-        address_range: Tuple[int, int],
+        bank_range: tuple[int, int],
+        address_range: tuple[int, int],
         mask: int,
         writeable: bool = False,
-        mirror_bank_range: Optional[Tuple[int, int]] = None,
+        mirror_bank_range: tuple[int, int] | None = None,
     ) -> None:
         if self.editable is not True:
             raise RuntimeError("Bus cannot be edited.")
@@ -95,14 +95,14 @@ class Address:
         return self.bus.get_mapping_for_bank(self._get_bank())
 
     @property
-    def physical(self) -> Optional[int]:
+    def physical(self) -> int | None:
         return self.mapping.physical_address(self.logical_value)
 
     @property
     def writable(self) -> bool:
         return self.mapping.writable
 
-    def __add__(self, other: int) -> "Address":
+    def __add__(self, other: Any) -> "Address":
         if isinstance(other, int):
             mapping = self._get_mapping()
             physical_address = mapping.physical_address(self.logical_value)

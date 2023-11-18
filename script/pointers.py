@@ -1,18 +1,20 @@
-from typing import BinaryIO, List, Optional, Protocol, Callable
+from collections.abc import Callable
+from typing import BinaryIO, Protocol
 from xml.etree import ElementTree
+
 from script import Table
 
 
 class FormulaProtocol(Protocol):
     def __call__(self, value: bytes) -> int:
-        ...
+        """Formula function protocol."""
 
 
-class Pointer(object):
-    def __init__(self, id: int, address: Optional[int] = None) -> None:
+class Pointer:
+    def __init__(self, id: int, address: int | None = None) -> None:
         self.id = id
-        self.address: Optional[int] = address
-        self.value: Optional[bytes] = None
+        self.address: int | None = address
+        self.value: bytes | None = None
 
     def get_address(self) -> int:
         assert self.address is not None
@@ -23,13 +25,13 @@ class Pointer(object):
         return self.value
 
 
-class Script(object):
+class Script:
     def __init__(self, rom: BinaryIO) -> None:
         self.rom = rom
 
     def read_fixed_text_list(
         self, pointer_file: BinaryIO, address: int, count: int, bytes_length: int
-    ) -> List[Pointer]:
+    ) -> list[Pointer]:
         pointers = []
         pointer_file.seek(address)
         for i in range(count):
@@ -42,7 +44,7 @@ class Script(object):
 
     def read_pointers(
         self, pointer_file: BinaryIO, address: int, count: int, length: int, formula: FormulaProtocol
-    ) -> List[Pointer]:
+    ) -> list[Pointer]:
         pointer_file.seek(address)
         temporary_pointers = []
         for i in range(count):
@@ -51,7 +53,7 @@ class Script(object):
             temporary_pointers.append(pointer)
         return temporary_pointers
 
-    def read_pointers_content(self, pointers_to_dump: List[Pointer], end_of_script_address: int) -> List[Pointer]:
+    def read_pointers_content(self, pointers_to_dump: list[Pointer], end_of_script_address: int) -> list[Pointer]:
         def sort_func(ptr: Pointer) -> int:
             return ptr.get_address()
 
@@ -72,7 +74,7 @@ class Script(object):
 
         return pointers
 
-    def append_pointers(self, pointer_table_1: List[Pointer], pointer_table_2: List[Pointer]) -> List[Pointer]:
+    def append_pointers(self, pointer_table_1: list[Pointer], pointer_table_2: list[Pointer]) -> list[Pointer]:
         pointers_1 = sorted(pointer_table_1, key=lambda x: x.id)
         pointers_2 = sorted(pointer_table_2, key=lambda x: x.id)
         last_id = pointers_1[-1].id
@@ -83,19 +85,19 @@ class Script(object):
         return pointers_1 + pointers_2
 
 
-def write_pointers_as_xml(pointers: List[Pointer], table: Table, output_file: str) -> None:
+def write_pointers_as_xml(pointers: list[Pointer], table: Table, output_file: str) -> None:
     sorted_pointers_by_id = sorted(pointers, key=lambda p: p.id)
-    with open(output_file, "wt", encoding="utf-8") as fd:
+    with open(output_file, "w", encoding="utf-8") as fd:
         fd.writelines('<?xml version="1.0" encoding="utf-8"?>\n')
         fd.write('<sn:script xmlns:sn="http://snes.ninja/ScriptNS">\n')
         for pointer in sorted_pointers_by_id:
-            fd.write('<sn:pointer id="{:d}">'.format(pointer.id))
+            fd.write(f'<sn:pointer id="{pointer.id:d}">')
             fd.write(table.to_text(pointer.get_value()))
             fd.write("</sn:pointer>\n\n")
         fd.write("</sn:script>\n")
 
 
-def write_pointers_value_as_binary(pointers: List[Pointer], output_file: str) -> None:
+def write_pointers_value_as_binary(pointers: list[Pointer], output_file: str) -> None:
     sorted_pointers = sorted(pointers, key=lambda x: x.id)
     with open(output_file, "wb") as fd:
         for pointer in sorted_pointers:
@@ -103,7 +105,7 @@ def write_pointers_value_as_binary(pointers: List[Pointer], output_file: str) ->
 
 
 def write_pointers_addresses_as_binary(
-    pointers: List[Pointer], formula: Callable[[int], bytes], output_file: str
+    pointers: list[Pointer], formula: Callable[[int], bytes], output_file: str
 ) -> None:
     sorted_pointers = sorted(pointers, key=lambda x: x.id)
     current_position = 0
@@ -114,8 +116,8 @@ def write_pointers_addresses_as_binary(
 
 
 def read_pointers_from_xml(
-    input_file: str, table: Table, formatter: Optional[Callable[[str], str]] = None
-) -> List[Pointer]:
+    input_file: str, table: Table, formatter: Callable[[str], str] | None = None
+) -> list[Pointer]:
     pointer_table = []
     with open(input_file, encoding="utf-8") as data_source:
         tree = ElementTree.parse(data_source)
@@ -133,6 +135,6 @@ def read_pointers_from_xml(
     return pointer_table
 
 
-def recode_pointer_values(pointers: List[Pointer], from_table: Table, to_table: Table) -> None:
+def recode_pointer_values(pointers: list[Pointer], from_table: Table, to_table: Table) -> None:
     for pointer in pointers:
         pointer.value = to_table.to_bytes(from_table.to_text(pointer.get_value()))

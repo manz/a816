@@ -1,13 +1,12 @@
 import struct
 import unittest
 from io import BufferedReader, BytesIO
-from typing import List, Tuple
 
 from a816.writers import IPSWriter
 
 
 class WriterTestCase(unittest.TestCase):
-    def read_patch(self, data: memoryview) -> List[Tuple[int, int, bytes]]:
+    def read_patch(self, data: memoryview) -> list[tuple[int, int, bytes]]:
         patch = BufferedReader(BytesIO(bytes(data)))  # type:ignore
         patch.seek(5)
         blocks = []

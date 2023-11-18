@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Protocol, Union
+from typing import Any, Protocol
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.exceptions import SymbolNotDefined
@@ -52,8 +52,8 @@ from a816.parse.nodes import (
 from a816.parse.tokens import Token, TokenType
 from a816.symbols import Resolver
 
-MacroDefinitions = Dict[str, Any]
-GenNodes = List[NodeProtocol]
+MacroDefinitions = dict[str, Any]
+GenNodes = list[NodeProtocol]
 
 
 class CodeGenFuncProtocol(Protocol):
@@ -67,7 +67,7 @@ class CodeGenFuncProtocol(Protocol):
         """Protocol for codegen functions."""
 
 
-def code_gen(ast_nodes: List[AstNode], resolver: Resolver) -> GenNodes:
+def code_gen(ast_nodes: list[AstNode], resolver: Resolver) -> GenNodes:
     macro_definitions: MacroDefinitions = {}
     return _code_gen(ast_nodes, resolver, macro_definitions)
 
@@ -77,7 +77,7 @@ def _get_file_info(node: AstNode) -> Token:
 
 
 def generate_block(
-    node: Union[CompoundAstNode, BlockAstNode],
+    node: CompoundAstNode | BlockAstNode,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     file_info: Token,
@@ -94,7 +94,7 @@ def generate_scope(
     name = node.name
     resolver.append_named_scope(name)
     resolver.use_next_scope()
-    code: List[NodeProtocol] = [ScopeNode(resolver)]
+    code: list[NodeProtocol] = [ScopeNode(resolver)]
 
     code += _code_gen(node.body.body, resolver, macro_definitions)
     code.append(PopScopeNode(resolver))
@@ -127,16 +127,14 @@ def generate_opcode(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    code: List[NodeProtocol] = []
-    opcode = node.opcode_value
+    code: list[NodeProtocol] = []
     size = None
 
     if isinstance(node.operand, BlockAstNode):
         raise NodeError("Opcode operand must not be code", file_info)
 
-    if isinstance(opcode, list) or isinstance(opcode, tuple):
-        size = opcode[1]
-        opcode = opcode[0]
+    size = node.value_size
+    opcode = node.opcode
     mode = node.addressing_mode
     if mode == AddressingMode.none:
         code.append(OpcodeNode(opcode, addressing_mode=mode, file_info=file_info, resolver=resolver))
@@ -201,7 +199,7 @@ def generate_dl(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    code: List[NodeProtocol] = []
+    code: list[NodeProtocol] = []
     for expr in node.data:
         assert isinstance(expr, ExpressionAstNode)
         code.append(LongNode(ExpressionNode(expr, resolver, file_info)))
@@ -235,7 +233,7 @@ def generate_db(
 
 
 def generate_symbol(
-    node: Union[SymbolAffectationAstNode, AssignAstNode],
+    node: SymbolAffectationAstNode | AssignAstNode,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     file_info: Token,
@@ -442,7 +440,7 @@ generators = {
 }
 
 
-def _code_gen(ast_nodes: List[AstNode], resolver: Resolver, macro_definitions: MacroDefinitions) -> List[NodeProtocol]:
+def _code_gen(ast_nodes: list[AstNode], resolver: Resolver, macro_definitions: MacroDefinitions) -> list[NodeProtocol]:
     code = []
     for node in ast_nodes:
         file_info = _get_file_info(node)

@@ -36,6 +36,7 @@ repository = "https://github.com/manz/a816"
 
 [project.scripts]
 x816 = "a816.cli:cli_main"
+a816 = "a816.cli:cli_main"
 
 [build-system]
 requires = ["hatchling"]
@@ -57,8 +58,10 @@ exclude = [
 line-length = 120
 indent-width = 4
 
-# Assume Python 3.8
 target-version = "py310"
+
+[tool.ruff.lint]
+extend-select = ["I", "B", "UP"]
 
 [tool.coverage.run]
 relative_files = true
@@ -72,19 +75,20 @@ dependencies = [
 ]
 
 [tool.hatch.envs.tests.scripts]
-coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov-branch tests"
+coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov=script --cov-branch tests"
 
 tests = "pytest tests"
 check = [
-    "ruff format --check a816 tests",
-    "ruff a816 tests",
+    "ruff a816 script tests",
+    "ruff format --check script tests",
 ]
 format = [
-    "ruff --fix a816 tests",
-    "ruff format a816 tests",
+    "ruff --fix a816 script tests",
+    "ruff format a816 script tests",
     "check",
 ]
-type = "mypy -p a816 -p tests --strict --show-error-codes"
+
+type = "mypy -p a816 -p script -p tests --strict --show-error-codes"
 
 all = ["check", "type", "coverage"]
 

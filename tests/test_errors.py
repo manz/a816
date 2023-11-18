@@ -33,7 +33,7 @@ class ErrorsTest(unittest.TestCase):
             v = str(e)
             self.assertEqual(
                 v,
-                """"unknown_symbol (ExpressionNode(unknown_symbol)) is not defined in the current scope." at 
+                """"unknown_symbol (ExpressionNode(unknown_symbol)) is not defined in the current scope." at
 test_undefined_symbol.s:0 jsr.l unknown_symbol""",
                 "error should contain file information.",
             )
@@ -47,7 +47,7 @@ test_undefined_symbol.s:0 jsr.l unknown_symbol""",
             v = str(e)
             self.assertEqual(
                 v,
-                """"unknown_symbol (ExpressionNode(unknown_symbol)) is not defined in the current scope." at 
+                """"unknown_symbol (ExpressionNode(unknown_symbol)) is not defined in the current scope." at
 test_undefined_symbol_db.s:0 .db unknown_symbol""",
                 "error should contain file information.",
             )

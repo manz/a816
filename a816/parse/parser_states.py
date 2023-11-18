@@ -1,7 +1,7 @@
 import ast
-from typing import List, Literal, Optional, Tuple, Type, Union, cast
+from typing import Literal, TypeGuard, cast
 
-from a816.cpu.cpu_65c816 import AddressingMode
+from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
 from a816.parse.ast.nodes import (
     AsciiAstNode,
     AssignAstNode,
@@ -61,7 +61,7 @@ def parse_scope(p: Parser) -> ScopeAstNode:
     return ScopeAstNode(keyword.value, BlockAstNode(block, next_token), current)
 
 
-def parse_macro_definition_args(p: Parser) -> List[str]:
+def parse_macro_definition_args(p: Parser) -> list[str]:
     args = []
 
     first_arg = p.next()
@@ -89,8 +89,8 @@ def parse_macro_definition_args(p: Parser) -> List[str]:
 
 def parse_expression_list_inner(
     p: Parser,
-) -> List[Union[ExpressionAstNode, BlockAstNode]]:
-    expressions: List[Union[ExpressionAstNode, BlockAstNode]] = []
+) -> list[ExpressionAstNode | BlockAstNode]:
+    expressions: list[ExpressionAstNode | BlockAstNode] = []
     while True:
         if accept_token(p.current(), TokenType.RPAREN):
             break
@@ -108,7 +108,7 @@ def parse_expression_list_inner(
     return expressions
 
 
-def parse_expression_list(p: Parser) -> List[Union[ExpressionAstNode, BlockAstNode]]:
+def parse_expression_list(p: Parser) -> list[ExpressionAstNode | BlockAstNode]:
     expect_token(p.next(), TokenType.LPAREN)
     expressions = parse_expression_list_inner(p)
 
@@ -324,7 +324,7 @@ def parse_label(p: Parser) -> LabelAstNode:
     return LabelAstNode(current_token.value, current_token)
 
 
-def parse_block(p: Parser) -> List[AstNode]:
+def parse_block(p: Parser) -> list[AstNode]:
     decl = []
     while p.current().type != TokenType.EOF:
         if p.current().type == TokenType.RBRACE:
@@ -355,12 +355,12 @@ def parse_expression(p: Parser) -> ExpressionAstNode:
     return ExpressionAstNode(nodes)
 
 
-def parse_expression_ep(p: Parser) -> List[AstNode]:
+def parse_expression_ep(p: Parser) -> list[AstNode]:
     return [parse_expression(p)]
 
 
-def _parse_expression(p: Parser) -> List[ExprNode]:
-    tokens: List[ExprNode] = []
+def _parse_expression(p: Parser) -> list[ExprNode]:
+    tokens: list[ExprNode] = []
     current_token = p.next()
     if accept_token(current_token, TokenType.LPAREN):
         tokens.append(Parenthesis(current_token))
@@ -389,11 +389,11 @@ def _parse_expression(p: Parser) -> List[ExprNode]:
 
 def parse_symbol_affectation(
     p: Parser,
-) -> Union[SymbolAffectationAstNode, AssignAstNode]:
+) -> SymbolAffectationAstNode | AssignAstNode:
     current = p.current()
     symbol = p.next()
     expect_tokens(p.next(), [TokenType.EQUAL, TokenType.ASSIGN])
-    node_type: Union[Type[SymbolAffectationAstNode], Type[AssignAstNode]]
+    node_type: type[SymbolAffectationAstNode] | type[AssignAstNode]
     if p.current().type == TokenType.EQUAL:
         node_type = SymbolAffectationAstNode
     else:
@@ -404,10 +404,14 @@ def parse_symbol_affectation(
     return node_type(symbol.value, expression, current)
 
 
+def is_value_size(value_size: str) -> TypeGuard[ValueSize]:
+    return value_size in ["b", "w", "l"]
+
+
 def parse_opcode(p: Parser) -> OpcodeAstNode:
     opcode: Token = p.next()
-    size: Optional[str] = None
-    index: Optional[str] = None
+    size: str | None = None
+    index: str | None = None
 
     if accept_token(opcode, TokenType.OPCODE_NAKED):
         addressing_mode = AddressingMode.none
@@ -415,7 +419,7 @@ def parse_opcode(p: Parser) -> OpcodeAstNode:
         addressing_mode = AddressingMode.direct
 
     if accept_token(p.current(), TokenType.OPCODE_SIZE):
-        size = p.current().value
+        size = p.current().value.lower()
         p.next()
 
     addressing_mode, inner_index, operand = parse_operand_and_addressing(addressing_mode, opcode, p)
@@ -424,16 +428,10 @@ def parse_opcode(p: Parser) -> OpcodeAstNode:
         index = p.next().value.lower()
         addressing_mode = index_map[addressing_mode]
 
-    opcode_value: Union[Tuple[str, str], str]
-
-    if size is not None:
-        opcode_value = (opcode.value, size.lower())
-    else:
-        opcode_value = opcode.value
-
     return OpcodeAstNode(
         addressing_mode=addressing_mode,
-        opcode_value=opcode_value,
+        opcode=opcode.value,
+        value_size=size if size is not None and is_value_size(size) else None,
         operand=operand,
         index=index or inner_index,
         file_info=opcode,
@@ -442,7 +440,7 @@ def parse_opcode(p: Parser) -> OpcodeAstNode:
 
 def parse_operand_and_addressing(
     addressing_mode: AddressingMode, opcode: Token, p: Parser
-) -> Tuple[AddressingMode, Optional[str], Optional[ExpressionAstNode]]:
+) -> tuple[AddressingMode, str | None, ExpressionAstNode | None]:
     inner_index = None
     operand = None
     if accept_token(p.current(), TokenType.SHARP):
@@ -493,7 +491,7 @@ def parse_code_lookup(p: Parser) -> CodeLookupAstNode:
 
 def parse_decl(
     p: Parser,
-) -> Optional[AstNode]:
+) -> AstNode | None:
     current_token = p.next()
     if accept_token(current_token, TokenType.COMMENT):
         return None
@@ -524,8 +522,8 @@ def parse_decl(
         raise ParserSyntaxError(f"Unexpected Keyword {current_token}", current_token, None)
 
 
-def parse_initial(p: Parser) -> List[AstNode]:
-    statements: List[AstNode] = []
+def parse_initial(p: Parser) -> list[AstNode]:
+    statements: list[AstNode] = []
     while p.current().type != TokenType.EOF:
         statement = parse_decl(p)
         if statement:

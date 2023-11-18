@@ -1,26 +1,22 @@
 import re
-from typing import List, Optional, Dict, ItemsView, Union, Tuple
 
 
 class Table:
     table_line_regex = re.compile(r"(?P<byte>[0-9a-fA-F]+)(?::(?P<ignore>[0-9a-fA-F]+))?\s*=(?P<text>[^\n]+)")
     joker_regex = re.compile(r"^\[0x(?P<byte>[0-9a-fA-F]+)]")
 
-    def __init__(self, path: Optional[str] = None) -> None:
-        self.lookup: Dict[str, bytes] = {}
-        self.inverted_lookup: Dict[bytes, Union[str, Tuple[str, int]]] = {}
+    def __init__(self, path: str | None = None) -> None:
+        self.lookup: dict[str, bytes] = {}
+        self.inverted_lookup: dict[bytes, str | tuple[str, int]] = {}
         self.max_bytes_length = 0
         self.max_text_length = 0
 
         if path is not None:
             self.include(path)
 
-    @property
-    def items(self) -> ItemsView[str, bytes]:
-        return self.lookup.items()
-
     def include(self, path: str) -> None:
-        with open(path, "rt", encoding="utf-8") as f:
+        """Includes a table content to the current instance."""
+        with open(path, encoding="utf-8") as f:
             for line in f.readlines():
                 self.parse_table_line(line)
 
@@ -43,21 +39,20 @@ class Table:
         return matches is not None
 
     @staticmethod
-    def transform_byte_matches_to_int(value: str) -> List[int]:
-        return list(map(lambda b: int("".join(b), 16), zip(*[iter(value)] * 2)))
+    def transform_byte_matches_to_int(value: str) -> list[int]:
+        return list(map(lambda b: int("".join(b), 16), zip(*[iter(value)] * 2, strict=True)))
 
-    def add_inverted_lookup(self, byte: List[int], text: str, ignore: Optional[int] = None) -> None:
+    def add_inverted_lookup(self, byte: list[int], text: str, ignore: int | None = None) -> None:
         if ignore is not None:
             self.inverted_lookup[bytes(byte)] = (text, ignore)
         else:
             self.inverted_lookup[bytes(byte)] = text
 
-    def add_lookup(self, text: str, byte: List[int]) -> None:
-
+    def add_lookup(self, text: str, byte: list[int]) -> None:
         self.lookup[text] = bytes(byte)
 
     def to_bytes(self, text: str) -> bytes:
-        binary_text: List[int] = []
+        binary_text: list[int] = []
         current_position = 0
         while text[current_position:]:
             remainder = text[current_position:]
@@ -98,7 +93,7 @@ class Table:
                         current_position += i
                         text += decoded[0]
                         for _ in range(decoded[1]):
-                            text += "[" + hex(binary[current_position]) + "]"
+                            text += f"[{hex(binary[current_position])}]"
                             current_position += 1
                     else:
                         current_position += i
@@ -107,7 +102,7 @@ class Table:
                 except KeyError:
                     pass
             else:
-                text += "[" + hex(binary[current_position]) + "]"
+                text += f"[{hex(binary[current_position])}]"
                 current_position += 1
 
         return text

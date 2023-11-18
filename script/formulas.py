@@ -1,6 +1,7 @@
 import struct
-from typing import Callable
-from a816.cpu.cpu_65c816 import rom_to_snes, RomType
+from collections.abc import Callable
+
+from a816.cpu.cpu_65c816 import RomType, rom_to_snes
 
 
 def base_relative_16bits_pointer_formula(base: int) -> Callable[[bytes], int]:

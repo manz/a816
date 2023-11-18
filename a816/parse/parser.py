@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, List
+from collections.abc import Callable
 
 from a816.parse.ast.nodes import AstNode
 from a816.parse.errors import ParserSyntaxError
@@ -9,12 +9,12 @@ logger = logging.getLogger("a816.parser")
 
 
 class Parser:
-    def __init__(self, tokens: List[Token], initial_state: "StateFunc"):
-        self.tokens: List[Token] = tokens
+    def __init__(self, tokens: list[Token], initial_state: "StateFunc"):
+        self.tokens: list[Token] = tokens
         self.pos = 0
         self.initial_state: StateFunc = initial_state
 
-    def parse(self) -> List[AstNode]:
+    def parse(self) -> list[AstNode]:
         try:
             return self.initial_state(self)
         except ParserSyntaxError as e:
@@ -51,12 +51,12 @@ def expect_token(token: Token, token_type: TokenType) -> None:
         raise ParserSyntaxError(f"Expected {token_type} but got {token}", token, token_type)
 
 
-def expect_tokens(token: Token, token_types: List[TokenType]) -> None:
+def expect_tokens(token: Token, token_types: list[TokenType]) -> None:
     if token.type not in token_types:
         raise ParserSyntaxError(f"Expected {token_types} but got {token}", token, token_types[0])
 
 
-def accept_tokens(token: Token, token_types: List[TokenType]) -> bool:
+def accept_tokens(token: Token, token_types: list[TokenType]) -> bool:
     return token.type in token_types
 
 
@@ -64,4 +64,4 @@ def accept_token(token: Token, token_type: TokenType) -> bool:
     return token.type == token_type
 
 
-StateFunc = Callable[[Parser], List[AstNode]]
+StateFunc = Callable[[Parser], list[AstNode]]

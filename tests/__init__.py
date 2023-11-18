@@ -1,12 +1,10 @@
-from typing import List
-
 from a816.writers import Writer
 
 
 class StubWriter(Writer):
     def __init__(self) -> None:
-        self.data: List[bytes] = []
-        self.data_addresses: List[int] = []
+        self.data: list[bytes] = []
+        self.data_addresses: list[int] = []
 
     def begin(self) -> None:
         """not needed by StubWriter"""

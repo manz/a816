@@ -1,5 +1,3 @@
-from typing import List
-
 from a816.parse.ast.nodes import BinOp, ExpressionAstNode, ExprNode, Term, UnaryOp
 from a816.parse.tokens import TokenType
 from a816.symbols import Resolver
@@ -22,16 +20,16 @@ OPERATOR_PRECEDENCE = {
 }
 
 
-def reverse_find_token(items: List[ExprNode], value: str) -> int:
+def reverse_find_token(items: list[ExprNode], value: str) -> int:
     for pos in range(len(items) - 1, -1, -1):
         if items[pos].token.value == value:
             return pos
     return -1
 
 
-def shunting_yard(expr_nodes: List[ExprNode]) -> List[ExprNode]:
-    output_queue: List[ExprNode] = []
-    operator_stack: List[ExprNode] = []
+def shunting_yard(expr_nodes: list[ExprNode]) -> list[ExprNode]:
+    output_queue: list[ExprNode] = []
+    operator_stack: list[ExprNode] = []
 
     for expr in expr_nodes:
         if isinstance(expr, Term):
@@ -80,7 +78,7 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int:
     tokens = expression.tokens
     ordered = shunting_yard(tokens)
 
-    values_stack: List[int] = []
+    values_stack: list[int] = []
     r: int
 
     for current in ordered:

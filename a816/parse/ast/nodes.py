@@ -1,8 +1,9 @@
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, Union
+from typing import Any, Literal, TypedDict
 
-from a816.cpu.cpu_65c816 import AddressingMode
+from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
 from a816.parse.tokens import Token
 
 
@@ -14,7 +15,7 @@ class AstNode(ABC):
         self.file_info = file_info
 
     @abstractmethod
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         """Returns the tuple representation of the node."""
 
 
@@ -46,35 +47,35 @@ class Parenthesis(ExprNode):
 
 
 class ExpressionAstNode(AstNode):
-    tokens: List[ExprNode]
+    tokens: list[ExprNode]
 
-    def __init__(self, tokens: List[ExprNode]) -> None:
+    def __init__(self, tokens: list[ExprNode]) -> None:
         super().__init__("expression", tokens[0].token)
         self.tokens = tokens
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return (" ".join([expr_node.token.value for expr_node in self.tokens]),)
 
 
 class BlockAstNode(AstNode):
-    body: List[AstNode]
+    body: list[AstNode]
 
-    def __init__(self, body: List[AstNode], file_info: Token) -> None:
+    def __init__(self, body: list[AstNode], file_info: Token) -> None:
         super().__init__("block", file_info)
         self.body = body
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, list(node.to_representation() for node in self.body)
 
 
 class CompoundAstNode(AstNode):
-    body: List[AstNode]
+    body: list[AstNode]
 
-    def __init__(self, body: List[AstNode], file_info: Token):
+    def __init__(self, body: list[AstNode], file_info: Token):
         super().__init__("compound", file_info)
         self.body = body
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, list(node.to_representation() for node in self.body)
 
 
@@ -85,7 +86,7 @@ class LabelAstNode(AstNode):
         super().__init__("label", file_info)
         self.label = label
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.label
 
 
@@ -96,7 +97,7 @@ class TextAstNode(AstNode):
         super().__init__("text", file_info)
         self.text = text
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
 
 
@@ -107,7 +108,7 @@ class AsciiAstNode(AstNode):
         super().__init__("ascii", file_info)
         self.text = text
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
 
 
@@ -120,7 +121,7 @@ class ScopeAstNode(AstNode):
         self.name = name
         self.body = body
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.body.to_representation()
 
 
@@ -129,7 +130,7 @@ class CodePositionAstNode(AstNode):
         super().__init__("star_eq", file_info)
         self.expression = expression
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.expression.to_representation()[0]
 
 
@@ -138,22 +139,17 @@ class CodeRelocationAstNode(AstNode):
         super().__init__("at_eq", file_info)
         self.expression = expression
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.expression.to_representation()[0]
 
 
-MapArgs = TypedDict(
-    "MapArgs",
-    {
-        "identifier": Union[str, int],
-        "writable": bool,
-        "bank_range": Tuple[int, int],
-        "addr_range": Tuple[int, int],
-        "mask": int,
-        "mirror_bank_range": Tuple[int, int],
-    },
-    total=False,
-)
+class MapArgs(TypedDict, total=False):
+    identifier: str | int
+    writable: bool
+    bank_range: tuple[int, int]
+    addr_range: tuple[int, int]
+    mask: int
+    mirror_bank_range: tuple[int, int]
 
 
 class MapAstNode(AstNode):
@@ -163,20 +159,20 @@ class MapAstNode(AstNode):
         super().__init__("map", file_info)
         self.args = args
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.args
 
 
 class IfAstNode(AstNode):
     expression: ExpressionAstNode
     block: CompoundAstNode
-    else_block: Optional[CompoundAstNode]
+    else_block: CompoundAstNode | None
 
     def __init__(
         self,
         expression: ExpressionAstNode,
         block: CompoundAstNode,
-        else_bock: Optional[CompoundAstNode],
+        else_bock: CompoundAstNode | None,
         file_info: Token,
     ):
         super().__init__("if", file_info)
@@ -184,7 +180,7 @@ class IfAstNode(AstNode):
         self.block = block
         self.else_block = else_bock
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return (
             self.kind,
             self.expression.to_representation()[0],
@@ -195,34 +191,34 @@ class IfAstNode(AstNode):
 
 class MacroAstNode(AstNode):
     name: str
-    args: List[str]
+    args: list[str]
     block: BlockAstNode
 
-    def __init__(self, name: str, args: List[str], block: BlockAstNode, file_info: Token):
+    def __init__(self, name: str, args: list[str], block: BlockAstNode, file_info: Token):
         super().__init__("macro", file_info)
         self.name = name
         self.args = args
         self.block = block
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, ("args", self.args), self.block.to_representation()
 
 
 class MacroApplyAstNode(AstNode):
     name: str
-    args: List[Union[ExpressionAstNode, BlockAstNode]]
+    args: list[ExpressionAstNode | BlockAstNode]
 
     def __init__(
         self,
         name: str,
-        args: List[Union[ExpressionAstNode, BlockAstNode]],
+        args: list[ExpressionAstNode | BlockAstNode],
         file_info: Token,
     ):
         super().__init__("macro_apply", file_info)
         self.name = name
         self.args = args
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         apply_args = []
 
         for arg in self.args:
@@ -239,12 +235,12 @@ class MacroApplyAstNode(AstNode):
 
 
 class DataNode(AstNode):
-    data: List[ExpressionAstNode]
+    data: list[ExpressionAstNode]
 
     def __init__(
         self,
         kind: str,
-        data: List[Union[ExpressionAstNode, BlockAstNode]],
+        data: list[ExpressionAstNode | BlockAstNode],
         file_info: Token,
     ):
         super().__init__(kind, file_info)
@@ -255,7 +251,7 @@ class DataNode(AstNode):
             assert isinstance(d, ExpressionAstNode)
             self.data.append(d)
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, [d.to_representation()[0] for d in self.data]
 
 
@@ -266,7 +262,7 @@ class TableAstNode(AstNode):
         super().__init__("table", file_info)
         self.file_path = file_path
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path
 
 
@@ -277,7 +273,7 @@ class IncludeAstNode(AstNode):
         super().__init__("include", file_info)
         self.file_path = file_path
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path
 
 
@@ -289,7 +285,7 @@ class IncludeIpsAstNode(AstNode):
         self.file_path = file_path
         self.expression = expression
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path, self.expression.to_representation()[0]
 
 
@@ -300,7 +296,7 @@ class IncludeBinaryAstNode(AstNode):
         super().__init__("incbin", file_info)
         self.file_path = file_path
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path
 
 
@@ -310,7 +306,7 @@ class SymbolAffectationAstNode(AstNode):
         self.symbol = symbol
         self.value = value
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol, self.value.to_representation()[0]
 
 
@@ -320,7 +316,7 @@ class AssignAstNode(AstNode):
         self.symbol = symbol
         self.value = value
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol, self.value.to_representation()[0]
 
 
@@ -329,17 +325,17 @@ class CodeLookupAstNode(AstNode):
         super().__init__("code_lookup", file_info)
         self.symbol = symbol
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol
 
 
 class StructAstNode(AstNode):
-    def __init__(self, name: str, fields: Dict[str, str], file_info: Token) -> None:
+    def __init__(self, name: str, fields: dict[str, str], file_info: Token) -> None:
         super().__init__("struct", file_info)
         self.name = name
         self.fields = fields
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.fields
 
 
@@ -358,7 +354,7 @@ class ForAstNode(AstNode):
         self.max_value = max_value
         self.body = body
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    def to_representation(self) -> tuple[Any, ...]:
         return (
             self.kind,
             self.symbol,
@@ -368,23 +364,23 @@ class ForAstNode(AstNode):
         )
 
 
-KeywordAstNode = Union[
-    ScopeAstNode,
-    MapAstNode,
-    MacroAstNode,
-    IfAstNode,
-    ForAstNode,
-    DataNode,
-    TextAstNode,
-    AsciiAstNode,
-    IncludeAstNode,
-    IncludeIpsAstNode,
-    IncludeBinaryAstNode,
-    BlockAstNode,
-    TableAstNode,
-    StructAstNode,
-]
-FileInfoAstNode = Tuple[Literal["file_info"], Token]
+KeywordAstNode = (
+    ScopeAstNode
+    | MapAstNode
+    | MacroAstNode
+    | IfAstNode
+    | ForAstNode
+    | DataNode
+    | TextAstNode
+    | AsciiAstNode
+    | IncludeAstNode
+    | IncludeIpsAstNode
+    | IncludeBinaryAstNode
+    | BlockAstNode
+    | TableAstNode
+    | StructAstNode
+)
+FileInfoAstNode = tuple[Literal["file_info"], Token]
 
 
 class OpcodeAstNode(AstNode):
@@ -392,40 +388,58 @@ class OpcodeAstNode(AstNode):
         self,
         *,
         addressing_mode: AddressingMode,
-        opcode_value: Union[Tuple[str, str], str],
-        operand: Optional[ExpressionAstNode],
-        index: Optional[str],
+        opcode: str,
+        value_size: ValueSize | None,
+        operand: ExpressionAstNode | None,
+        index: str | None,
         file_info: Token,
     ):
         super().__init__("opcode", file_info)
         self.addressing_mode = addressing_mode
-        self.opcode_value = opcode_value
+        self.opcode = opcode
+        self.value_size = value_size
         self.operand = operand
         self.index = index
 
-    def to_representation(self) -> Tuple[Any, ...]:
+    @property
+    def opcode_value(self) -> tuple[str, ValueSize] | str:
+        warnings.warn(
+            "Use opcode and value_size fields instead of opcode_value composite field.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._repr_opcode_value
+
+    @property
+    def _repr_opcode_value(self) -> tuple[str, ValueSize] | str:
+        if self.value_size:
+            return self.opcode, self.value_size
+        else:
+            return self.opcode
+
+    def to_representation(self) -> tuple[Any, ...]:
         return (
             self.kind,
             self.addressing_mode,
-            self.opcode_value,
+            self._repr_opcode_value,
             self.operand.to_representation()[0] if self.operand else None,
             self.index,
         )
 
 
-DeclAstNode = Union[
-    CodeLookupAstNode,
-    LabelAstNode,
-    CompoundAstNode,
-    CodePositionAstNode,
-    CodeRelocationAstNode,
-    OpcodeAstNode,
-    KeywordAstNode,
-    MacroApplyAstNode,
-    SymbolAffectationAstNode,
-    IfAstNode,
-    # TableAstNode
-]
+DeclAstNode = (
+    CodeLookupAstNode
+    | LabelAstNode
+    | CompoundAstNode
+    | CodePositionAstNode
+    | CodeRelocationAstNode
+    | OpcodeAstNode
+    | KeywordAstNode
+    | MacroApplyAstNode
+    | SymbolAffectationAstNode
+    | IfAstNode,
+)
+
 index_map = {
     AddressingMode.indirect: AddressingMode.indirect_indexed,
     AddressingMode.indirect_long: AddressingMode.indirect_indexed_long,

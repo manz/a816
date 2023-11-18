@@ -1,5 +1,5 @@
 import struct
-from typing import BinaryIO, List, Protocol, Tuple
+from typing import BinaryIO, Protocol
 
 
 class Writer(Protocol):
@@ -19,7 +19,7 @@ class Writer(Protocol):
 class IPSWriter(Writer):
     def __init__(self, file: BinaryIO, copier_header: bool = False) -> None:
         self.file = file
-        self._regions: List[Tuple[int, int]] = []
+        self._regions: list[tuple[int, int]] = []
         self._copier_header = copier_header
 
     def begin(self) -> None:
