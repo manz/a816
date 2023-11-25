@@ -1,4 +1,5 @@
-from typing import Callable, List, Optional
+from collections.abc import Callable
+from typing import Optional
 
 from a816.parse.errors import ScannerException
 from a816.parse.tokens import EOF, File, Position, Token, TokenType
@@ -11,13 +12,13 @@ class Scanner:
 
     line = 0
     column = 0
-    filename: Optional[str] = None
+    filename: str | None = None
     file: File
     input: str
 
     def __init__(self, initial_state: "ScannerStateFunc") -> None:
         self.initial_state = initial_state
-        self.tokens: List[Token] = []
+        self.tokens: list[Token] = []
         self.line_offset = 0
         self.current_line = 0
 
@@ -29,7 +30,7 @@ class Scanner:
         print(f"{position_str} :\n{line}")
         print(" " * position.column + "^")
 
-    def scan(self, filename: str, input_: str) -> List[Token]:
+    def scan(self, filename: str, input_: str) -> list[Token]:
         self.file = File(filename)
         self.input = input_
         self.state = self.initial_state
@@ -55,7 +56,7 @@ class Scanner:
             self.line_offset = self.pos + 1
             self.current_line += 1
 
-    def next(self) -> Optional[str]:
+    def next(self) -> str | None:
         if self.pos < len(self.input):
             data = self.input[self.pos]
             if data == "\n":
@@ -94,7 +95,7 @@ class Scanner:
 
     def accept_run(self, candidates: str, negate: bool = False) -> None:
         while self.accept(candidates, negate):
-            # Accepts candidates until a non matching char is found.
+            # Accepts candidates until a non-matching char is found.
             pass
 
     def ignore(self) -> None:

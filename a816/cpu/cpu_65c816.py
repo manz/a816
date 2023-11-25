@@ -2,11 +2,13 @@ import struct
 import typing
 import warnings
 from enum import Enum
-from typing import Dict, List, Optional, Protocol, Union
+from typing import Literal, Protocol
 
 if typing.TYPE_CHECKING:  # pragma: nocover
     from a816.parse.nodes import ValueNodeProtocol
     from a816.symbols import Resolver
+
+ValueSize = Literal["b", "w", "l", ""]
 
 
 class NoOpcodeForOperandSize(Exception):
@@ -26,53 +28,42 @@ class AddressingMode(Enum):
     stack_indexed_indirect_indexed = 9
 
 
+# IDEA: OpcodeProtocol & Opcode With Value
 class OpcodeProtocol(Protocol):
     def emit(
         self,
-        value_node: "Optional[ValueNodeProtocol]",
+        value_node: "ValueNodeProtocol | None",
         resolver: "Resolver",
-        size: Optional[str] = None,
+        size: ValueSize | None = None,
     ) -> bytes:
         """"""
 
-    def supposed_length(self, value_node: "Optional[ValueNodeProtocol]", size: Optional[str] = None) -> int:
-        """"""
-
-    def get_opcode_byte(self, value_size: str) -> int:
-        """"""
-
-    def guess_value_size(self, value_node: "ValueNodeProtocol", size: Optional[str]) -> str:
+    def supposed_length(self, value_node: "ValueNodeProtocol | None", size: ValueSize | None = None) -> int:
         """"""
 
 
-class BaseOpcode(OpcodeProtocol):
+class OpcodeWithoutOperand(OpcodeProtocol):
     def __init__(self, opcode: int) -> None:
         self.opcode = opcode
 
     def emit(
         self,
-        value_node: "Optional[ValueNodeProtocol]",
+        value_node: "ValueNodeProtocol | None",
         resolver: "Resolver",
-        size: Optional[str] = None,
+        size: ValueSize | None = None,
     ) -> bytes:
         return struct.pack("B", self.opcode)
 
-    def get_opcode_byte(self, value_size: str) -> int:
-        return self.opcode
-
-    def supposed_length(self, value_node: "Optional[ValueNodeProtocol]", size: Optional[str] = None) -> int:
+    def supposed_length(self, value_node: "ValueNodeProtocol | None", size: ValueSize | None = None) -> int:
         return 1
 
-    def guess_value_size(self, value_node: "ValueNodeProtocol", size: Optional[str]) -> str:
-        return ""
 
-
-class RelativeJumpOpcode(BaseOpcode):
+class RelativeJumpOpcode(OpcodeWithoutOperand):
     def emit(
         self,
-        value_node: "Optional[ValueNodeProtocol]",
+        value_node: "ValueNodeProtocol | None",
         resolver: "Resolver",
-        size: Optional[str] = None,
+        size: ValueSize | None = None,
     ) -> bytes:
         if value_node is None:
             raise RuntimeError("Nope.")
@@ -91,31 +82,32 @@ class RelativeJumpOpcode(BaseOpcode):
         else:
             delta = value
         try:
-            return super(RelativeJumpOpcode, self).emit(value_node, resolver, size) + struct.pack("b", delta)
+            return super().emit(value_node, resolver, size) + struct.pack("b", delta)
         except struct.error:
             print(value_node)
             raise
 
-    def supposed_length(self, value_node: "Optional[ValueNodeProtocol]", size: Optional[str] = None) -> int:
+    def supposed_length(self, value_node: "ValueNodeProtocol | None", size: ValueSize | None = None) -> int:
         return 2
 
 
+def guess_value_size(value_node: "ValueNodeProtocol", size: ValueSize | None) -> ValueSize:
+    if value_node is None:
+        raise RuntimeError("Nope.")
+    if size:
+        return size
+    else:
+        return value_node.get_operand_size()
+
+
 class Opcode(OpcodeProtocol):
-    def __init__(self, opcode_def: List[Optional[int]], is_a: bool = False, is_x: bool = False):
+    def __init__(self, opcode_def: list[int | None], is_a: bool = False, is_x: bool = False):
         self.opcode_def = opcode_def
         self.is_a = is_a
         self.is_x = is_x
-        self.size_opcode_map: Dict[str, int] = {"b": 0, "w": 1, "l": 2}
+        self.size_opcode_map: dict[str, int] = {"b": 0, "w": 1, "l": 2}
 
-    def guess_value_size(self, value_node: "ValueNodeProtocol", size: Optional[str]) -> str:
-        if value_node is None:
-            raise RuntimeError("Nope.")
-        if size:
-            return size
-        else:
-            return value_node.get_operand_size()
-
-    def emit_value(self, value_node: "ValueNodeProtocol", size: str) -> bytes:
+    def emit_value(self, value_node: "ValueNodeProtocol", size: ValueSize) -> bytes:
         value = value_node.get_value()
         if size == "b":
             return struct.pack("B", value & 0xFF)
@@ -123,20 +115,20 @@ class Opcode(OpcodeProtocol):
             return struct.pack("<H", value & 0xFFFF)
         elif size == "l":
             return struct.pack("<HB", value & 0xFFFF, value >> 16)
-        else:
-            raise RuntimeError(f"Unknown Size {size}")
+        return b""
 
-    def supposed_length(self, value_node: "Optional[ValueNodeProtocol]", size: Optional[str] = None) -> int:
+    def supposed_length(self, value_node: "ValueNodeProtocol | None", size: ValueSize | None = None) -> int:
         if value_node is None:
-            raise RuntimeError("Nope.")
-        value_size = self.guess_value_size(value_node, size)
+            raise RuntimeError(f"value node cannot be none for opcode {self.opcode_def}")
+
+        value_size = guess_value_size(value_node, size)
         return 2 + self.size_opcode_map[value_size]
 
     def get_opcode_byte(self, value_size: str) -> int:
         try:
             opcode_byte = self.opcode_def[self.size_opcode_map[value_size]]
-        except IndexError:
-            raise NoOpcodeForOperandSize()
+        except IndexError as e:
+            raise NoOpcodeForOperandSize() from e
         else:
             if opcode_byte is None:
                 raise NoOpcodeForOperandSize()
@@ -144,13 +136,14 @@ class Opcode(OpcodeProtocol):
 
     def emit(
         self,
-        value_node: "Optional[ValueNodeProtocol]",
+        value_node: "ValueNodeProtocol | None",
         resolver: "Resolver",
-        size: Optional[str] = None,
+        size: ValueSize | None = None,
     ) -> bytes:
         if value_node is None:
-            raise RuntimeError("Nope.")
-        value_size = self.guess_value_size(value_node, size)
+            raise RuntimeError(f"value node cannot be none for opcode {self.opcode_def}")
+
+        value_size = guess_value_size(value_node, size)
         opcode_byte = self.get_opcode_byte(value_size)
 
         operand_bytes = self.emit_value(value_node, value_size)
@@ -158,10 +151,10 @@ class Opcode(OpcodeProtocol):
         return node_bytes
 
 
-OpcodeDef = Union[OpcodeProtocol, Dict[str, OpcodeProtocol]]
+OpcodeDef = OpcodeProtocol | dict[str, OpcodeProtocol]
 
-snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
-    "nop": {AddressingMode.none: BaseOpcode(0xEA)},
+snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
+    "nop": {AddressingMode.none: OpcodeWithoutOperand(0xEA)},
     "rep": {AddressingMode.immediate: Opcode([0xC2])},
     "cpx": {
         AddressingMode.immediate: Opcode([0xE0, 0xE0], is_x=True),
@@ -172,7 +165,7 @@ snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct: Opcode([0xC4, 0xCC]),
     },
     "dec": {
-        AddressingMode.none: BaseOpcode(0x3A),
+        AddressingMode.none: OpcodeWithoutOperand(0x3A),
         AddressingMode.direct: Opcode([0xC6, 0xCE]),
         AddressingMode.direct_indexed: {"x": Opcode([0xD6, 0xDE])},
     },
@@ -228,7 +221,7 @@ snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {"x": Opcode([0xB4, 0xBC], is_x=True)},
     },
     "lsr": {
-        AddressingMode.none: BaseOpcode(0x4A),
+        AddressingMode.none: OpcodeWithoutOperand(0x4A),
         AddressingMode.direct: Opcode([0x46, 0x4E]),
         AddressingMode.direct_indexed: {"x": Opcode([0x56, 0x5E])},
     },
@@ -239,14 +232,14 @@ snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.indirect_long: Opcode([None, 0xDC, None]),
     },
     "inc": {
-        AddressingMode.none: BaseOpcode(0x1A),
+        AddressingMode.none: OpcodeWithoutOperand(0x1A),
         AddressingMode.direct: Opcode([0xE6, 0xEE]),
         AddressingMode.direct_indexed: {"x": Opcode([0xF6, 0xFE])},
     },
-    "inx": {AddressingMode.none: BaseOpcode(0xE8)},
-    "iny": {AddressingMode.none: BaseOpcode(0xC8)},
-    "dex": {AddressingMode.none: BaseOpcode(0xCA)},
-    "dey": {AddressingMode.none: BaseOpcode(0x88)},
+    "inx": {AddressingMode.none: OpcodeWithoutOperand(0xE8)},
+    "iny": {AddressingMode.none: OpcodeWithoutOperand(0xC8)},
+    "dex": {AddressingMode.none: OpcodeWithoutOperand(0xCA)},
+    "dey": {AddressingMode.none: OpcodeWithoutOperand(0x88)},
     "adc": {
         AddressingMode.immediate: Opcode([0x69, 0x69], is_a=True),
         AddressingMode.direct: Opcode([0x65, 0x6D, 0x6F]),
@@ -273,7 +266,7 @@ snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.indirect_indexed_long: {"y": Opcode([0x37])},
     },
     "asl": {
-        AddressingMode.none: BaseOpcode(0x0A),
+        AddressingMode.none: OpcodeWithoutOperand(0x0A),
         AddressingMode.direct: Opcode([0x06, 0x0E]),
         AddressingMode.direct_indexed: {"x": Opcode([0x16, 0x1E])},
     },
@@ -289,8 +282,8 @@ snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
     "bne": {AddressingMode.direct: RelativeJumpOpcode(0xD0)},
     "bpl": {AddressingMode.direct: RelativeJumpOpcode(0x10)},
     "bra": {AddressingMode.direct: RelativeJumpOpcode(0x80)},
-    "brk": {AddressingMode.none: BaseOpcode(0x00)},
-    "clc": {AddressingMode.none: BaseOpcode(0x18)},
+    "brk": {AddressingMode.none: OpcodeWithoutOperand(0x00)},
+    "clc": {AddressingMode.none: OpcodeWithoutOperand(0x18)},
     "cmp": {
         AddressingMode.immediate: Opcode([0xC9, 0xC9], is_a=True),
         AddressingMode.direct: Opcode([0xC5, 0xCD, 0xCF], is_a=True),
@@ -301,34 +294,34 @@ snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
     },
     "pea": {AddressingMode.direct: Opcode([None, 0xF4])},
     "pei": {AddressingMode.indirect: Opcode([0xD4])},
-    "pha": {AddressingMode.none: BaseOpcode(0x48)},
-    "pla": {AddressingMode.none: BaseOpcode(0x68)},
-    "phy": {AddressingMode.none: BaseOpcode(0x5A)},
-    "ply": {AddressingMode.none: BaseOpcode(0x7A)},
-    "phx": {AddressingMode.none: BaseOpcode(0xDA)},
-    "plx": {AddressingMode.none: BaseOpcode(0xFA)},
-    "php": {AddressingMode.none: BaseOpcode(0x08)},
-    "plp": {AddressingMode.none: BaseOpcode(0x28)},
-    "phb": {AddressingMode.none: BaseOpcode(0x8B)},
-    "plb": {AddressingMode.none: BaseOpcode(0xAB)},
-    "phd": {AddressingMode.none: BaseOpcode(0x0B)},
-    "pld": {AddressingMode.none: BaseOpcode(0x2B)},
+    "pha": {AddressingMode.none: OpcodeWithoutOperand(0x48)},
+    "pla": {AddressingMode.none: OpcodeWithoutOperand(0x68)},
+    "phy": {AddressingMode.none: OpcodeWithoutOperand(0x5A)},
+    "ply": {AddressingMode.none: OpcodeWithoutOperand(0x7A)},
+    "phx": {AddressingMode.none: OpcodeWithoutOperand(0xDA)},
+    "plx": {AddressingMode.none: OpcodeWithoutOperand(0xFA)},
+    "php": {AddressingMode.none: OpcodeWithoutOperand(0x08)},
+    "plp": {AddressingMode.none: OpcodeWithoutOperand(0x28)},
+    "phb": {AddressingMode.none: OpcodeWithoutOperand(0x8B)},
+    "plb": {AddressingMode.none: OpcodeWithoutOperand(0xAB)},
+    "phd": {AddressingMode.none: OpcodeWithoutOperand(0x0B)},
+    "pld": {AddressingMode.none: OpcodeWithoutOperand(0x2B)},
     "phk": {
-        AddressingMode.none: BaseOpcode(0x4B),
+        AddressingMode.none: OpcodeWithoutOperand(0x4B),
     },
     "rol": {
-        AddressingMode.none: BaseOpcode(0x2A),
+        AddressingMode.none: OpcodeWithoutOperand(0x2A),
         AddressingMode.direct: Opcode([0x26, 0x2E]),
         AddressingMode.direct_indexed: {"x": Opcode([0x36, 0x3E])},
     },
     "ror": {
-        AddressingMode.none: BaseOpcode(0x6A),
+        AddressingMode.none: OpcodeWithoutOperand(0x6A),
         AddressingMode.direct: Opcode([0x66, 0x6E]),
         AddressingMode.direct_indexed: {"x": Opcode([0x76, 0x7E])},
     },
-    "rti": {AddressingMode.none: BaseOpcode(0x40)},
-    "rtl": {AddressingMode.none: BaseOpcode(0x6B)},
-    "rts": {AddressingMode.none: BaseOpcode(0x60)},
+    "rti": {AddressingMode.none: OpcodeWithoutOperand(0x40)},
+    "rtl": {AddressingMode.none: OpcodeWithoutOperand(0x6B)},
+    "rts": {AddressingMode.none: OpcodeWithoutOperand(0x60)},
     "sbc": {
         AddressingMode.immediate: Opcode([0xE9, 0xE9], is_a=True),
         AddressingMode.direct: Opcode([0xE5, 0xED, 0xEF]),
@@ -340,9 +333,9 @@ snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.indirect_indexed: {"y": Opcode([0xF1])},
         AddressingMode.indirect_indexed_long: {"y": Opcode([0xF7])},
     },
-    "sec": {AddressingMode.none: BaseOpcode(0x38)},
-    "sed": {AddressingMode.none: BaseOpcode(0xF8)},
-    "sei": {AddressingMode.none: BaseOpcode(0x78)},
+    "sec": {AddressingMode.none: OpcodeWithoutOperand(0x38)},
+    "sed": {AddressingMode.none: OpcodeWithoutOperand(0xF8)},
+    "sei": {AddressingMode.none: OpcodeWithoutOperand(0x78)},
     "sep": {AddressingMode.immediate: Opcode([0xE2])},
     "sta": {
         AddressingMode.direct: Opcode([0x85, 0x8D, 0x8F]),
@@ -368,24 +361,24 @@ snes_opcode_table: Dict[str, Dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct: Opcode([0x64, 0x9C]),
         AddressingMode.direct_indexed: {"x": Opcode([0x74, 0x9E])},
     },
-    "stp": {AddressingMode.none: BaseOpcode(0xDB)},
-    "tax": {AddressingMode.none: BaseOpcode(0xAA)},
-    "tay": {AddressingMode.none: BaseOpcode(0xA8)},
-    "tcd": {AddressingMode.none: BaseOpcode(0x5B)},
-    "tcs": {AddressingMode.none: BaseOpcode(0x1B)},
-    "tdc": {AddressingMode.none: BaseOpcode(0x7B)},
+    "stp": {AddressingMode.none: OpcodeWithoutOperand(0xDB)},
+    "tax": {AddressingMode.none: OpcodeWithoutOperand(0xAA)},
+    "tay": {AddressingMode.none: OpcodeWithoutOperand(0xA8)},
+    "tcd": {AddressingMode.none: OpcodeWithoutOperand(0x5B)},
+    "tcs": {AddressingMode.none: OpcodeWithoutOperand(0x1B)},
+    "tdc": {AddressingMode.none: OpcodeWithoutOperand(0x7B)},
     "trb": {AddressingMode.direct: Opcode([0x14, 0x1C])},
     "tsb": {AddressingMode.direct: Opcode([0x04, 0x0C])},
-    "tsc": {AddressingMode.none: BaseOpcode(0x3B)},
-    "tsx": {AddressingMode.none: BaseOpcode(0xBA)},
-    "txa": {AddressingMode.none: BaseOpcode(0x8A)},
-    "txs": {AddressingMode.none: BaseOpcode(0x9A)},
-    "txy": {AddressingMode.none: BaseOpcode(0x9B)},
-    "tya": {AddressingMode.none: BaseOpcode(0x98)},
-    "tyx": {AddressingMode.none: BaseOpcode(0xBB)},
-    "wai": {AddressingMode.none: BaseOpcode(0xCB)},
-    "xba": {AddressingMode.none: BaseOpcode(0xEB)},
-    "xce": {AddressingMode.none: BaseOpcode(0xFB)},
+    "tsc": {AddressingMode.none: OpcodeWithoutOperand(0x3B)},
+    "tsx": {AddressingMode.none: OpcodeWithoutOperand(0xBA)},
+    "txa": {AddressingMode.none: OpcodeWithoutOperand(0x8A)},
+    "txs": {AddressingMode.none: OpcodeWithoutOperand(0x9A)},
+    "txy": {AddressingMode.none: OpcodeWithoutOperand(0x9B)},
+    "tya": {AddressingMode.none: OpcodeWithoutOperand(0x98)},
+    "tyx": {AddressingMode.none: OpcodeWithoutOperand(0xBB)},
+    "wai": {AddressingMode.none: OpcodeWithoutOperand(0xCB)},
+    "xba": {AddressingMode.none: OpcodeWithoutOperand(0xEB)},
+    "xce": {AddressingMode.none: OpcodeWithoutOperand(0xFB)},
 }
 
 
@@ -396,10 +389,7 @@ class RomType(Enum):
 
 
 def rom_to_snes(address: int, mode: RomType) -> int:
-    warnings.warn(
-        "Kept for compatibility, see Address class for more information.",
-        DeprecationWarning,
-    )
+    warnings.warn("Kept for compatibility, see Address class for more information.", DeprecationWarning, stacklevel=2)
     if mode == RomType.low_rom:
         bank = int(address / 0x8000)
         remainder = (address % 0x8000) + 0x8000
@@ -417,10 +407,7 @@ def rom_to_snes(address: int, mode: RomType) -> int:
 
 def snes_to_rom(address: int) -> int:
     """Legacy mapping"""
-    warnings.warn(
-        "Kept for compatibility, see Address class for more information.",
-        DeprecationWarning,
-    )
+    warnings.warn("Kept for compatibility, see Address class for more information.", DeprecationWarning, stacklevel=2)
 
     if address >= 0xC00000:
         rom_address = address - 0xC00000
@@ -435,7 +422,7 @@ def snes_to_rom(address: int) -> int:
     return rom_address
 
 
-def get_opcodes_with_addressing(addressing_mode: AddressingMode) -> List[str]:
+def get_opcodes_with_addressing(addressing_mode: AddressingMode) -> list[str]:
     def filter_func(k: str) -> bool:
         keys = snes_opcode_table[k].keys()
         return addressing_mode in keys

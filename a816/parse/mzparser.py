@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 from a816.parse.ast.nodes import AstNode
 from a816.parse.codegen import code_gen
@@ -14,11 +14,11 @@ from a816.symbols import Resolver
 
 @dataclass
 class ParserResult:
-    nodes: List[AstNode]
-    error: Optional[str]
+    nodes: list[AstNode]
+    error: str | None
 
     @property
-    def ast(self) -> List[Tuple[Any, ...]]:
+    def ast(self) -> list[tuple[Any, ...]]:
         return [node.to_representation() for node in self.nodes]
 
 
@@ -26,15 +26,15 @@ class MZParser:
     def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
 
-    def parse(self, program: str, filename: str = "") -> List[NodeProtocol]:
+    def parse(self, program: str, filename: str = "") -> list[NodeProtocol]:
         ast = self.parse_as_ast(program, filename)
         return code_gen(ast.nodes, self.resolver)
 
     @staticmethod
-    def parse_as_ast(program: str, filename: str = "") -> ParserResult:
+    def parse_as_ast(program: str, filename: str = "memory.s") -> ParserResult:
         scanner = Scanner(lex_initial)
-        ast: List[AstNode] = []
-        error: Optional[str]
+        ast: list[AstNode] = []
+        error: str | None
 
         try:
             tokens = scanner.scan(filename, program)

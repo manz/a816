@@ -1,5 +1,3 @@
-from typing import Optional
-
 from a816.parse.tokens import Position, Token, TokenType
 
 
@@ -8,11 +6,11 @@ class ParserSyntaxError(Exception):
         self,
         message: str,
         token: Token,
-        expected_token_type: Optional[TokenType] = None,
+        expected_token_type: TokenType | None = None,
     ) -> None:
         super().__init__(message)
         self.token: Token = token
-        self.expected_token_type: Optional[TokenType] = expected_token_type
+        self.expected_token_type: TokenType | None = expected_token_type
 
 
 class ScannerException(Exception):

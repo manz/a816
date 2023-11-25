@@ -1,6 +1,5 @@
 import logging
 from pathlib import Path
-from typing import List, Optional
 
 from a816.cpu.cpu_65c816 import RomType
 from a816.parse.mzparser import MZParser
@@ -20,7 +19,7 @@ logger = logging.getLogger("a816")
 
 
 class Program:
-    def __init__(self, parser: Optional[MZParser] = None, dump_symbols: bool = False):
+    def __init__(self, parser: MZParser | None = None, dump_symbols: bool = False):
         self.resolver = Resolver()
         self.logger = logging.getLogger("x816")
         self.dump_symbols = dump_symbols
@@ -39,7 +38,7 @@ class Program:
         self.resolver.last_used_scope = 0
         self.resolver.current_scope = self.resolver.scopes[0]
 
-    def resolve_labels(self, program_nodes: List[NodeProtocol]) -> None:
+    def resolve_labels(self, program_nodes: list[NodeProtocol]) -> None:
         """
         Resolves the labels
         :param program_nodes:
@@ -63,7 +62,7 @@ class Program:
             previous_pc = node.pc_after(previous_pc)
         self.resolver_reset()
 
-    def emit(self, program: List[NodeProtocol], writer: Writer) -> None:
+    def emit(self, program: list[NodeProtocol], writer: Writer) -> None:
         current_block = b""
         current_block_addr = self.resolver.pc
         for node in program:
@@ -128,7 +127,7 @@ class Program:
         self,
         asm_file: str,
         ips_file: Path,
-        mapping: Optional[str] = None,
+        mapping: str | None = None,
         copier_header: bool = False,
     ) -> int:
         if mapping is not None:
@@ -151,7 +150,7 @@ class Program:
         :param filename:
         :return:
         """
-        with open(filename, "wt", encoding="utf-8") as output_file:
+        with open(filename, "w", encoding="utf-8") as output_file:
             labels = self.resolver.get_all_labels()
             output_file.write("[labels]\n")
             for name, value in labels:

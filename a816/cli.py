@@ -1,4 +1,3 @@
-# coding:utf8
 import argparse
 import logging
 import sys

@@ -132,7 +132,7 @@ class EmitTest(unittest.TestCase):
         writer = StubWriter()
 
         program = Program()
-        program.resolver.bus
+        #        program.resolver.bus
         input_program = """
         *=0x008000
         .macro test(pointer) {

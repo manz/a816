@@ -1,5 +1,5 @@
 import struct
-from typing import Any, List, Tuple
+from typing import Any
 from unittest.case import TestCase
 
 from a816.cpu.cpu_65c816 import AddressingMode
@@ -17,9 +17,9 @@ class TestParse(TestCase):
 
     @staticmethod
     def _get_result_for(program_text: str) -> ParserResult:
-        return MZParser.parse_as_ast(program_text, "memory.s")
+        return MZParser.parse_as_ast(program_text)
 
-    def _get_ast_for(self, program_text: str) -> List[Tuple[Any, ...]]:
+    def _get_ast_for(self, program_text: str) -> list[tuple[Any, ...]]:
         return self._get_result_for(program_text).ast
 
     def test_label(self) -> None:

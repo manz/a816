@@ -1,7 +1,7 @@
 import logging
 import struct
 import unittest
-from typing import List, Tuple, cast
+from typing import cast
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.nodes import (
@@ -30,7 +30,7 @@ logger.addHandler(stream_handler)
 
 class StubWriter(Writer):
     def __init__(self) -> None:
-        self.data: List[Tuple[int, bytes]] = []
+        self.data: list[tuple[int, bytes]] = []
 
     def begin(self) -> None:
         """StubWriter only implements write_block."""
@@ -73,7 +73,7 @@ class ParseTest(unittest.TestCase):
         input_program = "'coucou"
         program = Program()
 
-        result = program.parser.parse_as_ast(input_program, "memory.s")
+        result = program.parser.parse_as_ast(input_program)
 
         self.assertEqual("memory.s:0:0 : Unterminated String\n'coucou\n^", result.error)
 
@@ -81,14 +81,14 @@ class ParseTest(unittest.TestCase):
         input_program = "lda.Q #0x00"
         program = Program()
 
-        result = program.parser.parse_as_ast(input_program, "memory.s")
+        result = program.parser.parse_as_ast(input_program)
         self.assertEqual("memory.s:0:4 : Invalid Size Specifier\nlda.Q #0x00\n    ^", result.error)
 
     def test_invalid_index(self) -> None:
         input_program = "lda 0x00, O"
         program = Program()
 
-        result = program.parser.parse_as_ast(input_program, "memory.s")
+        result = program.parser.parse_as_ast(input_program)
         self.assertEqual("memory.s:0:10 : Invalid index\nlda 0x00, O\n          ^", result.error)
 
     def test_data_word(self) -> None:

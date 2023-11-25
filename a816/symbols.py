@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Dict, ItemsView, List, Optional, Tuple, Union
+from collections.abc import ItemsView
+from typing import Any, Optional
 
 from a816.cpu.cpu_65c816 import RomType
 from a816.cpu.mapping import Address, Bus
@@ -12,12 +13,12 @@ logger = logging.getLogger("a816")
 
 class Scope:
     def __init__(self, resolver: "Resolver", parent: Optional["Scope"] = None) -> None:
-        self.symbols: Dict[str, int] = {}
-        self.code_symbols: Dict[str, BlockAstNode] = {}
+        self.symbols: dict[str, int] = {}
+        self.code_symbols: dict[str, BlockAstNode] = {}
         self.parent = parent
         self.resolver: Resolver = resolver
-        self.table: Optional[Table] = None
-        self.labels: Dict[str, int] = {}
+        self.table: Table | None = None
+        self.labels: dict[str, int] = {}
 
     def add_label(self, label: str, value: Address) -> None:
         self.labels[label] = value.logical_value
@@ -26,7 +27,7 @@ class Scope:
     def get_labels(self) -> ItemsView[str, int]:
         return self.labels.items()
 
-    def add_symbol(self, symbol: str, value: Union[int, BlockAstNode]) -> None:
+    def add_symbol(self, symbol: str, value: int | BlockAstNode) -> None:
         if isinstance(value, BlockAstNode):
             if symbol in self.code_symbols:
                 logger.warning("Symbol already defined (%s)" % symbol)
@@ -36,7 +37,7 @@ class Scope:
                 logger.warning("Symbol already defined (%s)" % symbol)
             self.symbols[symbol] = value
 
-    def __getitem__(self, item: str) -> Union[int, BlockAstNode]:
+    def __getitem__(self, item: str) -> int | BlockAstNode:
         try:
             return self.code_symbols[item]
         except KeyError:
@@ -47,7 +48,7 @@ class Scope:
         except KeyError as e:
             raise SymbolNotDefined(item) from e
 
-    def get_table(self) -> Optional[Table]:
+    def get_table(self) -> Table | None:
         if self.table is None:
             if self.parent:
                 return self.parent.get_table()
@@ -56,7 +57,7 @@ class Scope:
         else:
             return self.table
 
-    def value_for(self, symbol: str) -> Optional[Union[int, BlockAstNode]]:
+    def value_for(self, symbol: str) -> int | BlockAstNode | None:
         if self.parent:
             if symbol in self.symbols or symbol in self.code_symbols:
                 return self[symbol]
@@ -71,7 +72,7 @@ class InternalScope(Scope):
 
 
 class NamedScope(Scope):
-    def __init__(self, name: str, resolver: "Resolver", parent: Optional[Scope] = None):
+    def __init__(self, name: str, resolver: "Resolver", parent: Scope | None = None):
         super().__init__(resolver, parent)
         self.name = name
 
@@ -151,7 +152,7 @@ class Resolver:
         else:
             raise RuntimeError("Current scope has no parent...")
 
-    def _dump_symbols(self, symbols: Dict[str, Any]) -> None:
+    def _dump_symbols(self, symbols: dict[str, Any]) -> None:
         keys = sorted(symbols.keys())
         for key in keys:
             value = symbols[key]
@@ -160,9 +161,9 @@ class Resolver:
                 self._dump_symbols(value)
             else:
                 if isinstance(value, tuple):
-                    print("%s %s" % (key.ljust(32), value))
+                    print(f"{key.ljust(32)} {value}")
                 else:
-                    print("%s 0x%02x" % (key.ljust(32), value))
+                    print(f"{key.ljust(32)} 0x{value:02x}")
 
     def dump_symbol_map(self) -> None:
         for scope in self.scopes:
@@ -170,8 +171,8 @@ class Resolver:
                 print("Scope\n")
                 self._dump_symbols(scope.symbols)
 
-    def get_all_labels(self) -> List[Tuple[str, int]]:
-        labels: List[Tuple[str, int]] = []
+    def get_all_labels(self) -> list[tuple[str, int]]:
+        labels: list[tuple[str, int]] = []
         for scope in self.scopes:
             if not isinstance(scope, InternalScope):
                 labels += scope.get_labels()
