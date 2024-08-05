@@ -255,8 +255,8 @@ def lex_initial(s: Scanner) -> None:
         s.emit(TokenType.OPERATOR)
     # elif l.accept_prefix('True') or l.accept_prefix('False'):
     #     l.emit(TokenType.BOOLEAN)
-    elif s.accept_prefix("byte") or s.accept_prefix("word") or s.accept_prefix("long"):
-        s.emit(TokenType.TYPE)
+    # elif s.accept_prefix("byte") or s.accept_prefix("word") or s.accept_prefix("long"):
+    #    s.emit(TokenType.TYPE)
     elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
         s.backup()
         # check if not an opcode
