@@ -124,7 +124,7 @@ class EmitTest(unittest.TestCase):
            """
         program.assemble_string_with_emitter(input_program, "test_macro_application", writer)
 
-        self.assertEqual(writer.data[0], b"\xFF\xFF\x03")
+        self.assertEqual(writer.data[0], b"\xff\xff\x03")
         self.assertEqual(writer.data_addresses[0], program.get_physical_address(0x03FFFF))
         self.assertEqual(program.resolver.current_scope["label2"], 0x048002)
 

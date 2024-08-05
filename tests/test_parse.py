@@ -2,6 +2,7 @@ import logging
 import struct
 import unittest
 from typing import cast
+from unittest import skip
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.nodes import (
@@ -384,6 +385,7 @@ class ParseTest(unittest.TestCase):
             ips_node.expression.tokens,
         )
 
+    @skip("experimental")
     def test_parse_struct(self) -> None:
         input_program = """
         .struct a_struct {

@@ -79,11 +79,11 @@ coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov=script --
 
 tests = "pytest tests"
 check = [
-    "ruff a816 script tests",
+    "ruff check a816 script tests",
     "ruff format --check script tests",
 ]
 format = [
-    "ruff --fix a816 script tests",
+    "ruff check --fix a816 script tests",
     "ruff format a816 script tests",
     "check",
 ]

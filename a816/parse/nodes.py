@@ -55,7 +55,7 @@ class ValueNode(ValueNodeProtocol):
         return value_length
 
     def __str__(self) -> str:
-        return "ValueNode(%s)" % self.value
+        return f"ValueNode({self.value})"
 
 
 class ExpressionNode(ValueNodeProtocol):
@@ -101,7 +101,7 @@ class LabelNode(NodeProtocol):
         return self.__str__()
 
     def __str__(self) -> str:
-        return "LabelNode(%s)" % self.symbol_name
+        return f"LabelNode({self.symbol_name})"
 
 
 class SymbolNode(NodeProtocol):
@@ -193,11 +193,7 @@ class NodeError(Exception):
     def __str__(self) -> str:
         error_message = f'"{self.message}"'
         if self.file_info is not None and self.file_info.position is not None:
-            error_message += " at\n{file}:{line} {data}".format(
-                file=self.file_info.position.file.filename,
-                line=self.file_info.position.line,
-                data=self.file_info.position.get_line(),
-            )
+            error_message += f" at\n{self.file_info.position.file.filename}:{self.file_info.position.line} {self.file_info.position.get_line()}"
 
         return error_message
 
@@ -280,7 +276,7 @@ class CodePositionNode(NodeProtocol):
         return b""
 
     def __str__(self) -> str:
-        return "CodePositionNode(%s)" % self.value_node.get_value()
+        return f"CodePositionNode({self.value_node.get_value()})"
 
 
 class RelocationAddressNode(NodeProtocol):
@@ -298,7 +294,7 @@ class RelocationAddressNode(NodeProtocol):
         return b""
 
     def __str__(self) -> str:
-        return "RelocationAddressNode(%s)" % self.pc_value_node.get_value()
+        return f"RelocationAddressNode({self.pc_value_node.get_value()})"
 
 
 class IncludeIpsNode(NodeProtocol):

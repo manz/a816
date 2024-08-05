@@ -30,11 +30,11 @@ class Scope:
     def add_symbol(self, symbol: str, value: int | BlockAstNode) -> None:
         if isinstance(value, BlockAstNode):
             if symbol in self.code_symbols:
-                logger.warning("Symbol already defined (%s)" % symbol)
+                logger.warning(f"Symbol already defined ({symbol})")
             self.code_symbols[symbol] = value
         else:
             if symbol in self.symbols:
-                logger.warning("Symbol already defined (%s)" % symbol)
+                logger.warning(f"Symbol already defined ({symbol})")
             self.symbols[symbol] = value
 
     def __getitem__(self, item: str) -> int | BlockAstNode:
