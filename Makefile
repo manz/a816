@@ -37,7 +37,7 @@ env: ## Builds development virtualenv
 
 .PHONY: binary
 binary: ## Builds a standalone binary using pyoxydizer
-	$(Q) hatch run binary:oxydizer
+	$(Q) hatch run binary:build
 	$(Q) python3 zip_release.py
 
 .PHONY: binary-nuitka

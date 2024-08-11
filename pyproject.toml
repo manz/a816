@@ -1,9 +1,7 @@
 [project]
 name = "a816"
 description = "65c816 patching assembler (Super Famicom)"
-authors = [
-    { name = "Emmanuel Peralta", email = "manz@ringum.net" },
-]
+authors = [{ name = "Emmanuel Peralta", email = "manz@ringum.net" }]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,9 +16,7 @@ classifiers = [
 
 dependencies = []
 
-dynamic = [
-    "version",
-]
+dynamic = ["version"]
 
 [tool.hatch.version]
 source = "env"
@@ -51,14 +47,14 @@ exclude = [
     ".github",
     ".coverage",
     "build",
-    "dist"
+    "dist",
 ]
 
 # Same as Black.
 line-length = 120
 indent-width = 4
 
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 extend-select = ["I", "B", "UP"]
@@ -70,18 +66,13 @@ relative_files = true
 
 [tool.hatch.envs.tests]
 detached = true
-dependencies = [
-    "pytest", "pytest-cov", "mypy", "ruff"
-]
+dependencies = ["pygls", "pytest", "pytest-cov", "mypy", "ruff"]
 
 [tool.hatch.envs.tests.scripts]
 coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov=script --cov-branch tests"
 
 tests = "pytest tests"
-check = [
-    "ruff check a816 script tests",
-    "ruff format --check script tests",
-]
+check = ["ruff check a816 script tests", "ruff format --check script tests"]
 format = [
     "ruff check --fix a816 script tests",
     "ruff format a816 script tests",
@@ -94,16 +85,9 @@ all = ["check", "type", "coverage"]
 
 [tool.hatch.envs.binary]
 detached = true
-dependencies = [
-    "nuitka",
-    "ordered-set",
-    "pyoxidizer"
-]
+dependencies = ["nuitka"]
 
 [tool.hatch.envs.binary.scripts]
 build = [
-    "nuitka3 --standalone a816/cli.py"
-]
-oxydizer = [
-    "pyoxidizer build --release"
+    "nuitka --onefile a816/cli.py  --product-name=a816 --company-name=ManZ --output-filename=x816 --no-deployment-flag=self-execution",
 ]
