@@ -8,13 +8,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v3
-    - name: Setup Python 3.10
-      uses: actions/setup-python@v4
+    - uses: actions/checkout@v4
+    - name: Setup Python 3.12
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.12'
     - name: Install hatch
       run: pip install hatch
     - name: Type check
