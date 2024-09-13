@@ -369,7 +369,7 @@ def _parse_expression(p: Parser) -> list[ExprNode]:
         tokens.append(Parenthesis(p.next()))
     elif accept_tokens(current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.IDENTIFIER]):
         tokens.append(Term(current_token))
-    elif accept_token(current_token, TokenType.OPERATOR) and current_token.value == "-":
+    elif accept_token(current_token, TokenType.OPERATOR) and current_token.value in ["-", "~"]:
         tokens.append(UnaryOp(current_token))
         tokens += _parse_expression(p)
     else:
