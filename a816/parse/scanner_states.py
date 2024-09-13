@@ -65,7 +65,7 @@ def lex_expression(s: "Scanner") -> None:
             lex_number(s)
         elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
             lex_identifier(s)
-        elif s.accept("+-*/&|") or s.accept_prefix("<<") or s.accept_prefix(">>"):
+        elif s.accept("+-*/&|~") or s.accept_prefix("<<") or s.accept_prefix(">>"):
             s.emit(TokenType.OPERATOR)
         elif s.accept("("):
             s.emit(TokenType.LPAREN)

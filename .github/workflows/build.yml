@@ -15,7 +15,7 @@ jobs:
       with:
         python-version: '3.12'
     - name: Install hatch
-      run: pip install hatch
+      run: pip install -r requirements.txt
     - name: Type check
       run: hatch run tests:type
     - name: Style check

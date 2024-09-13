@@ -1,3 +1,5 @@
+import ctypes
+
 from a816.parse.ast.nodes import BinOp, ExpressionAstNode, ExprNode, Term, UnaryOp
 from a816.parse.tokens import TokenType
 from a816.symbols import Resolver
@@ -95,6 +97,15 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int:
 
             if current.token.value == "-":
                 r = -v1
+            elif current.token.value == "~":
+                if v1.bit_length() <= 8:
+                    r = ctypes.c_uint8(~v1).value
+                elif v1.bit_length() <= 16:
+                    r = ctypes.c_uint16(~v1).value
+                elif v1.bit_length() <= 32:
+                    r = ctypes.c_uint32(~v1).value
+                else:
+                    raise RuntimeError("not only works up 32 bits integers.")
             else:
                 raise RuntimeError(f"Unsupported unary Operator {current.token}")
 
