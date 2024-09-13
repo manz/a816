@@ -49,6 +49,24 @@ class ExpressionsTest(TestCase):
         value = eval_expression_str("0x00ff | 0xff00", resolver)
         self.assertEqual(0x00FF | 0xFF00, value)
 
+    def test_not(self) -> None:
+        resolver = Resolver()
+
+        value = eval_expression_str("~0x80", resolver)
+        self.assertEqual(0x7f, value)
+
+        value = eval_expression_str("~0x8000", resolver)
+        self.assertEqual(0x7fff, value)
+
+        value = eval_expression_str("~0x800000", resolver)
+        self.assertEqual(0xff7fffff, value)
+
+        value = eval_expression_str("~0x80000000", resolver)
+        self.assertEqual(0x7fffffff, value)
+
+        with self.assertRaises(RuntimeError):
+            eval_expression_str("~0x8000000000", resolver)
+
     def test_lshift(self) -> None:
         resolver = Resolver()
 
