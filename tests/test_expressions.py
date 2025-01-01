@@ -90,17 +90,17 @@ class ExpressionsTest(TestCase):
         resolver = Resolver()
         resolver.current_scope.add_symbol("a", 4)
         value = eval_expression_str("a != 3", resolver)
-        self.assertEqual(value, True)
+        self.assertTrue(value)
 
         resolver.current_scope.add_symbol("a", 3)
         value = eval_expression_str("a != 3", resolver)
-        self.assertEqual(value, False)
+        self.assertFalse(value)
 
         value = eval_expression_str("10 >= 1", resolver)
-        self.assertEqual(value, True)
+        self.assertTrue(value)
 
         value = eval_expression_str("1 > 1", resolver)
-        self.assertEqual(value, False)
+        self.assertFalse(value)
 
         value = eval_expression_str("0x2 < 0b100", resolver)
-        self.assertEqual(value, True)
+        self.assertTrue(value)
