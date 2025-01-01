@@ -345,7 +345,7 @@ def generate_if(
 
     try:
         condition = eval_expression(node.expression, resolver)
-    except (KeyError, SymbolNotDefined) as e:
+    except (KeyError, SymbolNotDefined):
         condition = False
     if condition:
         code += _code_gen(if_branch_true.body, resolver, macro_definitions)
