@@ -15,7 +15,7 @@ from tests import StubWriter
 class EmitTest(unittest.TestCase):
     def test_emit_opcode_size_error(self) -> None:
         program = Program()
-        nodes = program.parser.parse("lda.l #0x123456")
+        _, nodes = program.parser.parse("lda.l #0x123456")
 
         self.assertEqual(len(nodes), 1)
 
@@ -32,7 +32,7 @@ class EmitTest(unittest.TestCase):
 
         program = Program()
 
-        nodes = program.parser.parse(input_program)
+        _, nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
 
         program.resolver.pc = 3
@@ -189,6 +189,64 @@ class EmitTest(unittest.TestCase):
         program.emit(nodes, writer)
 
         self.assertEqual(writer.data[0], b"Final Fantasy VI    ")
+
+    def test_if(self) -> None:
+        input_program = """
+            DEBUG := 1
+            .if DEBUG {
+                .db 0x85
+            } else {
+                .db 0x11
+            }
+            """
+
+        program = Program()
+        result = program.parser.parse_as_ast(input_program)
+        self.assertEqual(
+            [
+                ("assign", "DEBUG", "1"),
+                ("if", "DEBUG", ("compound", [("db", ["0x85"])]), ("compound", [("db", ["0x11"])])),
+            ],
+            result.ast,
+        )
+
+        writer = StubWriter()
+
+        nodes = code_gen(result.nodes, program.resolver)
+        program.resolve_labels(nodes)
+
+        program.emit(nodes, writer)
+
+        self.assertEqual(writer.data[0], b"\x85")
+
+    def test_else(self) -> None:
+        input_program = """
+            DEBUG := 0
+            .if DEBUG {
+                .db 0x85
+            } else {
+                .db 0x11
+            }
+            """
+
+        program = Program()
+        result = program.parser.parse_as_ast(input_program)
+        self.assertEqual(
+            [
+                ("assign", "DEBUG", "0"),
+                ("if", "DEBUG", ("compound", [("db", ["0x85"])]), ("compound", [("db", ["0x11"])])),
+            ],
+            result.ast,
+        )
+
+        writer = StubWriter()
+
+        nodes = code_gen(result.nodes, program.resolver)
+        program.resolve_labels(nodes)
+
+        program.emit(nodes, writer)
+
+        self.assertEqual(writer.data[0], b"\x11")
 
     @skip("Not implemented yet")
     def test_tr(self) -> None:

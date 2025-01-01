@@ -26,9 +26,9 @@ class MZParser:
     def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
 
-    def parse(self, program: str, filename: str = "") -> list[NodeProtocol]:
+    def parse(self, program: str, filename: str = "") -> tuple[str | None, list[NodeProtocol]]:
         ast = self.parse_as_ast(program, filename)
-        return code_gen(ast.nodes, self.resolver)
+        return ast.error, code_gen(ast.nodes, self.resolver)
 
     @staticmethod
     def parse_as_ast(program: str, filename: str = "memory.s") -> ParserResult:

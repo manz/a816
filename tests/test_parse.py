@@ -49,7 +49,7 @@ class StubWriter(Writer):
 class ParseTest(unittest.TestCase):
     def test_parse(self) -> None:
         program = Program()
-        nodes = program.parser.parse("lda #0x1234")
+        _, nodes = program.parser.parse("lda #0x1234")
 
         self.assertEqual(len(nodes), 1)
 
@@ -62,7 +62,7 @@ class ParseTest(unittest.TestCase):
 
     def test_parse_comments(self) -> None:
         program = Program()
-        nodes = program.parser.parse("; comment\nlda #0x1234\n; another comment")
+        _, nodes = program.parser.parse("; comment\nlda #0x1234\n; another comment")
 
         self.assertEqual(len(nodes), 1)
 
@@ -102,7 +102,7 @@ class ParseTest(unittest.TestCase):
 
         program = Program()
 
-        nodes = program.parser.parse(input_program)
+        _, nodes = program.parser.parse(input_program)
         program.resolve_labels(nodes)
         emitted_nodes = []
         for node in nodes:
@@ -126,7 +126,7 @@ class ParseTest(unittest.TestCase):
         """
 
         program = Program()
-        nodes = program.parser.parse(input_program)
+        _, nodes = program.parser.parse(input_program)
 
         program.resolve_labels(nodes)
 
@@ -161,7 +161,7 @@ class ParseTest(unittest.TestCase):
         ast = program.parser.parse_as_ast(input_program)
         print(ast)
         nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
+        program.resolve_labels(nodes[1])
 
     def test_macro(self) -> None:
         input_program = """
