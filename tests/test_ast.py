@@ -85,7 +85,7 @@ class TestParse(TestCase):
         self.assertEqual(result.ast, [("opcode", AddressingMode.none, "nop", None, None)])
 
     def test_symbol_define(self) -> None:
-        result = self._get_result_for("toto = 0x00 + 0x00")
+        result = self._get_result_for("toto := 0x00 + 0x00")
         self.assertEqual([("assign", "toto", "0x00 + 0x00")], result.ast)
 
     def test_macro(self) -> None:
