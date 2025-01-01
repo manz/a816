@@ -392,9 +392,10 @@ def parse_symbol_affectation(
 ) -> SymbolAffectationAstNode | AssignAstNode:
     current = p.current()
     symbol = p.next()
-    expect_tokens(p.next(), [TokenType.EQUAL, TokenType.ASSIGN])
+    operator = p.next()
+    expect_tokens(operator, [TokenType.EQUAL, TokenType.ASSIGN])
     node_type: type[SymbolAffectationAstNode] | type[AssignAstNode]
-    if p.current().type == TokenType.EQUAL:
+    if operator.type == TokenType.EQUAL:
         node_type = SymbolAffectationAstNode
     else:
         node_type = AssignAstNode
