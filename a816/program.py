@@ -86,8 +86,12 @@ class Program:
         if len(current_block) > 0:
             writer.write_block(current_block, current_block_addr)
 
-    def assemble_string_with_emitter(self, input_program: str, filename: str, emitter: Writer) -> None:
-        nodes = self.parser.parse(input_program, filename)
+    def assemble_string_with_emitter(self, input_program: str, filename: str, emitter: Writer) -> str | None:
+        error, nodes = self.parser.parse(input_program, filename)
+
+        if error is not None:
+            return error
+
         self.logger.info("Resolving labels")
         self.resolve_labels(nodes)
 
@@ -95,6 +99,8 @@ class Program:
             self.resolver.dump_symbol_map()
 
         self.emit(nodes, emitter)
+
+        return None
 
     def assemble_with_emitter(self, asm_file: str, emitter: Writer) -> int:
         try:

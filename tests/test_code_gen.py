@@ -8,7 +8,7 @@ from a816.program import Program
 class CodeGenTest(unittest.TestCase):
     def test_immediate_code_gen(self) -> None:
         program = Program()
-        nodes = program.parser.parse("lda #0x1234")
+        _, nodes = program.parser.parse("lda #0x1234")
 
         self.assertEqual(len(nodes), 1)
 

@@ -233,12 +233,24 @@ def generate_db(
 
 
 def generate_symbol(
-    node: SymbolAffectationAstNode | AssignAstNode,
+    node: SymbolAffectationAstNode,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
     return [SymbolNode(node.symbol, node.value, resolver)]
+
+
+def generate_assign(
+    node: AssignAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    value = eval_expression(node.value, resolver)
+    resolver.current_scope.add_symbol(node.symbol, value)
+
+    return []
 
 
 def generate_label(
@@ -432,7 +444,7 @@ generators = {
     "dl": generate_dl,
     "pointer": generate_dl,
     "symbol": generate_symbol,
-    "assign": generate_symbol,
+    "assign": generate_assign,
     "label": generate_label,
     "opcode": generate_opcode,
     "incbin": generate_incbin,
