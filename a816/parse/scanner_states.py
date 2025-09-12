@@ -248,7 +248,7 @@ def lex_initial(s: Scanner) -> None:
 
     s.ignore_run(" \t\n")
     if s.accept(";"):
-        while s.peek() not in ["\n", None]:
+        while s.peek() not in ["\n", EOF]:
             # eat the comment until end of  line.
             s.next()
             pass

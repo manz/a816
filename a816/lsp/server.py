@@ -833,7 +833,6 @@ class A816LanguageServer:
                 node_file = node.file_info.position.file.filename
                 doc_file = doc.uri
 
-
                 if node_file != doc_file:
                     return
 
@@ -939,19 +938,23 @@ class A816LanguageServer:
                     if expr_token.position:
                         match expr_token.type:
                             case TokenType.NUMBER:
-                                tokens.append({
-                                    "line": expr_token.position.line,
-                                    "char": expr_token.position.column,
-                                    "length": len(expr_token.value),
-                                    "type": 3,  # number
-                                })
+                                tokens.append(
+                                    {
+                                        "line": expr_token.position.line,
+                                        "char": expr_token.position.column,
+                                        "length": len(expr_token.value),
+                                        "type": 3,  # number
+                                    }
+                                )
                             case TokenType.IDENTIFIER:
-                                tokens.append({
-                                    "line": expr_token.position.line,
-                                    "char": expr_token.position.column,
-                                    "length": len(expr_token.value),
-                                    "type": 6,  # variable
-                                })
+                                tokens.append(
+                                    {
+                                        "line": expr_token.position.line,
+                                        "char": expr_token.position.column,
+                                        "length": len(expr_token.value),
+                                        "type": 6,  # variable
+                                    }
+                                )
 
         except Exception as e:
             logger.debug(f"Error analyzing expression tokens: {e}")
