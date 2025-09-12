@@ -1,4 +1,5 @@
 import logging
+import re
 import struct
 from typing import Literal, Protocol
 
@@ -11,8 +12,8 @@ from a816.cpu.cpu_65c816 import (
     snes_opcode_table,
 )
 from a816.cpu.mapping import Address
-from a816.exceptions import SymbolNotDefined
-from a816.parse.ast.expression import eval_expression
+from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
+from a816.parse.ast.expression import eval_expression, eval_expression_str
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.tokens import Token
 from a816.symbols import Resolver
@@ -64,14 +65,38 @@ class ExpressionNode(ValueNodeProtocol):
         self.resolver = resolver
         self.file_info = file_info
 
-    def get_value(self) -> int:
+    def get_value(self) -> int | str: # type:ignore
         try:
             return eval_expression(self.expression, self.resolver)
+        except ExternalExpressionReference as e:
+            # Expression contains external symbols, defer to link time
+            if hasattr(self.resolver, "_object_writer") and self.resolver._object_writer is not None:
+                # Store the deferred expression info for use by the caller
+                self._deferred_expression = e.expression_str
+                self._external_symbols = e.external_symbols
+                return 0  # Placeholder value - caller will generate expression relocation
+            else:
+                # Not compiling to object file, can't resolve external symbols
+                raise NodeError(f"Expression contains external symbols: {e.expression_str}", self.file_info) from e
+        except ExternalSymbolReference as e:
+            # Single external symbol reference
+            if hasattr(self.resolver, "_object_writer") and self.resolver._object_writer is not None:
+                # Store the expression for later evaluation at link time
+                expression_str = self.expression.to_representation()[0]  # Get string representation
+                # Add expression relocation with offset to be determined by the caller
+                # For now, return 0 as placeholder
+                self._deferred_expression = expression_str
+                return 0  # Placeholder value
+            else:
+                # Not compiling to object file, can't resolve external symbol
+                raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
         except SymbolNotDefined as e:
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
 
     def get_value_string_len(self) -> int:
-        return len(hex(self.get_value())) - 2
+        value = self.get_value()
+        assert isinstance(value, int)
+        return len(hex(value)) - 2
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.expression.to_representation()[0]})"
@@ -128,6 +153,31 @@ class SymbolNode(NodeProtocol):
         return f"SymbolNode({self.symbol_name}, {self.expression})"
 
 
+class ExternNode(NodeProtocol):
+    def __init__(self, symbol_name: str, resolver: Resolver) -> None:
+        self.symbol_name = symbol_name
+        self.resolver = resolver
+
+    def emit(self, current_addr: Address) -> bytes:
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        # Mark symbol as external in the current scope
+        from a816.object_file import SymbolSection, SymbolType
+
+        # Add external symbol to the resolver's scope
+        self.resolver.current_scope.add_external_symbol(self.symbol_name)
+
+        # Add external symbol to the object writer if we're in object compilation mode
+        if hasattr(self.resolver, "_object_writer") and self.resolver._object_writer:
+            self.resolver._object_writer.add_symbol(self.symbol_name, 0, SymbolType.EXTERNAL, SymbolSection.CODE)
+
+        return current_pc
+
+    def __str__(self) -> str:
+        return f"ExternNode({self.symbol_name})"
+
+
 class BinaryNode(NodeProtocol):
     def __init__(self, path: str, resolver: Resolver) -> None:
         with open(path, "rb") as binary_file:
@@ -167,6 +217,35 @@ class WordNode(NodeProtocol):
 
     def pc_after(self, current_pc: Address) -> Address:
         return current_pc + 2
+
+
+class DebugNode(NodeProtocol):
+    def __init__(self, message: str, resolver: Resolver) -> None:
+        self.message = message
+        self.resolver = resolver
+
+    def emit(self, current_address: Address) -> bytes:
+        message = self.message
+        matches = re.finditer(r"\{([^}]+)}", self.message)
+
+        for match in matches:
+            expression_str = match.group(1)
+
+            _value = eval_expression_str(expression_str, self.resolver)
+
+            match _value:
+                case int():
+                    value = hex(_value)
+                case str():
+                    value = _value
+
+            message = message.replace(match.group(0), value)
+
+        print(message)
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        return current_pc
 
 
 class ByteNode(NodeProtocol):

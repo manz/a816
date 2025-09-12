@@ -1,5 +1,6 @@
 import ctypes
 
+from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
 from a816.parse.ast.nodes import BinOp, ExpressionAstNode, ExprNode, Term, UnaryOp
 from a816.parse.tokens import TokenType
 from a816.symbols import Resolver
@@ -16,6 +17,12 @@ OPERATOR_PRECEDENCE = {
     "-": 4,
     "<<": 5,
     ">>": 5,
+    ">=": 6,
+    "<=": 6,
+    ">": 6,
+    "<": 6,
+    "==": 7,
+    "!=": 7,
     "&": 8,
     "^": 9,
     "|": 10,
@@ -76,26 +83,48 @@ def eval_number(number: str) -> int:
     return int(number, base)
 
 
-def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int:
+def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | str:
+    """Evaluate an expression, detecting external symbol references"""
     tokens = expression.tokens
     ordered = shunting_yard(tokens)
 
-    values_stack: list[int] = []
+    # First pass: collect external symbols referenced in this expression
+    external_symbols: set[str] = set()
+
+    # Check if we're compiling to an object file and need to defer external expressions
+    if hasattr(resolver, "_object_writer") and resolver._object_writer is not None:
+        for current in ordered:
+            if current.token.type == TokenType.IDENTIFIER:
+                try:
+                    resolver.current_scope.value_for(current.token.value)
+                except ExternalSymbolReference as e:
+                    external_symbols.add(e.symbol_name)
+
+        # If expression contains external symbols, throw exception to defer evaluation
+        if external_symbols:
+            # Reconstruct expression string from tokens
+            expression_str = reconstruct_expression(expression)
+            raise ExternalExpressionReference(expression_str, external_symbols)
+
+    values_stack: list[int | str] = []
     r: int
 
     for current in ordered:
         if current.token.type == TokenType.NUMBER:
             values_stack.append(eval_number(current.token.value))
+        elif current.token.type == TokenType.QUOTED_STRING:
+            values_stack.append(current.token.value[1:-1])
         elif current.token.type == TokenType.IDENTIFIER:
             resolved_value = resolver.current_scope.value_for(current.token.value)
-            if isinstance(resolved_value, int):
+            if isinstance(resolved_value, int) or isinstance(resolved_value, str):
                 values_stack.append(resolved_value)
             else:
                 raise RuntimeError(f"Unable  to resolve {current.token.value}")
         elif isinstance(current, UnaryOp):
             v1 = values_stack.pop()
-
+            assert isinstance(v1, int)
             if current.token.value == "-":
+                assert isinstance(v1, int)
                 r = -v1
             elif current.token.value == "~":
                 if v1.bit_length() <= 8:
@@ -113,25 +142,60 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int:
         elif isinstance(current, BinOp):
             v2 = values_stack.pop()
             v1 = values_stack.pop()
-
-            if current.token.value == "+":
-                r = v1 + v2
-            elif current.token.value == "-":
-                r = v1 - v2
-            elif current.token.value == "*":
-                r = v1 * v2
-            elif current.token.value == "&":
-                r = v1 & v2
-            elif current.token.value == "|":
-                r = v1 | v2
-            elif current.token.value == ">>":
-                r = v1 >> v2
-            elif current.token.value == "<<":
-                r = v1 << v2
+            if isinstance(v1, int) and isinstance(v2, int):
+                if current.token.value == "+":
+                    r = v1 + v2
+                elif current.token.value == "-":
+                    r = v1 - v2
+                elif current.token.value == "*":
+                    r = v1 * v2
+                elif current.token.value == "&":
+                    r = v1 & v2
+                elif current.token.value == "|":
+                    r = v1 | v2
+                elif current.token.value == ">>":
+                    r = v1 >> v2
+                elif current.token.value == "<<":
+                    r = v1 << v2
+                elif current.token.value == ">=":
+                    r = v1 >= v2
+                elif current.token.value == "<=":
+                    r = v1 <= v2
+                elif current.token.value == "<":
+                    r = v1 < v2
+                elif current.token.value == ">":
+                    r = v1 > v2
+                elif current.token.value == "==":
+                    r = v1 == v2
+                elif current.token.value == "!=":
+                    r = v1 != v2
+                else:
+                    raise RuntimeError("operator unknown")
+            elif isinstance(v1, str) and isinstance(v2, str):
+                if current.token.value == "==":
+                    r = v1 == v2
+                elif current.token.value == "!=":
+                    r = v1 != v2
+                else:
+                    raise RuntimeError("operator unknown")
             else:
-                raise RuntimeError("operator unknown")
+                raise RuntimeError("Mismatched types in expression")
             values_stack.append(r)
     return values_stack.pop()
+
+
+def reconstruct_expression(expression: ExpressionAstNode) -> str:
+    """Reconstruct the original expression string from the AST"""
+    tokens = expression.tokens
+    result = []
+
+    for token in tokens:
+        if hasattr(token, "token"):
+            result.append(token.token.value)
+        else:
+            result.append(str(token))
+
+    return " ".join(result)
 
 
 def expr_to_ast(expr_str: str) -> ExpressionAstNode:
@@ -149,6 +213,6 @@ def expr_to_ast(expr_str: str) -> ExpressionAstNode:
     return first_node
 
 
-def eval_expression_str(expr_str: str, resolver: Resolver) -> int:
+def eval_expression_str(expr_str: str, resolver: Resolver) -> int | str:
     expr_node = expr_to_ast(expr_str)
     return eval_expression(expr_node, resolver)

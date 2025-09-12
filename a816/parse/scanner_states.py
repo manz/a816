@@ -65,7 +65,19 @@ def lex_expression(s: "Scanner") -> None:
             lex_number(s)
         elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
             lex_identifier(s)
-        elif s.accept("+-*/&|~") or s.accept_prefix("<<") or s.accept_prefix(">>"):
+        elif s.accept("'"):
+            lex_quoted_string(s)
+        elif (
+            s.accept("+-*/&|~")
+            or s.accept_prefix("<<")
+            or s.accept_prefix(">>")
+            or s.accept_prefix("!=")
+            or s.accept_prefix("==")
+            or s.accept_prefix(">=")
+            or s.accept_prefix("<=")
+            or s.accept_prefix(">")
+            or s.accept_prefix("<")
+        ):
             s.emit(TokenType.OPERATOR)
         elif s.accept("("):
             s.emit(TokenType.LPAREN)
@@ -177,6 +189,8 @@ KEYWORDS = {
     "for",
     "struct",
     "istruct",
+    "extern",
+    "debug",
 }
 
 
@@ -234,10 +248,10 @@ def lex_initial(s: Scanner) -> None:
 
     s.ignore_run(" \t\n")
     if s.accept(";"):
-        while s.next() not in ["\n", None]:
+        while s.peek() not in ["\n", None]:
             # eat the comment until end of  line.
+            s.next()
             pass
-
         s.emit(TokenType.COMMENT)
     elif s.accept("0123456789"):
         lex_number(s)
@@ -305,4 +319,4 @@ def lex_initial(s: Scanner) -> None:
         s.emit(TokenType.COMMENT)
     else:
         if s.next() is not None:
-            raise ScannerException(f"Invalid Input {s.input[s.start:]}", s.get_position())
+            raise ScannerException(f"Invalid Input {s.input[s.start :]}", s.get_position())

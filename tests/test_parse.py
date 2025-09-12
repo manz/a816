@@ -412,7 +412,6 @@ class ParseTest(unittest.TestCase):
         ast = program.parser.parse_as_ast("a = 3")
         self.assertEqual([("symbol", "a", "3")], ast.ast)
 
-
     def test_assign(self) -> None:
         program = Program()
         ast = program.parser.parse_as_ast("a := 3")
