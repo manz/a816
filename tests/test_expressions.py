@@ -1,4 +1,4 @@
-from unittest import TestCase, skip
+from unittest import TestCase
 
 from a816.parse.ast.expression import eval_expression_str
 from a816.parse.errors import ParserSyntaxError
@@ -85,7 +85,7 @@ class ExpressionsTest(TestCase):
         value = eval_expression_str("(1 + 3) * 5", resolver)
         self.assertEqual((1 + 3) * 5, value)
 
-    @skip("BOOLEAN not really supported")
+    # @skip("BOOLEAN not really supported")
     def test_eval_bool(self) -> None:
         resolver = Resolver()
         resolver.current_scope.add_symbol("a", 4)
@@ -93,6 +93,11 @@ class ExpressionsTest(TestCase):
         self.assertTrue(value)
 
         resolver.current_scope.add_symbol("a", 3)
+        resolver.current_scope.add_symbol("whee", "WHOOOO")
+
+        value = eval_expression_str("whee == 'WHOOOO'", resolver)
+        assert value is True
+
         value = eval_expression_str("a != 3", resolver)
         self.assertFalse(value)
 

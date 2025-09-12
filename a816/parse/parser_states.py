@@ -11,10 +11,13 @@ from a816.parse.ast.nodes import (
     CodeLookupAstNode,
     CodePositionAstNode,
     CodeRelocationAstNode,
+    CommentAstNode,
     CompoundAstNode,
     DataNode,
+    DebugAstNode,
     ExpressionAstNode,
     ExprNode,
+    ExternAstNode,
     ForAstNode,
     IfAstNode,
     IncludeBinaryAstNode,
@@ -263,6 +266,21 @@ def parse_include_ips(p: Parser) -> IncludeIpsAstNode:
     return IncludeIpsAstNode(string, expression, current)
 
 
+def parse_extern(p: Parser) -> ExternAstNode:
+    """Parse extern symbol_name"""
+    symbol_token = p.current()
+    expect_token(symbol_token, TokenType.IDENTIFIER)
+    p.next()  # consume the identifier
+    return ExternAstNode(symbol_token.value, symbol_token)
+
+
+def parse_debug(p: Parser) -> DebugAstNode:
+    message_token = p.current()
+    expect_token(message_token, TokenType.QUOTED_STRING)
+    p.next()  # consume the identifier
+    return DebugAstNode(message_token.value[1:-1], message_token)
+
+
 def parse_keyword(p: Parser) -> KeywordAstNode:
     keyword = p.next()
 
@@ -286,7 +304,6 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
         return DataNode("pointer", expressions, keyword)
     elif keyword.value == "include":
         filename = parse_directive_with_quoted_string(p)
-
         with open(filename, encoding="utf-8") as fd:
             source = fd.read()
 
@@ -313,6 +330,10 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
         return parse_for(p)
     elif keyword.value == "struct":
         return parse_struct(p)
+    elif keyword.value == "extern":
+        return parse_extern(p)
+    elif keyword.value == "debug":
+        return parse_debug(p)
     else:
         raise ParserSyntaxError(f"Unexpected token {keyword}", keyword)
 
@@ -367,7 +388,9 @@ def _parse_expression(p: Parser) -> list[ExprNode]:
         tokens += _parse_expression(p)
         expect_token(p.current(), TokenType.RPAREN)
         tokens.append(Parenthesis(p.next()))
-    elif accept_tokens(current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.IDENTIFIER]):
+    elif accept_tokens(
+        current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.QUOTED_STRING, TokenType.IDENTIFIER]
+    ):
         tokens.append(Term(current_token))
     elif accept_token(current_token, TokenType.OPERATOR) and current_token.value in ["-", "~"]:
         tokens.append(UnaryOp(current_token))
@@ -495,7 +518,7 @@ def parse_decl(
 ) -> AstNode | None:
     current_token = p.next()
     if accept_token(current_token, TokenType.COMMENT):
-        return None
+        return CommentAstNode(current_token.value, current_token)
     elif accept_token(current_token, TokenType.DOUBLE_LBRACE):
         return parse_code_lookup(p)
     elif accept_tokens(current_token, [TokenType.OPCODE, TokenType.OPCODE_NAKED]):

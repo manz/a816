@@ -1,10 +1,13 @@
 import logging
 from collections.abc import ItemsView
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from a816.cpu.cpu_65c816 import RomType
 from a816.cpu.mapping import Address, Bus
-from a816.exceptions import SymbolNotDefined
+
+if TYPE_CHECKING:
+    from a816.writers import ObjectWriter
+from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import BlockAstNode
 from script import Table
 
@@ -12,9 +15,10 @@ logger = logging.getLogger("a816")
 
 
 class Scope:
-    def __init__(self, resolver: "Resolver", parent: Optional["Scope"] = None) -> None:
-        self.symbols: dict[str, int] = {}
+    def __init__(self, resolver: "Resolver", parent: "Scope | None" = None) -> None:
+        self.symbols: dict[str, int | str] = {}
         self.code_symbols: dict[str, BlockAstNode] = {}
+        self.external_symbols: set[str] = set()
         self.parent = parent
         self.resolver: Resolver = resolver
         self.table: Table | None = None
@@ -27,7 +31,7 @@ class Scope:
     def get_labels(self) -> ItemsView[str, int]:
         return self.labels.items()
 
-    def add_symbol(self, symbol: str, value: int | BlockAstNode) -> None:
+    def add_symbol(self, symbol: str, value: int | BlockAstNode | str) -> None:
         if isinstance(value, BlockAstNode):
             if symbol in self.code_symbols:
                 logger.warning(f"Symbol already defined ({symbol})")
@@ -37,7 +41,19 @@ class Scope:
                 logger.warning(f"Symbol already defined ({symbol})")
             self.symbols[symbol] = value
 
-    def __getitem__(self, item: str) -> int | BlockAstNode:
+    def add_external_symbol(self, symbol: str) -> None:
+        """Mark a symbol as external (defined in another object file)"""
+        self.external_symbols.add(symbol)
+
+    def is_external_symbol(self, symbol: str) -> bool:
+        """Check if a symbol is marked as external"""
+        if symbol in self.external_symbols:
+            return True
+        if self.parent:
+            return self.parent.is_external_symbol(symbol)
+        return False
+
+    def __getitem__(self, item: str) -> int | str | BlockAstNode:
         try:
             return self.code_symbols[item]
         except KeyError:
@@ -45,8 +61,12 @@ class Scope:
 
         try:
             return self.symbols[item]
-        except KeyError as e:
-            raise SymbolNotDefined(item) from e
+        except KeyError:
+            # Check if this is an external symbol
+            if self.is_external_symbol(item):
+                raise ExternalSymbolReference(item) from None
+            else:
+                raise SymbolNotDefined(item) from None
 
     def get_table(self) -> Table | None:
         if self.table is None:
@@ -57,14 +77,18 @@ class Scope:
         else:
             return self.table
 
-    def value_for(self, symbol: str) -> int | BlockAstNode | None:
+    def value_for(self, symbol: str) -> int | str | BlockAstNode | None:
         if self.parent:
             if symbol in self.symbols or symbol in self.code_symbols:
                 return self[symbol]
             else:
                 return self.parent.value_for(symbol)
         else:
-            return self[symbol]
+            try:
+                return self[symbol]
+            except ExternalSymbolReference as e:
+                # Re-raise the exception so expression evaluator can detect it
+                raise e
 
 
 class InternalScope(Scope):
@@ -107,6 +131,7 @@ class Resolver:
         self.bus = Bus()
         self.pc = 0
         self.reloc_address: Address
+        self._object_writer: ObjectWriter | None = None
         self.set_position(pc)
 
     def get_bus(self) -> Bus:
@@ -162,8 +187,10 @@ class Resolver:
             else:
                 if isinstance(value, tuple):
                     print(f"{key.ljust(32)} {value}")
-                else:
+                elif isinstance(value, int):
                     print(f"{key.ljust(32)} 0x{value:02x}")
+                else:
+                    print(f"{key.ljust(32)} {value}")
 
     def dump_symbol_map(self) -> None:
         for scope in self.scopes:
@@ -178,3 +205,23 @@ class Resolver:
                 labels += scope.get_labels()
 
         return labels
+
+    def get_all_symbols(self) -> list[tuple[str, int]]:
+        """Get all symbols including labels and assignments for object file export"""
+        symbols: list[tuple[str, int]] = []
+        seen_symbols: set[str] = set()
+
+        for scope in self.scopes:
+            if not isinstance(scope, InternalScope):
+                # Add labels first (since labels are also in the symbols dict)
+                for name, value in scope.get_labels():
+                    if name not in seen_symbols:
+                        symbols.append((name, value))
+                        seen_symbols.add(name)
+
+                # Add regular symbols (assignments) that aren't already labels
+                for name, symbol_value in scope.symbols.items():
+                    if isinstance(symbol_value, int) and name not in seen_symbols:  # Only export numeric symbols
+                        symbols.append((name, symbol_value))
+                        seen_symbols.add(name)
+        return symbols

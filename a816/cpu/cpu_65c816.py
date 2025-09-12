@@ -108,7 +108,23 @@ class Opcode(OpcodeProtocol):
         self.size_opcode_map: dict[str, int] = {"b": 0, "w": 1, "l": 2}
 
     def emit_value(self, value_node: "ValueNodeProtocol", size: ValueSize) -> bytes:
+        from a816.parse.nodes import ExpressionNode
+
         value = value_node.get_value()
+
+        # Check if this ExpressionNode has a deferred expression from external symbols
+        if isinstance(value_node, ExpressionNode) and hasattr(value_node, "_deferred_expression"):
+            # Generate expression relocation instead of regular relocation
+            resolver = value_node.resolver
+            if hasattr(resolver, "_object_writer") and resolver._object_writer is not None:
+                # Determine size in bytes
+                size_bytes = 1 if size == "b" else 2 if size == "w" else 3
+                # Add expression relocation at current PC offset + 1 (after opcode byte)
+                current_offset = resolver.pc + 1
+                resolver._object_writer.add_expression_relocation(
+                    current_offset, value_node._deferred_expression, size_bytes
+                )
+
         if size == "b":
             return struct.pack("B", value & 0xFF)
         elif size == "w":

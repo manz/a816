@@ -18,6 +18,10 @@ class AstNode(ABC):
     def to_representation(self) -> tuple[Any, ...]:
         """Returns the tuple representation of the node."""
 
+    def to_canonical(self) -> str:
+        """Returns the canonical representation of the node."""
+        return f"# {self.kind} node (to_canonical not implemented)"
+
 
 @dataclass
 class ExprNode:
@@ -56,6 +60,9 @@ class ExpressionAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return (" ".join([expr_node.token.value for expr_node in self.tokens]),)
 
+    def to_canonical(self) -> str:
+        return " ".join([expr_node.token.value for expr_node in self.tokens])
+
 
 class BlockAstNode(AstNode):
     body: list[AstNode]
@@ -66,6 +73,9 @@ class BlockAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, list(node.to_representation() for node in self.body)
+
+    def to_canonical(self) -> str:
+        return f"{{\n{'\n'.join([node.to_canonical() for node in self.body])}}}\n"
 
 
 class CompoundAstNode(AstNode):
@@ -78,6 +88,9 @@ class CompoundAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, list(node.to_representation() for node in self.body)
 
+    def to_canonical(self) -> str:
+        return "\n".join([node.to_canonical() for node in self.body])
+
 
 class LabelAstNode(AstNode):
     label: str
@@ -88,6 +101,9 @@ class LabelAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.label
+
+    def to_canonical(self) -> str:
+        return f"{self.label}:"
 
 
 class TextAstNode(AstNode):
@@ -100,6 +116,9 @@ class TextAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
 
+    def to_canonical(self) -> str:
+        return f'.text "{self.text}"'
+
 
 class AsciiAstNode(AstNode):
     text: str
@@ -110,6 +129,23 @@ class AsciiAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
+
+    def to_canonical(self) -> str:
+        return f'.ascii "{self.text}"'
+
+
+class CommentAstNode(AstNode):
+    comment: str
+
+    def __init__(self, comment: str, file_info: Token) -> None:
+        super().__init__("comment", file_info)
+        self.comment = comment
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.comment
+
+    def to_canonical(self) -> str:
+        return self.comment
 
 
 class ScopeAstNode(AstNode):
@@ -124,6 +160,9 @@ class ScopeAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.body.to_representation()
 
+    def to_canonical(self) -> str:
+        return f".scope {self.name}:\n{{{self.body.to_canonical()}}}\n"
+
 
 class CodePositionAstNode(AstNode):
     def __init__(self, expression: ExpressionAstNode, file_info: Token):
@@ -133,6 +172,9 @@ class CodePositionAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.expression.to_representation()[0]
 
+    def to_canonical(self) -> str:
+        return f"*={self.expression.to_canonical()}"
+
 
 class CodeRelocationAstNode(AstNode):
     def __init__(self, expression: ExpressionAstNode, file_info: Token):
@@ -141,6 +183,9 @@ class CodeRelocationAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.expression.to_representation()[0]
+
+    def to_canonical(self) -> str:
+        return f"@={self.expression.to_canonical()}"
 
 
 class MapArgs(TypedDict, total=False):
@@ -161,6 +206,9 @@ class MapAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.args
+
+    def to_canonical(self) -> str:
+        return f".map {self.args}"
 
 
 class IfAstNode(AstNode):
@@ -188,6 +236,15 @@ class IfAstNode(AstNode):
             self.else_block.to_representation() if self.else_block else None,
         )
 
+    def to_canonical(self) -> str:
+        condition = self.expression.to_canonical()
+        block_content = self.block.to_canonical()
+        if self.else_block:
+            else_content = self.else_block.to_canonical()
+            return f".if {condition}\n{block_content}.else\n{else_content}.endif"
+        else:
+            return f".if {condition}\n{block_content}.endif"
+
 
 class MacroAstNode(AstNode):
     name: str
@@ -202,6 +259,11 @@ class MacroAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, ("args", self.args), self.block.to_representation()
+
+    def to_canonical(self) -> str:
+        args_str = ", ".join(self.args) if self.args else ""
+        block_content = self.block.to_canonical()
+        return f".macro {self.name}({args_str}) {{{block_content}}}"
 
 
 class MacroApplyAstNode(AstNode):
@@ -233,6 +295,19 @@ class MacroApplyAstNode(AstNode):
             ("apply_args", apply_args),
         )
 
+    def to_canonical(self) -> str:
+        if self.args:
+            args_list = []
+            for arg in self.args:
+                if isinstance(arg, ExpressionAstNode):
+                    args_list.append(arg.to_canonical())
+                else:
+                    args_list.append(arg.to_canonical())
+            args_str = ", ".join(args_list)
+            return f"{self.name}({args_str})"
+        else:
+            return f"{self.name}()"
+
 
 class DataNode(AstNode):
     data: list[ExpressionAstNode]
@@ -254,6 +329,10 @@ class DataNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, [d.to_representation()[0] for d in self.data]
 
+    def to_canonical(self) -> str:
+        values = [d.to_canonical() for d in self.data]
+        return f".{self.kind} {', '.join(values)}"
+
 
 class TableAstNode(AstNode):
     file_path: str
@@ -265,6 +344,9 @@ class TableAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path
 
+    def to_canonical(self) -> str:
+        return f'.table "{self.file_path}"'
+
 
 class IncludeAstNode(AstNode):
     file_path: str
@@ -275,6 +357,9 @@ class IncludeAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path
+
+    def to_canonical(self) -> str:
+        return f".include '{self.file_path}'"
 
 
 class IncludeIpsAstNode(AstNode):
@@ -288,6 +373,10 @@ class IncludeIpsAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path, self.expression.to_representation()[0]
 
+    def to_canonical(self) -> str:
+        expr = self.expression.to_canonical()
+        return f'.include_ips "{self.file_path}" {expr}'
+
 
 class IncludeBinaryAstNode(AstNode):
     file_path: str
@@ -299,6 +388,9 @@ class IncludeBinaryAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path
 
+    def to_canonical(self) -> str:
+        return f'.incbin "{self.file_path}"'
+
 
 class SymbolAffectationAstNode(AstNode):
     def __init__(self, symbol: str, value: ExpressionAstNode, file_info: Token):
@@ -308,6 +400,34 @@ class SymbolAffectationAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol, self.value.to_representation()[0]
+
+    def to_canonical(self) -> str:
+        value_str = self.value.to_canonical()
+        return f"{self.symbol} = {value_str}"
+
+
+class ExternAstNode(AstNode):
+    def __init__(self, symbol: str, file_info: Token):
+        super().__init__("extern", file_info)
+        self.symbol = symbol
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.symbol
+
+    def to_canonical(self) -> str:
+        return f".extern {self.symbol}"
+
+
+class DebugAstNode(AstNode):
+    def __init__(self, message: str, file_info: Token) -> None:
+        super().__init__("debug", file_info)
+        self.message = message
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.message
+
+    def to_canonical(self) -> str:
+        return f".debug '{self.message}'"
 
 
 class AssignAstNode(AstNode):
@@ -319,6 +439,9 @@ class AssignAstNode(AstNode):
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol, self.value.to_representation()[0]
 
+    def to_canonical(self) -> str:
+        return f"{self.symbol} := {self.value.to_canonical()}"
+
 
 class CodeLookupAstNode(AstNode):
     def __init__(self, symbol: str, file_info: Token):
@@ -327,6 +450,9 @@ class CodeLookupAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol
+
+    def to_canonical(self) -> str:
+        return f"{{{{{self.symbol}}}}}"
 
 
 class StructAstNode(AstNode):
@@ -337,6 +463,10 @@ class StructAstNode(AstNode):
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.fields
+
+    def to_canonical(self) -> str:
+        fields_str = ", ".join(f"{name}: {type_}" for name, type_ in self.fields.items())
+        return f".struct {self.name} {{ {fields_str} }}"
 
 
 class ForAstNode(AstNode):
@@ -363,6 +493,12 @@ class ForAstNode(AstNode):
             self.body.to_representation(),
         )
 
+    def to_canonical(self) -> str:
+        min_val = self.min_value.to_canonical()
+        max_val = self.max_value.to_canonical()
+        body_content = self.body.to_canonical()
+        return f".for {self.symbol} {min_val} {max_val}\n{body_content}.endfor"
+
 
 KeywordAstNode = (
     ScopeAstNode
@@ -379,6 +515,8 @@ KeywordAstNode = (
     | BlockAstNode
     | TableAstNode
     | StructAstNode
+    | ExternAstNode
+    | DebugAstNode
 )
 FileInfoAstNode = tuple[Literal["file_info"], Token]
 
@@ -426,6 +564,21 @@ class OpcodeAstNode(AstNode):
             self.index,
         )
 
+    def to_canonical(self) -> str:
+        # Build opcode with size specifier
+        result = self.opcode
+        if self.value_size:
+            result += f".{self.value_size}"
+
+        # Add operand if present
+        if self.operand:
+            operand_str = self.operand.to_canonical()
+            if self.index:
+                operand_str += f",{self.index}"
+            result += f" {operand_str}"
+
+        return result
+
 
 DeclAstNode = (
     CodeLookupAstNode
@@ -437,7 +590,8 @@ DeclAstNode = (
     | KeywordAstNode
     | MacroApplyAstNode
     | SymbolAffectationAstNode
-    | IfAstNode,
+    | IfAstNode
+    | CommentAstNode,
 )
 
 index_map = {

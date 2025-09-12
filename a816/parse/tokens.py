@@ -71,6 +71,10 @@ class TokenType(Enum):
 
     TYPE = auto()
 
+    IMPORT = auto()
+
+    FROM = auto()
+
 
 class Token:
     def __init__(self, type_: TokenType, value: str, position: Position | None = None) -> None:
@@ -100,7 +104,7 @@ class Token:
             trace = f"""
 {self.position} {self.type}
 {line}
-{' ' * self.position.column}{'^' * len(self.value)}"""
+{" " * self.position.column}{"^" * len(self.value)}"""
         return trace
 
 

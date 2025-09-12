@@ -1,4 +1,4 @@
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.exceptions import SymbolNotDefined
@@ -11,9 +11,13 @@ from a816.parse.ast.nodes import (
     CodeLookupAstNode,
     CodePositionAstNode,
     CodeRelocationAstNode,
+    CommentAstNode,
     CompoundAstNode,
     DataNode,
+    DebugAstNode,
     ExpressionAstNode,
+    ExternAstNode,
+    FileInfoAstNode,
     ForAstNode,
     IfAstNode,
     IncludeBinaryAstNode,
@@ -34,7 +38,9 @@ from a816.parse.nodes import (
     BinaryNode,
     ByteNode,
     CodePositionNode,
+    DebugNode,
     ExpressionNode,
+    ExternNode,
     IncludeIpsNode,
     LabelNode,
     LongNode,
@@ -241,6 +247,15 @@ def generate_symbol(
     return [SymbolNode(node.symbol, node.value, resolver)]
 
 
+def generate_extern(
+    node: ExternAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    return [ExternNode(node.symbol, resolver)]
+
+
 def generate_assign(
     node: AssignAstNode,
     resolver: Resolver,
@@ -314,8 +329,8 @@ def generate_for(
     file_info: Token,
 ) -> GenNodes:
     code: GenNodes = []
-    from_val = eval_expression(node.min_value, resolver)
-    to_val = eval_expression(node.max_value, resolver)
+    from_val = cast(int, eval_expression(node.min_value, resolver))
+    to_val = cast(int, eval_expression(node.max_value, resolver))
     for k in range(from_val, to_val):
         resolver.append_internal_scope()
         resolver.use_next_scope()
@@ -424,6 +439,19 @@ def generate_compound(
     return code
 
 
+def generate_comment(
+    node: CommentAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: FileInfoAstNode
+) -> list[NodeProtocol]:
+    # Comments don't generate executable code, so return empty list
+    return []
+
+
+def generate_debug(
+    node: DebugAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: FileInfoAstNode
+) -> list[NodeProtocol]:
+    return [DebugNode(node.message, resolver)]
+
+
 generators = {
     "block": generate_block,
     "scope": generate_scope,
@@ -444,11 +472,14 @@ generators = {
     "dl": generate_dl,
     "pointer": generate_dl,
     "symbol": generate_symbol,
+    "extern": generate_extern,
     "assign": generate_assign,
     "label": generate_label,
     "opcode": generate_opcode,
     "incbin": generate_incbin,
     "include_ips": generate_include_ips,
+    "comment": generate_comment,
+    "debug": generate_debug,
 }
 
 
