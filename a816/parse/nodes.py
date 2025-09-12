@@ -65,7 +65,7 @@ class ExpressionNode(ValueNodeProtocol):
         self.resolver = resolver
         self.file_info = file_info
 
-    def get_value(self) -> int | str: # type:ignore
+    def get_value(self) -> int | str:  # type:ignore
         try:
             return eval_expression(self.expression, self.resolver)
         except ExternalExpressionReference as e:

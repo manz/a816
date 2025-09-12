@@ -7,7 +7,7 @@ from a816.writers import IPSWriter
 
 class WriterTestCase(unittest.TestCase):
     def read_patch(self, data: memoryview) -> list[tuple[int, int, bytes]]:
-        patch = BufferedReader(BytesIO(bytes(data)))  # type:ignore
+        patch = BufferedReader(BytesIO(bytes(data)))
         patch.seek(5)
         blocks = []
         while patch.peek(3) != b"EOF":
