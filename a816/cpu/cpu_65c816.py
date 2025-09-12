@@ -192,6 +192,7 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {
             "x": Opcode([None, 0x1D, 0x1F], is_a=True),
             "y": Opcode([None, 0x19, None], is_a=True),
+            "s": Opcode([0x03, None, None])
         },
         AddressingMode.indirect_indexed_long: {"y": Opcode([0x17])},
     },
@@ -328,6 +329,7 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {
             "x": Opcode([0xF5, 0xFD, 0xFF]),
             "y": Opcode([None, 0xF9]),
+            "s": Opcode([0xE3])
         },
         AddressingMode.indirect: Opcode([0xF2]),
         AddressingMode.indirect_indexed: {"y": Opcode([0xF1])},
