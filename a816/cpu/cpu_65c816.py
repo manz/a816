@@ -247,6 +247,7 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct: Opcode([None, 0x4C, 0x5C]),
         AddressingMode.indirect: Opcode([None, 0x6C, None]),
         AddressingMode.indirect_long: Opcode([None, 0xDC, None]),
+        AddressingMode.dp_or_sr_indirect_indexed: Opcode([None, 0x7c, None])
     },
     "inc": {
         AddressingMode.none: OpcodeWithoutOperand(0x1A),
