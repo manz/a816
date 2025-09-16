@@ -464,6 +464,19 @@ class AbstractTextNode(NodeProtocol):
     def emit(self, current_addr: Address) -> bytes:
         return self.binary_text
 
+def variable_expansion(value: str, resolver: Resolver) -> str:
+    if value is not None and isinstance(value, str):
+        def replace_match(match: re.Match[str]) -> str:
+            lookup = match.groups("lookup")[0]
+            variable_value = resolver.current_scope.value_for(lookup)
+            if variable_value is None:
+                raise ValueError(f"Error while resolving variable {lookup} in {value} variable value is None.")
+            return variable_value
+
+        try:
+            return re.sub(r"\${(?P<lookup>[^}]+)}", replace_match, value) or value
+        except ValueError:
+            return value
 
 class TextNode(AbstractTextNode):
     def __init__(self, text: str, resolver: Resolver, file_info: Token) -> None:
@@ -478,7 +491,7 @@ class TextNode(AbstractTextNode):
                 f"table_is_not_defined ({self}) is not defined in the current scope.",
                 self.file_info,
             )
-        return self.table.to_bytes(self.text)
+        return self.table.to_bytes(variable_expansion(self.text, self.resolver))
 
 
 class AsciiNode(AbstractTextNode):

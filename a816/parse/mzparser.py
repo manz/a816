@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from time import strptime, strftime, gmtime
 from typing import Any
 
 from a816.parse.ast.nodes import AstNode
@@ -28,6 +29,7 @@ class MZParser:
 
     def parse(self, program: str, filename: str = "") -> tuple[str | None, list[NodeProtocol]]:
         ast = self.parse_as_ast(program, filename)
+        self.resolver.current_scope.add_symbol("BUILD_DATE", strftime("%Y-%m-%d %H:%M:%S", gmtime()))
         return ast.error, code_gen(ast.nodes, self.resolver)
 
     @staticmethod
