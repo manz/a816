@@ -1,10 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import gmtime, strftime
 from typing import Any
 
 from a816.parse.ast.nodes import AstNode
 from a816.parse.codegen import code_gen
-from a816.parse.errors import ParserSyntaxError, ScannerException
+from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
 from a816.parse.nodes import NodeProtocol
 from a816.parse.parser import Parser
 from a816.parse.parser_states import parse_initial
@@ -16,7 +16,12 @@ from a816.symbols import Resolver
 @dataclass
 class ParserResult:
     nodes: list[AstNode]
-    error: str | None
+    parse_error: ParseError | None = None
+
+    @property
+    def error(self) -> str | None:
+        """Formatted error string for display."""
+        return self.parse_error.format() if self.parse_error else None
 
     @property
     def ast(self) -> list[tuple[Any, ...]]:
@@ -34,31 +39,28 @@ class MZParser:
 
     @staticmethod
     def parse_as_ast(program: str, filename: str = "memory.s") -> ParserResult:
-        from a816.errors import SourceLocation, format_error
-
         scanner = Scanner(lex_initial)
         ast: list[AstNode] = []
-        error: str | None
+        parse_error: ParseError | None = None
 
         try:
             tokens = scanner.scan(filename, program)
             parser = Parser(tokens, parse_initial)
             ast = parser.parse()
-            error = None
         except ScannerException as e:
             position = e.position
             try:
                 source_line = position.get_line()
             except (IndexError, AttributeError):
                 source_line = ""
-            location = SourceLocation(
+            parse_error = ParseError(
+                message=str(e),
                 filename=position.file.filename,
                 line=position.line,
                 column=position.column,
                 source_line=source_line,
                 length=1,
             )
-            error = format_error(str(e), location)
         except ParserSyntaxError as e:
             if e.token.position is not None:
                 pos = e.token.position
@@ -66,14 +68,19 @@ class MZParser:
                     source_line = pos.get_line()
                 except (IndexError, AttributeError):
                     source_line = ""
-                location = SourceLocation(
+                parse_error = ParseError(
+                    message=str(e),
                     filename=pos.file.filename,
                     line=pos.line,
                     column=pos.column,
                     source_line=source_line,
                     length=len(e.token.value) if e.token.value else 1,
                 )
-                error = format_error(str(e), location)
             else:
-                error = format_error(str(e))
-        return ParserResult(nodes=ast, error=error)
+                parse_error = ParseError(
+                    message=str(e),
+                    filename=filename,
+                    line=0,
+                    column=0,
+                )
+        return ParserResult(nodes=ast, parse_error=parse_error)

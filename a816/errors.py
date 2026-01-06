@@ -1,5 +1,6 @@
 """Error display utilities for consistent, readable error messages."""
 
+import os
 import sys
 from dataclasses import dataclass
 
@@ -15,8 +16,24 @@ _MAGENTA = "\033[35m"
 _CYAN = "\033[36m"
 _WHITE = "\033[37m"
 
+
+def _should_use_colors() -> bool:
+    """Determine if colors should be used based on environment and terminal."""
+    # NO_COLOR convention: https://no-color.org/
+    if os.environ.get("NO_COLOR"):
+        return False
+    # FORCE_COLOR forces colors even without TTY
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    # CLICOLOR_FORCE also forces colors
+    if os.environ.get("CLICOLOR_FORCE"):
+        return True
+    # Check if stderr is a TTY
+    return hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+
+
 # Check if output supports colors
-_USE_COLORS = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+_USE_COLORS = _should_use_colors()
 
 
 def _color(text: str, *codes: str) -> str:

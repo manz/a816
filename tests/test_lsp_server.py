@@ -84,6 +84,33 @@ subroutine:
         for diag in doc.diagnostics:
             self.assertEqual(diag.severity, DiagnosticSeverity.Error)
 
+    def test_document_diagnostics_line_column(self) -> None:
+        """Test that diagnostics have correct line and column positions"""
+        # Error is on line 2 (0-indexed: 1), column 5 (after the space and at 'Q')
+        content = """main:
+    lda.Q #0x42"""
+
+        doc = A816Document("test://example.s", content)
+
+        self.assertGreater(len(doc.diagnostics), 0)
+        diag = doc.diagnostics[0]
+
+        # The error should point to line 2 (index 1) where .Q is
+        self.assertEqual(diag.range.start.line, 1, "Error should be on line 2 (0-indexed: 1)")
+
+    def test_document_diagnostics_unterminated_string(self) -> None:
+        """Test diagnostics for unterminated string errors point to correct line"""
+        content = ".incbin 'assets/file.bin\n"
+
+        doc = A816Document("test://example.s", content)
+
+        self.assertGreater(len(doc.diagnostics), 0)
+        diag = doc.diagnostics[0]
+
+        # Error should be on line 1 (index 0), not line 2
+        self.assertEqual(diag.range.start.line, 0, "Unterminated string error should be on line 1")
+        self.assertIn("Unterminated String", diag.message)
+
     def test_document_update_content(self) -> None:
         """Test document content update"""
         initial_content = """main:

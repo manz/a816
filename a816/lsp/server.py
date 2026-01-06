@@ -77,7 +77,7 @@ from a816.parse.ast.nodes import (
     SymbolAffectationAstNode,
     Term,
 )
-from a816.parse.errors import ParserSyntaxError, ScannerException
+from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
 from a816.parse.mzparser import MZParser
 from a816.parse.scanner_states import KEYWORDS
 from a816.parse.tokens import Token, TokenType
@@ -109,7 +109,7 @@ class A816Document:
         self.label_docstrings: dict[str, str] = {}
         self.diagnostics: list[Diagnostic] = []
         self.ast_nodes: list[AstNode] = []
-        self.parse_error: str | None = None
+        self.parse_error: ParseError | None = None
         self.analyze()
 
     def update_content(self, content: str) -> None:
@@ -134,7 +134,7 @@ class A816Document:
             # Parse using the actual a816 parser
             parser_result = MZParser.parse_as_ast(self.content, self.uri)
             self.ast_nodes = parser_result.nodes
-            self.parse_error = parser_result.error
+            self.parse_error = parser_result.parse_error
 
             # Extract symbols and labels from AST
             self._extract_symbols_from_ast()
@@ -142,12 +142,22 @@ class A816Document:
 
         except (ScannerException, ParserSyntaxError) as e:
             # These should be handled by MZParser.parse_as_ast, but just in case
-            self.parse_error = str(e)
+            self.parse_error = ParseError(
+                message=str(e),
+                filename=self.uri,
+                line=0,
+                column=0,
+            )
             self.ast_nodes = []
             logger.warning("Parser exception not caught by MZParser: %s", e)
         except Exception as e:
             # Catch any other unexpected exceptions
-            self.parse_error = f"Unexpected parser error: {str(e)}"
+            self.parse_error = ParseError(
+                message=f"Unexpected parser error: {str(e)}",
+                filename=self.uri,
+                line=0,
+                column=0,
+            )
             self.ast_nodes = []
             logger.exception("Unexpected error during document analysis")
 
@@ -400,31 +410,10 @@ class A816Document:
         if not self.parse_error:
             return
 
-        # Try to extract line and column information from error message
-        lines = self.parse_error.split("\n")
-        error_line = 0
-        error_col = 0
-        message = self.parse_error
-
-        # Parse error format: "filename:line:column : error message"
-        # Handle URI schemes like "test://file.s:1:19 : message"
-        if lines and " : " in lines[0]:
-            # Split on " : " first to separate the location from message
-            location_part, message = lines[0].split(" : ", 1)
-            # Now find the last two colons for line:column
-            parts = location_part.rsplit(":", 2)
-            if len(parts) >= 2:
-                try:
-                    error_line = max(0, int(parts[-2]))  # Already 0-indexed from parser
-                    error_col = max(0, int(parts[-1]))
-                except (ValueError, IndexError):
-                    pass
-
-        # If we have caret position info, try to use it
-        if len(lines) >= 3 and "^" in lines[2]:
-            caret_pos = lines[2].find("^")
-            if caret_pos >= 0:
-                error_col = caret_pos
+        error = self.parse_error
+        error_line = error.line
+        error_col = error.column
+        error_length = error.length
 
         # Ensure we don't go beyond document bounds
         if not self.lines:
@@ -437,17 +426,23 @@ class A816Document:
                 error_line = 0
             if error_col < 0:
                 error_col = 0
-            if error_col >= len(self.lines[error_line]):
-                error_col = len(self.lines[error_line])
 
-        # Create diagnostic
+            line_length = len(self.lines[error_line]) if self.lines else 0
+            if error_col >= line_length:
+                error_col = max(0, line_length - 1)
+
+            # Ensure error_length doesn't exceed line bounds
+            if error_col + error_length > line_length:
+                error_length = max(1, line_length - error_col)
+
+        # Create diagnostic with proper range
         self.diagnostics.append(
             Diagnostic(
                 range=Range(
                     start=Position(line=error_line, character=error_col),
-                    end=Position(line=error_line, character=error_col + 1),
+                    end=Position(line=error_line, character=error_col + error_length),
                 ),
-                message=message,
+                message=error.message,
                 severity=DiagnosticSeverity.Error,
             )
         )
