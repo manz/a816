@@ -1,10 +1,7 @@
-"""
-Assembly code formatter for a816
-Uses the AST to provide consistent code formatting
-"""
-
 from pathlib import Path
 
+from a816.cpu.cpu_65c816 import AddressingMode
+from a816.exceptions import FormattingError
 from a816.parse.ast.nodes import (
     AsciiAstNode,
     AstNode,
@@ -15,6 +12,7 @@ from a816.parse.ast.nodes import (
     CommentAstNode,
     CompoundAstNode,
     DataNode,
+    DocstringAstNode,
     ExternAstNode,
     ForAstNode,
     IfAstNode,
@@ -65,24 +63,38 @@ class A816Formatter:
 
     def __init__(self, options: FormattingOptions | None = None):
         self.options = options or FormattingOptions()
+        self._instruction_like_nodes = (
+            OpcodeAstNode,
+            DataNode,
+            TextAstNode,
+            AsciiAstNode,
+            MacroApplyAstNode,
+            IncludeAstNode,
+            DocstringAstNode,
+            ExternAstNode,
+            SymbolAffectationAstNode,
+            CodePositionAstNode,
+            CodeRelocationAstNode,
+            CodeLookupAstNode,
+        )
 
     def format_text(self, content: str, file_path: str | None = None) -> str:
         """Format assembly code from text content"""
+        source = file_path or "<input>"
         try:
             # Parse the content into an AST
-            result = MZParser.parse_as_ast(content, file_path or "<input>")
+            result = MZParser.parse_as_ast(content, source)
 
             if result.error:
-                return content
-                # If parsing fails, use fallback formatting
-                return self._fallback_format(content)
+                raise FormattingError(f"Unable to format {source}:\n{result.error}")
 
             # Preserve blank lines from original content
             return self._format_with_preserved_blanks(content, result.nodes)
 
-        except (ParserSyntaxError, Exception):
-            # If parsing fails, return original content with minimal formatting
-            return self._fallback_format(content)
+        except ParserSyntaxError as exc:
+            raise FormattingError(f"Unable to format {source}: {exc}") from exc
+        except Exception as exc:
+            raise FormattingError(f"Unexpected formatter failure for {source}: {exc}") from exc
 
     def format_file(self, file_path: str | Path) -> str:
         """Format assembly code from a file"""
@@ -90,7 +102,9 @@ class A816Formatter:
         content = path.read_text(encoding="utf-8")
         return self.format_text(content, str(path))
 
-    def _format_ast(self, ast: AstNode, indent_instructions: bool = False) -> list[str]:
+    def _format_ast(
+        self, ast: AstNode, indent_instructions: bool = False, *, indent_after_label: bool = True
+    ) -> list[str]:
         """Format an AST node into lines of text"""
         if isinstance(ast, CompoundAstNode):
             lines = []
@@ -98,11 +112,11 @@ class A816Formatter:
 
             for node in ast.body:
                 # Check if we should indent instructions (after labels)
-                should_indent = indent_instructions or prev_was_label
-                node_lines = self._format_ast(node, should_indent)
+                should_indent = indent_instructions or (indent_after_label and prev_was_label)
+                node_lines = self._format_ast(node, should_indent, indent_after_label=indent_after_label)
 
                 # If this node is an instruction and should be indented, indent it
-                if should_indent and isinstance(node, OpcodeAstNode | DataNode | TextAstNode | AsciiAstNode):
+                if should_indent and isinstance(node, self._instruction_like_nodes):
                     node_lines = [
                         self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines
                     ]
@@ -115,7 +129,7 @@ class A816Formatter:
         elif isinstance(ast, BlockAstNode):
             lines = []
             for node in ast.body:
-                node_lines = self._format_ast(node, True)  # Always indent in blocks
+                node_lines = self._format_ast(node, True, indent_after_label=indent_after_label)  # Always indent
                 lines.extend(node_lines)
             return lines
 
@@ -142,21 +156,26 @@ class A816Formatter:
 
         elif isinstance(ast, ScopeAstNode):
             lines = [f".scope {ast.name} {{"]
-            lines.extend(self._format_ast(ast.body, True))
+            if ast.docstring:
+                lines.extend(self._format_docstring(ast.docstring, indent_level=1))
+            lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
             lines.append("}")
             return lines
 
         elif isinstance(ast, MacroAstNode):
-            return [self._format_macro(ast)]
+            return self._format_macro(ast)
 
         elif isinstance(ast, MacroApplyAstNode):
             return [self._format_macro_apply(ast)]
 
+        elif isinstance(ast, DocstringAstNode):
+            return self._format_docstring(ast.text)
+
         elif isinstance(ast, IfAstNode):
-            return [self._format_if(ast)]
+            return self._format_if(ast)
 
         elif isinstance(ast, ForAstNode):
-            return [self._format_for(ast)]
+            return self._format_for(ast)
 
         elif isinstance(ast, IncludeAstNode):
             return [f'.include "{ast.file_path}"']
@@ -171,10 +190,10 @@ class A816Formatter:
             return [f'.table "{ast.file_path}"']
 
         elif isinstance(ast, StructAstNode):
-            return [self._format_struct(ast)]
+            return ast.to_canonical().splitlines()
 
         elif isinstance(ast, ExternAstNode):
-            return [f"    .extern {ast.symbol}"]
+            return [f".extern {ast.symbol}"]
 
         elif isinstance(ast, SymbolAffectationAstNode):
             value = ast.value.to_canonical() if ast.value else ""
@@ -187,11 +206,11 @@ class A816Formatter:
             return [ast.to_canonical()]
 
         elif isinstance(ast, CodeLookupAstNode):
-            return [f"    {{{{ {ast.symbol} }}}}"]
+            return [f"{{{{ {ast.symbol} }}}}"]
 
         else:
-            # Fallback to canonical representation
-            return [ast.to_canonical()]
+            # Fallback to canonical representation; split to preserve structure
+            return ast.to_canonical().splitlines()
 
     def _format_opcode(self, opcode_ast: OpcodeAstNode) -> str:
         """Format an opcode instruction"""
@@ -201,23 +220,54 @@ class A816Formatter:
             opcode += f".{opcode_ast.value_size.lower()}"
 
         # Add operand if present
-        operand = ""
-        if opcode_ast.operand:
-            operand = opcode_ast.operand.to_canonical()
-
-            # Add index if present
-            if opcode_ast.index:
-                operand += f",{opcode_ast.index.lower()}"
-
-            # Add space after comma if configured
-            if self.options.space_after_comma and "," in operand:
-                operand = operand.replace(",", ", ")
+        operand = self._format_operand(opcode_ast)
 
         # Format with single space between opcode and operand (no indentation here)
         if operand:
             return f"{opcode} {operand}"
         else:
             return f"{opcode}"
+
+    def _format_operand(self, opcode_ast: OpcodeAstNode) -> str:
+        """Format an opcode operand according to its addressing mode"""
+        if not opcode_ast.operand:
+            return ""
+
+        operand = opcode_ast.operand.to_canonical().strip()
+        addressing_mode = opcode_ast.addressing_mode
+        index = opcode_ast.index.lower() if opcode_ast.index else None
+        comma = ", " if self.options.space_after_comma else ","
+
+        if addressing_mode == AddressingMode.immediate:
+            return operand if operand.startswith("#") else f"#{operand}"
+
+        if addressing_mode == AddressingMode.indirect:
+            return f"({operand})"
+
+        if addressing_mode == AddressingMode.indirect_indexed:
+            base = f"({operand})"
+            return f"{base}{comma}{index}" if index else base
+
+        if addressing_mode == AddressingMode.indirect_long:
+            return f"[{operand}]"
+
+        if addressing_mode == AddressingMode.indirect_indexed_long:
+            base = f"[{operand}]"
+            return f"{base}{comma}{index}" if index else base
+
+        if addressing_mode == AddressingMode.dp_or_sr_indirect_indexed:
+            inner = f"{operand}{comma}{index}" if index else operand
+            return f"({inner})"
+
+        if addressing_mode == AddressingMode.stack_indexed_indirect_indexed:
+            inner = f"{operand}{comma}s"
+            base = f"({inner})"
+            return f"{base}{comma}{index}" if index else base
+
+        if index:
+            return f"{operand}{comma}{index}"
+
+        return operand
 
     def _format_data(self, data_ast: DataNode) -> str:
         """Format a data directive"""
@@ -232,13 +282,22 @@ class A816Formatter:
         # Format with single space between directive and operand (no indentation here)
         return f"{directive} {operand}"
 
-    def _format_macro(self, macro_ast: MacroAstNode) -> str:
-        """Format a macro definition"""
+    def _format_macro(self, macro_ast: MacroAstNode) -> list[str]:
+        """Format a macro definition with its body"""
         params = ", ".join(macro_ast.args) if self.options.space_after_comma else ",".join(macro_ast.args)
-        result = f"macro {macro_ast.name}"
-        if params:
-            result += f"({params})"
-        return result
+        header = f".macro {macro_ast.name}"
+        if macro_ast.args:
+            header += f"({params})"
+        else:
+            header += "()"
+        header += " {"
+
+        body_lines = []
+        if macro_ast.docstring:
+            body_lines.extend(self._format_docstring(macro_ast.docstring, indent_level=1))
+        body_lines.extend(self._indent_block_lines(self._format_ast(macro_ast.block)))
+
+        return [header, *body_lines, "}"]
 
     def _format_macro_apply(self, apply_ast: MacroApplyAstNode) -> str:
         """Format a macro application"""
@@ -247,25 +306,43 @@ class A816Formatter:
             for arg in apply_ast.args:
                 args.append(arg.to_canonical())
             arg_str = ", ".join(args) if self.options.space_after_comma else ",".join(args)
-            return f"    {apply_ast.name}({arg_str})"
+            return f"{apply_ast.name}({arg_str})"
         else:
-            return f"    {apply_ast.name}()"
+            return f"{apply_ast.name}()"
 
-    def _format_if(self, if_ast: IfAstNode) -> str:
-        """Format an if statement"""
+    def _format_if(self, if_ast: IfAstNode) -> list[str]:
+        """Format an if statement with explicit braces"""
         condition = if_ast.expression.to_canonical()
-        return f"if {condition}"
+        lines = [f".if {condition} {{"]
+        lines.extend(self._indent_block_lines(self._format_ast(if_ast.block)))
+        if if_ast.else_block:
+            lines.append("} else {")
+            lines.extend(self._indent_block_lines(self._format_ast(if_ast.else_block)))
+        lines.append("}")
+        return lines
 
-    def _format_for(self, for_ast: ForAstNode) -> str:
+    def _format_docstring(self, text: str, indent_level: int = 0) -> list[str]:
+        indent = " " * (self.options.indent_size * indent_level)
+        if "\n" not in text:
+            return [f'{indent}"""{text}"""']
+
+        formatted = [f'{indent}"""']
+        for line in text.splitlines():
+            formatted.append(f"{indent}{line}")
+        formatted.append(f'{indent}"""')
+        return formatted
+
+    def _format_for(self, for_ast: ForAstNode) -> list[str]:
         """Format a for loop"""
         symbol = for_ast.symbol
         min_val = for_ast.min_value.to_canonical()
         max_val = for_ast.max_value.to_canonical()
-        return f"for {symbol} {min_val} {max_val}"
-
-    def _format_struct(self, struct_ast: StructAstNode) -> str:
-        """Format a struct definition"""
-        return f"struct {struct_ast.name}"
+        comma = ", " if self.options.space_after_comma else ","
+        header = f".for {symbol} := {min_val}{comma}{max_val} {{"
+        lines = [header]
+        lines.extend(self._indent_block_lines(self._format_ast(for_ast.body)))
+        lines.append("}")
+        return lines
 
     def _indent(self, line: str, levels: int = 1) -> str:
         """Add indentation to a line"""
@@ -273,6 +350,16 @@ class A816Formatter:
             return line
         indent = " " * (self.options.indent_size * levels)
         return f"{indent}{line.lstrip()}"
+
+    def _indent_block_lines(self, lines: list[str], levels: int = 1) -> list[str]:
+        """Indent a sequence of lines representing a block"""
+        indented: list[str] = []
+        for line in lines:
+            if not line.strip():
+                indented.append("")
+            else:
+                indented.append(self._indent(line, levels))
+        return indented
 
     def _finalize_formatting(self, lines: list[str]) -> str:
         """Finalize formatting by cleaning up whitespace"""
@@ -298,6 +385,45 @@ class A816Formatter:
         else:
             # Remove all empty lines
             lines = [line for line in lines if line.strip()]
+
+        # Ensure labels are separated by a blank line
+        adjusted: list[str] = []
+        for line in lines:
+            if line.strip().endswith(":") and (not line.startswith(".")):
+                if adjusted and adjusted[-1].strip():
+                    adjusted.append("")
+            adjusted.append(line)
+        lines = adjusted
+
+        # Align inline comments within blocks sharing the same indentation
+        inline_groups: dict[int, list[tuple[int, str, str]]] = {}
+        for index, line in enumerate(lines):
+            if ";" not in line:
+                continue
+            stripped = line.lstrip()
+            if stripped.startswith(";"):
+                continue
+            semicolon_index = line.find(";")
+            if semicolon_index <= 0:
+                continue
+            indent = len(line) - len(line.lstrip())
+            code_part = line[indent:semicolon_index].rstrip()
+            if not code_part:
+                continue
+            comment_part = line[semicolon_index + 1 :].strip()
+            inline_groups.setdefault(indent, []).append((index, code_part, comment_part))
+
+        for indent, entries in inline_groups.items():
+            if not entries:
+                continue
+            max_code_len = max(len(code_part) for _, code_part, _ in entries)
+            target_column = max(indent + max_code_len + 1, self.options.comment_alignment)
+            for index, code_part, comment_part in entries:
+                padding = target_column - (indent + len(code_part))
+                if padding < 1:
+                    padding = 1
+                comment_text = f"; {comment_part}" if comment_part else ";"
+                lines[index] = f"{' ' * indent}{code_part}{' ' * padding}{comment_text}"
 
         # Join with newlines and ensure single trailing newline
         content = "\n".join(lines)
@@ -327,6 +453,7 @@ class A816Formatter:
 
         # Process each node while preserving blank lines
         in_label_section = False
+        last_emitted_line_num: int | None = None
 
         for line_num, node in node_positions:
             # Add any blank lines before this node
@@ -340,22 +467,66 @@ class A816Formatter:
                 current_line_idx += 1
 
             # Format the current node
-            node_lines = self._format_ast(node)
-
-            # Apply context-aware indentation
-            if isinstance(node, LabelAstNode):
-                in_label_section = True
-                formatted_lines.extend(node_lines)
-            elif isinstance(node, OpcodeAstNode | DataNode | TextAstNode | AsciiAstNode):
-                if in_label_section:
-                    node_lines = [
-                        self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines
-                    ]
-                formatted_lines.extend(node_lines)
+            if isinstance(node, CompoundAstNode):
+                in_label_section = False
+                block_lines = self._format_ast(node, indent_after_label=False)
+                formatted_lines.append("{")
+                formatted_lines.extend(self._indent_block_lines(block_lines))
+                formatted_lines.append("}")
+                last_emitted_line_num = None
             else:
-                if not isinstance(node, CommentAstNode):
-                    in_label_section = False
-                formatted_lines.extend(node_lines)
+                node_lines = self._format_ast(node)
+                node_line = None
+                if hasattr(node, "file_info") and node.file_info and node.file_info.position:
+                    node_line = node.file_info.position.line
+
+                # Apply context-aware indentation
+                if isinstance(node, LabelAstNode):
+                    if formatted_lines and formatted_lines[-1].strip():
+                        formatted_lines.append("")
+                    in_label_section = True
+                    formatted_lines.extend(node_lines)
+                    last_emitted_line_num = node_line
+                elif isinstance(node, CommentAstNode):
+                    comment_text = node_lines[0] if node_lines else ""
+                    if (
+                        last_emitted_line_num is not None
+                        and node_line is not None
+                        and node_line == last_emitted_line_num
+                        and formatted_lines
+                        and formatted_lines[-1].strip()
+                    ):
+                        formatted_lines[-1] = formatted_lines[-1].rstrip() + " " + comment_text.strip()
+                    else:
+                        if in_label_section and comment_text.strip():
+                            formatted_lines.append(self._indent(comment_text))
+                        else:
+                            formatted_lines.extend(node_lines)
+                    if node_line is not None:
+                        last_emitted_line_num = node_line
+                elif isinstance(node, self._instruction_like_nodes):
+                    if isinstance(node, (CodePositionAstNode, CodeRelocationAstNode)):
+                        if formatted_lines and formatted_lines[-1].strip():
+                            formatted_lines.append("")
+                        formatted_lines.extend([line.lstrip() for line in node_lines])
+                        in_label_section = True
+                        if node_line is not None:
+                            last_emitted_line_num = node_line
+                    else:
+                        if in_label_section:
+                            node_lines = [
+                                self._indent(line) if line.strip() and not line.startswith(" ") else line
+                                for line in node_lines
+                            ]
+                        formatted_lines.extend(node_lines)
+                        if node_line is not None:
+                            last_emitted_line_num = node_line
+                else:
+                    if not isinstance(node, CommentAstNode):
+                        in_label_section = False
+                    formatted_lines.extend(node_lines)
+                    if node_line is not None:
+                        last_emitted_line_num = node_line
 
             processed_lines.add(line_num)
             current_line_idx = max(current_line_idx, line_num + 1)
@@ -367,40 +538,5 @@ class A816Formatter:
                 if not original_line.strip():
                     formatted_lines.append("")
             current_line_idx += 1
-
-        return self._finalize_formatting(formatted_lines)
-
-    def _fallback_format(self, content: str) -> str:
-        """Fallback formatting when AST parsing fails"""
-        lines = content.splitlines()
-        formatted_lines = []
-
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                # Preserve blank lines in fallback mode too
-                if self.options.preserve_empty_lines:
-                    formatted_lines.append("")
-                continue
-
-            # Basic indentation for opcodes and directives
-            if stripped.startswith(";"):
-                # Comment - keep as is
-                formatted_lines.append(stripped)
-            elif ":" in stripped and not stripped.startswith("."):
-                # Label
-                label_part = stripped.split(":")[0]
-                rest = ":".join(stripped.split(":")[1:])
-                if rest.strip():
-                    formatted_lines.append(f"{label_part}:")
-                    formatted_lines.append(f"    {rest.strip()}")
-                else:
-                    formatted_lines.append(f"{label_part}:")
-            elif stripped.startswith("."):
-                # Directive
-                formatted_lines.append(f"    {stripped}")
-            else:
-                # Likely an opcode
-                formatted_lines.append(f"    {stripped}")
 
         return self._finalize_formatting(formatted_lines)

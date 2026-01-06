@@ -36,6 +36,7 @@ class TokenType(Enum):
     LABEL = auto()
     IDENTIFIER = auto()
     QUOTED_STRING = auto()
+    DOCSTRING = auto()
     OPERATOR = auto()
     LPAREN = auto()
     RPAREN = auto()

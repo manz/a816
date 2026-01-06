@@ -15,11 +15,13 @@ from a816.parse.ast.nodes import (
     CompoundAstNode,
     DataNode,
     DebugAstNode,
+    DocstringAstNode,
     ExpressionAstNode,
     ExternAstNode,
     FileInfoAstNode,
     ForAstNode,
     IfAstNode,
+    IncludeAstNode,
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
     LabelAstNode,
@@ -27,6 +29,7 @@ from a816.parse.ast.nodes import (
     MacroAstNode,
     MapAstNode,
     OpcodeAstNode,
+    RegisterSizeAstNode,
     ScopeAstNode,
     SymbolAffectationAstNode,
     TableAstNode,
@@ -48,6 +51,7 @@ from a816.parse.nodes import (
     NodeProtocol,
     OpcodeNode,
     PopScopeNode,
+    RegisterSizeNode,
     RelocationAddressNode,
     ScopeNode,
     SymbolNode,
@@ -190,6 +194,29 @@ def generate_include_ips(
     return [IncludeIpsNode(node.file_path, resolver, node.expression)]
 
 
+def generate_include(
+    node: IncludeAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Inline the AST captured from an .include directive while honouring original scoping."""
+    code: GenNodes = []
+    if node.included_nodes:
+        code.extend(_code_gen(node.included_nodes, resolver, macro_definitions))
+    return code
+
+
+def generate_docstring(
+    node: DocstringAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Docstrings are metadata-only and do not emit code."""
+    return []
+
+
 def generate_incbin(
     node: IncludeBinaryAstNode,
     resolver: Resolver,
@@ -254,6 +281,15 @@ def generate_extern(
     file_info: Token,
 ) -> GenNodes:
     return [ExternNode(node.symbol, resolver)]
+
+
+def generate_register_size(
+    node: RegisterSizeAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    return [RegisterSizeNode(node.register, node.size, resolver)]
 
 
 def generate_assign(
@@ -477,9 +513,12 @@ generators = {
     "label": generate_label,
     "opcode": generate_opcode,
     "incbin": generate_incbin,
+    "docstring": generate_docstring,
+    "include": generate_include,
     "include_ips": generate_include_ips,
     "comment": generate_comment,
     "debug": generate_debug,
+    "register_size": generate_register_size,
 }
 
 

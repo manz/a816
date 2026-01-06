@@ -2,19 +2,29 @@
 Unit tests for A816 LSP Server functionality
 """
 
+import asyncio
+import tempfile
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import MagicMock
 
 from lsprotocol.types import (
     CompletionItemKind,
     DiagnosticSeverity,
+    HoverParams,
+    Position,
+    ReferenceContext,
+    ReferenceParams,
+    TextDocumentIdentifier,
+    WorkspaceSymbolParams,
 )
 from lsprotocol.types import (
     FormattingOptions as LSPFormattingOptions,
 )
 
+from a816.exceptions import FormattingError
 from a816.formatter import FormattingOptions
-from a816.lsp.server import A816Document, A816LanguageServer
+from a816.lsp.server import A816Document, A816LanguageServer, WorkspaceIndex
 
 
 class TestA816Document(TestCase):
@@ -134,6 +144,64 @@ main:
 
         # Should not generate diagnostics for case variations
         self.assertEqual(len(doc.diagnostics), 0)
+
+    def test_document_label_docstring_association(self) -> None:
+        """Docstrings immediately after labels should be associated with the label"""
+        content = """lookup_dakuten:
+    \"\"\"
+    input: A 8bit: current char
+    output: A 16bits: the resolved char
+    \"\"\"
+    lda #0"""
+
+        doc = A816Document("test://doc.s", content)
+
+        self.assertIn("lookup_dakuten", doc.labels)
+        self.assertIn("lookup_dakuten", doc.label_docstrings)
+        docstring = doc.label_docstrings["lookup_dakuten"]
+        self.assertIn("input: A 8bit: current char", docstring)
+        self.assertIn("output: A 16bits: the resolved char", docstring)
+
+
+class TestWorkspaceIndex(TestCase):
+    """Tests for workspace-level indexing"""
+
+    def test_workspace_index_resolves_entrypoint_and_includes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            entry = root / "main.s"
+            module = root / "module.s"
+
+            entry.write_text(
+                """;! a816-lsp entrypoint
+FLAG := 1
+.include 'module.s'
+
+main_label:
+    \"\"\"Main doc\"\"\"
+    rtl
+""",
+                encoding="utf-8",
+            )
+
+            module.write_text(
+                """module_label:
+    \"\"\"Module doc\"\"\"
+    rtl
+""",
+                encoding="utf-8",
+            )
+
+            index = WorkspaceIndex(root)
+            index.rebuild()
+
+            self.assertIsNotNone(index.entrypoint)
+            assert index.entrypoint is not None
+            self.assertEqual(index.entrypoint.name, "main.s")
+            self.assertIn("module_label", index.labels)
+            self.assertEqual(index.get_label_doc("module_label"), "Module doc")
+            location = index.get_label_location("module_label")
+            self.assertIsNotNone(location)
 
 
 class TestA816LanguageServer(TestCase):
@@ -273,6 +341,107 @@ main:
         # Tokens should be in groups of 5 (deltaLine, deltaStart, length, tokenType, tokenModifiers)
         self.assertEqual(len(tokens) % 5, 0)
 
+    def test_hover_returns_label_docstring(self) -> None:
+        """Hover should surface label docstrings"""
+        uri = "test://hover_doc.s"
+        content = """lookup_dakuten:
+    \"\"\"
+    input: A 8bit: current char
+    output: A 16bits: the resolved char
+    \"\"\"
+    rtl"""
+
+        doc = A816Document(uri, content)
+        self.server.documents[uri] = doc
+
+        handler = self.server.server.lsp._get_handler("textDocument/hover")
+        params = HoverParams(
+            text_document=TextDocumentIdentifier(uri=uri),
+            position=Position(line=0, character=5),
+        )
+
+        import asyncio
+
+        hover_result = asyncio.run(handler(params))
+        self.assertIsNotNone(hover_result)
+        self.assertIsNotNone(hover_result.contents)
+        self.assertIn("resolved char", hover_result.contents.value)
+
+    def test_workspace_symbol_lookup(self) -> None:
+        """Workspace symbol search should find labels across files"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            main_path = root / "main.s"
+            main_path.write_text(
+                "lookup_dakuten:\n    lda #0\n    rtl\n",
+                encoding="utf-8",
+            )
+
+            index = WorkspaceIndex(root)
+            index.rebuild()
+
+            self.server.workspace_index = index
+            self.server._ensure_workspace_index = lambda: index
+
+            handler = self.server.server.lsp._get_handler("workspace/symbol")
+            params = WorkspaceSymbolParams(query="lookup")
+            results = asyncio.run(handler(params))
+
+            names = {symbol.name for symbol in results}
+            self.assertIn("lookup_dakuten", names)
+            for symbol in results:
+                if symbol.name == "lookup_dakuten":
+                    self.assertIn(symbol.container_name, {None, "main.s"})
+
+    def test_workspace_references(self) -> None:
+        """Reference search should include matches across workspace"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            def_path = root / "defs.s"
+            ref_path = root / "ref.s"
+
+            def_path.write_text(
+                "lookup_label:\n    rtl\n",
+                encoding="utf-8",
+            )
+
+            ref_path.write_text(
+                "    jsr lookup_label\n    rts\n",
+                encoding="utf-8",
+            )
+
+            def_doc = A816Document(def_path.as_uri(), def_path.read_text(encoding="utf-8"))
+            ref_doc = A816Document(ref_path.as_uri(), ref_path.read_text(encoding="utf-8"))
+
+            index = WorkspaceIndex(root)
+            index.replace_document(def_doc)
+            index.replace_document(ref_doc)
+            index.built = True
+
+            self.server.workspace_index = index
+            self.server._ensure_workspace_index = lambda: index
+            self.server.documents[ref_path.as_uri()] = ref_doc
+
+            handler = self.server.server.lsp._get_handler("textDocument/references")
+            params = ReferenceParams(
+                text_document=TextDocumentIdentifier(uri=ref_path.as_uri()),
+                position=Position(line=0, character=10),
+                context=ReferenceContext(include_declaration=True),
+            )
+            results = asyncio.run(handler(params))
+
+            uris = {loc.uri for loc in results}
+            self.assertIn(def_path.as_uri(), uris)
+            self.assertIn(ref_path.as_uri(), uris)
+
+            params_no_decl = ReferenceParams(
+                text_document=TextDocumentIdentifier(uri=ref_path.as_uri()),
+                position=Position(line=0, character=10),
+                context=ReferenceContext(include_declaration=False),
+            )
+            results_no_decl = asyncio.run(handler(params_no_decl))
+            self.assertTrue(all(loc.uri != def_path.as_uri() for loc in results_no_decl))
+
     def test_tokenize_line(self) -> None:
         """Test line tokenization for semantic highlighting"""
         test_cases = [
@@ -340,12 +509,10 @@ unknown_instruction
         doc = A816Document("test://example.s", content)
         self.assertGreater(len(doc.diagnostics), 0)
 
-        # Format content (should still work despite error)
+        # Formatting should now raise because the content is invalid
         formatter = A816LanguageServer().formatter
-        formatted = formatter.format_text(content)
-
-        self.assertIsInstance(formatted, str)
-        self.assertIn("; Header", formatted)
+        with self.assertRaises(FormattingError):
+            formatter.format_text(content)
 
     def test_server_with_real_assembly_content(self) -> None:
         """Test server with realistic assembly content"""
@@ -444,3 +611,15 @@ subroutine:
         # Should include local labels
         self.assertIn("main", completion_labels)
         self.assertIn("subroutine", completion_labels)
+
+    def test_document_macro_docstring_storage(self) -> None:
+        """Macro docstrings should be captured for tooling use"""
+        content = '''
+.macro greet() {
+    """Say hi"""
+    lda #0
+}
+'''
+
+        doc = A816Document("test://docstring.s", content)
+        self.assertEqual(doc.macro_docstrings.get("greet"), "Say hi")

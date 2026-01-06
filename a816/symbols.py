@@ -121,8 +121,8 @@ BUS_MAPPING = {RomType.low_rom: low_rom_bus, RomType.high_rom: high_rom_bus}
 class Resolver:
     def __init__(self, pc: int = 0x000000):
         self.reloc = False
-        self.a = False
-        self.x = False
+        self.a_size: int = 8  # Accumulator size: 8 or 16 bits
+        self.i_size: int = 8  # Index register size: 8 or 16 bits
         self.rom_type = RomType.low_rom
         self.current_scope_index = 0
         self.last_used_scope = 0

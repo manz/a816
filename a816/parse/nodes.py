@@ -178,6 +178,29 @@ class ExternNode(NodeProtocol):
         return f"ExternNode({self.symbol_name})"
 
 
+class RegisterSizeNode(NodeProtocol):
+    """Node for register size directives (.a8, .a16, .i8, .i16)"""
+
+    def __init__(self, register: str, size: int, resolver: Resolver) -> None:
+        self.register = register  # "a" for accumulator, "i" for index
+        self.size = size  # 8 or 16
+        self.resolver = resolver
+
+    def emit(self, current_addr: Address) -> bytes:
+        # Update resolver state during emission
+        if self.register == "a":
+            self.resolver.a_size = self.size
+        else:
+            self.resolver.i_size = self.size
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        return current_pc
+
+    def __str__(self) -> str:
+        return f"RegisterSizeNode({self.register}{self.size})"
+
+
 class BinaryNode(NodeProtocol):
     def __init__(self, path: str, resolver: Resolver) -> None:
         with open(path, "rb") as binary_file:
@@ -270,11 +293,28 @@ class NodeError(Exception):
         self.message = message
 
     def __str__(self) -> str:
-        error_message = f'"{self.message}"'
-        if self.file_info is not None and self.file_info.position is not None:
-            error_message += f" at\n{self.file_info.position.file.filename}:{self.file_info.position.line} {self.file_info.position.get_line()}"
+        return self.format()
 
-        return error_message
+    def format(self, use_colors: bool = True) -> str:
+        """Format the error with source location and visual indicator."""
+        from a816.errors import SourceLocation, format_error
+
+        location = None
+        if self.file_info is not None and self.file_info.position is not None:
+            pos = self.file_info.position
+            try:
+                source_line = pos.get_line()
+            except (IndexError, AttributeError):
+                source_line = ""
+            location = SourceLocation(
+                filename=pos.file.filename,
+                line=pos.line,
+                column=pos.column,
+                source_line=source_line,
+                length=len(self.file_info.value) if self.file_info.value else 1,
+            )
+
+        return format_error(self.message, location)
 
 
 class OpcodeNode(NodeProtocol):
@@ -464,8 +504,10 @@ class AbstractTextNode(NodeProtocol):
     def emit(self, current_addr: Address) -> bytes:
         return self.binary_text
 
+
 def variable_expansion(value: str, resolver: Resolver) -> str:
     if value is not None and isinstance(value, str):
+
         def replace_match(match: re.Match[str]) -> str:
             lookup = match.groups("lookup")[0]
             variable_value = resolver.current_scope.value_for(lookup)
@@ -477,6 +519,7 @@ def variable_expansion(value: str, resolver: Resolver) -> str:
             return re.sub(r"\${(?P<lookup>[^}]+)}", replace_match, value) or value
         except ValueError:
             return value
+
 
 class TextNode(AbstractTextNode):
     def __init__(self, text: str, resolver: Resolver, file_info: Token) -> None:

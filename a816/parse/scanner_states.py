@@ -30,10 +30,12 @@ def lex_identifier(s: "Scanner") -> None:
 
 
 def lex_quoted_string(s: "Scanner") -> None:
+    # Capture position at the start of the string (the opening quote)
+    start_position = s.get_position()
     c = s.next()
     while c != "'":
         if c == "\n" or c is None:
-            raise ScannerException("Unterminated String", s.get_position())
+            raise ScannerException("Unterminated String", start_position)
 
         if c == "\\" and s.peek() == "'":
             s.next()
@@ -41,6 +43,41 @@ def lex_quoted_string(s: "Scanner") -> None:
         c = s.next()
 
     s.emit(TokenType.QUOTED_STRING)
+
+
+def lex_double_quoted_string(s: "Scanner") -> None:
+    # Capture position at the start of the string (the opening quote)
+    start_position = s.get_position()
+    c = s.next()
+    while c != '"':
+        if c == "\n" or c is None:
+            raise ScannerException("Unterminated String", start_position)
+
+        if c == "\\" and s.peek() == '"':
+            s.next()
+
+        c = s.next()
+
+    s.emit(TokenType.QUOTED_STRING)
+
+
+def lex_docstring(s: "Scanner", quote_char: str) -> None:
+    """Scan a triple-quoted docstring delimited by quote_char."""
+    # Capture position at the start of the docstring
+    start_position = s.get_position()
+    while True:
+        c = s.next()
+        if c is None:
+            raise ScannerException("Unterminated docstring", start_position)
+        if c == "\\":
+            # Skip escaped characters so they don't terminate the string early
+            s.next()
+            continue
+        if c == quote_char and s.peek() == quote_char and s.peek(1) == quote_char:
+            # Consume the remaining two quote characters of the terminator
+            s.pos += 2
+            break
+    s.emit(TokenType.DOCSTRING)
 
 
 def accept_opcode(s: "Scanner") -> bool:
@@ -65,8 +102,16 @@ def lex_expression(s: "Scanner") -> None:
             lex_number(s)
         elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
             lex_identifier(s)
+        elif s.peek() == '"' and s.peek(1) == '"' and s.peek(2) == '"':
+            s.pos += 3
+            lex_docstring(s, '"')
+        elif s.peek() == "'" and s.peek(1) == "'" and s.peek(2) == "'":
+            s.pos += 3
+            lex_docstring(s, "'")
         elif s.accept("'"):
             lex_quoted_string(s)
+        elif s.accept('"'):
+            lex_double_quoted_string(s)
         elif (
             s.accept("+-*/&|~")
             or s.accept_prefix("<<")
@@ -191,6 +236,10 @@ KEYWORDS = {
     "istruct",
     "extern",
     "debug",
+    "a8",
+    "a16",
+    "i8",
+    "i16",
 }
 
 
@@ -212,7 +261,7 @@ def lex_macro_args_def(s: "Scanner") -> None:
 
 def lex_keyword(s: "Scanner") -> None:
     s.ignore()
-    s.accept_run("abcdefghijklmnopqrstuvwxyz_")
+    s.accept_run("abcdefghijklmnopqrstuvwxyz_0123456789")
     if s.current_token_text() in KEYWORDS:
         s.emit(TokenType.KEYWORD)
     else:
@@ -291,8 +340,16 @@ def lex_initial(s: Scanner) -> None:
             s.emit(TokenType.STAR_EQ)
         else:
             s.emit(TokenType.OPERATOR)
+    elif s.peek() == '"' and s.peek(1) == '"' and s.peek(2) == '"':
+        s.pos += 3
+        lex_docstring(s, '"')
+    elif s.peek() == "'" and s.peek(1) == "'" and s.peek(2) == "'":
+        s.pos += 3
+        lex_docstring(s, "'")
     elif s.accept("'"):
         lex_quoted_string(s)
+    elif s.accept('"'):
+        lex_double_quoted_string(s)
     elif s.accept("("):
         s.emit(TokenType.LPAREN)
     elif s.accept(")"):

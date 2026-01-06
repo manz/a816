@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from a816.exceptions import UnresolvedSymbolError
 from a816.linker import Linker
 from a816.object_file import ObjectFile, SymbolType
 from a816.program import Program
@@ -236,8 +237,9 @@ main:
             linker = Linker([obj])
 
             # Should raise error for unresolved symbol
-            with pytest.raises(ValueError, match="Unresolved external symbols"):
+            with pytest.raises(UnresolvedSymbolError) as exc_info:
                 linker.link()
+            assert "missing_symbol" in exc_info.value.symbols
 
     def test_object_file_format_roundtrip(self) -> None:
         """Test that object file format can be written and read correctly"""

@@ -3,8 +3,10 @@ import logging
 import sys
 from pathlib import Path
 
+from a816.exceptions import LinkerError
 from a816.linker import Linker
 from a816.object_file import ObjectFile
+from a816.parse.nodes import NodeError
 from a816.program import Program
 
 logger = logging.getLogger("x816")
@@ -116,9 +118,20 @@ def cli_main() -> None:
 
             sys.exit(exit_code)
 
+    except LinkerError as e:
+        # Use formatted error display for linker errors
+        print(e.format(), file=sys.stderr)
+        sys.exit(1)
+    except NodeError as e:
+        # Use formatted error display for node errors
+        print(e.format(), file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        logger.error(f"Error: {e}")
-        sys.exit(-1)
+        # Fallback for unexpected errors
+        from a816.errors import format_error_simple
+
+        print(format_error_simple("error", str(e)), file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

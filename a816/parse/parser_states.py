@@ -1,4 +1,5 @@
 import ast
+import inspect
 from typing import Literal, TypeGuard, cast
 
 from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
@@ -15,11 +16,13 @@ from a816.parse.ast.nodes import (
     CompoundAstNode,
     DataNode,
     DebugAstNode,
+    DocstringAstNode,
     ExpressionAstNode,
     ExprNode,
     ExternAstNode,
     ForAstNode,
     IfAstNode,
+    IncludeAstNode,
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
     KeywordAstNode,
@@ -30,6 +33,7 @@ from a816.parse.ast.nodes import (
     MapAstNode,
     OpcodeAstNode,
     Parenthesis,
+    RegisterSizeAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
@@ -61,7 +65,8 @@ def parse_scope(p: Parser) -> ScopeAstNode:
     next_token = p.next()
     expect_token(next_token, TokenType.LBRACE)
     block = parse_block(p)
-    return ScopeAstNode(keyword.value, BlockAstNode(block, next_token), current)
+    docstring, block = extract_docstring(block)
+    return ScopeAstNode(keyword.value, BlockAstNode(block, next_token), current, docstring=docstring)
 
 
 def parse_macro_definition_args(p: Parser) -> list[str]:
@@ -137,8 +142,15 @@ def parse_macro(p: Parser) -> MacroAstNode:
     block_token = p.current()
     expect_token(p.next(), TokenType.LBRACE)
     block = parse_block(p)
+    docstring, block = extract_docstring(block)
 
-    return MacroAstNode(macro_identifier.value, args, BlockAstNode(block, block_token), macro_identifier)
+    return MacroAstNode(
+        macro_identifier.value,
+        args,
+        BlockAstNode(block, block_token),
+        macro_identifier,
+        docstring=docstring,
+    )
 
 
 def parse_map(p: Parser) -> MapAstNode:
@@ -313,7 +325,7 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
             parser = Parser(tokens, cast(StateFunc, parse_initial))
             sub_ast = parser.parse()
 
-        return BlockAstNode(sub_ast, keyword)
+        return IncludeAstNode(filename, sub_ast, keyword)
     elif keyword.value == "include_ips":
         return parse_include_ips(p)
     elif keyword.value == "incbin":
@@ -334,6 +346,14 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
         return parse_extern(p)
     elif keyword.value == "debug":
         return parse_debug(p)
+    elif keyword.value == "a8":
+        return RegisterSizeAstNode("a", 8, keyword)
+    elif keyword.value == "a16":
+        return RegisterSizeAstNode("a", 16, keyword)
+    elif keyword.value == "i8":
+        return RegisterSizeAstNode("i", 8, keyword)
+    elif keyword.value == "i16":
+        return RegisterSizeAstNode("i", 16, keyword)
     else:
         raise ParserSyntaxError(f"Unexpected token {keyword}", keyword)
 
@@ -356,6 +376,13 @@ def parse_block(p: Parser) -> list[AstNode]:
 
     expect_token(p.next(), TokenType.RBRACE)
     return decl
+
+
+def extract_docstring(statements: list[AstNode]) -> tuple[str | None, list[AstNode]]:
+    if statements and isinstance(statements[0], DocstringAstNode):
+        doc_node = cast(DocstringAstNode, statements[0])
+        return doc_node.text, statements[1:]
+    return None, statements
 
 
 def parse_code_position_keyword(p: Parser) -> CodePositionAstNode:
@@ -519,6 +546,10 @@ def parse_decl(
     current_token = p.next()
     if accept_token(current_token, TokenType.COMMENT):
         return CommentAstNode(current_token.value, current_token)
+    elif accept_token(current_token, TokenType.DOCSTRING):
+        raw_text = ast.literal_eval(current_token.value)
+        doc_text = inspect.cleandoc(raw_text)
+        return DocstringAstNode(doc_text, current_token)
     elif accept_token(current_token, TokenType.DOUBLE_LBRACE):
         return parse_code_lookup(p)
     elif accept_tokens(current_token, [TokenType.OPCODE, TokenType.OPCODE_NAKED]):

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from time import strptime, strftime, gmtime
+from time import gmtime, strftime
 from typing import Any
 
 from a816.parse.ast.nodes import AstNode
@@ -34,6 +34,8 @@ class MZParser:
 
     @staticmethod
     def parse_as_ast(program: str, filename: str = "memory.s") -> ParserResult:
+        from a816.errors import SourceLocation, format_error
+
         scanner = Scanner(lex_initial)
         ast: list[AstNode] = []
         error: str | None
@@ -45,9 +47,33 @@ class MZParser:
             error = None
         except ScannerException as e:
             position = e.position
-            position_str = str(position)
-            line = position.get_line()
-            error = f"{position_str} : {e}\n{line}\n" + (" " * position.column + "^")
+            try:
+                source_line = position.get_line()
+            except (IndexError, AttributeError):
+                source_line = ""
+            location = SourceLocation(
+                filename=position.file.filename,
+                line=position.line,
+                column=position.column,
+                source_line=source_line,
+                length=1,
+            )
+            error = format_error(str(e), location)
         except ParserSyntaxError as e:
-            error = e.token.trace()
+            if e.token.position is not None:
+                pos = e.token.position
+                try:
+                    source_line = pos.get_line()
+                except (IndexError, AttributeError):
+                    source_line = ""
+                location = SourceLocation(
+                    filename=pos.file.filename,
+                    line=pos.line,
+                    column=pos.column,
+                    source_line=source_line,
+                    length=len(e.token.value) if e.token.value else 1,
+                )
+                error = format_error(str(e), location)
+            else:
+                error = format_error(str(e))
         return ParserResult(nodes=ast, error=error)

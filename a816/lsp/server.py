@@ -3,6 +3,12 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
+
+try:
+    import tomllib  # type: ignore[attr-defined]
+except ModuleNotFoundError:  # pragma: no cover
+    tomllib = None  # type: ignore[assignment]
 
 from lsprotocol.types import (
     CompletionItem,
@@ -23,6 +29,7 @@ from lsprotocol.types import (
     Location,
     MarkupContent,
     MarkupKind,
+    MessageType,
     Position,
     Range,
     ReferenceParams,
@@ -32,11 +39,13 @@ from lsprotocol.types import (
     SignatureHelp,
     SignatureHelpParams,
     SignatureInformation,
+    SymbolInformation,
     SymbolKind,
     TextDocumentContentChangeEvent_Type1,
     TextDocumentContentChangeEvent_Type2,
     TextDocumentPositionParams,
     TextEdit,
+    WorkspaceSymbolParams,
 )
 from lsprotocol.types import (
     FormattingOptions as LSPFormattingOptions,
@@ -44,21 +53,27 @@ from lsprotocol.types import (
 from pygls.server import LanguageServer
 
 from a816.cpu.cpu_65c816 import AddressingMode, snes_opcode_table
+from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter, FormattingOptions
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
+    BlockAstNode,
     CodePositionAstNode,
     CommentAstNode,
+    CompoundAstNode,
     DataNode,
+    DocstringAstNode,
     ExpressionAstNode,
     ExternAstNode,
     IfAstNode,
+    IncludeAstNode,
     LabelAstNode,
     MacroApplyAstNode,
     MacroAstNode,
     MapAstNode,
     OpcodeAstNode,
+    ScopeAstNode,
     SymbolAffectationAstNode,
     Term,
 )
@@ -68,6 +83,14 @@ from a816.parse.scanner_states import KEYWORDS
 from a816.parse.tokens import Token, TokenType
 
 logger = logging.getLogger(__name__)
+
+
+def uri_to_path(uri: str) -> Path:
+    """Convert file URI or plain path to Path."""
+    parsed = urlparse(uri)
+    if parsed.scheme == "file":
+        return Path(unquote(parsed.path))
+    return Path(uri)
 
 
 class A816Document:
@@ -81,6 +104,9 @@ class A816Document:
         self.labels: dict[str, tuple[Position, str]] = {}  # label -> (position, file_uri)
         self.macros: dict[str, tuple[Position, str]] = {}  # macro -> (position, file_uri)
         self.macro_params: dict[str, list[str]] = {}  # macro_name -> parameter_names
+        self.macro_docstrings: dict[str, str] = {}
+        self.scope_docstrings: dict[str, str] = {}
+        self.label_docstrings: dict[str, str] = {}
         self.diagnostics: list[Diagnostic] = []
         self.ast_nodes: list[AstNode] = []
         self.parse_error: str | None = None
@@ -94,6 +120,9 @@ class A816Document:
         self.labels.clear()
         self.macros.clear()
         self.macro_params.clear()
+        self.macro_docstrings.clear()
+        self.scope_docstrings.clear()
+        self.label_docstrings.clear()
         self.diagnostics.clear()
         self.ast_nodes.clear()
         self.parse_error = None
@@ -109,6 +138,7 @@ class A816Document:
 
             # Extract symbols and labels from AST
             self._extract_symbols_from_ast()
+            self._collect_docstrings()
 
         except (ScannerException, ParserSyntaxError) as e:
             # These should be handled by MZParser.parse_as_ast, but just in case
@@ -135,6 +165,8 @@ class A816Document:
 
     def _visit_node_for_symbols(self, node: AstNode) -> None:
         """Recursively visit AST nodes to extract symbols and labels"""
+        if isinstance(node, DocstringAstNode):
+            return
         if isinstance(node, LabelAstNode):
             # Convert token position to LSP Position
             token = node.file_info
@@ -158,6 +190,9 @@ class A816Document:
                     pos = Position(line=token.position.line, character=token.position.column)
                     file_uri = self._get_file_uri_for_token(token)
                     self.symbols[node.symbol] = (pos, file_uri)
+        elif isinstance(node, ScopeAstNode):
+            if node.docstring:
+                self.scope_docstrings[node.name.lower()] = node.docstring
         elif isinstance(node, MacroAstNode):
             # Extract macro definitions
             if hasattr(node, "name") and node.name:
@@ -172,6 +207,13 @@ class A816Document:
                         self.macro_params[node.name] = [
                             param.name for param in node.parameters if hasattr(param, "name")
                         ]
+                    if hasattr(node, "docstring") and node.docstring:
+                        self.macro_docstrings[node.name.lower()] = node.docstring
+        elif isinstance(node, IncludeAstNode):
+            for child in node.included_nodes:
+                if isinstance(child, AstNode):
+                    self._visit_node_for_symbols(child)
+            return
         elif isinstance(node, MacroApplyAstNode):
             # Extract macro applications/calls
             if hasattr(node, "name") and node.name:
@@ -191,6 +233,126 @@ class A816Document:
             self._visit_node_for_symbols(node.block)
         if hasattr(node, "else_block") and node.else_block:
             self._visit_node_for_symbols(node.else_block)
+
+    def _collect_docstrings(self) -> None:
+        """Associate docstrings with labels, macros, and scopes"""
+        self.label_docstrings.clear()
+
+        def set_doc(target: tuple[str, str], text: str) -> None:
+            cleaned = text.strip()
+            if not cleaned:
+                return
+            kind, name = target
+            if kind == "label":
+                self.label_docstrings[name] = cleaned
+            elif kind == "macro":
+                self.macro_docstrings[name] = cleaned
+            elif kind == "scope":
+                self.scope_docstrings[name] = cleaned
+
+        def collect_nodes(
+            nodes: list[AstNode], pending_doc: str | None = None, pending_target: tuple[str, str] | None = None
+        ) -> tuple[str | None, tuple[str, str] | None]:
+            doc_buffer = pending_doc
+            target = pending_target
+
+            for node in nodes:
+                if isinstance(node, DocstringAstNode):
+                    text = node.text.strip()
+                    if not text:
+                        continue
+                    if target:
+                        set_doc(target, text)
+                        target = None
+                    else:
+                        doc_buffer = text
+                    continue
+
+                doc_buffer, target = handle_node(node, doc_buffer, target)
+
+            return doc_buffer, target
+
+        def collect_block(
+            block: AstNode | list[AstNode] | None,
+            pending_doc: str | None = None,
+            pending_target: tuple[str, str] | None = None,
+        ) -> tuple[str | None, tuple[str, str] | None]:
+            if block is None:
+                return pending_doc, pending_target
+            if isinstance(block, BlockAstNode):
+                return collect_nodes(block.body, pending_doc, pending_target)
+            if isinstance(block, CompoundAstNode):
+                return collect_nodes(block.body, pending_doc, pending_target)
+            if isinstance(block, list):
+                return collect_nodes(block, pending_doc, pending_target)
+            if isinstance(block, AstNode):
+                return collect_nodes([block], pending_doc, pending_target)
+            return pending_doc, pending_target
+
+        def handle_node(
+            node: AstNode, doc_buffer: str | None, target: tuple[str, str] | None
+        ) -> tuple[str | None, tuple[str, str] | None]:
+            buffer = doc_buffer
+            pending_target = target
+
+            if isinstance(node, LabelAstNode):
+                key = ("label", node.label.lower())
+                if buffer:
+                    set_doc(key, buffer)
+                    buffer = None
+                    pending_target = None
+                else:
+                    pending_target = key
+                return buffer, pending_target
+
+            if isinstance(node, MacroAstNode):
+                key = ("macro", node.name.lower())
+                doc_text = (node.docstring or buffer or "").strip()
+                if doc_text:
+                    set_doc(key, doc_text)
+                    buffer = None
+                    pending_target = None
+                else:
+                    pending_target = key
+                collect_block(node.block)
+                return buffer, pending_target
+
+            if isinstance(node, ScopeAstNode):
+                key = ("scope", node.name.lower())
+                doc_text = (node.docstring or buffer or "").strip()
+                if doc_text:
+                    set_doc(key, doc_text)
+                    buffer = None
+                    pending_target = None
+                else:
+                    pending_target = key
+                collect_block(node.body)
+                return buffer, pending_target
+
+            if isinstance(node, CompoundAstNode):
+                return collect_nodes(node.body, buffer, pending_target)
+
+            if isinstance(node, BlockAstNode):
+                return collect_nodes(node.body, buffer, pending_target)
+
+            if isinstance(node, IncludeAstNode):
+                included_nodes = [child for child in node.included_nodes if isinstance(child, AstNode)]
+                collect_nodes(included_nodes)
+                return buffer, None
+
+            if isinstance(node, CommentAstNode):
+                return buffer, pending_target
+
+            if hasattr(node, "body") and isinstance(node.body, list):
+                collect_nodes(node.body)
+            if hasattr(node, "block"):
+                collect_block(node.block)
+            if hasattr(node, "else_block"):
+                collect_block(node.else_block)
+
+            return buffer, None
+
+        collect_nodes(self.ast_nodes)
 
     def _get_file_uri_for_token(self, token: Token) -> str:
         """Get the file URI for a token, handling both current and included files"""
@@ -265,10 +427,18 @@ class A816Document:
                 error_col = caret_pos
 
         # Ensure we don't go beyond document bounds
-        if error_line >= len(self.lines):
-            error_line = len(self.lines) - 1
-        if error_line >= 0 and error_col >= len(self.lines[error_line]):
-            error_col = len(self.lines[error_line])
+        if not self.lines:
+            error_line = 0
+            error_col = 0
+        else:
+            if error_line >= len(self.lines):
+                error_line = len(self.lines) - 1
+            if error_line < 0:
+                error_line = 0
+            if error_col < 0:
+                error_col = 0
+            if error_col >= len(self.lines[error_line]):
+                error_col = len(self.lines[error_line])
 
         # Create diagnostic
         self.diagnostics.append(
@@ -283,13 +453,320 @@ class A816Document:
         )
 
 
+class WorkspaceIndex:
+    """Indexes workspace files to provide cross-file symbol resolution."""
+
+    ENTRYPOINT_PRAGMA = ";! a816-lsp entrypoint"
+
+    def __init__(self, root_path: Path | str | None):
+        self.root_path = Path(root_path).resolve() if root_path else None
+        self.entrypoint: Path | None = None
+        self.documents: dict[str, A816Document] = {}
+        self.labels: dict[str, tuple[Position, str]] = {}
+        self.symbols: dict[str, tuple[Position, str]] = {}
+        self.macros: dict[str, tuple[Position, str]] = {}
+        self.macro_params: dict[str, list[str]] = {}
+        self.macro_docstrings: dict[str, str] = {}
+        self.label_docstrings: dict[str, str] = {}
+        self.scope_docstrings: dict[str, str] = {}
+        self.doc_labels: dict[str, set[str]] = {}
+        self.doc_symbols: dict[str, set[str]] = {}
+        self.doc_macros: dict[str, set[str]] = {}
+        self.doc_label_docstrings: dict[str, set[str]] = {}
+        self.doc_macro_docstrings: dict[str, set[str]] = {}
+        self.doc_scope_docstrings: dict[str, set[str]] = {}
+        self.doc_macro_params: dict[str, set[str]] = {}
+        self.label_name_lookup: dict[str, str] = {}
+        self.macro_name_lookup: dict[str, str] = {}
+        self.scope_name_lookup: dict[str, str] = {}
+        self.built = False
+
+    def clear(self) -> None:
+        self.documents.clear()
+        self.labels.clear()
+        self.symbols.clear()
+        self.macros.clear()
+        self.macro_params.clear()
+        self.macro_docstrings.clear()
+        self.label_docstrings.clear()
+        self.scope_docstrings.clear()
+        self.doc_labels.clear()
+        self.doc_symbols.clear()
+        self.doc_macros.clear()
+        self.doc_label_docstrings.clear()
+        self.doc_macro_docstrings.clear()
+        self.doc_scope_docstrings.clear()
+        self.doc_macro_params.clear()
+        self.label_name_lookup.clear()
+        self.macro_name_lookup.clear()
+        self.scope_name_lookup.clear()
+
+    def rebuild(self) -> None:
+        """Re-index the workspace from the detected entrypoint."""
+        self.clear()
+        self.entrypoint = self._detect_entrypoint()
+        if not self.entrypoint:
+            logger.debug("WorkspaceIndex: no entrypoint detected")
+            self.built = True
+            return
+        self._explore_from(self.entrypoint)
+        self.built = True
+
+    def replace_document(self, doc: A816Document) -> None:
+        """Add or update a document inside the workspace index."""
+        if not doc.uri:
+            return
+        self._prune_previous_entries(doc.uri)
+        self._store_document(doc)
+        self.built = True
+
+    def remove_document(self, uri: str) -> None:
+        """Remove a document from the index."""
+        self._prune_previous_entries(uri)
+        self.documents.pop(uri, None)
+
+    def reload_document_from_disk(self, uri: str) -> None:
+        """Reload a document from disk after closing it."""
+        path = uri_to_path(uri)
+        if not path.exists():
+            self.remove_document(uri)
+            return
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            self.remove_document(uri)
+            return
+        doc = A816Document(path.as_uri(), content)
+        self.replace_document(doc)
+
+    def get_label_location(self, name: str) -> Location | None:
+        actual_name = name if name in self.labels else self.label_name_lookup.get(name.lower())
+        if not actual_name:
+            return None
+        position, uri = self.labels.get(actual_name, (None, None))
+        if position is None or uri is None:
+            return None
+        end = Position(line=position.line, character=position.character + len(actual_name))
+        return Location(uri=uri, range=Range(start=position, end=end))
+
+    def get_symbol_location(self, name: str) -> Location | None:
+        entry = self.symbols.get(name)
+        if not entry:
+            return None
+        position, uri = entry
+        end = Position(line=position.line, character=position.character + len(name))
+        return Location(uri=uri, range=Range(start=position, end=end))
+
+    def get_macro_location(self, name: str) -> tuple[Location, str] | None:
+        actual_name = name if name in self.macros else self.macro_name_lookup.get(name.lower())
+        if not actual_name:
+            return None
+        position, uri = self.macros.get(actual_name, (None, None))
+        if position is None or uri is None:
+            return None
+        end = Position(line=position.line, character=position.character + len(actual_name))
+        location = Location(uri=uri, range=Range(start=position, end=end))
+        return location, actual_name
+
+    def get_label_doc(self, name: str) -> str | None:
+        return self.label_docstrings.get(name.lower())
+
+    def get_macro_doc(self, name: str) -> str | None:
+        return self.macro_docstrings.get(name.lower())
+
+    def get_scope_doc(self, name: str) -> str | None:
+        return self.scope_docstrings.get(name.lower())
+
+    def get_macro_params(self, name: str) -> list[str]:
+        return self.macro_params.get(name, [])
+
+    def _detect_entrypoint(self) -> Path | None:
+        if not self.root_path:
+            return None
+        pragma = self._entry_from_pragma()
+        if pragma:
+            return pragma
+        config = self._entry_from_config()
+        if config:
+            return config
+        return self._fallback_entrypoint()
+
+    def _entry_from_pragma(self) -> Path | None:
+        if not self.root_path:
+            return None
+        for path in sorted(self.root_path.rglob("*.s")):
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for _ in range(64):
+                        line = handle.readline()
+                        if not line:
+                            break
+                        if self.ENTRYPOINT_PRAGMA in line:
+                            return path.resolve()
+            except OSError:
+                continue
+        return None
+
+    def _entry_from_config(self) -> Path | None:
+        if not self.root_path or tomllib is None:
+            return None
+
+        current = self.root_path
+        pyproject: Path | None = None
+
+        while True:
+            candidate = current / "pyproject.toml"
+            if candidate.exists():
+                pyproject = candidate
+                break
+            if current.parent == current:
+                break
+            current = current.parent
+
+        if not pyproject:
+            return None
+
+        try:
+            with pyproject.open("rb") as handle:
+                data = tomllib.load(handle)
+        except (OSError, tomllib.TOMLDecodeError):  # type: ignore[attr-defined]
+            return None
+        entry = data.get("tool", {}).get("a816-lsp", {}).get("entrypoint")
+        if not entry:
+            return None
+        candidate = (pyproject.parent / entry).resolve()
+        return candidate if candidate.exists() else None
+
+    def _fallback_entrypoint(self) -> Path | None:
+        if not self.root_path:
+            return None
+        default = (self.root_path / "ff4.s").resolve()
+        if default.exists():
+            return default
+        for path in sorted(self.root_path.rglob("*.s")):
+            return path.resolve()
+        return None
+
+    def _explore_from(self, entrypoint: Path) -> None:
+        queue: list[Path] = [entrypoint.resolve()]
+        visited: set[Path] = set()
+        while queue:
+            current = queue.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            if not current.exists():
+                logger.debug("WorkspaceIndex: include not found %s", current)
+                continue
+            try:
+                content = current.read_text(encoding="utf-8")
+            except OSError:
+                logger.debug("WorkspaceIndex: unable to read %s", current)
+                continue
+            doc = A816Document(current.as_uri(), content)
+            self._store_document(doc)
+            for include in self._extract_includes(current, content):
+                if include not in visited:
+                    queue.append(include)
+
+    def _extract_includes(self, file_path: Path, content: str) -> list[Path]:
+        include_paths: set[Path] = set()
+        for match in re.finditer(r"\.include\s+['\"]([^'\"]+)['\"]", content, re.IGNORECASE):
+            raw_path = match.group(1).strip()
+            include = (file_path.parent / raw_path).resolve()
+            include_paths.add(include)
+        return list(include_paths)
+
+    def _store_document(self, doc: A816Document) -> None:
+        if not doc.uri:
+            return
+        self.documents[doc.uri] = doc
+        new_label_names = set(doc.labels.keys())
+        new_symbol_names = set(doc.symbols.keys())
+        new_macro_names = set(doc.macros.keys())
+
+        for label in new_label_names:
+            position, uri = doc.labels[label]
+            self.labels[label] = (position, uri)
+            self.label_name_lookup[label.lower()] = label
+
+        for symbol in new_symbol_names:
+            position, uri = doc.symbols[symbol]
+            self.symbols[symbol] = (position, uri)
+
+        for macro in new_macro_names:
+            position, uri = doc.macros[macro]
+            self.macros[macro] = (position, uri)
+            self.macro_name_lookup[macro.lower()] = macro
+            if macro in doc.macro_params:
+                self.macro_params[macro] = doc.macro_params[macro]
+
+        if doc.label_docstrings:
+            for key, value in doc.label_docstrings.items():
+                self.label_docstrings[key] = value
+
+        if doc.macro_docstrings:
+            for key, value in doc.macro_docstrings.items():
+                self.macro_docstrings[key] = value
+
+        if doc.scope_docstrings:
+            for key, value in doc.scope_docstrings.items():
+                self.scope_docstrings[key] = value
+                self.scope_name_lookup[key] = key  # already lower-case
+
+        self.doc_labels[doc.uri] = new_label_names
+        self.doc_symbols[doc.uri] = new_symbol_names
+        self.doc_macros[doc.uri] = new_macro_names
+        self.doc_label_docstrings[doc.uri] = set(doc.label_docstrings.keys())
+        self.doc_macro_docstrings[doc.uri] = set(doc.macro_docstrings.keys())
+        self.doc_scope_docstrings[doc.uri] = set(doc.scope_docstrings.keys())
+        self.doc_macro_params[doc.uri] = set(doc.macro_params.keys())
+
+    def _prune_previous_entries(self, uri: str) -> None:
+        for label in self.doc_labels.get(uri, set()):
+            entry = self.labels.get(label)
+            if entry and entry[1] == uri:
+                self.labels.pop(label, None)
+                self.label_name_lookup.pop(label.lower(), None)
+        for symbol in self.doc_symbols.get(uri, set()):
+            entry = self.symbols.get(symbol)
+            if entry and entry[1] == uri:
+                self.symbols.pop(symbol, None)
+        for macro in self.doc_macros.get(uri, set()):
+            entry = self.macros.get(macro)
+            if entry and entry[1] == uri:
+                self.macros.pop(macro, None)
+                self.macro_name_lookup.pop(macro.lower(), None)
+            if macro in self.macro_params:
+                self.macro_params.pop(macro, None)
+        for key in self.doc_label_docstrings.get(uri, set()):
+            self.label_docstrings.pop(key, None)
+        for key in self.doc_macro_docstrings.get(uri, set()):
+            self.macro_docstrings.pop(key, None)
+        for key in self.doc_scope_docstrings.get(uri, set()):
+            self.scope_docstrings.pop(key, None)
+            self.scope_name_lookup.pop(key, None)
+        self.doc_labels.pop(uri, None)
+        self.doc_symbols.pop(uri, None)
+        self.doc_macros.pop(uri, None)
+        self.doc_label_docstrings.pop(uri, None)
+        self.doc_macro_docstrings.pop(uri, None)
+        self.doc_scope_docstrings.pop(uri, None)
+        self.doc_macro_params.pop(uri, None)
+
+
 class A816LanguageServer:
     """Enhanced LSP server for a816 assembly language"""
 
     def __init__(self) -> None:
         self.server = LanguageServer("a816-language-server", "v1.0")
+        try:
+            self.server.server_capabilities.workspace_symbol_provider = True  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
         self.documents: dict[str, A816Document] = {}
         self.formatter = A816Formatter()
+        self.workspace_index: WorkspaceIndex | None = None
         self._setup_handlers()
 
         # Cache instruction completions
@@ -305,6 +782,9 @@ class A816LanguageServer:
             """Handle document open event"""
             doc = A816Document(params.text_document.uri, params.text_document.text)
             self.documents[params.text_document.uri] = doc
+            workspace = self._ensure_workspace_index()
+            if workspace:
+                workspace.replace_document(doc)
 
             # Send diagnostics
             await self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
@@ -331,6 +811,9 @@ class A816LanguageServer:
 
             # Update document with final content
             doc.update_content(current_content)
+            workspace = self._ensure_workspace_index()
+            if workspace:
+                workspace.replace_document(doc)
 
             # Send updated diagnostics
             await self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
@@ -348,6 +831,9 @@ class A816LanguageServer:
         async def did_close(ls: LanguageServer, params: DidCloseTextDocumentParams) -> None:
             """Handle document close event"""
             self.documents.pop(params.text_document.uri, None)
+            workspace = self._ensure_workspace_index()
+            if workspace:
+                workspace.reload_document_from_disk(params.text_document.uri)
 
         @self.server.feature("textDocument/completion")
         async def completions(ls: LanguageServer, params: CompletionParams) -> CompletionList:
@@ -378,7 +864,15 @@ class A816LanguageServer:
             all_items.extend(self._build_labels_completions(doc))
             # Add local symbols, labels, and macros
             for label in doc.labels:
-                all_items.append(CompletionItem(label=label, kind=CompletionItemKind.Function, detail="Label"))
+                label_doc = doc.label_docstrings.get(label.lower())
+                all_items.append(
+                    CompletionItem(
+                        label=label,
+                        kind=CompletionItemKind.Function,
+                        detail="Label",
+                        documentation=label_doc,
+                    )
+                )
 
             for symbol in doc.symbols:
                 all_items.append(CompletionItem(label=symbol, kind=CompletionItemKind.Variable, detail="Symbol"))
@@ -386,16 +880,25 @@ class A816LanguageServer:
             for macro_name in doc.macros:
                 macro_parameters = doc.macro_params.get(macro_name, [])
                 param_sig = f"({', '.join(macro_parameters)})" if params else ""
+                macro_doc = doc.macro_docstrings.get(macro_name.lower())
+                documentation = macro_doc or (
+                    f"User-defined macro with {len(macro_parameters)} parameters"
+                    if macro_parameters
+                    else "User-defined macro"
+                )
                 all_items.append(
                     CompletionItem(
                         label=macro_name,
                         kind=CompletionItemKind.Function,
                         detail=f"User Macro{param_sig}",
-                        documentation=f"User-defined macro with {len(macro_parameters)} parameters"
-                        if macro_parameters
-                        else "User-defined macro",
+                        documentation=documentation,
                     )
                 )
+            workspace = self._ensure_workspace_index()
+            if workspace:
+                all_items.extend(self._build_workspace_label_completions(doc, workspace))
+                all_items.extend(self._build_workspace_symbol_completions(doc, workspace))
+                all_items.extend(self._build_workspace_macro_completions(doc, workspace))
 
             # Filter by current word
             if current_word:
@@ -431,7 +934,8 @@ class A816LanguageServer:
             if word_start >= word_end:
                 return None
 
-            word = line[word_start:word_end].lower()
+            raw_word = line[word_start:word_end]
+            word = raw_word.lower()
 
             # Check if it's an opcode
             base_word = word.split(".")[0] if "." in word else word
@@ -448,6 +952,58 @@ class A816LanguageServer:
                 return Hover(
                     contents=MarkupContent(kind=MarkupKind.Markdown, value=f"**{word.upper()}** - Assembler directive")
                 )
+
+            workspace = self._ensure_workspace_index()
+
+            label_doc = doc.label_docstrings.get(word)
+            if not label_doc and workspace:
+                label_doc = workspace.get_label_doc(raw_word)
+            if label_doc:
+                return Hover(
+                    contents=MarkupContent(
+                        kind=MarkupKind.Markdown,
+                        value=f"**{raw_word}**\n\n{label_doc}",
+                    )
+                )
+
+            scope_doc = doc.scope_docstrings.get(word)
+            if not scope_doc and workspace:
+                scope_doc = workspace.get_scope_doc(raw_word)
+            if scope_doc:
+                return Hover(
+                    contents=MarkupContent(
+                        kind=MarkupKind.Markdown,
+                        value=f"**{raw_word}**\n\n{scope_doc}",
+                    )
+                )
+
+            macro_name = next((name for name in doc.macros if name.lower() == word), None)
+            if macro_name:
+                doc_text = doc.macro_docstrings.get(word)
+                if doc_text:
+                    param_list = doc.macro_params.get(macro_name, [])
+                    params = f"({', '.join(param_list)})" if param_list else "()"
+                    return Hover(
+                        contents=MarkupContent(
+                            kind=MarkupKind.Markdown,
+                            value=f"**{macro_name}{params}**\n\n{doc_text}",
+                        )
+                    )
+
+            if workspace:
+                macro_location = workspace.get_macro_location(raw_word)
+                if macro_location:
+                    _, actual_macro_name = macro_location
+                    doc_text = workspace.get_macro_doc(actual_macro_name)
+                    if doc_text:
+                        param_list = workspace.get_macro_params(actual_macro_name)
+                        params = f"({', '.join(param_list)})" if param_list else "()"
+                        return Hover(
+                            contents=MarkupContent(
+                                kind=MarkupKind.Markdown,
+                                value=f"**{actual_macro_name}{params}**\n\n{doc_text}",
+                            )
+                        )
 
             return None
 
@@ -483,6 +1039,10 @@ class A816LanguageServer:
                     if macro_name in doc.macro_params:
                         macro_parameters = doc.macro_params[macro_name]
                         param_info = f"({', '.join(macro_parameters)})" if macro_parameters else "()"
+                    detail = None
+                    doc_text = doc.macro_docstrings.get(macro_name.lower())
+                    if doc_text:
+                        detail = doc_text.splitlines()[0]
 
                     symbols.append(
                         DocumentSymbol(
@@ -494,6 +1054,7 @@ class A816LanguageServer:
                             selection_range=Range(
                                 start=pos, end=Position(line=pos.line, character=pos.character + len(macro_name))
                             ),
+                            detail=detail,
                         )
                     )
 
@@ -572,12 +1133,82 @@ class A816LanguageServer:
                     )
                 ]
 
+            workspace = self._ensure_workspace_index()
+            if workspace:
+                label_location = workspace.get_label_location(word)
+                if label_location:
+                    return [label_location]
+                symbol_location = workspace.get_symbol_location(word)
+                if symbol_location:
+                    return [symbol_location]
+                macro_location = workspace.get_macro_location(word)
+                if macro_location:
+                    location, _ = macro_location
+                    return [location]
+
             # Check if we're on an .include directive
             include_location = self._check_include_directive(doc, line_num, char_pos, params.text_document.uri)
             if include_location:
                 return [include_location]
 
             return None
+
+        @self.server.feature("workspace/symbol")
+        async def workspace_symbol(ls: LanguageServer, params: WorkspaceSymbolParams) -> list[SymbolInformation]:
+            """Provide workspace-wide symbol lookup"""
+            workspace = self._ensure_workspace_index()
+            if not workspace:
+                return []
+
+            query = (params.query or "").strip().lower()
+            results: list[SymbolInformation] = []
+
+            def matches(name: str) -> bool:
+                return not query or query in name.lower()
+
+            for label, (position, uri) in workspace.labels.items():
+                if not matches(label):
+                    continue
+                end = Position(line=position.line, character=position.character + len(label))
+                container = self._workspace_container_name(uri, workspace)
+                results.append(
+                    SymbolInformation(
+                        name=label,
+                        kind=SymbolKind.Function,
+                        location=Location(uri=uri, range=Range(start=position, end=end)),
+                        container_name=container,
+                    )
+                )
+
+            for symbol, (position, uri) in workspace.symbols.items():
+                if not matches(symbol):
+                    continue
+                end = Position(line=position.line, character=position.character + len(symbol))
+                container = self._workspace_container_name(uri, workspace)
+                results.append(
+                    SymbolInformation(
+                        name=symbol,
+                        kind=SymbolKind.Variable,
+                        location=Location(uri=uri, range=Range(start=position, end=end)),
+                        container_name=container,
+                    )
+                )
+
+            for macro, (position, uri) in workspace.macros.items():
+                if not matches(macro):
+                    continue
+                end = Position(line=position.line, character=position.character + len(macro))
+                container = self._workspace_container_name(uri, workspace)
+                results.append(
+                    SymbolInformation(
+                        name=macro,
+                        kind=SymbolKind.Method,
+                        location=Location(uri=uri, range=Range(start=position, end=end)),
+                        container_name=container,
+                    )
+                )
+
+            return results[:100]
 
         @self.server.feature("textDocument/references")
         async def find_references(ls: LanguageServer, params: ReferenceParams) -> list[Location] | None:
@@ -608,20 +1239,62 @@ class A816LanguageServer:
             word = line[word_start:word_end]
 
             # Find all references to this word
-            references = []
-            for i, doc_line in enumerate(doc.lines):
-                # Simple word boundary search
-                pattern = r"\b" + re.escape(word) + r"\b"
-                for match in re.finditer(pattern, doc_line):
-                    references.append(
-                        Location(
-                            uri=params.text_document.uri,
-                            range=Range(
-                                start=Position(line=i, character=match.start()),
-                                end=Position(line=i, character=match.end()),
-                            ),
-                        )
-                    )
+            include_declaration = getattr(getattr(params, "context", None), "include_declaration", True)
+            pattern = re.compile(r"\b" + re.escape(word) + r"\b")
+
+            references: list[Location] = []
+            seen: set[tuple[str, int, int]] = set()
+
+            def add_references_from_document(document: A816Document, uri: str) -> None:
+                for i, doc_line in enumerate(document.lines):
+                    for match in pattern.finditer(doc_line):
+                        start = Position(line=i, character=match.start())
+                        end = Position(line=i, character=match.end())
+                        key = (uri, i, match.start())
+                        if key in seen:
+                            continue
+                        references.append(Location(uri=uri, range=Range(start=start, end=end)))
+                        seen.add(key)
+
+            add_references_from_document(doc, params.text_document.uri)
+
+            workspace = self._ensure_workspace_index()
+            if workspace:
+                for uri, workspace_doc in workspace.documents.items():
+                    if uri == params.text_document.uri:
+                        continue
+                    add_references_from_document(workspace_doc, uri)
+
+            if not references:
+                return None
+
+            if not include_declaration:
+                definition_locations: set[tuple[str, int, int]] = set()
+
+                def collect_definition_locations(document: A816Document, uri: str) -> None:
+                    for container in (document.labels, document.symbols, document.macros):
+                        for name, (position, _) in container.items():
+                            if name == word:
+                                definition_locations.add((uri, position.line, position.character))
+
+                collect_definition_locations(doc, params.text_document.uri)
+
+                if workspace:
+                    for name, (position, uri) in workspace.labels.items():
+                        if name == word:
+                            definition_locations.add((uri, position.line, position.character))
+                    for name, (position, uri) in workspace.symbols.items():
+                        if name == word:
+                            definition_locations.add((uri, position.line, position.character))
+                    for name, (position, uri) in workspace.macros.items():
+                        if name == word:
+                            definition_locations.add((uri, position.line, position.character))
+
+                references = [
+                    loc
+                    for loc in references
+                    if (loc.uri, loc.range.start.line, loc.range.start.character) not in definition_locations
+                ]
 
             return references if references else None
 
@@ -728,16 +1401,14 @@ class A816LanguageServer:
 
                 # Create a text edit that replaces the entire document
                 if formatted_content != doc.content:
-                    return [
-                        TextEdit(
-                            range=Range(
-                                start=Position(line=0, character=0), end=Position(line=len(doc.lines), character=0)
-                            ),
-                            new_text=formatted_content,
-                        )
-                    ]
+                    full_range = self._full_document_range(doc)
+                    return [TextEdit(range=full_range, new_text=formatted_content)]
                 else:
                     return []
+            except FormattingError as exc:
+                logger.error("Formatter failed for %s: %s", doc.uri, exc)
+                self.server.show_message(str(exc), MessageType.Error)
+                return []
             finally:
                 # Restore original formatter
                 self.formatter = original_formatter
@@ -760,7 +1431,41 @@ class A816LanguageServer:
         return FormattingOptions(
             indent_size=lsp_options.tab_size,
             opcode_indent=lsp_options.tab_size,
-            space_after_comma=not lsp_options.insert_spaces if hasattr(lsp_options, "insert_spaces") else True,
+            space_after_comma=getattr(lsp_options, "insert_spaces", True),
+        )
+
+    def _ensure_workspace_index(self) -> WorkspaceIndex | None:
+        """Ensure workspace-level symbols are indexed and up to date."""
+        try:
+            root_path = self.server.workspace.root_path
+        except RuntimeError:
+            root_path = None
+        if not root_path:
+            root_path = os.getcwd()
+        if not root_path:
+            return None
+        root = Path(root_path).resolve()
+        if self.workspace_index is None or (
+            self.workspace_index.root_path is not None and self.workspace_index.root_path != root
+        ):
+            self.workspace_index = WorkspaceIndex(root)
+        if self.workspace_index.root_path is None:
+            self.workspace_index.root_path = root
+        if not self.workspace_index.built:
+            self.workspace_index.rebuild()
+        return self.workspace_index
+
+    def _full_document_range(self, doc: A816Document) -> Range:
+        """Return a Range covering the entire document."""
+        if not doc.lines:
+            return Range(start=Position(line=0, character=0), end=Position(line=0, character=0))
+
+        last_line_index = len(doc.lines) - 1
+        last_line = doc.lines[last_line_index]
+        end_character = len(last_line)
+        return Range(
+            start=Position(line=0, character=0),
+            end=Position(line=last_line_index, character=end_character),
         )
 
     def _analyze_semantic_tokens(self, doc: A816Document) -> list[int]:
@@ -870,6 +1575,26 @@ class A816LanguageServer:
                         "type": 2,  # comment
                     }
                 )
+            elif isinstance(node, DocstringAstNode):
+                tokens.append(
+                    {
+                        "line": pos.line,
+                        "char": pos.column,
+                        "length": len(token_text),
+                        "type": 4,  # string
+                    }
+                )
+                return
+            elif isinstance(node, IncludeAstNode):
+                tokens.append(
+                    {
+                        "line": pos.line,
+                        "char": pos.column,
+                        "length": len(token_text),
+                        "type": 7,  # macro (directive)
+                    }
+                )
+                return
             elif isinstance(node, MacroApplyAstNode):
                 # Macro application/call - highlight as user-defined macro
                 tokens.append(
@@ -1094,17 +1819,17 @@ class A816LanguageServer:
                 i += 1
                 continue
 
-            # Numbers (hex, decimal, binary)
-            if char.isdigit() or char == "0x" or char == "#":
+            # Numbers (hex, decimal, immediate values)
+            if operand.startswith(("0x", "0X"), i) or char.isdigit() or char == "#":
                 start = i
-                if char == "0x":  # Hex
-                    i += 1
+                if operand.startswith(("0x", "0X"), i):
+                    i += 2
                     while i < len(operand) and operand[i] in "0123456789ABCDEFabcdef":
                         i += 1
                 elif char == "#":  # Immediate
                     i += 1
-                    if i < len(operand) and operand[i] == "0x":
-                        i += 1
+                    if operand.startswith(("0x", "0X"), i):
+                        i += 2
                         while i < len(operand) and operand[i] in "0123456789ABCDEFabcdef":
                             i += 1
                     else:
@@ -1197,6 +1922,74 @@ class A816LanguageServer:
             CompletionItem(label=sym, kind=CompletionItemKind.Variable, detail="Symbol") for sym in doc.symbols.keys()
         ]
 
+    def _build_workspace_label_completions(self, doc: A816Document, workspace: WorkspaceIndex) -> list[CompletionItem]:
+        doc_labels = set(doc.labels.keys())
+        items: list[CompletionItem] = []
+        for label in workspace.labels.keys():
+            if label in doc_labels:
+                continue
+            doc_text = workspace.get_label_doc(label)
+            items.append(
+                CompletionItem(
+                    label=label,
+                    kind=CompletionItemKind.Function,
+                    detail="Label",
+                    documentation=doc_text,
+                )
+            )
+        return items
+
+    def _build_workspace_symbol_completions(self, doc: A816Document, workspace: WorkspaceIndex) -> list[CompletionItem]:
+        doc_symbols = set(doc.symbols.keys())
+        items: list[CompletionItem] = []
+        for symbol in workspace.symbols.keys():
+            if symbol in doc_symbols:
+                continue
+            items.append(CompletionItem(label=symbol, kind=CompletionItemKind.Variable, detail="Symbol"))
+        return items
+
+    def _build_workspace_macro_completions(self, doc: A816Document, workspace: WorkspaceIndex) -> list[CompletionItem]:
+        doc_macros = set(doc.macros.keys())
+        items: list[CompletionItem] = []
+        for macro in workspace.macros.keys():
+            if macro in doc_macros:
+                continue
+            macro_params = workspace.get_macro_params(macro)
+            param_sig = f"({', '.join(macro_params)})" if macro_params else ""
+            macro_doc = workspace.get_macro_doc(macro)
+            documentation = macro_doc or (
+                f"User-defined macro with {len(macro_params)} parameters" if macro_params else "User-defined macro"
+            )
+            items.append(
+                CompletionItem(
+                    label=macro,
+                    kind=CompletionItemKind.Function,
+                    detail=f"User Macro{param_sig}",
+                    documentation=documentation,
+                )
+            )
+        return items
+
+    def _workspace_container_name(self, uri: str, workspace: WorkspaceIndex) -> str | None:
+        try:
+            path = uri_to_path(uri)
+        except ValueError:
+            return None
+        root = workspace.root_path
+        if root:
+            try:
+                rel = path.relative_to(root)
+                parent = rel.parent
+                if parent and parent != Path(""):
+                    return parent.as_posix()
+                return None
+            except ValueError:
+                pass
+        parent = path.parent
+        if parent and parent != Path(""):
+            return parent.as_posix()
+        return None
+
     def _check_include_directive(
         self, doc: A816Document, line_num: int, char_pos: int, current_uri: str
     ) -> Location | None:
@@ -1205,16 +1998,19 @@ class A816LanguageServer:
             if line_num >= len(doc.lines):
                 return None
 
-            line = doc.lines[line_num].strip()
+            line = doc.lines[line_num]
 
             # Match .include 'filename' or .include "filename"
-            include_match = re.match(r'\.include\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
+            include_match = re.search(r'\.include\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
             if not include_match:
                 return None
 
             include_path = include_match.group(1)
-            quote_start = line.find('"') if '"' in line else line.find("'")
-            quote_end = line.rfind('"') if '"' in line else line.rfind("'")
+            delimiter = '"' if '"' in include_match.group(0) else "'"
+            quote_start = line.find(delimiter, include_match.start())
+            quote_end = line.find(delimiter, quote_start + 1) if quote_start != -1 else -1
+            if quote_start == -1 or quote_end == -1:
+                return None
 
             # Check if cursor is within the quoted filename
             if quote_start <= char_pos <= quote_end:

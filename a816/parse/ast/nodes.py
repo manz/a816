@@ -10,9 +10,10 @@ from a816.parse.tokens import Token
 class AstNode(ABC):
     kind: str
 
-    def __init__(self, kind: str, file_info: Token) -> None:
+    def __init__(self, kind: str, file_info: Token, docstring: str | None = None) -> None:
         self.kind = kind
         self.file_info = file_info
+        self.docstring = docstring
 
     @abstractmethod
     def to_representation(self) -> tuple[Any, ...]:
@@ -148,12 +149,29 @@ class CommentAstNode(AstNode):
         return self.comment
 
 
+class DocstringAstNode(AstNode):
+    def __init__(self, text: str, file_info: Token) -> None:
+        super().__init__("docstring", file_info)
+        self.text = text
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.text
+
+    def to_canonical(self) -> str:
+        if '"""' in self.text and "'''" not in self.text:
+            return f"'''{self.text}'''"
+        if '"""' in self.text:
+            escaped = self.text.replace('"""', '\\"""')
+            return f'"""{escaped}"""'
+        return f'"""{self.text}"""'
+
+
 class ScopeAstNode(AstNode):
     name: str
     body: BlockAstNode
 
-    def __init__(self, name: str, body: Any, file_info: Token) -> None:
-        super().__init__("scope", file_info)
+    def __init__(self, name: str, body: Any, file_info: Token, docstring: str | None = None) -> None:
+        super().__init__("scope", file_info, docstring)
         self.name = name
         self.body = body
 
@@ -251,8 +269,8 @@ class MacroAstNode(AstNode):
     args: list[str]
     block: BlockAstNode
 
-    def __init__(self, name: str, args: list[str], block: BlockAstNode, file_info: Token):
-        super().__init__("macro", file_info)
+    def __init__(self, name: str, args: list[str], block: BlockAstNode, file_info: Token, docstring: str | None = None):
+        super().__init__("macro", file_info, docstring)
         self.name = name
         self.args = args
         self.block = block
@@ -350,16 +368,19 @@ class TableAstNode(AstNode):
 
 class IncludeAstNode(AstNode):
     file_path: str
+    included_nodes: list[AstNode]
 
-    def __init__(self, file_path: str, file_info: Token):
+    def __init__(self, file_path: str, included_nodes: list[AstNode], file_info: Token):
+        """Represents a source-level .include directive while preserving the nested AST."""
         super().__init__("include", file_info)
         self.file_path = file_path
+        self.included_nodes = included_nodes
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.file_path
+        return self.kind, self.file_path, [node.to_representation() for node in self.included_nodes]
 
     def to_canonical(self) -> str:
-        return f".include '{self.file_path}'"
+        return f'.include "{self.file_path}"'
 
 
 class IncludeIpsAstNode(AstNode):
@@ -428,6 +449,21 @@ class DebugAstNode(AstNode):
 
     def to_canonical(self) -> str:
         return f".debug '{self.message}'"
+
+
+class RegisterSizeAstNode(AstNode):
+    """AST node for register size directives (.a8, .a16, .i8, .i16)"""
+
+    def __init__(self, register: str, size: int, file_info: Token) -> None:
+        super().__init__("register_size", file_info)
+        self.register = register  # "a" for accumulator, "i" for index
+        self.size = size  # 8 or 16
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.register, self.size
+
+    def to_canonical(self) -> str:
+        return f".{self.register}{self.size}"
 
 
 class AssignAstNode(AstNode):

@@ -266,7 +266,8 @@ class Program:
             }
             self.resolver.rom_type = address_mapping[mapping]
 
-        self.resolver.dump_symbol_map()
+        if self.dump_symbols:
+            self.resolver.dump_symbol_map()
         with open(ips_file, "wb") as f:
             ips_emitter = IPSWriter(f, copier_header)
             ips_emitter.begin()
