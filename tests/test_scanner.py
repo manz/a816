@@ -1,0 +1,134 @@
+"""Tests for the scanner/lexer."""
+
+from unittest import TestCase
+
+from a816.parse.scanner import Scanner
+from a816.parse.scanner_states import lex_initial
+from a816.parse.tokens import TokenType
+
+
+class ScannerTest(TestCase):
+    """Test scanner tokenization."""
+
+    def _scan(self, text: str) -> list[tuple[TokenType, str]]:
+        """Helper to scan text and return list of (type, value) tuples."""
+        scanner = Scanner(lex_initial)
+        tokens = scanner.scan("test.s", text)
+        return [(t.type, t.value) for t in tokens if t.type != TokenType.EOF]
+
+    def test_comparison_operators_greater_equal(self) -> None:
+        """Test that >= is tokenized as a single operator, not > followed by =."""
+        tokens = self._scan("a >= b")
+        self.assertEqual(tokens[1], (TokenType.OPERATOR, ">="))
+
+    def test_comparison_operators_less_equal(self) -> None:
+        """Test that <= is tokenized as a single operator, not < followed by =."""
+        tokens = self._scan("a <= b")
+        self.assertEqual(tokens[1], (TokenType.OPERATOR, "<="))
+
+    def test_comparison_operators_greater(self) -> None:
+        """Test that > alone is tokenized correctly."""
+        tokens = self._scan("a > b")
+        self.assertEqual(tokens[1], (TokenType.OPERATOR, ">"))
+
+    def test_comparison_operators_less(self) -> None:
+        """Test that < alone is tokenized correctly."""
+        tokens = self._scan("a < b")
+        self.assertEqual(tokens[1], (TokenType.OPERATOR, "<"))
+
+    def test_comparison_operators_equal(self) -> None:
+        """Test that == is tokenized correctly."""
+        tokens = self._scan("a == b")
+        self.assertEqual(tokens[1], (TokenType.OPERATOR, "=="))
+
+    def test_comparison_operators_not_equal(self) -> None:
+        """Test that != is tokenized correctly."""
+        tokens = self._scan("a != b")
+        self.assertEqual(tokens[1], (TokenType.OPERATOR, "!="))
+
+    def test_shift_operators_left(self) -> None:
+        """Test that << is tokenized correctly."""
+        tokens = self._scan("a << b")
+        self.assertEqual(tokens[1], (TokenType.OPERATOR, "<<"))
+
+    def test_shift_operators_right(self) -> None:
+        """Test that >> is tokenized correctly."""
+        tokens = self._scan("a >> b")
+        self.assertEqual(tokens[1], (TokenType.OPERATOR, ">>"))
+
+    def test_number_hex(self) -> None:
+        """Test hexadecimal number parsing."""
+        tokens = self._scan("0x1F")
+        self.assertEqual(tokens[0], (TokenType.NUMBER, "0x1F"))
+
+    def test_number_binary(self) -> None:
+        """Test binary number parsing."""
+        tokens = self._scan("0b1010")
+        self.assertEqual(tokens[0], (TokenType.NUMBER, "0b1010"))
+
+    def test_number_octal(self) -> None:
+        """Test octal number parsing."""
+        tokens = self._scan("0o777")
+        self.assertEqual(tokens[0], (TokenType.NUMBER, "0o777"))
+
+    def test_number_decimal(self) -> None:
+        """Test decimal number parsing."""
+        tokens = self._scan("12345")
+        self.assertEqual(tokens[0], (TokenType.NUMBER, "12345"))
+
+    def test_single_quoted_string(self) -> None:
+        """Test single-quoted string parsing."""
+        tokens = self._scan("'hello world'")
+        self.assertEqual(tokens[0], (TokenType.QUOTED_STRING, "'hello world'"))
+
+    def test_double_quoted_string(self) -> None:
+        """Test double-quoted string parsing."""
+        tokens = self._scan('"hello world"')
+        self.assertEqual(tokens[0], (TokenType.QUOTED_STRING, '"hello world"'))
+
+    def test_escaped_single_quote(self) -> None:
+        """Test escaped single quote in string."""
+        tokens = self._scan("'it\\'s'")
+        self.assertEqual(tokens[0], (TokenType.QUOTED_STRING, "'it\\'s'"))
+
+    def test_escaped_double_quote(self) -> None:
+        """Test escaped double quote in string."""
+        tokens = self._scan('"say \\"hello\\""')
+        self.assertEqual(tokens[0], (TokenType.QUOTED_STRING, '"say \\"hello\\""'))
+
+    def test_identifier_with_underscore(self) -> None:
+        """Test identifier starting with underscore."""
+        tokens = self._scan("_my_label")
+        self.assertEqual(tokens[0], (TokenType.IDENTIFIER, "_my_label"))
+
+    def test_label_definition(self) -> None:
+        """Test label definition (identifier followed by colon)."""
+        tokens = self._scan("my_label:")
+        self.assertEqual(tokens[0], (TokenType.LABEL, "my_label"))
+
+    def test_opcode_recognition(self) -> None:
+        """Test that opcodes are recognized as OPCODE tokens."""
+        tokens = self._scan("lda #0x00")
+        self.assertEqual(tokens[0][0], TokenType.OPCODE)
+        self.assertEqual(tokens[0][1].lower(), "lda")
+
+    def test_line_comment(self) -> None:
+        """Test line comment starting with semicolon."""
+        tokens = self._scan("; this is a comment\nlda #0")
+        # First token should be comment
+        self.assertEqual(tokens[0][0], TokenType.COMMENT)
+
+    def test_block_comment(self) -> None:
+        """Test block comment /* ... */."""
+        tokens = self._scan("/* comment */ lda #0")
+        self.assertEqual(tokens[0][0], TokenType.COMMENT)
+
+    def test_docstring_single(self) -> None:
+        """Test triple single-quoted docstring."""
+        tokens = self._scan("'''docstring'''")
+        self.assertEqual(tokens[0][0], TokenType.DOCSTRING)
+
+    def test_docstring_double(self) -> None:
+        """Test triple double-quoted docstring."""
+        tokens = self._scan('"""docstring"""')
+        self.assertEqual(tokens[0][0], TokenType.DOCSTRING)

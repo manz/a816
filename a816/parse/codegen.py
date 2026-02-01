@@ -226,17 +226,27 @@ def generate_incbin(
     return [BinaryNode(node.file_path, resolver)]
 
 
+def _generate_data(
+    node: DataNode,
+    node_type: type[ByteNode] | type[WordNode] | type[LongNode],
+    resolver: Resolver,
+    file_info: Token,
+) -> GenNodes:
+    """Generate data nodes for .db, .dw, or .dl directives."""
+    code: GenNodes = []
+    for expr in node.data:
+        assert isinstance(expr, ExpressionAstNode)
+        code.append(node_type(ExpressionNode(expr, resolver, file_info)))
+    return code
+
+
 def generate_dl(
     node: DataNode,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    code: list[NodeProtocol] = []
-    for expr in node.data:
-        assert isinstance(expr, ExpressionAstNode)
-        code.append(LongNode(ExpressionNode(expr, resolver, file_info)))
-    return code
+    return _generate_data(node, LongNode, resolver, file_info)
 
 
 def generate_dw(
@@ -245,11 +255,7 @@ def generate_dw(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    code: GenNodes = []
-    for expr in node.data:
-        assert isinstance(expr, ExpressionAstNode)
-        code.append(WordNode(ExpressionNode(expr, resolver, file_info)))
-    return code
+    return _generate_data(node, WordNode, resolver, file_info)
 
 
 def generate_db(
@@ -258,11 +264,7 @@ def generate_db(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    code: GenNodes = []
-    for expr in node.data:
-        assert isinstance(expr, ExpressionAstNode)
-        code.append(ByteNode(ExpressionNode(expr, resolver, file_info)))
-    return code
+    return _generate_data(node, ByteNode, resolver, file_info)
 
 
 def generate_symbol(
@@ -397,6 +399,9 @@ def generate_if(
     try:
         condition = eval_expression(node.expression, resolver)
     except (KeyError, SymbolNotDefined):
+        # Symbol not yet defined - this can happen with forward label references
+        # like `.if END_OF_FREE_SPACE > 0x1ffff`. Labels are resolved in a later
+        # pass, so we treat unresolved symbols as false during code generation.
         condition = False
     if condition:
         code += _code_gen(if_branch_true.body, resolver, macro_definitions)
@@ -430,6 +435,10 @@ def generate_macro_application(
     macro_code = macro_def.block
     macro_args = macro_def.args
     macro_args_values = node.args
+
+    if len(macro_args_values) != len(macro_args):
+        raise ValueError(f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}")
+
     resolver.append_scope()
     resolver.use_next_scope()
     code.append(ScopeNode(resolver))

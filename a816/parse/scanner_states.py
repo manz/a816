@@ -10,10 +10,13 @@ from a816.parse.tokens import EOF, TokenType
 opcodes = snes_opcode_table.keys()
 opcodes_without_operand = get_opcodes_with_addressing(AddressingMode.none)
 
+# Character sets for identifier parsing
+IDENTIFIER_START_CHARS = "_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+IDENTIFIER_CHARS = IDENTIFIER_START_CHARS + "0123456789"
+
 
 def lex_identifier(s: "Scanner") -> None:
-    identifier_chars = "_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz0123456789"
-    s.accept_run(identifier_chars)
+    s.accept_run(IDENTIFIER_CHARS)
 
     if s.peek() == ":" and s.peek(1) != "=":
         s.emit(TokenType.LABEL)
@@ -24,41 +27,36 @@ def lex_identifier(s: "Scanner") -> None:
         # handle scoped identifiers
         if s.peek() == ".":
             s.next()
-            s.accept_run(identifier_chars)
+            s.accept_run(IDENTIFIER_CHARS)
 
         s.emit(TokenType.IDENTIFIER)
 
 
-def lex_quoted_string(s: "Scanner") -> None:
+def _lex_string(s: "Scanner", quote_char: str) -> None:
+    """Scan a string delimited by quote_char."""
     # Capture position at the start of the string (the opening quote)
     start_position = s.get_position()
     c = s.next()
-    while c != "'":
+    while c != quote_char:
         if c == "\n" or c is None:
             raise ScannerException("Unterminated String", start_position)
 
-        if c == "\\" and s.peek() == "'":
+        if c == "\\" and s.peek() == quote_char:
             s.next()
 
         c = s.next()
 
     s.emit(TokenType.QUOTED_STRING)
+
+
+def lex_quoted_string(s: "Scanner") -> None:
+    """Scan a single-quoted string."""
+    _lex_string(s, "'")
 
 
 def lex_double_quoted_string(s: "Scanner") -> None:
-    # Capture position at the start of the string (the opening quote)
-    start_position = s.get_position()
-    c = s.next()
-    while c != '"':
-        if c == "\n" or c is None:
-            raise ScannerException("Unterminated String", start_position)
-
-        if c == "\\" and s.peek() == '"':
-            s.next()
-
-        c = s.next()
-
-    s.emit(TokenType.QUOTED_STRING)
+    """Scan a double-quoted string."""
+    _lex_string(s, '"')
 
 
 def lex_docstring(s: "Scanner", quote_char: str) -> None:
@@ -100,7 +98,7 @@ def lex_expression(s: "Scanner") -> None:
         s.ignore_run(" ")
         if s.accept("0123456789"):
             lex_number(s)
-        elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
+        elif s.accept(IDENTIFIER_START_CHARS):
             lex_identifier(s)
         elif s.peek() == '"' and s.peek(1) == '"' and s.peek(2) == '"':
             s.pos += 3
@@ -243,22 +241,6 @@ KEYWORDS = {
 }
 
 
-def lex_macro_arg(s: "Scanner") -> None:
-    s.ignore_run(" ")
-
-    if s.next() == ",":
-        s.emit(TokenType.COMMA)
-    lex_identifier(s)
-
-
-def lex_macro_args_def(s: "Scanner") -> None:
-    s.emit(TokenType.LPAREN)
-    while s.peek() != ")":
-        lex_macro_arg(s)
-
-    s.emit(TokenType.RPAREN)
-
-
 def lex_keyword(s: "Scanner") -> None:
     s.ignore()
     s.accept_run("abcdefghijklmnopqrstuvwxyz_0123456789")
@@ -314,13 +296,13 @@ def lex_initial(s: Scanner) -> None:
         s.emit(TokenType.OPERATOR)
     elif s.accept_prefix("<<"):
         s.emit(TokenType.OPERATOR)
-    elif s.accept_prefix(">") or s.accept_prefix("<") or s.accept_prefix(">=") or s.accept_prefix("<="):
+    elif s.accept_prefix(">=") or s.accept_prefix("<=") or s.accept_prefix(">") or s.accept_prefix("<"):
         s.emit(TokenType.OPERATOR)
     # elif l.accept_prefix('True') or l.accept_prefix('False'):
     #     l.emit(TokenType.BOOLEAN)
     # elif s.accept_prefix("byte") or s.accept_prefix("word") or s.accept_prefix("long"):
     #    s.emit(TokenType.TYPE)
-    elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
+    elif s.accept(IDENTIFIER_START_CHARS):
         s.backup()
         # check if not an opcode
         if accept_opcode(s):

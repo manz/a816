@@ -20,6 +20,7 @@ from lsprotocol.types import (
     DidChangeTextDocumentParams,
     DidCloseTextDocumentParams,
     DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams,
     DocumentFormattingParams,
     DocumentRangeFormattingParams,
     DocumentSymbol,
@@ -829,6 +830,27 @@ class A816LanguageServer:
             workspace = self._ensure_workspace_index()
             if workspace:
                 workspace.reload_document_from_disk(params.text_document.uri)
+
+        @self.server.feature("textDocument/didSave")
+        async def did_save(ls: LanguageServer, params: DidSaveTextDocumentParams) -> None:
+            """Handle document save event - re-analyze and publish diagnostics"""
+            doc = self.documents.get(params.text_document.uri)
+            if not doc:
+                return
+
+            # If the save includes text, use it; otherwise re-analyze existing content
+            if params.text is not None:
+                doc.update_content(params.text)
+            else:
+                # Re-analyze with current content to ensure diagnostics are fresh
+                doc.update_content(doc.content)
+
+            workspace = self._ensure_workspace_index()
+            if workspace:
+                workspace.replace_document(doc)
+
+            # Publish updated diagnostics
+            await self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
 
         @self.server.feature("textDocument/completion")
         async def completions(ls: LanguageServer, params: CompletionParams) -> CompletionList:

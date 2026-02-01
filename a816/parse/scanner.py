@@ -22,14 +22,6 @@ class Scanner:
         self.line_offset = 0
         self.current_line = 0
 
-    def add_error(self, scanner_exception: ScannerException) -> None:
-        print(str(scanner_exception))
-        position = scanner_exception.position
-        position_str = str(position)
-        line = position.get_line()
-        print(f"{position_str} :\n{line}")
-        print(" " * position.column + "^")
-
     def scan(self, filename: str, input_: str) -> list[Token]:
         self.file = File(filename)
         self.input = input_
