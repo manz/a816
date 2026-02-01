@@ -1,6 +1,6 @@
 from typing import Any, Protocol, cast
 
-from a816.cpu.cpu_65c816 import AddressingMode
+from a816.cpu.types import AddressingMode
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import (
@@ -48,7 +48,6 @@ from a816.parse.nodes import (
     LabelNode,
     LongNode,
     NodeError,
-    NodeProtocol,
     OpcodeNode,
     PopScopeNode,
     RegisterSizeNode,
@@ -60,6 +59,7 @@ from a816.parse.nodes import (
     WordNode,
 )
 from a816.parse.tokens import Token, TokenType
+from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
 
 MacroDefinitions = dict[str, Any]
@@ -437,7 +437,9 @@ def generate_macro_application(
     macro_args_values = node.args
 
     if len(macro_args_values) != len(macro_args):
-        raise NodeError(f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}", file_info)
+        raise NodeError(
+            f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}", file_info
+        )
 
     resolver.append_scope()
     resolver.use_next_scope()

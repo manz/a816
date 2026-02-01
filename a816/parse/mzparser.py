@@ -5,11 +5,11 @@ from typing import Any
 from a816.parse.ast.nodes import AstNode
 from a816.parse.codegen import code_gen
 from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
-from a816.parse.nodes import NodeProtocol
 from a816.parse.parser import Parser
 from a816.parse.parser_states import parse_initial
 from a816.parse.scanner import Scanner
 from a816.parse.scanner_states import lex_initial
+from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
 
 

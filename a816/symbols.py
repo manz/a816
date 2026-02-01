@@ -2,8 +2,8 @@ import logging
 from collections.abc import ItemsView
 from typing import TYPE_CHECKING, Any
 
-from a816.cpu.cpu_65c816 import RomType
 from a816.cpu.mapping import Address, Bus
+from a816.cpu.types import RomType
 
 if TYPE_CHECKING:
     from a816.writers import ObjectWriter
@@ -15,7 +15,25 @@ logger = logging.getLogger("a816")
 
 
 class Scope:
+    """A symbol scope for managing labels, symbols, and tables.
+
+    Scopes form a hierarchy for symbol resolution, allowing nested namespaces
+    (e.g., inside macros or named scopes). Each scope can contain:
+    - Labels (code addresses)
+    - Symbols (numeric or string constants)
+    - Code symbols (macro-like block definitions)
+    - External symbol declarations
+
+    Symbol lookup traverses up the parent chain until found or root is reached.
+    """
+
     def __init__(self, resolver: "Resolver", parent: "Scope | None" = None) -> None:
+        """Initialize a new scope.
+
+        Args:
+            resolver: The parent Resolver managing this scope.
+            parent: Optional parent scope for hierarchical lookup.
+        """
         self.symbols: dict[str, int | str] = {}
         self.code_symbols: dict[str, BlockAstNode] = {}
         self.external_symbols: set[str] = set()
@@ -119,7 +137,25 @@ BUS_MAPPING = {RomType.low_rom: low_rom_bus, RomType.high_rom: high_rom_bus}
 
 
 class Resolver:
+    """Symbol resolver managing scopes, addresses, and CPU state during assembly.
+
+    The Resolver is the central state manager during assembly, tracking:
+    - Current program counter (PC) and relocation address
+    - Symbol scopes (hierarchical namespaces)
+    - CPU register sizes (A and X/Y for 65c816)
+    - ROM memory mapping type
+    - Address bus configuration
+
+    It provides symbol lookup, address calculation, and state management
+    across multiple assembly passes.
+    """
+
     def __init__(self, pc: int = 0x000000):
+        """Initialize the resolver with default state.
+
+        Args:
+            pc: Initial program counter value (default: 0x000000).
+        """
         self.reloc = False
         self.a_size: int = 8  # Accumulator size: 8 or 16 bits
         self.i_size: int = 8  # Index register size: 8 or 16 bits

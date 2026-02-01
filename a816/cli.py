@@ -1,3 +1,22 @@
+"""Command-line interface for the a816/x816 65c816 assembler.
+
+This module provides the main CLI entry point for assembling SNES/Super Famicom
+ROM code. Supports both direct assembly and separate compilation/linking workflows.
+
+Usage:
+    # Direct assembly to IPS patch
+    x816 source.s -o output.ips
+
+    # Compile to object files
+    x816 -c file1.s file2.s
+
+    # Link object files
+    x816 file1.o file2.o -o output.ips
+
+    # Mixed compilation and linking
+    x816 file1.s file2.o -o output.ips -f sfc
+"""
+
 import argparse
 import logging
 import sys
@@ -13,6 +32,17 @@ logger = logging.getLogger("x816")
 
 
 def cli_main() -> None:
+    """Main CLI entry point for the x816 assembler.
+
+    Parses command-line arguments and executes the appropriate assembly
+    or linking workflow. Handles both compile-only mode (-c) and direct
+    linking mode.
+
+    Exit codes:
+        0: Success
+        1: Error during assembly or linking
+        -1: Invalid input or configuration error
+    """
     parser = argparse.ArgumentParser(prog="x816", description="x816 usage", epilog="")
     parser.add_argument("--verbose", action="store_true", help="Displays all log levels.")
     parser.add_argument(

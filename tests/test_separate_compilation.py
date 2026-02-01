@@ -268,3 +268,178 @@ main:
             assert loaded_obj.code == test_code
             assert loaded_obj.symbols == test_symbols
             assert loaded_obj.relocations == test_relocations
+
+    def test_create_sfc_from_linked_objects(self) -> None:
+        """Test creating SFC file from linked object files"""
+
+        asm_code = """*=0x8000
+main:
+    lda #0x42
+    sta 0x2000
+    rts"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write assembly file
+            asm_file = Path(tmpdir) / "test.s"
+            asm_file.write_text(asm_code)
+
+            # Compile to object file
+            obj_file = Path(tmpdir) / "test.o"
+            program = Program()
+            result = program.assemble_as_object(str(asm_file), obj_file)
+            assert result == 0
+
+            # Link (single file)
+            obj = ObjectFile.read(str(obj_file))
+            linker = Linker([obj])
+            linked_obj = linker.link()
+
+            # Create SFC file
+            sfc_file = Path(tmpdir) / "test.sfc"
+            result = program.link_as_sfc(linked_obj, sfc_file)
+            assert result == 0
+            assert sfc_file.exists()
+
+            # Verify SFC file contains code
+            with open(sfc_file, "rb") as f:
+                content = f.read()
+                assert len(content) > 0
+
+    def test_link_as_patch_with_mapping(self) -> None:
+        """Test creating IPS patch with different ROM mappings"""
+
+        asm_code = """*=0x8000
+main:
+    lda #0x42
+    rts"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm_file = Path(tmpdir) / "test.s"
+            asm_file.write_text(asm_code)
+
+            obj_file = Path(tmpdir) / "test.o"
+            program = Program()
+            result = program.assemble_as_object(str(asm_file), obj_file)
+            assert result == 0
+
+            obj = ObjectFile.read(str(obj_file))
+            linker = Linker([obj])
+            linked_obj = linker.link()
+
+            # Test with different mappings
+            for mapping in ["low", "low2", "high"]:
+                ips_file = Path(tmpdir) / f"test_{mapping}.ips"
+                result = program.link_as_patch(linked_obj, ips_file, mapping=mapping)
+                assert result == 0
+                assert ips_file.exists()
+
+    def test_link_as_patch_with_copier_header(self) -> None:
+        """Test creating IPS patch with copier header"""
+
+        asm_code = """*=0x8000
+main:
+    lda #0x42
+    rts"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm_file = Path(tmpdir) / "test.s"
+            asm_file.write_text(asm_code)
+
+            obj_file = Path(tmpdir) / "test.o"
+            program = Program()
+            result = program.assemble_as_object(str(asm_file), obj_file)
+            assert result == 0
+
+            obj = ObjectFile.read(str(obj_file))
+            linker = Linker([obj])
+            linked_obj = linker.link()
+
+            ips_file = Path(tmpdir) / "test.ips"
+            result = program.link_as_patch(linked_obj, ips_file, copier_header=True)
+            assert result == 0
+            assert ips_file.exists()
+
+    def test_exports_symbol_file(self) -> None:
+        """Test exporting symbol file for debugger"""
+
+        asm_code = """*=0x8000
+main:
+    lda #0x42
+helper:
+    sta 0x2000
+    rts"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm_file = Path(tmpdir) / "test.s"
+            asm_file.write_text(asm_code)
+
+            # Assemble to set up the symbol table
+            ips_file = Path(tmpdir) / "test.ips"
+            program = Program()
+            result = program.assemble_as_patch(str(asm_file), ips_file)
+            assert result == 0
+
+            # Export symbols
+            sym_file = Path(tmpdir) / "test.sym"
+            program.exports_symbol_file(str(sym_file))
+            assert sym_file.exists()
+
+            # Verify symbol file format
+            content = sym_file.read_text()
+            assert "[labels]" in content
+            assert "main" in content
+            assert "helper" in content
+
+    def test_get_physical_address(self) -> None:
+        """Test physical address calculation"""
+
+        program = Program()
+        # Set up resolver with a known address
+        program.resolver.pc = 0x8000
+
+        # Default mapping should work
+        physical = program.get_physical_address(0x8000)
+        assert physical is not None
+
+    def test_get_physical_address_error(self) -> None:
+        """Test physical address error for unmapped address"""
+
+        program = Program()
+
+        # Address with no physical mapping should raise KeyError (unmapped bank)
+        with pytest.raises(KeyError):
+            program.get_physical_address(0xFFFFFF)
+
+    def test_link_as_patch_empty_code(self) -> None:
+        """Test link_as_patch with empty linked object"""
+
+        from a816.object_file import ObjectFile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create empty object file
+            empty_obj = ObjectFile(b"", [], [])
+
+            ips_file = Path(tmpdir) / "test.ips"
+            program = Program()
+            result = program.link_as_patch(empty_obj, ips_file)
+            assert result == 0
+
+            # IPS file should still be valid (just header + EOF)
+            with open(ips_file, "rb") as f:
+                content = f.read()
+                assert content.startswith(b"PATCH")
+                assert content.endswith(b"EOF")
+
+    def test_link_as_sfc_empty_code(self) -> None:
+        """Test link_as_sfc with empty linked object"""
+
+        from a816.object_file import ObjectFile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            empty_obj = ObjectFile(b"", [], [])
+
+            sfc_file = Path(tmpdir) / "test.sfc"
+            program = Program()
+            result = program.link_as_sfc(empty_obj, sfc_file)
+            assert result == 0
+            assert sfc_file.exists()

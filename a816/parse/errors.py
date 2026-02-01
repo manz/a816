@@ -16,6 +16,7 @@ class ParseError:
 
     def format(self) -> str:
         """Format error for display."""
+        # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import SourceLocation, format_error
 
         location = SourceLocation(

@@ -397,8 +397,8 @@ def parse_block(p: Parser) -> list[AstNode]:
 
 def extract_docstring(statements: list[AstNode]) -> tuple[str | None, list[AstNode]]:
     if statements and isinstance(statements[0], DocstringAstNode):
-        doc_node = cast(DocstringAstNode, statements[0])
-        return doc_node.text, statements[1:]
+        # isinstance already narrows the type, no cast needed
+        return statements[0].text, statements[1:]
     return None, statements
 
 

@@ -49,6 +49,7 @@ class LinkerError(A816Error):
 
     def format(self) -> str:
         """Format the error with colors for display."""
+        # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import format_error_simple
 
         return format_error_simple("linker error", str(self))
@@ -62,6 +63,7 @@ class DuplicateSymbolError(LinkerError):
         super().__init__(f"duplicate symbol '{symbol_name}'")
 
     def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import format_linker_error
 
         return format_linker_error(
@@ -84,6 +86,7 @@ class UnresolvedSymbolError(LinkerError):
         super().__init__(message)
 
     def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import format_linker_error
 
         if len(self.symbols) == 1:
@@ -118,6 +121,7 @@ class RelocationError(LinkerError):
         super().__init__(f"{relocation_type} relocation failed for '{symbol_name}'")
 
     def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import format_error_simple
 
         return format_error_simple(
@@ -140,6 +144,7 @@ class ExpressionEvaluationError(LinkerError):
         super().__init__(f"failed to evaluate '{expression}'")
 
     def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import format_error_simple
 
         return format_error_simple(

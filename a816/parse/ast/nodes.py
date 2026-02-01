@@ -553,6 +553,7 @@ KeywordAstNode = (
     | StructAstNode
     | ExternAstNode
     | DebugAstNode
+    | RegisterSizeAstNode
 )
 FileInfoAstNode = tuple[Literal["file_info"], Token]
 

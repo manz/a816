@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 try:
-    import tomllib  # type: ignore[attr-defined]
+    import tomllib
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
@@ -625,7 +625,7 @@ class WorkspaceIndex:
         try:
             with pyproject.open("rb") as handle:
                 data = tomllib.load(handle)
-        except (OSError, tomllib.TOMLDecodeError):  # type: ignore[attr-defined]
+        except (OSError, tomllib.TOMLDecodeError):
             return None
         entry = data.get("tool", {}).get("a816-lsp", {}).get("entrypoint")
         if not entry:
@@ -757,7 +757,7 @@ class A816LanguageServer:
     def __init__(self) -> None:
         self.server = LanguageServer("a816-language-server", "v1.0")
         try:
-            self.server.server_capabilities.workspace_symbol_provider = True  # type: ignore[attr-defined]
+            self.server.server_capabilities.workspace_symbol_provider = True
         except AttributeError:
             pass
         self.documents: dict[str, A816Document] = {}
@@ -999,11 +999,11 @@ class A816LanguageServer:
                 doc_text = doc.macro_docstrings.get(word)
                 if doc_text:
                     param_list = doc.macro_params.get(macro_name, [])
-                    params = f"({', '.join(param_list)})" if param_list else "()"
+                    params_str = f"({', '.join(param_list)})" if param_list else "()"
                     return Hover(
                         contents=MarkupContent(
                             kind=MarkupKind.Markdown,
-                            value=f"**{macro_name}{params}**\n\n{doc_text}",
+                            value=f"**{macro_name}{params_str}**\n\n{doc_text}",
                         )
                     )
 
@@ -1014,11 +1014,11 @@ class A816LanguageServer:
                     doc_text = workspace.get_macro_doc(actual_macro_name)
                     if doc_text:
                         param_list = workspace.get_macro_params(actual_macro_name)
-                        params = f"({', '.join(param_list)})" if param_list else "()"
+                        params_str = f"({', '.join(param_list)})" if param_list else "()"
                         return Hover(
                             contents=MarkupContent(
                                 kind=MarkupKind.Markdown,
-                                value=f"**{actual_macro_name}{params}**\n\n{doc_text}",
+                                value=f"**{actual_macro_name}{params_str}**\n\n{doc_text}",
                             )
                         )
 

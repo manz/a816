@@ -381,7 +381,7 @@ main:
         doc = A816Document(uri, content)
         self.server.documents[uri] = doc
 
-        handler = self.server.server.lsp._get_handler("textDocument/hover")
+        handler = self.server.server.lsp._get_handler("textDocument/hover")  # type: ignore[no-untyped-call]
         params = HoverParams(
             text_document=TextDocumentIdentifier(uri=uri),
             position=Position(line=0, character=5),
@@ -408,9 +408,9 @@ main:
             index.rebuild()
 
             self.server.workspace_index = index
-            self.server._ensure_workspace_index = lambda: index
+            self.server._ensure_workspace_index = lambda: index  # type: ignore[method-assign]
 
-            handler = self.server.server.lsp._get_handler("workspace/symbol")
+            handler = self.server.server.lsp._get_handler("workspace/symbol")  # type: ignore[no-untyped-call]
             params = WorkspaceSymbolParams(query="lookup")
             results = asyncio.run(handler(params))
 
@@ -446,10 +446,10 @@ main:
             index.built = True
 
             self.server.workspace_index = index
-            self.server._ensure_workspace_index = lambda: index
+            self.server._ensure_workspace_index = lambda: index  # type: ignore[method-assign]
             self.server.documents[ref_path.as_uri()] = ref_doc
 
-            handler = self.server.server.lsp._get_handler("textDocument/references")
+            handler = self.server.server.lsp._get_handler("textDocument/references")  # type: ignore[no-untyped-call]
             params = ReferenceParams(
                 text_document=TextDocumentIdentifier(uri=ref_path.as_uri()),
                 position=Position(line=0, character=10),

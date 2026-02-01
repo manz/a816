@@ -1,16 +1,27 @@
 import struct
 import typing
 import warnings
-from enum import Enum
-from typing import Literal, Protocol
 
+from a816.cpu.types import AddressingMode, RomType, ValueSize
 from a816.exceptions import MissingOperandError
+from a816.protocols import OpcodeProtocol, ValueNodeProtocol
 
 if typing.TYPE_CHECKING:  # pragma: nocover
-    from a816.parse.nodes import ValueNodeProtocol
     from a816.symbols import Resolver
 
-ValueSize = Literal["b", "w", "l", ""]
+# Re-export types for backward compatibility
+__all__ = [
+    "AddressingMode",
+    "RomType",
+    "ValueSize",
+    "OpcodeProtocol",
+    "NoOpcodeForOperandSize",
+    "snes_opcode_table",
+    "rom_to_snes",
+    "snes_to_rom",
+    "get_opcodes_with_addressing",
+    "guess_value_size",
+]
 
 
 class NoOpcodeForOperandSize(Exception):
@@ -21,33 +32,6 @@ class NoOpcodeForOperandSize(Exception):
     """
 
     pass
-
-
-class AddressingMode(Enum):
-    none = 0
-    immediate = 1
-    direct = 2
-    direct_indexed = 3
-    indirect = 4
-    indirect_indexed = 5
-    indirect_long = 6
-    indirect_indexed_long = 7
-    dp_or_sr_indirect_indexed = 8
-    stack_indexed_indirect_indexed = 9
-
-
-# IDEA: OpcodeProtocol & Opcode With Value
-class OpcodeProtocol(Protocol):
-    def emit(
-        self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
-        size: ValueSize | None = None,
-    ) -> bytes:
-        """"""
-
-    def supposed_length(self, value_node: "ValueNodeProtocol | None", size: ValueSize | None = None) -> int:
-        """"""
 
 
 class OpcodeWithoutOperand(OpcodeProtocol):
@@ -76,9 +60,9 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         if value_node is None:
             raise MissingOperandError("branch")
         value = value_node.get_value()
-        from a816.parse.nodes import ExpressionNode
 
-        if isinstance(value_node, ExpressionNode):
+        # Use duck typing: ExpressionNode has 'expression' attribute, ValueNode does not
+        if hasattr(value_node, "expression"):
             pc = resolver.pc
             physical_destination = resolver.get_bus().get_address(value).physical
 
@@ -133,12 +117,11 @@ class Opcode(OpcodeProtocol):
         self.size_opcode_map: dict[str, int] = {"b": 0, "w": 1, "l": 2}
 
     def emit_value(self, value_node: "ValueNodeProtocol", size: ValueSize) -> bytes:
-        from a816.parse.nodes import ExpressionNode
-
         value = value_node.get_value()
 
-        # Check if this ExpressionNode has a deferred expression from external symbols
-        if isinstance(value_node, ExpressionNode) and hasattr(value_node, "_deferred_expression"):
+        # Check if this is an ExpressionNode with a deferred expression from external symbols
+        # Use duck typing: check for resolver attribute (ExpressionNode has it, ValueNode doesn't)
+        if hasattr(value_node, "resolver") and hasattr(value_node, "_deferred_expression"):
             # Generate expression relocation instead of regular relocation
             resolver = value_node.resolver
             if hasattr(resolver, "_object_writer") and resolver._object_writer is not None:
@@ -425,12 +408,6 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "xba": {AddressingMode.none: OpcodeWithoutOperand(0xEB)},
     "xce": {AddressingMode.none: OpcodeWithoutOperand(0xFB)},
 }
-
-
-class RomType(Enum):
-    low_rom = 0
-    low_rom_2 = 1
-    high_rom = 2
 
 
 def rom_to_snes(address: int, mode: RomType) -> int:

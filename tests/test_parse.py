@@ -450,6 +450,7 @@ lda #1
         ast_result = program.parser.parse_as_ast(input_program)
 
         self.assertIsInstance(ast_result.nodes[0], DocstringAstNode)
+        assert isinstance(ast_result.nodes[0], DocstringAstNode)  # for type narrowing
         self.assertEqual(ast_result.nodes[0].text, "Module description")
 
     @skip("experimental")

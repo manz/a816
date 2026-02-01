@@ -1,47 +1,23 @@
 import logging
 import re
 import struct
-from typing import Literal, Protocol
 
 from a816.cpu.cpu_65c816 import (
-    AddressingMode,
     NoOpcodeForOperandSize,
-    OpcodeProtocol,
-    ValueSize,
     guess_value_size,
     snes_opcode_table,
 )
 from a816.cpu.mapping import Address
+from a816.cpu.types import AddressingMode, ValueSize
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.expression import eval_expression, eval_expression_str
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.tokens import Token
+from a816.protocols import NodeProtocol, OpcodeProtocol, ValueNodeProtocol
 from a816.symbols import Resolver
 from script import Table
 
 logger = logging.getLogger("a816.nodes")
-
-
-class ValueNodeProtocol(Protocol):
-    def get_value(self) -> int:
-        """Returns the value of the node as an int."""
-
-    def get_value_string_len(self) -> int:
-        """Returns the length in bytes of the value."""
-
-    def get_operand_size(self) -> Literal["b", "w", "l"]:
-        """Returns the operand size as b w l"""
-        retval: Literal["b", "w", "l"]
-
-        value_length = self.get_value_string_len()
-        if value_length <= 2:
-            retval = "b"
-        elif value_length <= 4:
-            retval = "w"
-        else:
-            retval = "l"
-
-        return retval
 
 
 class ValueNode(ValueNodeProtocol):
@@ -103,14 +79,6 @@ class ExpressionNode(ValueNodeProtocol):
         return f"{self.__class__.__name__}({self.expression.to_representation()[0]})"
 
 
-class NodeProtocol(Protocol):
-    def emit(self, current_addr: Address) -> bytes:
-        """Emits the node as bytes"""
-
-    def pc_after(self, current_pc: Address) -> Address:
-        """Returns the program counter address after the node was emitted."""
-
-
 class LabelNode(NodeProtocol):
     def __init__(self, symbol_name: str, resolver: Resolver) -> None:
         self.symbol_name = symbol_name
@@ -164,6 +132,7 @@ class ExternNode(NodeProtocol):
 
     def pc_after(self, current_pc: Address) -> Address:
         # Mark symbol as external in the current scope
+        # Late import: intentional to avoid circular dependency with object_file module
         from a816.object_file import SymbolSection, SymbolType
 
         # Add external symbol to the resolver's scope
@@ -298,6 +267,7 @@ class NodeError(Exception):
 
     def format(self, use_colors: bool = True) -> str:
         """Format the error with source location and visual indicator."""
+        # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import SourceLocation, format_error
 
         location = None
@@ -514,7 +484,14 @@ def variable_expansion(value: str, resolver: Resolver) -> str:
             variable_value = resolver.current_scope.value_for(lookup)
             if variable_value is None:
                 raise ValueError(f"Error while resolving variable {lookup} in {value} variable value is None.")
-            return variable_value
+            # Convert to string for substitution
+            if isinstance(variable_value, int):
+                return str(variable_value)
+            elif isinstance(variable_value, str):
+                return variable_value
+            else:
+                # BlockAstNode - convert to string representation
+                return str(variable_value)
 
         try:
             return re.sub(r"\${(?P<lookup>[^}]+)}", replace_match, value) or value

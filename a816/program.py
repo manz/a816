@@ -10,9 +10,9 @@ from a816.parse.nodes import (
     IncludeIpsNode,
     LabelNode,
     NodeError,
-    NodeProtocol,
     SymbolNode,
 )
+from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
 from a816.writers import IPSWriter, ObjectWriter, SFCWriter, Writer
 
@@ -20,13 +20,46 @@ logger = logging.getLogger("a816")
 
 
 class Program:
+    """Main assembler program orchestrating parsing, symbol resolution, and code emission.
+
+    The Program class is the central entry point for assembling 65c816 code. It manages:
+    - Parsing assembly source files into AST and executable nodes
+    - Symbol resolution across multiple passes
+    - Code emission to various output formats (IPS patches, SFC files, object files)
+    - Separate compilation and linking workflows
+
+    Example:
+        >>> program = Program()
+        >>> result = program.assemble_as_patch("source.s", Path("output.ips"))
+        >>> if result == 0:
+        ...     print("Assembly successful")
+    """
+
     def __init__(self, parser: MZParser | None = None, dump_symbols: bool = False):
+        """Initialize the assembler program.
+
+        Args:
+            parser: Optional custom parser instance. If None, creates a default MZParser.
+            dump_symbols: If True, prints the symbol table after assembly.
+        """
         self.resolver = Resolver()
         self.logger = logging.getLogger("a816")
         self.dump_symbols = dump_symbols
         self.parser = parser or MZParser(self.resolver)
 
     def get_physical_address(self, logical_address: int) -> int:
+        """Convert a logical SNES address to a physical ROM address.
+
+        Args:
+            logical_address: The SNES logical address (e.g., 0x8000).
+
+        Returns:
+            The corresponding physical ROM address.
+
+        Raises:
+            RuntimeError: If the address has no physical mapping.
+            KeyError: If the bank is not mapped in the current ROM type.
+        """
         physical_address = self.resolver.get_bus().get_address(logical_address).physical
         if physical_address is not None:
             return physical_address
@@ -34,16 +67,23 @@ class Program:
             raise RuntimeError(f"{logical_address} has no physical address.")
 
     def resolver_reset(self) -> None:
-        """resets the resolver"""
+        """Reset the resolver state to initial values.
+
+        Resets PC, scope tracking, and current scope pointer for a fresh pass.
+        """
         self.resolver.pc = 0x000000
         self.resolver.last_used_scope = 0
         self.resolver.current_scope = self.resolver.scopes[0]
 
     def resolve_labels(self, program_nodes: list[NodeProtocol]) -> None:
-        """
-        Resolves the labels
-        :param program_nodes:
-        :return:
+        """Resolve all labels and symbols through multi-pass processing.
+
+        Performs two passes over the program nodes:
+        1. First pass: Process symbol definitions and forward references
+        2. Second pass: Process label definitions with known addresses
+
+        Args:
+            program_nodes: List of executable nodes from parsing.
         """
         self.resolver.last_used_scope = 0
 
@@ -64,6 +104,16 @@ class Program:
         self.resolver_reset()
 
     def emit(self, program: list[NodeProtocol], writer: Writer) -> None:
+        """Emit machine code from resolved nodes to a writer.
+
+        Iterates through program nodes, generating machine code bytes and
+        writing them to the output writer. Handles code position changes
+        and IPS block includes.
+
+        Args:
+            program: List of resolved executable nodes.
+            writer: Output writer (IPSWriter, SFCWriter, etc.).
+        """
         current_block = b""
         current_block_addr = self.resolver.pc
         for node in program:
@@ -103,9 +153,10 @@ class Program:
 
         try:
             for node in program:
-                # TODO: Add logic to detect external symbol references and create relocations
-                # For now, emit normally - full relocation detection would require
-                # analyzing the node types and their symbol references
+                # Note: External symbol references are handled during parsing/codegen.
+                # The OpcodeNode and ExpressionNode classes already create relocations
+                # when they encounter external symbols (via ExternalSymbolReference).
+                # Here we simply emit the code - relocations are stored in the ObjectWriter.
                 node_bytes = node.emit(self.resolver.reloc_address)
 
                 if node_bytes:
@@ -278,8 +329,16 @@ class Program:
     def link_as_patch(
         self, linked_obj: ObjectFile, ips_file: Path, mapping: str | None = None, copier_header: bool = False
     ) -> int:
-        """
-        Create IPS patch from linked object file.
+        """Create IPS patch from linked object file.
+
+        Args:
+            linked_obj: The linked object file containing code and symbols.
+            ips_file: Output path for the IPS patch file.
+            mapping: ROM mapping type ('low', 'low2', 'high'). Default is 'low'.
+            copier_header: If True, adds 0x200 offset for copier headers.
+
+        Returns:
+            0 on success, -1 on failure.
         """
         if mapping is not None:
             address_mapping = {
@@ -294,12 +353,9 @@ class Program:
                 ips_emitter = IPSWriter(f, copier_header)
                 ips_emitter.begin()
 
-                # Write the linked code as a single block
-                # For now, assume it starts at PC=0 and needs to be relocated based on symbols
                 if linked_obj.code:
-                    # TODO: Implement proper address resolution from linked symbols
-                    # For now, write at a default address
-                    start_address = 0x8000  # Default SNES code start
+                    # Determine start address from CODE symbols, default to 0x8000
+                    start_address = self._get_code_start_address(linked_obj)
                     ips_emitter.write_block(linked_obj.code, start_address)
 
                 ips_emitter.end()
@@ -311,18 +367,23 @@ class Program:
             return -1
 
     def link_as_sfc(self, linked_obj: ObjectFile, sfc_file: Path) -> int:
-        """
-        Create SFC file from linked object file.
+        """Create SFC file from linked object file.
+
+        Args:
+            linked_obj: The linked object file containing code and symbols.
+            sfc_file: Output path for the SFC ROM file.
+
+        Returns:
+            0 on success, -1 on failure.
         """
         try:
             with open(sfc_file, "wb") as f:
                 sfc_emitter = SFCWriter(f)
                 sfc_emitter.begin()
 
-                # Write the linked code
                 if linked_obj.code:
-                    # TODO: Implement proper address resolution from linked symbols
-                    start_address = 0x8000  # Default SNES code start
+                    # Determine start address from CODE symbols, default to 0x8000
+                    start_address = self._get_code_start_address(linked_obj)
                     sfc_emitter.write_block(linked_obj.code, start_address)
 
                 sfc_emitter.end()
@@ -332,6 +393,27 @@ class Program:
         except OSError as e:
             self.logger.error(f"Failed to create SFC file: {e}")
             return -1
+
+    def _get_code_start_address(self, linked_obj: ObjectFile) -> int:
+        """Determine the start address for code from linked object symbols.
+
+        Finds the lowest address among CODE section symbols to determine
+        where the code block should be written.
+
+        Args:
+            linked_obj: The linked object file with symbols.
+
+        Returns:
+            The lowest CODE symbol address, or 0x8000 as default.
+        """
+        code_addresses = [
+            value
+            for name, value, sym_type, section in linked_obj.symbols
+            if section == SymbolSection.CODE and sym_type != SymbolType.EXTERNAL
+        ]
+        if code_addresses:
+            return min(code_addresses)
+        return 0x8000  # Default SNES code start
 
     def exports_symbol_file(self, filename: str) -> None:
         """

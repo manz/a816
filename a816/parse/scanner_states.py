@@ -357,4 +357,4 @@ def lex_initial(s: Scanner) -> None:
         s.emit(TokenType.COMMENT)
     else:
         if s.next() is not None:
-            raise ScannerException(f"Invalid Input {s.input[s.start:]}", s.get_position())
+            raise ScannerException(f"Invalid Input {s.input[s.start :]}", s.get_position())
