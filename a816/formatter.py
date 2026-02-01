@@ -93,7 +93,7 @@ class A816Formatter:
 
         except ParserSyntaxError as exc:
             raise FormattingError(f"Unable to format {source}: {exc}") from exc
-        except Exception as exc:
+        except (AttributeError, KeyError, IndexError, TypeError) as exc:
             raise FormattingError(f"Unexpected formatter failure for {source}: {exc}") from exc
 
     def format_file(self, file_path: str | Path) -> str:

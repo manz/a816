@@ -95,7 +95,8 @@ class ExpressionNode(ValueNodeProtocol):
 
     def get_value_string_len(self) -> int:
         value = self.get_value()
-        assert isinstance(value, int)
+        if not isinstance(value, int):
+            raise TypeError(f"Expected int, got {type(value).__name__}")
         return len(hex(value)) - 2
 
     def __str__(self) -> str:

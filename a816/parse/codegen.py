@@ -437,7 +437,7 @@ def generate_macro_application(
     macro_args_values = node.args
 
     if len(macro_args_values) != len(macro_args):
-        raise ValueError(f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}")
+        raise NodeError(f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}", file_info)
 
     resolver.append_scope()
     resolver.use_next_scope()

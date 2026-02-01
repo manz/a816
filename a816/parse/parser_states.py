@@ -1,5 +1,6 @@
 import ast
 import inspect
+from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
 from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
@@ -315,17 +316,33 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
         expressions = parse_expression_list_inner(p)
         return DataNode("pointer", expressions, keyword)
     elif keyword.value == "include":
-        filename = parse_directive_with_quoted_string(p)
-        with open(filename, encoding="utf-8") as fd:
+        include_path = parse_directive_with_quoted_string(p)
+
+        # Resolve include path relative to the parent file's directory
+        resolved_path = include_path
+        if keyword.position and keyword.position.file:
+            parent_filename = keyword.position.file.filename
+            # Handle file:// URIs from LSP
+            if parent_filename.startswith("file://"):
+                from urllib.parse import unquote, urlparse
+
+                parent_filename = unquote(urlparse(parent_filename).path)
+            parent_file = Path(parent_filename)
+            if parent_file.parent.exists():
+                candidate = parent_file.parent / include_path
+                if candidate.exists():
+                    resolved_path = str(candidate)
+
+        with open(resolved_path, encoding="utf-8") as fd:
             source = fd.read()
 
             scanner = Scanner(cast(ScannerStateFunc, lex_initial))
-            tokens = scanner.scan(filename, source)
+            tokens = scanner.scan(resolved_path, source)
 
             parser = Parser(tokens, cast(StateFunc, parse_initial))
             sub_ast = parser.parse()
 
-        return IncludeAstNode(filename, sub_ast, keyword)
+        return IncludeAstNode(include_path, sub_ast, keyword)
     elif keyword.value == "include_ips":
         return parse_include_ips(p)
     elif keyword.value == "incbin":

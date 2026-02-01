@@ -22,7 +22,7 @@ logger = logging.getLogger("a816")
 class Program:
     def __init__(self, parser: MZParser | None = None, dump_symbols: bool = False):
         self.resolver = Resolver()
-        self.logger = logging.getLogger("x816")
+        self.logger = logging.getLogger("a816")
         self.dump_symbols = dump_symbols
         self.parser = parser or MZParser(self.resolver)
 
@@ -306,7 +306,7 @@ class Program:
                 self.logger.info("Successfully created IPS patch")
                 return 0
 
-        except Exception as e:
+        except OSError as e:
             self.logger.error(f"Failed to create IPS patch: {e}")
             return -1
 
@@ -329,7 +329,7 @@ class Program:
                 self.logger.info("Successfully created SFC file")
                 return 0
 
-        except Exception as e:
+        except OSError as e:
             self.logger.error(f"Failed to create SFC file: {e}")
             return -1
 

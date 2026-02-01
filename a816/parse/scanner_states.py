@@ -282,7 +282,6 @@ def lex_initial(s: Scanner) -> None:
         while s.peek() not in ["\n", EOF]:
             # eat the comment until end of  line.
             s.next()
-            pass
         s.emit(TokenType.COMMENT)
     elif s.accept("0123456789"):
         lex_number(s)
@@ -358,4 +357,4 @@ def lex_initial(s: Scanner) -> None:
         s.emit(TokenType.COMMENT)
     else:
         if s.next() is not None:
-            raise ScannerException(f"Invalid Input {s.input[s.start :]}", s.get_position())
+            raise ScannerException(f"Invalid Input {s.input[s.start:]}", s.get_position())

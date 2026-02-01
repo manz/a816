@@ -149,7 +149,7 @@ class Linker:
         # Safely evaluate the expression using Python's eval with no builtins
         try:
             return cast(int, eval(expr_to_eval, {"__builtins__": {}}, {}))
-        except Exception as e:
+        except (SyntaxError, NameError, TypeError, ValueError) as e:
             raise ExpressionEvaluationError(expression, str(e)) from e
 
     def _substitute_symbols(self, expression: str) -> str:

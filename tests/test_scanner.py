@@ -2,6 +2,7 @@
 
 from unittest import TestCase
 
+from a816.parse.errors import ScannerException
 from a816.parse.scanner import Scanner
 from a816.parse.scanner_states import lex_initial
 from a816.parse.tokens import TokenType
@@ -132,3 +133,49 @@ class ScannerTest(TestCase):
         """Test triple double-quoted docstring."""
         tokens = self._scan('"""docstring"""')
         self.assertEqual(tokens[0][0], TokenType.DOCSTRING)
+
+    def test_scoped_identifier(self) -> None:
+        """Test scoped identifier (scope.member) parsing."""
+        tokens = self._scan("scope.member")
+        self.assertEqual(tokens[0], (TokenType.IDENTIFIER, "scope.member"))
+
+    def test_keyword_include(self) -> None:
+        """Test .include keyword parsing."""
+        tokens = self._scan(".include")
+        self.assertEqual(tokens[0], (TokenType.KEYWORD, "include"))
+
+    def test_keyword_db(self) -> None:
+        """Test .db keyword parsing."""
+        tokens = self._scan(".db")
+        self.assertEqual(tokens[0], (TokenType.KEYWORD, "db"))
+
+    def test_assignment_operator(self) -> None:
+        """Test := assignment operator."""
+        tokens = self._scan("value := 42")
+        self.assertEqual(tokens[0], (TokenType.IDENTIFIER, "value"))
+        self.assertEqual(tokens[1], (TokenType.ASSIGN, ":="))
+        self.assertEqual(tokens[2], (TokenType.NUMBER, "42"))
+
+    def test_star_eq_operator(self) -> None:
+        """Test *= operator for code position."""
+        tokens = self._scan("*= 0x8000")
+        self.assertEqual(tokens[0], (TokenType.STAR_EQ, "*="))
+        self.assertEqual(tokens[1], (TokenType.NUMBER, "0x8000"))
+
+    def test_at_eq_operator(self) -> None:
+        """Test @= operator for relocation."""
+        tokens = self._scan("@= 0x1000")
+        self.assertEqual(tokens[0], (TokenType.AT_EQ, "@="))
+        self.assertEqual(tokens[1], (TokenType.NUMBER, "0x1000"))
+
+    def test_empty_input(self) -> None:
+        """Test scanning empty input returns no tokens."""
+        tokens = self._scan("")
+        self.assertEqual(tokens, [])
+
+    def test_unterminated_string_error(self) -> None:
+        """Test that unterminated string raises ScannerException."""
+        scanner = Scanner(lex_initial)
+        with self.assertRaises(ScannerException) as ctx:
+            scanner.scan("test.s", "'unterminated")
+        self.assertIn("Unterminated", str(ctx.exception))

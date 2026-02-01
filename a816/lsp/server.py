@@ -151,8 +151,8 @@ class A816Document:
             )
             self.ast_nodes = []
             logger.warning("Parser exception not caught by MZParser: %s", e)
-        except Exception as e:
-            # Catch any other unexpected exceptions
+        except (AttributeError, KeyError, IndexError, TypeError) as e:
+            # Catch AST processing exceptions
             self.parse_error = ParseError(
                 message=f"Unexpected parser error: {str(e)}",
                 filename=self.uri,
@@ -170,8 +170,8 @@ class A816Document:
         try:
             for node in self.ast_nodes:
                 self._visit_node_for_symbols(node)
-        except Exception:
-            logger.exception("Error extracting symbols from AST")
+        except (AttributeError, KeyError, IndexError, TypeError) as e:
+            logger.warning("Error extracting symbols from AST: %s", e)
             # Continue without symbols rather than crashing
 
     def _visit_node_for_symbols(self, node: AstNode) -> None:
@@ -819,7 +819,7 @@ class A816LanguageServer:
             try:
                 # Send a semantic tokens refresh request to the client using pygls
                 self.server.send_notification("workspace/semanticTokens/refresh")
-            except Exception as e:
+            except (AttributeError, RuntimeError) as e:
                 logger.debug(f"Could not refresh semantic tokens: {e}")
                 # This is optional - some clients don't support refresh
 
@@ -843,7 +843,7 @@ class A816LanguageServer:
                 doc.update_content(params.text)
             else:
                 # Re-analyze with current content to ensure diagnostics are fresh
-                doc.update_content(doc.content)
+                doc.analyze()
 
             workspace = self._ensure_workspace_index()
             if workspace:
@@ -1664,7 +1664,7 @@ class A816LanguageServer:
             if hasattr(node, "else_block") and node.else_block:
                 self._visit_node_for_tokens(node.else_block, tokens, doc)
 
-        except Exception as e:
+        except (AttributeError, KeyError, IndexError, TypeError) as e:
             logger.debug(f"Error processing AST node {type(node).__name__}: {e}")
 
     def _analyze_expression_tokens(
@@ -1698,7 +1698,7 @@ class A816LanguageServer:
                                     }
                                 )
 
-        except Exception as e:
+        except (AttributeError, KeyError, IndexError, TypeError) as e:
             logger.debug(f"Error analyzing expression tokens: {e}")
 
     def _classify_identifier(self, identifier: str, doc: A816Document) -> int:
@@ -2044,7 +2044,7 @@ class A816LanguageServer:
 
             return None
 
-        except Exception as e:
+        except (OSError, ValueError, AttributeError) as e:
             logger.debug(f"Error checking include directive: {e}")
             return None
 
@@ -2074,7 +2074,7 @@ class A816LanguageServer:
             # Return as string path
             return str(resolved_path)
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             logger.debug(f"Error resolving include path '{include_path}' from '{current_uri}': {e}")
             return None
 
