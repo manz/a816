@@ -10,11 +10,13 @@ from a816.symbols import high_rom_bus, low_rom_bus
 from a816.xdds import (
     apply_ips_patch,
     create_parser,
+    disassemble,
     get_bus_for_rom_type,
     hexdump,
     logical_to_physical,
     parse_address,
     physical_to_logical,
+    show_mapping_info,
 )
 
 
@@ -373,3 +375,176 @@ class TestLogicalToPhysical:
         # HiROM $41:0000 -> physical 0x10000
         physical = logical_to_physical(high_rom_bus, 0x410000)
         assert physical == 0x10000
+
+
+class TestShowMappingInfo:
+    """Tests for the show_mapping_info function."""
+
+    def test_show_mapping_info_lorom(self, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            show_mapping_info(RomType.low_rom)
+        assert "low_rom" in caplog.text
+        assert "low_rom_default_mapping" in caplog.text
+
+    def test_show_mapping_info_hirom(self, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            show_mapping_info(RomType.high_rom)
+        assert "high_rom" in caplog.text
+        assert "high_rom_default_mapping" in caplog.text
+
+
+class TestDisassemble:
+    """Tests for the disassemble function."""
+
+    def test_disassemble_basic(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # SEI (0x78), LDA #0x00 (0xA9 0x00), RTS (0x60)
+        data = bytes([0x78, 0xA9, 0x00, 0x60])
+        disassemble(data, low_rom_bus, 0, m_flag=True, x_flag=True, count=3)
+        captured = capsys.readouterr()
+        assert "sei" in captured.out.lower()
+        assert "lda" in captured.out.lower()
+        assert "rts" in captured.out.lower()
+
+    def test_disassemble_with_count(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # Multiple NOPs
+        data = bytes([0xEA, 0xEA, 0xEA, 0xEA])
+        disassemble(data, low_rom_bus, 0, count=2)
+        captured = capsys.readouterr()
+        lines = [line for line in captured.out.strip().split("\n") if line]
+        assert len(lines) == 2
+
+    def test_disassemble_no_bytes(self, capsys: pytest.CaptureFixture[str]) -> None:
+        data = bytes([0xEA])  # NOP
+        disassemble(data, low_rom_bus, 0, show_bytes=False)
+        captured = capsys.readouterr()
+        # Without bytes, should not show raw hex values like "ea"
+        # The output should just have the mnemonic
+        assert "nop" in captured.out.lower()
+
+    def test_disassemble_m16_mode(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # LDA #$1234 in 16-bit mode (A9 34 12)
+        data = bytes([0xA9, 0x34, 0x12])
+        disassemble(data, low_rom_bus, 0, m_flag=False, count=1)
+        captured = capsys.readouterr()
+        assert "lda" in captured.out.lower()
+        # Should show 16-bit immediate
+        assert "1234" in captured.out.lower() or "34 12" in captured.out.lower()
+
+    def test_disassemble_x16_mode(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # LDX #$1234 in 16-bit index mode (A2 34 12)
+        data = bytes([0xA2, 0x34, 0x12])
+        disassemble(data, low_rom_bus, 0, m_flag=True, x_flag=False, count=1)
+        captured = capsys.readouterr()
+        assert "ldx" in captured.out.lower()
+
+    def test_disassemble_a816_syntax(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # NOP
+        data = bytes([0xEA])
+        disassemble(data, low_rom_bus, 0, a816_syntax=True, count=1)
+        captured = capsys.readouterr()
+        # a816 syntax should output assembly-compatible format
+        assert "nop" in captured.out.lower()
+
+    def test_disassemble_hirom_addresses(self, capsys: pytest.CaptureFixture[str]) -> None:
+        data = bytes([0xEA])  # NOP
+        disassemble(data, high_rom_bus, 0, count=1)
+        captured = capsys.readouterr()
+        # HiROM physical 0 -> $40:0000
+        assert "40" in captured.out
+
+
+class TestParserDisasmOptions:
+    """Tests for disassembly-related parser options."""
+
+    def test_parser_accepts_disasm_flag(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["-d", "input.sfc"])
+        assert args.disasm is True
+
+    def test_parser_accepts_count_flag(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["-n", "10", "input.sfc"])
+        assert args.count == 10
+
+    def test_parser_m8_default(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["input.sfc"])
+        assert args.m_flag is True
+
+    def test_parser_m16_flag(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["--m16", "input.sfc"])
+        assert args.m_flag is False
+
+    def test_parser_x8_default(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["input.sfc"])
+        assert args.x_flag is True
+
+    def test_parser_x16_flag(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["--x16", "input.sfc"])
+        assert args.x_flag is False
+
+    def test_parser_no_bytes_flag(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["--no-bytes", "input.sfc"])
+        assert args.no_bytes is True
+
+    def test_parser_asm_syntax_flag(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["--asm", "input.sfc"])
+        assert args.asm is True
+
+
+class TestApplyIpsPatchErrors:
+    """Tests for IPS patch error conditions."""
+
+    def test_truncated_ips_offset_raises(self) -> None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00" * 16)
+            rom_path = Path(rom_file.name)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ips") as ips_file:
+            ips_file.write(b"PATCH")
+            ips_file.write(b"\x00\x00")  # Truncated offset (only 2 bytes instead of 3)
+            ips_path = Path(ips_file.name)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as out_file:
+            output_path = Path(out_file.name)
+
+        try:
+            with pytest.raises(ValueError, match="Unexpected end"):
+                apply_ips_patch(rom_path, ips_path, output_path)
+        finally:
+            rom_path.unlink()
+            ips_path.unlink()
+            if output_path.exists():
+                output_path.unlink()
+
+    def test_truncated_ips_size_raises(self) -> None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00" * 16)
+            rom_path = Path(rom_file.name)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ips") as ips_file:
+            ips_file.write(b"PATCH")
+            ips_file.write(b"\x00\x00\x05")  # Valid offset
+            ips_file.write(b"\x00")  # Truncated size (only 1 byte instead of 2)
+            ips_path = Path(ips_file.name)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as out_file:
+            output_path = Path(out_file.name)
+
+        try:
+            with pytest.raises(ValueError, match="Unexpected end"):
+                apply_ips_patch(rom_path, ips_path, output_path)
+        finally:
+            rom_path.unlink()
+            ips_path.unlink()
+            if output_path.exists():
+                output_path.unlink()
