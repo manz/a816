@@ -17,6 +17,7 @@ from a816.xdds import (
     parse_address,
     physical_to_logical,
     show_mapping_info,
+    xdds_main,
 )
 
 
@@ -548,3 +549,256 @@ class TestApplyIpsPatchErrors:
             ips_path.unlink()
             if output_path.exists():
                 output_path.unlink()
+
+
+class TestXddsMain:
+    """Tests for the xdds_main CLI function."""
+
+    def test_hexdump_basic(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test basic hexdump output."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x78\xa9\x00\x8d\x00\x21\x60")  # SEI, LDA #0, STA $2100, RTS
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "$00:8000" in captured.out
+            assert "78" in captured.out
+        finally:
+            rom_path.unlink()
+
+    def test_hexdump_with_length(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test hexdump with length limit."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00" * 100)
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "-l", "16", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            # Should only have one line of output (16 bytes)
+            lines = [line for line in captured.out.strip().split("\n") if line]
+            assert len(lines) == 1
+        finally:
+            rom_path.unlink()
+
+    def test_hexdump_with_start_offset(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test hexdump with start offset."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00" * 0x8000 + b"\xab\xcd")
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "-s", "0x8000", "-l", "2", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "$01:8000" in captured.out  # Physical 0x8000 = $01:8000 in LoROM
+            assert "ab cd" in captured.out.lower()
+        finally:
+            rom_path.unlink()
+
+    def test_hexdump_with_snes_address(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test hexdump with SNES logical address."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00" * 0x100 + b"\xef")
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "-s", "$00:8100", "-l", "1", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "ef" in captured.out.lower()
+        finally:
+            rom_path.unlink()
+
+    def test_hexdump_hirom(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test hexdump with HiROM mapping."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x12\x34")
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "--hirom", "-l", "2", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "$40:0000" in captured.out
+        finally:
+            rom_path.unlink()
+
+    def test_hexdump_no_ascii(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test hexdump without ASCII."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"ABCD")
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "--no-ascii", "-l", "4", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            # Hex values should be present
+            assert "41 42 43 44" in captured.out
+        finally:
+            rom_path.unlink()
+
+    def test_disassemble_mode(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test disassembly mode."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x78\xea\x60")  # SEI, NOP, RTS
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "-d", "-n", "3", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "sei" in captured.out.lower()
+            assert "nop" in captured.out.lower()
+            assert "rts" in captured.out.lower()
+        finally:
+            rom_path.unlink()
+
+    def test_disassemble_m16_mode(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test disassembly with 16-bit accumulator."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\xa9\x34\x12")  # LDA #$1234 (16-bit)
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "-d", "--m16", "-n", "1", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "lda" in captured.out.lower()
+        finally:
+            rom_path.unlink()
+
+    def test_disassemble_no_bytes(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test disassembly without bytes shown."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\xea")  # NOP
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "-d", "--no-bytes", "-n", "1", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "nop" in captured.out.lower()
+        finally:
+            rom_path.unlink()
+
+    def test_disassemble_asm_syntax(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test disassembly with a816 syntax."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\xea")  # NOP
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "-d", "--asm", "-n", "1", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "nop" in captured.out.lower()
+        finally:
+            rom_path.unlink()
+
+    def test_show_mappings(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test show mappings option."""
+        import logging
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00")
+            rom_path = Path(rom_file.name)
+
+        try:
+            with caplog.at_level(logging.INFO):
+                monkeypatch.setattr("sys.argv", ["xdds", "--show-mappings", "-l", "1", str(rom_path)])
+                xdds_main()
+            assert "low_rom" in caplog.text
+        finally:
+            rom_path.unlink()
+
+    def test_with_ips_patch(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test hexdump with IPS patch applied."""
+        # Create ROM file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00" * 16)
+            rom_path = Path(rom_file.name)
+
+        # Create IPS patch that writes 0xAB at offset 0
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ips") as ips_file:
+            ips_file.write(b"PATCH")
+            ips_file.write(b"\x00\x00\x00")  # Offset 0
+            ips_file.write(b"\x00\x01")  # Size 1
+            ips_file.write(b"\xab")  # Data
+            ips_file.write(b"EOF")
+            ips_path = Path(ips_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "--ips", str(ips_path), "-l", "1", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            assert "ab" in captured.out.lower()
+        finally:
+            rom_path.unlink()
+            ips_path.unlink()
+
+    def test_file_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test error when input file not found."""
+        monkeypatch.setattr("sys.argv", ["xdds", "/nonexistent/file.sfc"])
+        with pytest.raises(SystemExit) as exc_info:
+            xdds_main()
+        assert exc_info.value.code == -1
+
+    def test_ips_file_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test error when IPS file not found."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00")
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "--ips", "/nonexistent.ips", str(rom_path)])
+            with pytest.raises(SystemExit) as exc_info:
+                xdds_main()
+            assert exc_info.value.code == -1
+        finally:
+            rom_path.unlink()
+
+    def test_verbose_mode(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test verbose mode enables debug logging."""
+        import logging
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00")
+            rom_path = Path(rom_file.name)
+
+        try:
+            with caplog.at_level(logging.DEBUG):
+                monkeypatch.setattr("sys.argv", ["xdds", "--verbose", "-l", "1", str(rom_path)])
+                xdds_main()
+            # Just verify it doesn't crash
+        finally:
+            rom_path.unlink()
+
+    def test_custom_cols(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test custom column width."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as rom_file:
+            rom_file.write(b"\x00" * 32)
+            rom_path = Path(rom_file.name)
+
+        try:
+            monkeypatch.setattr("sys.argv", ["xdds", "-c", "8", "-l", "16", str(rom_path)])
+            xdds_main()
+            captured = capsys.readouterr()
+            # With 8 bytes per line, 16 bytes should give us 2 lines
+            lines = [line for line in captured.out.strip().split("\n") if line]
+            assert len(lines) == 2
+        finally:
+            rom_path.unlink()
