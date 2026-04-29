@@ -3,7 +3,6 @@ import os
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 try:
     import tomllib
@@ -83,16 +82,9 @@ from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
 from a816.parse.mzparser import MZParser
 from a816.parse.scanner_states import KEYWORDS
 from a816.parse.tokens import Token, TokenType
+from a816.util import uri_to_path
 
 logger = logging.getLogger(__name__)
-
-
-def uri_to_path(uri: str) -> Path:
-    """Convert file URI or plain path to Path."""
-    parsed = urlparse(uri)
-    if parsed.scheme == "file":
-        return Path(unquote(parsed.path))
-    return Path(uri)
 
 
 class A816Document:
@@ -728,21 +720,6 @@ class WorkspaceIndex:
                     candidate = (search_dir / module_file).resolve()
                     if candidate.exists():
                         found_paths.add(candidate)
-                        found = True
-                        break
-
-            # 3. Check workspace root and common subdirectories
-            if not found and self.root_path:
-                search_dirs = [
-                    self.root_path,
-                    self.root_path / "src",
-                    self.root_path / "lib",
-                    self.root_path / "modules",
-                ]
-                for search_dir in search_dirs:
-                    workspace_candidate = (search_dir / module_file).resolve()
-                    if workspace_candidate.exists():
-                        found_paths.add(workspace_candidate)
                         found = True
                         break
 
@@ -2186,45 +2163,23 @@ class A816LanguageServer:
             return None
 
     def _resolve_module_path(self, module_name: str, current_uri: str) -> str | None:
-        """Resolve module name to source file path for .import directives"""
-        try:
-            # Convert URI to file path
-            if current_uri.startswith("file://"):
-                current_path = Path(current_uri[7:])  # Remove file:// prefix
-            else:
-                current_path = Path(current_uri)
+        """Resolve module name to source file path for .import directives.
 
-            current_dir = current_path.parent
+        Search order:
+        1. Same directory as current file
+        2. module_paths configured in a816.toml
+        """
+        try:
+            current_dir = uri_to_path(current_uri).parent
             module_file = module_name + ".s"
 
-            # 1. Check same directory as current file
             candidate = (current_dir / module_file).resolve()
             if candidate.exists():
                 return str(candidate)
 
-            # 2. Check configured module paths from workspace
             workspace = self.workspace_index
             if workspace:
                 for search_dir in workspace.module_paths:
-                    workspace_candidate = (search_dir / module_file).resolve()
-                    if workspace_candidate.exists():
-                        return str(workspace_candidate)
-
-            # 3. Check workspace root and common subdirectories
-            root_path = None
-            try:
-                root_path = Path(self.server.workspace.root_path) if self.server.workspace.root_path else None
-            except Exception:
-                pass
-
-            if root_path:
-                search_dirs = [
-                    root_path,
-                    root_path / "src",
-                    root_path / "lib",
-                    root_path / "modules",
-                ]
-                for search_dir in search_dirs:
                     workspace_candidate = (search_dir / module_file).resolve()
                     if workspace_candidate.exists():
                         return str(workspace_candidate)

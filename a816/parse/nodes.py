@@ -258,7 +258,7 @@ class LinkedModuleNode(NodeProtocol):
                 else:
                     logger.warning(f"Unsupported relocation size {size} for expression '{expr}'")
 
-            except Exception as e:
+            except (SymbolNotDefined, NodeError, ValueError) as e:
                 logger.warning(f"Failed to evaluate expression '{expr}': {e}")
 
         return bytes(code_array)

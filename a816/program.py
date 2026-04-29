@@ -108,10 +108,7 @@ class Program:
         """
         self.resolver.last_used_scope = 0
 
-        # Normalize the address through the bus mapping. The initial reloc_address
-        # may have logical_value=0, but the mapped logical value is 0x8000 (for LoROM).
-        # Adding 0 forces the address through the mapping to get consistent values.
-        previous_pc = self.resolver.reloc_address + 0
+        previous_pc = self.resolver.reloc_address
 
         for node in program_nodes:
             if isinstance(node, SymbolNode):
@@ -120,7 +117,7 @@ class Program:
 
         self.resolver_reset()
 
-        previous_pc = self.resolver.reloc_address + 0
+        previous_pc = self.resolver.reloc_address
         for node in program_nodes:
             if isinstance(node, LabelNode) or isinstance(node, BinaryNode):
                 continue
@@ -295,11 +292,8 @@ class Program:
             self.resolver.context.mode = AssemblyMode.OBJECT
             self.resolver.context.object_writer = object_writer
 
-            # Record the base address for later offset calculation
-            # Force the address through the mapping to get the correct logical base.
-            # The initial reloc_address may have logical_value=0, but after any address
-            # arithmetic it becomes 0x8000+ (for LoROM). We need the mapped value.
-            base_address = (self.resolver.reloc_address + 0).logical_value
+            # Base logical address for converting symbol values to module-relative offsets.
+            base_address = self.resolver.reloc_address.logical_value
 
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()

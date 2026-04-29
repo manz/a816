@@ -316,12 +316,9 @@ def generate_import(
     # Get the base directory from the current file
     base_dir = None
     if file_info.position and file_info.position.file:
-        current_file = file_info.position.file.filename
-        if current_file.startswith("file://"):
-            from urllib.parse import unquote, urlparse
+        from a816.util import uri_to_path
 
-            current_file = unquote(urlparse(current_file).path)
-        base_dir = Path(current_file).parent
+        base_dir = uri_to_path(file_info.position.file.filename).parent
 
     # Build search paths
     search_paths: list[Path] = []
@@ -436,43 +433,20 @@ def _extract_public_symbols_from_source(source_path: Path) -> list[str]:
 def _collect_public_symbols(nodes: list[AstNode], symbols: list[str]) -> None:
     """Recursively collect public symbols from AST nodes.
 
-    Public symbols are those that don't start with underscore (_).
-    Symbols starting with underscore are considered local/private to the module.
+    Public symbols don't start with underscore (_); underscored symbols are
+    treated as module-private.
     """
-    for node in nodes:
-        if isinstance(node, LabelAstNode):
-            if not node.label.startswith("_"):
-                if node.label not in symbols:
-                    symbols.append(node.label)
-        elif isinstance(node, SymbolAffectationAstNode):
-            if not node.symbol.startswith("_"):
-                if node.symbol not in symbols:
-                    symbols.append(node.symbol)
-        elif isinstance(node, AssignAstNode):
-            if not node.symbol.startswith("_"):
-                if node.symbol not in symbols:
-                    symbols.append(node.symbol)
+    from a816.parse.ast.visitor import walk
 
-        # Recurse into compound structures
-        if hasattr(node, "body"):
-            if isinstance(node.body, BlockAstNode):
-                _collect_public_symbols(node.body.body, symbols)
-            elif isinstance(node.body, CompoundAstNode):
-                _collect_public_symbols(node.body.body, symbols)
-            elif isinstance(node.body, list):
-                _collect_public_symbols(node.body, symbols)
-        if hasattr(node, "block") and node.block:
-            if isinstance(node.block, BlockAstNode):
-                _collect_public_symbols(node.block.body, symbols)
-            elif isinstance(node.block, CompoundAstNode):
-                _collect_public_symbols(node.block.body, symbols)
-        if hasattr(node, "else_block") and node.else_block:
-            if isinstance(node.else_block, BlockAstNode):
-                _collect_public_symbols(node.else_block.body, symbols)
-            elif isinstance(node.else_block, CompoundAstNode):
-                _collect_public_symbols(node.else_block.body, symbols)
-        if hasattr(node, "included_nodes") and node.included_nodes:
-            _collect_public_symbols(node.included_nodes, symbols)
+    for node in walk(nodes):
+        name: str | None = None
+        if isinstance(node, LabelAstNode):
+            name = node.label
+        elif isinstance(node, SymbolAffectationAstNode | AssignAstNode):
+            name = node.symbol
+
+        if name is not None and not name.startswith("_") and name not in symbols:
+            symbols.append(name)
 
 
 def generate_register_size(

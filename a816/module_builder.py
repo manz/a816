@@ -20,7 +20,6 @@ from a816.parse.ast.nodes import (
     CodePositionAstNode,
     CodeRelocationAstNode,
     ImportAstNode,
-    IncludeAstNode,
 )
 from a816.parse.mzparser import MZParser
 
@@ -116,15 +115,18 @@ class ModuleBuilder:
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
 
-    def discover_imports(self, source_file: Path) -> None:
+    def discover_imports(self, source_file: Path, parsed_nodes: list[AstNode] | None = None) -> None:
         """Recursively discover all imports starting from a source file.
 
         Args:
             source_file: The main source file to start from.
+            parsed_nodes: Optional pre-parsed AST for source_file to avoid a redundant parse.
         """
-        self._discover_imports_recursive(source_file, "__main__")
+        self._discover_imports_recursive(source_file, "__main__", parsed_nodes)
 
-    def _discover_imports_recursive(self, source_path: Path, module_name: str) -> None:
+    def _discover_imports_recursive(
+        self, source_path: Path, module_name: str, parsed_nodes: list[AstNode] | None = None
+    ) -> None:
         """Recursively discover imports from a source file."""
         if module_name in self._discovered:
             return
@@ -132,13 +134,14 @@ class ModuleBuilder:
         self._discovered.add(module_name)
         self.graph.add_module(module_name, source_path)
 
-        # Parse the file to find imports
         try:
-            content = source_path.read_text(encoding="utf-8")
-            result = MZParser.parse_as_ast(content, str(source_path))
+            if parsed_nodes is not None:
+                nodes = parsed_nodes
+            else:
+                content = source_path.read_text(encoding="utf-8")
+                nodes = MZParser.parse_as_ast(content, str(source_path)).nodes
 
-            # Find all import nodes
-            imports = self._collect_imports(result.nodes)
+            imports = self._collect_imports(nodes)
 
             for import_name in imports:
                 self.graph.add_dependency(module_name, import_name)
@@ -156,31 +159,9 @@ class ModuleBuilder:
 
     def _collect_imports(self, nodes: list[AstNode]) -> list[str]:
         """Collect all import names from AST nodes."""
-        imports: list[str] = []
+        from a816.parse.ast.visitor import walk
 
-        for node in nodes:
-            if isinstance(node, ImportAstNode):
-                imports.append(node.module_name)
-
-            # Recurse into compound structures
-            if hasattr(node, "body") and node.body:
-                if hasattr(node.body, "body"):
-                    imports.extend(self._collect_imports(node.body.body))
-                elif isinstance(node.body, list):
-                    imports.extend(self._collect_imports(node.body))
-
-            if hasattr(node, "block") and node.block:
-                if hasattr(node.block, "body"):
-                    imports.extend(self._collect_imports(node.block.body))
-
-            if hasattr(node, "else_block") and node.else_block:
-                if hasattr(node.else_block, "body"):
-                    imports.extend(self._collect_imports(node.else_block.body))
-
-            if hasattr(node, "included_nodes") and node.included_nodes:
-                imports.extend(self._collect_imports(node.included_nodes))
-
-        return imports
+        return [node.module_name for node in walk(nodes) if isinstance(node, ImportAstNode)]
 
     def _resolve_module_source(self, module_name: str, base_dir: Path) -> Path | None:
         """Find the source file for a module.
@@ -232,19 +213,19 @@ class ModuleBuilder:
         obj_name = module_name.replace("/", "_") + ".o"
         return self.output_dir / obj_name
 
-    def build(self, main_source: Path) -> ObjectFile:
+    def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
         """Build all modules and link them.
 
         Args:
             main_source: The main source file.
+            parsed_main_nodes: Optional pre-parsed AST for main_source.
 
         Returns:
             The linked ObjectFile.
         """
         from a816.program import Program
 
-        # Discover all imports
-        self.discover_imports(main_source)
+        self.discover_imports(main_source, parsed_main_nodes)
 
         # Get compilation order
         compilation_order = self.graph.topological_sort()
@@ -309,38 +290,10 @@ class ModuleBuilder:
 
 
 def _has_position_directives(nodes: list[AstNode]) -> bool:
-    """Check if AST contains *= or @= directives (position-dependent code).
+    """Check if AST contains *= or @= directives (position-dependent code)."""
+    from a816.parse.ast.visitor import walk
 
-    Walks the AST recursively to find CodePositionAstNode or CodeRelocationAstNode
-    instances, which indicate position-dependent code that requires direct assembly.
-    """
-    for node in nodes:
-        if isinstance(node, (CodePositionAstNode, CodeRelocationAstNode)):
-            return True
-
-        if hasattr(node, "body") and node.body:
-            if hasattr(node.body, "body") and isinstance(node.body.body, list):
-                if _has_position_directives(node.body.body):
-                    return True
-            elif isinstance(node.body, list):
-                if _has_position_directives(node.body):
-                    return True
-
-        if hasattr(node, "block") and node.block:
-            if hasattr(node.block, "body") and isinstance(node.block.body, list):
-                if _has_position_directives(node.block.body):
-                    return True
-
-        if hasattr(node, "else_block") and node.else_block:
-            if hasattr(node.else_block, "body") and isinstance(node.else_block.body, list):
-                if _has_position_directives(node.else_block.body):
-                    return True
-
-        if isinstance(node, IncludeAstNode) and node.included_nodes:
-            if _has_position_directives(node.included_nodes):
-                return True
-
-    return False
+    return any(isinstance(node, CodePositionAstNode | CodeRelocationAstNode) for node in walk(nodes))
 
 
 def build_with_imports(
@@ -387,7 +340,8 @@ def build_with_imports(
     # Check if the main file uses *= or @= directives (position-dependent code)
     # If so, use the direct assembly approach instead of full object linking
     parse_result = MZParser.parse_as_ast(main_source.read_text(encoding="utf-8"), str(main_source))
-    if _has_position_directives(parse_result.nodes):
+    main_nodes = parse_result.nodes
+    if _has_position_directives(main_nodes):
         logger.info("Detected position-dependent code (*=), using direct assembly mode")
         return build_with_imports_direct(
             main_source=main_source,
@@ -399,6 +353,7 @@ def build_with_imports(
             copier_header=copier_header,
             include_paths=include_paths,
             prelude_file=prelude_file,
+            parsed_main_nodes=main_nodes,
         )
 
     try:
@@ -408,7 +363,7 @@ def build_with_imports(
             symbols=symbols,
         )
 
-        linked = builder.build(main_source)
+        linked = builder.build(main_source, parsed_main_nodes=main_nodes)
 
         # Output the final file
         from a816.program import Program
@@ -440,6 +395,7 @@ def build_with_imports_direct(
     copier_header: bool = False,
     include_paths: list[Path] | None = None,
     prelude_file: Path | None = None,
+    parsed_main_nodes: list[AstNode] | None = None,
 ) -> BuildResult:
     """Build a project by directly assembling with import resolution.
 
@@ -485,7 +441,7 @@ def build_with_imports_direct(
             output_dir=output_dir,
             symbols=symbols,
         )
-        builder.discover_imports(main_source)
+        builder.discover_imports(main_source, parsed_main_nodes)
 
         # Get compilation order (excluding main)
         compilation_order = builder.graph.topological_sort()

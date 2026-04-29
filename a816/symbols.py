@@ -182,7 +182,9 @@ class Resolver:
         if physical is not None:
             self.pc = physical
 
-        self.reloc_address = addr
+        # Normalize through the bus mapping so reloc_address.logical_value is
+        # always the mapped logical address (e.g. 0x8000 for LoROM bank 0).
+        self.reloc_address = addr + 0
         self.reloc = False
 
     def append_named_scope(self, name: str) -> None:
