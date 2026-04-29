@@ -23,7 +23,17 @@ class Linker:
         self.linked_expression_relocations: list[tuple[int, str, int]] = []  # (offset, expression, size_bytes)
         self.symbol_map: dict[str, int] = {}
 
-    def link(self) -> ObjectFile:
+    def link(self, base_address: int = 0) -> ObjectFile:
+        """Link object files into a single object file.
+
+        Args:
+            base_address: Base ROM address for CODE section symbols (e.g., 0x8000 for SNES LoROM).
+                         This is added to CODE symbol addresses before evaluating expression relocations.
+
+        Returns:
+            A linked ObjectFile containing combined code, resolved symbols, and remaining relocations.
+        """
+        self._base_address = base_address
         self._resolve_symbols()
         self._apply_relocations()
         self._apply_expression_relocations()
@@ -33,6 +43,7 @@ class Linker:
         # First pass: collect external symbol requirements and global definitions
         external_symbols_needed: set[str] = set()
         current_code_offset = 0
+        base_address = getattr(self, "_base_address", 0)
 
         for obj_file in self.object_files:
             self.linked_code.extend(obj_file.code)
@@ -42,11 +53,16 @@ class Linker:
                         raise DuplicateSymbolError(name)
                     # Only add code offset for CODE section symbols (labels)
                     # DATA section symbols (constants) are absolute values
-                    final_address = address if section == SymbolSection.DATA else current_code_offset + address
+                    if section == SymbolSection.DATA:
+                        final_address = address
+                    else:
+                        # CODE symbols get base address + current offset + symbol's relative address
+                        final_address = base_address + current_code_offset + address
                     self.symbol_map[name] = final_address
                     self.linked_symbols.append((name, final_address, symbol_type, section))
                 elif symbol_type == SymbolType.LOCAL:
-                    self.linked_symbols.append((name, current_code_offset + address, symbol_type, section))
+                    local_address = base_address + current_code_offset + address
+                    self.linked_symbols.append((name, local_address, symbol_type, section))
                 elif symbol_type == SymbolType.EXTERNAL:
                     external_symbols_needed.add(name)
                 else:
@@ -67,6 +83,8 @@ class Linker:
             raise UnresolvedSymbolError(unresolved_symbols)
 
     def _apply_relocations(self) -> None:
+        base_address = getattr(self, "_base_address", 0)
+
         for offset, symbol_name, relocation_type in self.linked_relocations:
             if symbol_name not in self.symbol_map:
                 raise UnresolvedSymbolError({symbol_name})
@@ -93,7 +111,9 @@ class Linker:
                         )
                     self._write_le24(offset, symbol_address)
                 case RelocationType.RELATIVE_16:
-                    target_address = symbol_address - (offset + 2)
+                    # For relative relocations, current PC = base_address + offset
+                    current_pc = base_address + offset
+                    target_address = symbol_address - (current_pc + 2)
                     if not -0x8000 <= target_address <= 0x7FFF:
                         raise RelocationError(
                             symbol_name,
@@ -103,7 +123,9 @@ class Linker:
                         )
                     struct.pack_into("<h", self.linked_code, offset, target_address)
                 case RelocationType.RELATIVE_24:
-                    target_address = symbol_address - (offset + 3)
+                    # For relative relocations, current PC = base_address + offset
+                    current_pc = base_address + offset
+                    target_address = symbol_address - (current_pc + 3)
                     if not -0x800000 <= target_address <= 0x7FFFFF:
                         raise RelocationError(
                             symbol_name,

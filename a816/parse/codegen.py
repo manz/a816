@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from a816.cpu.types import AddressingMode
@@ -21,6 +22,7 @@ from a816.parse.ast.nodes import (
     FileInfoAstNode,
     ForAstNode,
     IfAstNode,
+    ImportAstNode,
     IncludeAstNode,
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
@@ -46,6 +48,7 @@ from a816.parse.nodes import (
     ExternNode,
     IncludeIpsNode,
     LabelNode,
+    LinkedModuleNode,
     LongNode,
     NodeError,
     OpcodeNode,
@@ -285,6 +288,193 @@ def generate_extern(
     return [ExternNode(node.symbol, resolver)]
 
 
+def generate_import(
+    node: ImportAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Generate nodes for all public symbols in an imported module.
+
+    Module resolution order:
+    1. Try .o file (compiled object) - extracts GLOBAL symbols and code
+    2. Fall back to .s file (source) - extracts public labels (non-dot-prefixed)
+
+    When a .o file is found:
+    - If we're compiling to an object file (resolver has _object_writer), create ExternNode
+    - Otherwise (direct assembly), create LinkedModuleNode that emits code and binds symbols
+
+    The module is searched in:
+    1. Directory of the current file
+    2. Module search paths (if configured in resolver)
+    """
+    from a816.object_file import ObjectFile, SymbolType
+
+    module_name = node.module_name
+    code: GenNodes = []
+
+    # Get the base directory from the current file
+    base_dir = None
+    if file_info.position and file_info.position.file:
+        current_file = file_info.position.file.filename
+        if current_file.startswith("file://"):
+            from urllib.parse import unquote, urlparse
+
+            current_file = unquote(urlparse(current_file).path)
+        base_dir = Path(current_file).parent
+
+    # Build search paths
+    search_paths: list[Path] = []
+    if base_dir:
+        search_paths.append(base_dir)
+    search_paths.extend(resolver.context.module_paths)
+
+    # Check compilation mode:
+    # - Object file compilation: generate ExternNode (external references)
+    # - Direct assembly mode: generate LinkedModuleNode (include code and bind symbols)
+    # - Other (parsing only, tests): generate ExternNode
+    compiling_to_object = resolver.context.is_object_mode
+    direct_assembly_mode = resolver.context.is_direct_mode
+
+    # Try to find .o file first
+    obj_path = _resolve_module_path(module_name, ".o", search_paths)
+    if obj_path:
+        try:
+            obj_file = ObjectFile.read(str(obj_path))
+
+            if direct_assembly_mode and not compiling_to_object:
+                # Direct assembly - create LinkedModuleNode that emits code and binds symbols
+                # Convert symbols to format expected by LinkedModuleNode
+                symbols_data = [
+                    (name, address, sym_type.value, section.value)
+                    for name, address, sym_type, section in obj_file.symbols
+                ]
+                # Pass expression relocations so they can be applied at emit time
+                expr_relocs = list(obj_file.expression_relocations) if obj_file.expression_relocations else []
+                code.append(LinkedModuleNode(module_name, obj_file.code, symbols_data, resolver, expr_relocs))
+            else:
+                # Object file compilation or parsing - mark symbols as external references
+                for name, _address, sym_type, _section in obj_file.symbols:
+                    if sym_type == SymbolType.GLOBAL:
+                        code.append(ExternNode(name, resolver))
+
+            return code
+        except (FileNotFoundError, ValueError):
+            pass  # Fall through to source file resolution
+
+    # Fall back to .s file
+    src_path = _resolve_module_path(module_name, ".s", search_paths)
+    if src_path:
+        try:
+            if direct_assembly_mode and not compiling_to_object:
+                # Direct assembly without .o file - parse and include the source file
+                # This is similar to .include but triggered by .import
+                from a816.parse.mzparser import MZParser
+
+                content = src_path.read_text(encoding="utf-8")
+                result = MZParser.parse_as_ast(content, str(src_path))
+                if result.nodes:
+                    code.extend(_code_gen(result.nodes, resolver, macro_definitions))
+                return code
+            else:
+                # Object file compilation or parsing - extract symbols as external references
+                symbols = _extract_public_symbols_from_source(src_path)
+                for symbol_name in symbols:
+                    code.append(ExternNode(symbol_name, resolver))
+                return code
+        except (FileNotFoundError, OSError):
+            pass
+
+    raise NodeError(f'Module not found: "{module_name}"', file_info)
+
+
+def _resolve_module_path(module_name: str, extension: str, search_paths: list[Path]) -> Path | None:
+    """Resolve a module name to a file path.
+
+    Args:
+        module_name: The module name (e.g., "vwf" or "battle/sram")
+        extension: File extension to try (e.g., ".o" or ".s")
+        search_paths: List of directories to search
+
+    Returns:
+        Path to the module file if found, None otherwise
+    """
+    # Module name can contain path separators (e.g., "battle/sram")
+    module_file = module_name + extension
+
+    for search_path in search_paths:
+        candidate = search_path / module_file
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def _extract_public_symbols_from_source(source_path: Path) -> list[str]:
+    """Extract public symbols from a source file using the AST parser.
+
+    Public symbols are:
+    - Labels that don't start with a dot (.)
+    - Symbol assignments that don't start with a dot
+
+    Uses the full parser to correctly handle comments, strings, conditionals, etc.
+    """
+    from a816.parse.mzparser import MZParser
+
+    symbols: list[str] = []
+    content = source_path.read_text(encoding="utf-8")
+
+    # Parse using the actual parser
+    result = MZParser.parse_as_ast(content, str(source_path))
+
+    # Extract symbols from AST nodes
+    _collect_public_symbols(result.nodes, symbols)
+
+    return symbols
+
+
+def _collect_public_symbols(nodes: list[AstNode], symbols: list[str]) -> None:
+    """Recursively collect public symbols from AST nodes.
+
+    Public symbols are those that don't start with underscore (_).
+    Symbols starting with underscore are considered local/private to the module.
+    """
+    for node in nodes:
+        if isinstance(node, LabelAstNode):
+            if not node.label.startswith("_"):
+                if node.label not in symbols:
+                    symbols.append(node.label)
+        elif isinstance(node, SymbolAffectationAstNode):
+            if not node.symbol.startswith("_"):
+                if node.symbol not in symbols:
+                    symbols.append(node.symbol)
+        elif isinstance(node, AssignAstNode):
+            if not node.symbol.startswith("_"):
+                if node.symbol not in symbols:
+                    symbols.append(node.symbol)
+
+        # Recurse into compound structures
+        if hasattr(node, "body"):
+            if isinstance(node.body, BlockAstNode):
+                _collect_public_symbols(node.body.body, symbols)
+            elif isinstance(node.body, CompoundAstNode):
+                _collect_public_symbols(node.body.body, symbols)
+            elif isinstance(node.body, list):
+                _collect_public_symbols(node.body, symbols)
+        if hasattr(node, "block") and node.block:
+            if isinstance(node.block, BlockAstNode):
+                _collect_public_symbols(node.block.body, symbols)
+            elif isinstance(node.block, CompoundAstNode):
+                _collect_public_symbols(node.block.body, symbols)
+        if hasattr(node, "else_block") and node.else_block:
+            if isinstance(node.else_block, BlockAstNode):
+                _collect_public_symbols(node.else_block.body, symbols)
+            elif isinstance(node.else_block, CompoundAstNode):
+                _collect_public_symbols(node.else_block.body, symbols)
+        if hasattr(node, "included_nodes") and node.included_nodes:
+            _collect_public_symbols(node.included_nodes, symbols)
+
+
 def generate_register_size(
     node: RegisterSizeAstNode,
     resolver: Resolver,
@@ -520,6 +710,7 @@ generators = {
     "pointer": generate_dl,
     "symbol": generate_symbol,
     "extern": generate_extern,
+    "import": generate_import,
     "assign": generate_assign,
     "label": generate_label,
     "opcode": generate_opcode,

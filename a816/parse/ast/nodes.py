@@ -439,6 +439,26 @@ class ExternAstNode(AstNode):
         return f".extern {self.symbol}"
 
 
+class ImportAstNode(AstNode):
+    """AST node for .import "module" directive.
+
+    Imports all public symbols from a module (object file or source file).
+    This is similar to Turbo Pascal's 'uses' clause.
+    """
+
+    module_name: str
+
+    def __init__(self, module_name: str, file_info: Token) -> None:
+        super().__init__("import", file_info)
+        self.module_name = module_name
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.module_name
+
+    def to_canonical(self) -> str:
+        return f'.import "{self.module_name}"'
+
+
 class DebugAstNode(AstNode):
     def __init__(self, message: str, file_info: Token) -> None:
         super().__init__("debug", file_info)
@@ -552,6 +572,7 @@ KeywordAstNode = (
     | TableAstNode
     | StructAstNode
     | ExternAstNode
+    | ImportAstNode
     | DebugAstNode
     | RegisterSizeAstNode
 )

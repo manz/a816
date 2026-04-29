@@ -1,12 +1,10 @@
 import logging
 from collections.abc import ItemsView
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from a816.context import AssemblyContext
 from a816.cpu.mapping import Address, Bus
 from a816.cpu.types import RomType
-
-if TYPE_CHECKING:
-    from a816.writers import ObjectWriter
 from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import BlockAstNode
 from script import Table
@@ -167,7 +165,7 @@ class Resolver:
         self.bus = Bus()
         self.pc = 0
         self.reloc_address: Address
-        self._object_writer: ObjectWriter | None = None
+        self.context = AssemblyContext()
         self.set_position(pc)
 
     def get_bus(self) -> Bus:

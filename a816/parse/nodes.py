@@ -46,7 +46,7 @@ class ExpressionNode(ValueNodeProtocol):
             return eval_expression(self.expression, self.resolver)
         except ExternalExpressionReference as e:
             # Expression contains external symbols, defer to link time
-            if hasattr(self.resolver, "_object_writer") and self.resolver._object_writer is not None:
+            if self.resolver.context.is_object_mode:
                 # Store the deferred expression info for use by the caller
                 self._deferred_expression = e.expression_str
                 self._external_symbols = e.external_symbols
@@ -56,11 +56,9 @@ class ExpressionNode(ValueNodeProtocol):
                 raise NodeError(f"Expression contains external symbols: {e.expression_str}", self.file_info) from e
         except ExternalSymbolReference as e:
             # Single external symbol reference
-            if hasattr(self.resolver, "_object_writer") and self.resolver._object_writer is not None:
+            if self.resolver.context.is_object_mode:
                 # Store the expression for later evaluation at link time
                 expression_str = self.expression.to_representation()[0]  # Get string representation
-                # Add expression relocation with offset to be determined by the caller
-                # For now, return 0 as placeholder
                 self._deferred_expression = expression_str
                 return 0  # Placeholder value
             else:
@@ -139,8 +137,9 @@ class ExternNode(NodeProtocol):
         self.resolver.current_scope.add_external_symbol(self.symbol_name)
 
         # Add external symbol to the object writer if we're in object compilation mode
-        if hasattr(self.resolver, "_object_writer") and self.resolver._object_writer:
-            self.resolver._object_writer.add_symbol(self.symbol_name, 0, SymbolType.EXTERNAL, SymbolSection.CODE)
+        object_writer = self.resolver.context.object_writer
+        if self.resolver.context.is_object_mode and object_writer is not None:
+            object_writer.add_symbol(self.symbol_name, 0, SymbolType.EXTERNAL, SymbolSection.CODE)
 
         return current_pc
 
@@ -189,12 +188,106 @@ class BinaryNode(NodeProtocol):
         return retval
 
 
+class LinkedModuleNode(NodeProtocol):
+    """Node that emits code from a compiled module and binds its symbols.
+
+    This is used by .import for position-dependent code (like ROM patches).
+    It loads the module's compiled code and adjusts symbol addresses based
+    on the current PC position.
+    """
+
+    def __init__(
+        self,
+        module_name: str,
+        code: bytes,
+        symbols: list[tuple[str, int, int, int]],  # (name, offset, type, section)
+        resolver: Resolver,
+        expression_relocations: list[tuple[int, str, int]] | None = None,  # (offset, expr, size)
+    ) -> None:
+        self.module_name = module_name
+        self.code = code
+        self.symbols = symbols
+        self.resolver = resolver
+        self.expression_relocations = expression_relocations or []
+        self._symbols_bound = False
+        self._patched_code: bytes | None = None
+
+    def emit(self, current_addr: Address) -> bytes:
+        # Apply expression relocations during emit when all symbols are resolved
+        if self._patched_code is None and self.expression_relocations:
+            self._patched_code = self._apply_expression_relocations()
+
+        if self._patched_code is not None:
+            return self._patched_code
+        return self.code
+
+    def pc_after(self, current_pc: Address) -> Address:
+        # Bind symbols with addresses adjusted for current position
+        if not self._symbols_bound:
+            from a816.object_file import SymbolSection, SymbolType
+
+            base_address = current_pc.logical_value
+            for name, offset, sym_type, section in self.symbols:
+                if sym_type == SymbolType.GLOBAL.value:
+                    if section == SymbolSection.CODE.value:
+                        # CODE symbols: add base address to offset
+                        symbol_address = base_address + offset
+                        self.resolver.current_scope.add_symbol(name, symbol_address)
+                    else:
+                        # DATA symbols (constants): use raw value
+                        self.resolver.current_scope.add_symbol(name, offset)
+            self._symbols_bound = True
+
+        return current_pc + len(self.code)
+
+    def _apply_expression_relocations(self) -> bytes:
+        """Apply expression relocations to the module's code."""
+        from a816.parse.ast.expression import eval_expression_str
+
+        code_array = bytearray(self.code)
+
+        for offset, expr, size in self.expression_relocations:
+            try:
+                value = eval_expression_str(expr, self.resolver)
+                if not isinstance(value, int):
+                    logger.warning(f"Expression '{expr}' did not evaluate to int: {value}")
+                    continue
+
+                # Write the value at the offset with the specified size
+                if size == 1:
+                    code_array[offset] = value & 0xFF
+                elif size == 2:
+                    code_array[offset] = value & 0xFF
+                    code_array[offset + 1] = (value >> 8) & 0xFF
+                elif size == 3:
+                    code_array[offset] = value & 0xFF
+                    code_array[offset + 1] = (value >> 8) & 0xFF
+                    code_array[offset + 2] = (value >> 16) & 0xFF
+                else:
+                    logger.warning(f"Unsupported relocation size {size} for expression '{expr}'")
+
+            except Exception as e:
+                logger.warning(f"Failed to evaluate expression '{expr}': {e}")
+
+        return bytes(code_array)
+
+    def __str__(self) -> str:
+        return f"LinkedModuleNode({self.module_name}, {len(self.code)} bytes, {len(self.symbols)} symbols)"
+
+
 class LongNode(NodeProtocol):
     def __init__(self, value_node: ValueNodeProtocol) -> None:
         self.value_node = value_node
 
     def emit(self, current_address: Address) -> bytes:
         value = self.value_node.get_value()
+        # Check for deferred expression (external symbols)
+        if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
+            resolver = self.value_node.resolver
+            if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+                resolver.context.object_writer.add_expression_relocation(
+                    resolver.pc, self.value_node._deferred_expression, 3
+                )
         return struct.pack("<HB", value & 0xFFFF, (value >> 16) & 0xFF)
 
     def pc_after(self, current_pc: Address) -> Address:
@@ -206,7 +299,15 @@ class WordNode(NodeProtocol):
         self.value_node = value_node
 
     def emit(self, current_address: Address) -> bytes:
-        return struct.pack("<H", self.value_node.get_value() & 0xFFFF)
+        value = self.value_node.get_value()
+        # Check for deferred expression (external symbols)
+        if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
+            resolver = self.value_node.resolver
+            if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+                resolver.context.object_writer.add_expression_relocation(
+                    resolver.pc, self.value_node._deferred_expression, 2
+                )
+        return struct.pack("<H", value & 0xFFFF)
 
     def pc_after(self, current_pc: Address) -> Address:
         return current_pc + 2
@@ -246,7 +347,15 @@ class ByteNode(NodeProtocol):
         self.value_node = value_node
 
     def emit(self, current_address: Address) -> bytes:
-        return struct.pack("B", self.value_node.get_value() & 0xFF)
+        value = self.value_node.get_value()
+        # Check for deferred expression (external symbols)
+        if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
+            resolver = self.value_node.resolver
+            if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+                resolver.context.object_writer.add_expression_relocation(
+                    resolver.pc, self.value_node._deferred_expression, 1
+                )
+        return struct.pack("B", value & 0xFF)
 
     def pc_after(self, current_pc: Address) -> Address:
         return current_pc + 1

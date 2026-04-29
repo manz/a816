@@ -68,6 +68,7 @@ from a816.parse.ast.nodes import (
     ExpressionAstNode,
     ExternAstNode,
     IfAstNode,
+    ImportAstNode,
     IncludeAstNode,
     LabelAstNode,
     MacroApplyAstNode,
@@ -97,17 +98,20 @@ def uri_to_path(uri: str) -> Path:
 class A816Document:
     """Represents an a816 assembly document with analysis capabilities"""
 
-    def __init__(self, uri: str, content: str):
+    def __init__(self, uri: str, content: str, include_paths: list[Path] | None = None):
         self.uri = uri
         self.content = content
+        self.include_paths: list[Path] = include_paths or []
         self.lines = content.splitlines()
         self.symbols: dict[str, tuple[Position, str]] = {}  # symbol -> (position, file_uri)
         self.labels: dict[str, tuple[Position, str]] = {}  # label -> (position, file_uri)
         self.macros: dict[str, tuple[Position, str]] = {}  # macro -> (position, file_uri)
+        self.externs: set[str] = set()  # extern symbol names (declarations, not definitions)
         self.macro_params: dict[str, list[str]] = {}  # macro_name -> parameter_names
         self.macro_docstrings: dict[str, str] = {}
         self.scope_docstrings: dict[str, str] = {}
         self.label_docstrings: dict[str, str] = {}
+        self.imports: list[str] = []  # module names from .import directives
         self.diagnostics: list[Diagnostic] = []
         self.ast_nodes: list[AstNode] = []
         self.parse_error: ParseError | None = None
@@ -120,10 +124,12 @@ class A816Document:
         self.symbols.clear()
         self.labels.clear()
         self.macros.clear()
+        self.externs.clear()
         self.macro_params.clear()
         self.macro_docstrings.clear()
         self.scope_docstrings.clear()
         self.label_docstrings.clear()
+        self.imports.clear()
         self.diagnostics.clear()
         self.ast_nodes.clear()
         self.parse_error = None
@@ -133,7 +139,9 @@ class A816Document:
         """Analyze document using the parser and extract symbols, labels, and diagnostics"""
         try:
             # Parse using the actual a816 parser
-            parser_result = MZParser.parse_as_ast(self.content, self.uri)
+            parser_result = MZParser.parse_as_ast(
+                self.content, self.uri, include_paths=self.include_paths
+            )
             self.ast_nodes = parser_result.nodes
             self.parse_error = parser_result.parse_error
 
@@ -194,13 +202,9 @@ class A816Document:
                     file_uri = self._get_file_uri_for_token(token)
                     self.symbols[node.symbol] = (pos, file_uri)
         elif isinstance(node, ExternAstNode):
-            # Extract external symbol declarations
+            # Track external symbol declarations (but don't add to symbols - they're not definitions)
             if hasattr(node, "symbol") and node.symbol:
-                token = node.file_info
-                if token.position:
-                    pos = Position(line=token.position.line, character=token.position.column)
-                    file_uri = self._get_file_uri_for_token(token)
-                    self.symbols[node.symbol] = (pos, file_uri)
+                self.externs.add(node.symbol)
         elif isinstance(node, ScopeAstNode):
             if node.docstring:
                 self.scope_docstrings[node.name.lower()] = node.docstring
@@ -220,6 +224,10 @@ class A816Document:
                         ]
                     if hasattr(node, "docstring") and node.docstring:
                         self.macro_docstrings[node.name.lower()] = node.docstring
+        elif isinstance(node, ImportAstNode):
+            # Track imported module names for cross-module symbol resolution
+            if node.module_name and node.module_name not in self.imports:
+                self.imports.append(node.module_name)
         elif isinstance(node, IncludeAstNode):
             for child in node.included_nodes:
                 if isinstance(child, AstNode):
@@ -457,6 +465,8 @@ class WorkspaceIndex:
     def __init__(self, root_path: Path | str | None):
         self.root_path = Path(root_path).resolve() if root_path else None
         self.entrypoint: Path | None = None
+        self.include_paths: list[Path] = []
+        self.module_paths: list[Path] = []
         self.documents: dict[str, A816Document] = {}
         self.labels: dict[str, tuple[Position, str]] = {}
         self.symbols: dict[str, tuple[Position, str]] = {}
@@ -479,6 +489,8 @@ class WorkspaceIndex:
 
     def clear(self) -> None:
         self.documents.clear()
+        self.include_paths.clear()
+        self.module_paths.clear()
         self.labels.clear()
         self.symbols.clear()
         self.macros.clear()
@@ -532,7 +544,7 @@ class WorkspaceIndex:
         except OSError:
             self.remove_document(uri)
             return
-        doc = A816Document(path.as_uri(), content)
+        doc = A816Document(path.as_uri(), content, include_paths=self.include_paths)
         self.replace_document(doc)
 
     def get_label_location(self, name: str) -> Location | None:
@@ -608,30 +620,45 @@ class WorkspaceIndex:
             return None
 
         current = self.root_path
-        pyproject: Path | None = None
+        config_file: Path | None = None
 
         while True:
-            candidate = current / "pyproject.toml"
+            candidate = current / "a816.toml"
             if candidate.exists():
-                pyproject = candidate
+                config_file = candidate
                 break
             if current.parent == current:
                 break
             current = current.parent
 
-        if not pyproject:
+        if not config_file:
             return None
 
         try:
-            with pyproject.open("rb") as handle:
+            with config_file.open("rb") as handle:
                 data = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError):
             return None
-        entry = data.get("tool", {}).get("a816-lsp", {}).get("entrypoint")
+
+        config_root = config_file.parent
+
+        # Read include-paths from config
+        for p in data.get("include-paths", []):
+            resolved = (config_root / p).resolve()
+            if resolved not in self.include_paths:
+                self.include_paths.append(resolved)
+
+        # Read module-paths from config
+        for p in data.get("module-paths", []):
+            resolved = (config_root / p).resolve()
+            if resolved not in self.module_paths:
+                self.module_paths.append(resolved)
+
+        entry = data.get("entrypoint")
         if not entry:
             return None
-        candidate = (pyproject.parent / entry).resolve()
-        return candidate if candidate.exists() else None
+        result = (config_root / entry).resolve()
+        return result if result.exists() else None
 
     def _fallback_entrypoint(self) -> Path | None:
         if not self.root_path:
@@ -659,19 +686,67 @@ class WorkspaceIndex:
             except OSError:
                 logger.debug("WorkspaceIndex: unable to read %s", current)
                 continue
-            doc = A816Document(current.as_uri(), content)
+            doc = A816Document(current.as_uri(), content, include_paths=self.include_paths)
             self._store_document(doc)
             for include in self._extract_includes(current, content):
                 if include not in visited:
                     queue.append(include)
 
     def _extract_includes(self, file_path: Path, content: str) -> list[Path]:
-        include_paths: set[Path] = set()
+        found_paths: set[Path] = set()
+
+        # Extract .include directives
         for match in re.finditer(r"\.include\s+['\"]([^'\"]+)['\"]", content, re.IGNORECASE):
             raw_path = match.group(1).strip()
-            include = (file_path.parent / raw_path).resolve()
-            include_paths.add(include)
-        return list(include_paths)
+            # Try relative to parent file first
+            candidate = (file_path.parent / raw_path).resolve()
+            if candidate.exists():
+                found_paths.add(candidate)
+            else:
+                # Fall back to configured include paths
+                for search_dir in self.include_paths:
+                    candidate = (search_dir / raw_path).resolve()
+                    if candidate.exists():
+                        found_paths.add(candidate)
+                        break
+
+        # Extract .import directives and resolve to source files
+        for match in re.finditer(r"\.import\s+['\"]([^'\"]+)['\"]", content, re.IGNORECASE):
+            module_name = match.group(1).strip()
+            module_file = module_name + ".s"
+            found = False
+
+            # 1. Check same directory as file
+            candidate = (file_path.parent / module_file).resolve()
+            if candidate.exists():
+                found_paths.add(candidate)
+                found = True
+
+            # 2. Check configured module paths
+            if not found:
+                for search_dir in self.module_paths:
+                    candidate = (search_dir / module_file).resolve()
+                    if candidate.exists():
+                        found_paths.add(candidate)
+                        found = True
+                        break
+
+            # 3. Check workspace root and common subdirectories
+            if not found and self.root_path:
+                search_dirs = [
+                    self.root_path,
+                    self.root_path / "src",
+                    self.root_path / "lib",
+                    self.root_path / "modules",
+                ]
+                for search_dir in search_dirs:
+                    workspace_candidate = (search_dir / module_file).resolve()
+                    if workspace_candidate.exists():
+                        found_paths.add(workspace_candidate)
+                        found = True
+                        break
+
+        return list(found_paths)
 
     def _store_document(self, doc: A816Document) -> None:
         if not doc.uri:
@@ -776,9 +851,10 @@ class A816LanguageServer:
         @self.server.feature("textDocument/didOpen")
         async def did_open(ls: LanguageServer, params: DidOpenTextDocumentParams) -> None:
             """Handle document open event"""
-            doc = A816Document(params.text_document.uri, params.text_document.text)
-            self.documents[params.text_document.uri] = doc
             workspace = self._ensure_workspace_index()
+            include_paths = workspace.include_paths if workspace else []
+            doc = A816Document(params.text_document.uri, params.text_document.text, include_paths=include_paths)
+            self.documents[params.text_document.uri] = doc
             if workspace:
                 workspace.replace_document(doc)
 
@@ -1120,8 +1196,11 @@ class A816LanguageServer:
 
             word = line[word_start:word_end]
 
-            # Check if it's a known label
-            if word in doc.labels:
+            # If word is an extern declaration, skip local lookups and find actual definition
+            is_extern = word in doc.externs
+
+            # Check if it's a known label (skip if extern - it won't be here anyway)
+            if not is_extern and word in doc.labels:
                 pos, file_uri = doc.labels[word]
                 return [
                     Location(
@@ -1131,7 +1210,7 @@ class A816LanguageServer:
                 ]
 
             # Check if it's a known macro
-            if word in doc.macros:
+            if not is_extern and word in doc.macros:
                 pos, file_uri = doc.macros[word]
                 return [
                     Location(
@@ -1140,8 +1219,8 @@ class A816LanguageServer:
                     )
                 ]
 
-            # Check if it's a known symbol
-            if word in doc.symbols:
+            # Check if it's a known symbol (skip if extern - we want the actual definition)
+            if not is_extern and word in doc.symbols:
                 pos, file_uri = doc.symbols[word]
                 return [
                     Location(
@@ -1150,6 +1229,7 @@ class A816LanguageServer:
                     )
                 ]
 
+            # Look in workspace for cross-file definitions (including extern symbols)
             workspace = self._ensure_workspace_index()
             if workspace:
                 label_location = workspace.get_label_location(word)
@@ -1623,7 +1703,14 @@ class A816LanguageServer:
                     }
                 )
             elif isinstance(
-                node, CodePositionAstNode | MapAstNode | IfAstNode | MacroAstNode | AssignAstNode | ExternAstNode
+                node,
+                CodePositionAstNode
+                | MapAstNode
+                | IfAstNode
+                | MacroAstNode
+                | AssignAstNode
+                | ExternAstNode
+                | ImportAstNode,
             ):
                 # Assembler directives
                 tokens.append(
@@ -2010,7 +2097,7 @@ class A816LanguageServer:
     def _check_include_directive(
         self, doc: A816Document, line_num: int, char_pos: int, current_uri: str
     ) -> Location | None:
-        """Check if the cursor is on an .include directive and return the file location"""
+        """Check if the cursor is on an .include or .import directive and return the file location"""
         try:
             if line_num >= len(doc.lines):
                 return None
@@ -2019,28 +2106,43 @@ class A816LanguageServer:
 
             # Match .include 'filename' or .include "filename"
             include_match = re.search(r'\.include\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
-            if not include_match:
-                return None
+            if include_match:
+                include_path = include_match.group(1)
+                delimiter = '"' if '"' in include_match.group(0) else "'"
+                quote_start = line.find(delimiter, include_match.start())
+                quote_end = line.find(delimiter, quote_start + 1) if quote_start != -1 else -1
+                if quote_start == -1 or quote_end == -1:
+                    return None
 
-            include_path = include_match.group(1)
-            delimiter = '"' if '"' in include_match.group(0) else "'"
-            quote_start = line.find(delimiter, include_match.start())
-            quote_end = line.find(delimiter, quote_start + 1) if quote_start != -1 else -1
-            if quote_start == -1 or quote_end == -1:
-                return None
+                # Check if cursor is within the quoted filename
+                if quote_start <= char_pos <= quote_end:
+                    resolved_path = self._resolve_include_path(include_path, current_uri)
+                    if resolved_path and os.path.exists(resolved_path):
+                        file_uri = Path(resolved_path).as_uri()
+                        return Location(
+                            uri=file_uri,
+                            range=Range(start=Position(line=0, character=0), end=Position(line=0, character=0)),
+                        )
 
-            # Check if cursor is within the quoted filename
-            if quote_start <= char_pos <= quote_end:
-                # Resolve the file path
-                resolved_path = self._resolve_include_path(include_path, current_uri)
-                if resolved_path and os.path.exists(resolved_path):
-                    # Convert to file:// URI
-                    file_uri = Path(resolved_path).as_uri()
+            # Match .import 'module' or .import "module"
+            import_match = re.search(r'\.import\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
+            if import_match:
+                module_name = import_match.group(1)
+                delimiter = '"' if '"' in import_match.group(0) else "'"
+                quote_start = line.find(delimiter, import_match.start())
+                quote_end = line.find(delimiter, quote_start + 1) if quote_start != -1 else -1
+                if quote_start == -1 or quote_end == -1:
+                    return None
 
-                    return Location(
-                        uri=file_uri,
-                        range=Range(start=Position(line=0, character=0), end=Position(line=0, character=0)),
-                    )
+                # Check if cursor is within the quoted module name
+                if quote_start <= char_pos <= quote_end:
+                    resolved_path = self._resolve_module_path(module_name, current_uri)
+                    if resolved_path and os.path.exists(resolved_path):
+                        file_uri = Path(resolved_path).as_uri()
+                        return Location(
+                            uri=file_uri,
+                            range=Range(start=Position(line=0, character=0), end=Position(line=0, character=0)),
+                        )
 
             return None
 
@@ -2049,33 +2151,88 @@ class A816LanguageServer:
             return None
 
     def _resolve_include_path(self, include_path: str, current_uri: str) -> str | None:
-        """Resolve include path relative to current document"""
+        """Resolve include path relative to current document, then search workspace include paths"""
         try:
             # Convert URI to file path
             if current_uri.startswith("file://"):
                 current_path = Path(current_uri[7:])  # Remove file:// prefix
             else:
-                # Handle non-file URIs or local paths
                 current_path = Path(current_uri)
 
             current_dir = current_path.parent
 
-            # Handle different path types
             if os.path.isabs(include_path):
-                # Absolute path
-                resolved_path = Path(include_path)
+                resolved_path = Path(include_path).resolve()
+                if resolved_path.exists():
+                    return str(resolved_path)
             else:
-                # Relative path - resolve relative to current file
-                resolved_path = current_dir / include_path
+                # Try relative to current file first
+                resolved_path = (current_dir / include_path).resolve()
+                if resolved_path.exists():
+                    return str(resolved_path)
 
-            # Normalize the path
-            resolved_path = resolved_path.resolve()
+                # Fall back to searching workspace include paths
+                workspace = self.workspace_index
+                if workspace:
+                    for search_dir in workspace.include_paths:
+                        candidate = (search_dir / include_path).resolve()
+                        if candidate.exists():
+                            return str(candidate)
 
-            # Return as string path
             return str(resolved_path)
 
         except (OSError, ValueError) as e:
             logger.debug(f"Error resolving include path '{include_path}' from '{current_uri}': {e}")
+            return None
+
+    def _resolve_module_path(self, module_name: str, current_uri: str) -> str | None:
+        """Resolve module name to source file path for .import directives"""
+        try:
+            # Convert URI to file path
+            if current_uri.startswith("file://"):
+                current_path = Path(current_uri[7:])  # Remove file:// prefix
+            else:
+                current_path = Path(current_uri)
+
+            current_dir = current_path.parent
+            module_file = module_name + ".s"
+
+            # 1. Check same directory as current file
+            candidate = (current_dir / module_file).resolve()
+            if candidate.exists():
+                return str(candidate)
+
+            # 2. Check configured module paths from workspace
+            workspace = self.workspace_index
+            if workspace:
+                for search_dir in workspace.module_paths:
+                    workspace_candidate = (search_dir / module_file).resolve()
+                    if workspace_candidate.exists():
+                        return str(workspace_candidate)
+
+            # 3. Check workspace root and common subdirectories
+            root_path = None
+            try:
+                root_path = Path(self.server.workspace.root_path) if self.server.workspace.root_path else None
+            except Exception:
+                pass
+
+            if root_path:
+                search_dirs = [
+                    root_path,
+                    root_path / "src",
+                    root_path / "lib",
+                    root_path / "modules",
+                ]
+                for search_dir in search_dirs:
+                    workspace_candidate = (search_dir / module_file).resolve()
+                    if workspace_candidate.exists():
+                        return str(workspace_candidate)
+
+            return None
+
+        except (OSError, ValueError) as e:
+            logger.debug(f"Error resolving module path '{module_name}' from '{current_uri}': {e}")
             return None
 
     def _apply_text_change(self, content: str, change: TextDocumentContentChangeEvent_Type1) -> str:

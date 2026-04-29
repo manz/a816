@@ -124,12 +124,12 @@ class Opcode(OpcodeProtocol):
         if hasattr(value_node, "resolver") and hasattr(value_node, "_deferred_expression"):
             # Generate expression relocation instead of regular relocation
             resolver = value_node.resolver
-            if hasattr(resolver, "_object_writer") and resolver._object_writer is not None:
+            if resolver.context.is_object_mode:
                 # Determine size in bytes
                 size_bytes = 1 if size == "b" else 2 if size == "w" else 3
                 # Add expression relocation at current PC offset + 1 (after opcode byte)
                 current_offset = resolver.pc + 1
-                resolver._object_writer.add_expression_relocation(
+                resolver.context.object_writer.add_expression_relocation(
                     current_offset, value_node._deferred_expression, size_bytes
                 )
 

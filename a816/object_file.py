@@ -24,7 +24,7 @@ class SymbolSection(Enum):
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x0002  # Increment version for new format
+    VERSION = 0x0003  # Version 3: 32-bit sizes to support large files
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class ObjectFile:
         expression_relocation_table_size = self._calculate_expression_relocation_table_size()
 
         header = struct.pack(
-            "<IHHHHI",
+            "<IHIIII",
             self.MAGIC_NUMBER,
             self.VERSION,
             code_size,
@@ -128,31 +128,53 @@ class ObjectFile:
     @staticmethod
     def read(filename: str) -> "ObjectFile":
         with open(filename, "rb") as f:
-            header_data = f.read(16)  # Read more bytes for new format
-            if len(header_data) < 14:
+            # Read enough bytes for version 3 header (22 bytes)
+            header_data = f.read(22)
+            if len(header_data) < 6:  # Minimum: magic + version
                 raise ValueError("Invalid file format")
 
-            # Try old format first
-            if len(header_data) == 14:
-                magic_number, version, code_size, symbol_table_size, relocation_table_size = struct.unpack(
-                    "<IHHHI", header_data
-                )
-                expression_relocation_table_size = 0
-            else:
-                (
-                    magic_number,
-                    version,
-                    code_size,
-                    symbol_table_size,
-                    relocation_table_size,
-                    expression_relocation_table_size,
-                ) = struct.unpack("<IHHHHI", header_data)
+            # First read magic and version to determine format
+            magic_number, version = struct.unpack("<IH", header_data[:6])
 
             if magic_number != ObjectFile.MAGIC_NUMBER:
                 raise ValueError("Invalid magic number")
 
-            # Support both old and new versions
-            if version not in [0x0001, 0x0002]:
+            # Parse header based on version
+            if version == 0x0001:
+                # Version 1: <IHHHI (14 bytes)
+                if len(header_data) < 14:
+                    raise ValueError("Invalid file format")
+                _, _, code_size, symbol_table_size, relocation_table_size = struct.unpack("<IHHHI", header_data[:14])
+                expression_relocation_table_size = 0
+                # Seek back if we read too much
+                f.seek(14)
+            elif version == 0x0002:
+                # Version 2: <IHHHHI (16 bytes)
+                if len(header_data) < 16:
+                    raise ValueError("Invalid file format")
+                (
+                    _,
+                    _,
+                    code_size,
+                    symbol_table_size,
+                    relocation_table_size,
+                    expression_relocation_table_size,
+                ) = struct.unpack("<IHHHHI", header_data[:16])
+                # Seek back if we read too much
+                f.seek(16)
+            elif version == 0x0003:
+                # Version 3: <IHIIII (22 bytes) - 32-bit sizes
+                if len(header_data) < 22:
+                    raise ValueError("Invalid file format")
+                (
+                    _,
+                    _,
+                    code_size,
+                    symbol_table_size,
+                    relocation_table_size,
+                    expression_relocation_table_size,
+                ) = struct.unpack("<IHIIII", header_data)
+            else:
                 raise ValueError(f"Unsupported version: {version}")
 
             code = f.read(code_size)
@@ -176,9 +198,9 @@ class ObjectFile:
                 relocation_type = RelocationType(struct.unpack("<B", f.read(1))[0])
                 relocations.append((offset, name, relocation_type))
 
-            # Read expression relocations if present (version 2)
+            # Read expression relocations if present (version 2+)
             expression_relocations = []
-            if version == 0x0002 and expression_relocation_table_size > 0:
+            if version >= 0x0002 and expression_relocation_table_size > 0:
                 num_expr_relocations = struct.unpack("<H", f.read(2))[0]
                 for _ in range(num_expr_relocations):
                     offset = struct.unpack("<I", f.read(4))[0]

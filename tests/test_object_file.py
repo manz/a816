@@ -3,6 +3,12 @@ from pathlib import Path
 
 from a816.object_file import ObjectFile, RelocationType, SymbolSection, SymbolType
 
+# Header format for version 3: <IHIIII (22 bytes)
+# magic (4), version (2), code_size (4), symbol_table_size (4),
+# relocation_table_size (4), expression_relocation_table_size (4)
+HEADER_SIZE = 22
+HEADER_FORMAT = "<IHIIII"
+
 
 def test_write_empty_object_file(tmp_path: Path) -> None:
     test_filename = tmp_path / "test_object_file.o"
@@ -10,9 +16,9 @@ def test_write_empty_object_file(tmp_path: Path) -> None:
     obj.write(str(test_filename))
 
     with open(test_filename, "rb") as f:
-        header = f.read(16)
+        header = f.read(HEADER_SIZE)
         magic, version, code_size, symbol_table_size, relocation_table_size, expression_relocation_table_size = (
-            struct.unpack("<IHHHHI", header)
+            struct.unpack(HEADER_FORMAT, header)
         )
         assert magic == ObjectFile.MAGIC_NUMBER
         assert version == ObjectFile.VERSION
@@ -20,7 +26,6 @@ def test_write_empty_object_file(tmp_path: Path) -> None:
         assert symbol_table_size == 2
         assert relocation_table_size == 2
         assert expression_relocation_table_size == 2
-        # assert reserved == 0
 
         num_symbols = struct.unpack("<H", f.read(2))[0]
         assert num_symbols == 0
@@ -36,9 +41,9 @@ def test_write_object_file_with_code(tmp_path: Path) -> None:
     obj.write(str(test_filename))
 
     with open(test_filename, "rb") as f:
-        header = f.read(16)
+        header = f.read(HEADER_SIZE)
         magic, version, code_size, symbol_table_size, relocation_table_size, expression_relocation_table_size = (
-            struct.unpack("<IHHHHI", header)
+            struct.unpack(HEADER_FORMAT, header)
         )
         assert magic == ObjectFile.MAGIC_NUMBER
         assert version == ObjectFile.VERSION
@@ -67,7 +72,7 @@ def test_write_object_file_with_symbols(tmp_path: Path) -> None:
     obj.write(str(test_filename))
 
     with open(test_filename, "rb") as f:
-        f.read(16)  # Skip header
+        f.read(HEADER_SIZE)  # Skip header
         f.read(0)  # Skip code section
         num_symbols = struct.unpack("<H", f.read(2))[0]
         assert num_symbols == len(symbols)
@@ -98,7 +103,7 @@ def test_write_object_file_with_relocations(tmp_path: Path) -> None:
     obj.write(str(test_filename))
 
     with open(test_filename, "rb") as f:
-        f.read(16)  # Skip header
+        f.read(HEADER_SIZE)  # Skip header
         f.read(0)  # Skip code section
         f.read(2)  # Skip symbol table size
         num_relocations = struct.unpack("<H", f.read(2))[0]
@@ -147,9 +152,9 @@ def test_write_object_file_with_expression_relocations(tmp_path: Path) -> None:
     obj.write(str(test_filename))
 
     with open(test_filename, "rb") as f:
-        header = f.read(16)
+        header = f.read(HEADER_SIZE)
         magic, version, code_size, symbol_table_size, relocation_table_size, expression_relocation_table_size = (
-            struct.unpack("<IHHHHI", header)
+            struct.unpack(HEADER_FORMAT, header)
         )
         assert magic == ObjectFile.MAGIC_NUMBER
         assert version == ObjectFile.VERSION
@@ -202,3 +207,100 @@ def test_read_write_with_expression_relocations(tmp_path: Path) -> None:
     assert obj.symbols == obj2.symbols
     assert obj.relocations == obj2.relocations
     assert obj.expression_relocations == obj2.expression_relocations
+
+
+def test_symbol_offsets_in_scoped_blocks(tmp_path: Path) -> None:
+    """Test that labels inside { } scoped blocks get correct relative offsets.
+
+    This tests a bug where labels inside anonymous scoped blocks were getting
+    logical addresses (0x8000+offset) instead of relative offsets (0+offset).
+    """
+    from a816.program import Program
+
+    # Create test source with labels inside and outside scoped blocks
+    source = """\
+first_label:
+    lda #0x42
+    rts
+{
+_inner_label:
+    lda #0x00
+    rts
+}
+second_label:
+    lda #0x01
+    rts
+"""
+    src_file = tmp_path / "test_scoped.s"
+    src_file.write_text(source)
+
+    obj_file = tmp_path / "test_scoped.o"
+    program = Program()
+    result = program.assemble_as_object(str(src_file), obj_file)
+    assert result == 0, "Assembly should succeed"
+
+    # Read the object file and check symbol offsets
+    obj = ObjectFile.read(str(obj_file))
+
+    # Build a map of symbol name to offset
+    symbol_offsets = {name: offset for name, offset, _, _ in obj.symbols}
+
+    # first_label should be at offset 0
+    assert "first_label" in symbol_offsets
+    assert symbol_offsets["first_label"] == 0, f"first_label should be at 0, got {symbol_offsets['first_label']}"
+
+    # _inner_label should be at offset 3 (lda #imm = 2 bytes, rts = 1 byte)
+    assert "_inner_label" in symbol_offsets
+    inner_offset = symbol_offsets["_inner_label"]
+    # The offset should be a small positive number, NOT 0x8000+
+    assert inner_offset < 0x100, f"_inner_label should have small offset, got 0x{inner_offset:04x}"
+    assert inner_offset == 3, f"_inner_label should be at 3, got {inner_offset}"
+
+    # second_label should be at offset 6 (first_label code + inner_label code)
+    assert "second_label" in symbol_offsets
+    second_offset = symbol_offsets["second_label"]
+    assert second_offset < 0x100, f"second_label should have small offset, got 0x{second_offset:04x}"
+    assert second_offset == 6, f"second_label should be at 6, got {second_offset}"
+
+
+def test_symbol_offsets_in_nested_scoped_blocks(tmp_path: Path) -> None:
+    """Test labels in nested scoped blocks get correct offsets."""
+    from a816.program import Program
+
+    source = """\
+outer:
+    nop
+{
+_level1:
+    nop
+    {
+    _level2:
+        nop
+    }
+_after_nested:
+    nop
+}
+final:
+    nop
+"""
+    src_file = tmp_path / "test_nested.s"
+    src_file.write_text(source)
+
+    obj_file = tmp_path / "test_nested.o"
+    program = Program()
+    result = program.assemble_as_object(str(src_file), obj_file)
+    assert result == 0, "Assembly should succeed"
+
+    obj = ObjectFile.read(str(obj_file))
+    symbol_offsets = {name: offset for name, offset, _, _ in obj.symbols}
+
+    # All offsets should be small (relative to start of code, not logical addresses)
+    for name, offset in symbol_offsets.items():
+        assert offset < 0x100, f"{name} should have small offset, got 0x{offset:04x}"
+
+    # nop = 1 byte each
+    assert symbol_offsets.get("outer") == 0
+    assert symbol_offsets.get("_level1") == 1
+    assert symbol_offsets.get("_level2") == 2
+    assert symbol_offsets.get("_after_nested") == 3
+    assert symbol_offsets.get("final") == 4

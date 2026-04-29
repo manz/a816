@@ -23,6 +23,7 @@ from a816.parse.ast.nodes import (
     ExternAstNode,
     ForAstNode,
     IfAstNode,
+    ImportAstNode,
     IncludeAstNode,
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
@@ -287,6 +288,17 @@ def parse_extern(p: Parser) -> ExternAstNode:
     return ExternAstNode(symbol_token.value, symbol_token)
 
 
+def parse_import(p: Parser) -> ImportAstNode:
+    """Parse .import "module_name" directive.
+
+    The .import directive imports all public symbols from a module.
+    Module resolution happens at code generation time.
+    """
+    current = p.current()
+    module_name = parse_directive_with_quoted_string(p)
+    return ImportAstNode(module_name, current)
+
+
 def parse_debug(p: Parser) -> DebugAstNode:
     message_token = p.current()
     expect_token(message_token, TokenType.QUOTED_STRING)
@@ -333,13 +345,21 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
                 if candidate.exists():
                     resolved_path = str(candidate)
 
+        # Fall back to searching include paths if relative resolution failed
+        if resolved_path == include_path and p.include_paths:
+            for search_dir in p.include_paths:
+                candidate = search_dir / include_path
+                if candidate.exists():
+                    resolved_path = str(candidate)
+                    break
+
         with open(resolved_path, encoding="utf-8") as fd:
             source = fd.read()
 
             scanner = Scanner(cast(ScannerStateFunc, lex_initial))
             tokens = scanner.scan(resolved_path, source)
 
-            parser = Parser(tokens, cast(StateFunc, parse_initial))
+            parser = Parser(tokens, cast(StateFunc, parse_initial), include_paths=p.include_paths)
             sub_ast = parser.parse()
 
         return IncludeAstNode(include_path, sub_ast, keyword)
@@ -361,6 +381,8 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
         return parse_struct(p)
     elif keyword.value == "extern":
         return parse_extern(p)
+    elif keyword.value == "import":
+        return parse_import(p)
     elif keyword.value == "debug":
         return parse_debug(p)
     elif keyword.value == "a8":

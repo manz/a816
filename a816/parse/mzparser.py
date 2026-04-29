@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from time import gmtime, strftime
 from typing import Any
 
@@ -33,19 +34,24 @@ class MZParser:
         self.resolver = resolver
 
     def parse(self, program: str, filename: str = "") -> tuple[str | None, list[NodeProtocol]]:
-        ast = self.parse_as_ast(program, filename)
+        include_paths = self.resolver.context.include_paths
+        ast = self.parse_as_ast(program, filename, include_paths=include_paths)
         self.resolver.current_scope.add_symbol("BUILD_DATE", strftime("%Y-%m-%d %H:%M:%S", gmtime()))
         return ast.error, code_gen(ast.nodes, self.resolver)
 
     @staticmethod
-    def parse_as_ast(program: str, filename: str = "memory.s") -> ParserResult:
+    def parse_as_ast(
+        program: str,
+        filename: str = "memory.s",
+        include_paths: list[Path] | None = None,
+    ) -> ParserResult:
         scanner = Scanner(lex_initial)
         ast: list[AstNode] = []
         parse_error: ParseError | None = None
 
         try:
             tokens = scanner.scan(filename, program)
-            parser = Parser(tokens, parse_initial)
+            parser = Parser(tokens, parse_initial, include_paths=include_paths)
             ast = parser.parse()
         except ScannerException as e:
             position = e.position

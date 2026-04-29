@@ -4,17 +4,23 @@ This module provides the main CLI entry point for assembling SNES/Super Famicom
 ROM code. Supports both direct assembly and separate compilation/linking workflows.
 
 Usage:
-    # Direct assembly to IPS patch
-    x816 source.s -o output.ips
+    # Direct assembly to IPS patch (auto-discovers .import dependencies)
+    x816 main.s -o output.ips
 
-    # Compile to object files
+    # With additional module search paths
+    x816 main.s -o output.ips -I src/ -I lib/
+
+    # Compile to object files only
     x816 -c file1.s file2.s
 
-    # Link object files
+    # Link object files explicitly (no auto-import)
     x816 file1.o file2.o -o output.ips
 
-    # Mixed compilation and linking
+    # Mixed compilation and linking (explicit mode)
     x816 file1.s file2.o -o output.ips -f sfc
+
+    # Disable auto-imports for single file
+    x816 --no-auto-imports main.s -o output.ips
 """
 
 import argparse
@@ -64,13 +70,91 @@ def cli_main() -> None:
     parser.add_argument("--dump-symbols", action="store_true", help="Dumps symbol table")
     parser.add_argument("-c", "--compile-only", action="store_true", help="Compile to object files without linking.")
     parser.add_argument("-D", "--defines", metavar="KEY=VALUE", nargs="+", help="Defines symbols.")
+    parser.add_argument(
+        "--no-auto-imports",
+        action="store_true",
+        help="Disable automatic import resolution (use explicit file list instead).",
+    )
+    parser.add_argument(
+        "-I",
+        "--module-path",
+        metavar="PATH",
+        action="append",
+        dest="module_paths",
+        default=[],
+        help="Add directory to module search path (can be specified multiple times).",
+    )
+    parser.add_argument(
+        "--obj-dir",
+        type=Path,
+        dest="obj_dir",
+        default=None,
+        help="Directory for compiled object files (default: build/obj).",
+    )
+    parser.add_argument(
+        "--include-path",
+        metavar="PATH",
+        action="append",
+        dest="include_paths",
+        default=[],
+        help="Add directory to include search path for .include directives.",
+    )
+    parser.add_argument(
+        "--prelude",
+        type=Path,
+        dest="prelude_file",
+        default=None,
+        help="Config file prepended to every module compilation (e.g., feature flags).",
+    )
 
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 
+    # Determine if we should use auto-imports (default for single source file)
+    use_auto_imports = (
+        not args.no_auto_imports
+        and not args.compile_only
+        and len(args.input_files) == 1
+        and args.input_files[0].suffix in [".s", ".asm"]
+    )
+
     try:
-        if args.compile_only:
+        if use_auto_imports:
+            # Auto-import mode: discover and compile all dependencies
+            from a816.module_builder import build_with_imports
+
+            main_source = args.input_files[0]
+
+            # Parse defines - only numeric values are supported for auto-import mode
+            # String values like MY_TEXT=ABC need to be passed directly to resolver
+            symbols: dict[str, int | str] = {}
+            if args.defines:
+                for item in args.defines:
+                    key, value = item.split("=", 1)
+                    try:
+                        symbols[key] = int(value, 0)  # Support hex (0x) and decimal
+                    except ValueError:
+                        symbols[key] = value  # Keep string values as-is
+
+            # Build module paths
+            module_paths = [Path(p) for p in args.module_paths]
+            include_paths = [Path(p) for p in args.include_paths]
+
+            result = build_with_imports(
+                main_source=main_source,
+                output_file=args.output_file,
+                output_format=args.format,
+                module_paths=module_paths,
+                output_dir=args.obj_dir,
+                symbols=symbols,
+                copier_header=args.copier_header,
+                include_paths=include_paths,
+                prelude_file=args.prelude_file,
+            )
+            sys.exit(result.exit_code)
+
+        elif args.compile_only:
             # Compile each input file to an object file
             exit_code = 0
             for input_file in args.input_files:
@@ -84,6 +168,8 @@ def cli_main() -> None:
                     logger.info(f"Compiling {input_file} -> {obj_file}")
 
                 program = Program(dump_symbols=args.dump_symbols)
+                for inc_path in args.include_paths:
+                    program.add_include_path(inc_path)
                 if args.defines:
                     for item in args.defines:
                         key, value = item.split("=", 1)
@@ -132,8 +218,10 @@ def cli_main() -> None:
                 sys.exit(-1)
 
             # Link all object files
+            # Default base address is 0x8000 for SNES LoROM
+            base_address = 0x8000
             linker = Linker(object_files)
-            linked_obj = linker.link()
+            linked_obj = linker.link(base_address=base_address)
 
             # Generate final output based on format
             program = Program(dump_symbols=args.dump_symbols)

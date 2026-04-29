@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+from a816.context import AssemblyMode
 from a816.cpu.cpu_65c816 import RomType
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.parse.mzparser import MZParser
@@ -47,6 +48,26 @@ class Program:
         self.dump_symbols = dump_symbols
         self.parser = parser or MZParser(self.resolver)
 
+    def add_module_path(self, path: str | Path) -> None:
+        """Add a directory to the module search path for .import directives.
+
+        Args:
+            path: Directory path to add to the search path.
+        """
+        module_path = Path(path) if isinstance(path, str) else path
+        if module_path not in self.resolver.context.module_paths:
+            self.resolver.context.module_paths.append(module_path)
+
+    def add_include_path(self, path: str | Path) -> None:
+        """Add a directory to the include search path for .include directives.
+
+        Args:
+            path: Directory path to add to the search path.
+        """
+        include_path = Path(path) if isinstance(path, str) else path
+        if include_path not in self.resolver.context.include_paths:
+            self.resolver.context.include_paths.append(include_path)
+
     def get_physical_address(self, logical_address: int) -> int:
         """Convert a logical SNES address to a physical ROM address.
 
@@ -87,7 +108,10 @@ class Program:
         """
         self.resolver.last_used_scope = 0
 
-        previous_pc = self.resolver.reloc_address
+        # Normalize the address through the bus mapping. The initial reloc_address
+        # may have logical_value=0, but the mapped logical value is 0x8000 (for LoROM).
+        # Adding 0 forces the address through the mapping to get consistent values.
+        previous_pc = self.resolver.reloc_address + 0
 
         for node in program_nodes:
             if isinstance(node, SymbolNode):
@@ -96,7 +120,7 @@ class Program:
 
         self.resolver_reset()
 
-        previous_pc = self.resolver.reloc_address
+        previous_pc = self.resolver.reloc_address + 0
         for node in program_nodes:
             if isinstance(node, LabelNode) or isinstance(node, BinaryNode):
                 continue
@@ -199,10 +223,16 @@ class Program:
 
         return None
 
-    def assemble_with_emitter(self, asm_file: str, emitter: Writer) -> int:
+    def assemble_with_emitter(self, asm_file: str, emitter: Writer, prelude: str | None = None) -> int:
+        previous_mode = self.resolver.context.mode
         try:
+            # Set direct assembly mode so .import includes module code
+            self.resolver.context.mode = AssemblyMode.DIRECT
+
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
+                if prelude:
+                    input_program = prelude + "\n" + input_program
                 try:
                     error = self.assemble_string_with_emitter(input_program, asm_file, emitter)
                     if error is not None:
@@ -215,49 +245,66 @@ class Program:
         except RuntimeError as e:
             self.logger.error(e)
             return -1
+        finally:
+            self.resolver.context.mode = previous_mode
 
         self.logger.info("Success !")
         return 0
 
-    def assemble(self, asm_file: str, sfc_file: Path) -> int:
+    def assemble(self, asm_file: str, sfc_file: Path, prelude: str | None = None) -> int:
         """
         Compile asmfile.
         :param asm_file:
         :param sfc_file:
+        :param prelude: Optional prelude content to prepend to the source.
         :return: error code
         """
         with open(sfc_file, "wb") as f:
             sfc_emitter = SFCWriter(f)
-            return self.assemble_with_emitter(asm_file, sfc_emitter)
+            return self.assemble_with_emitter(asm_file, sfc_emitter, prelude=prelude)
 
-    def assemble_as_object(self, asm_file: str, output_file: Path) -> int:
+    def assemble_as_object(self, asm_file: str, output_file: Path, prelude: str | None = None) -> int:
         """
         Compile assembly file to object file for later linking.
         :param asm_file: Input assembly file
         :param output_file: Output object file path
+        :param prelude: Optional prelude content to prepend to the source
         :return: error code
         """
         object_writer = ObjectWriter(str(output_file))
         object_writer.begin()
 
         try:
-            exit_code = self.assemble_with_object_emitter(asm_file, object_writer)
+            exit_code = self.assemble_with_object_emitter(asm_file, object_writer, prelude=prelude)
             object_writer.end()
             return exit_code
         except RuntimeError as e:
             self.logger.error(e)
             return -1
 
-    def assemble_with_object_emitter(self, asm_file: str, object_writer: ObjectWriter) -> int:
+    def assemble_with_object_emitter(
+        self, asm_file: str, object_writer: ObjectWriter, prelude: str | None = None
+    ) -> int:
         """
         Assemble with object file emission, collecting symbols and relocations.
         """
+        previous_mode = self.resolver.context.mode
+        previous_writer = self.resolver.context.object_writer
         try:
-            # Attach object writer to resolver for extern handling
-            self.resolver._object_writer = object_writer
+            # Set object compilation mode
+            self.resolver.context.mode = AssemblyMode.OBJECT
+            self.resolver.context.object_writer = object_writer
+
+            # Record the base address for later offset calculation
+            # Force the address through the mapping to get the correct logical base.
+            # The initial reloc_address may have logical_value=0, but after any address
+            # arithmetic it becomes 0x8000+ (for LoROM). We need the mapped value.
+            base_address = (self.resolver.reloc_address + 0).logical_value
 
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
+                if prelude:
+                    input_program = prelude + "\n" + input_program
                 try:
                     error, nodes = self.parser.parse(input_program, asm_file)
 
@@ -273,14 +320,21 @@ class Program:
                         # Skip external symbols as they're already added by ExternNode
                         if not self.resolver.current_scope.is_external_symbol(name):
                             # For object files, treat most symbols as global by default
-                            # unless they start with '.' (local convention)
-                            symbol_type = SymbolType.LOCAL if name.startswith(".") else SymbolType.GLOBAL
+                            # Symbols starting with '_' are local (private to the module)
+                            symbol_type = SymbolType.LOCAL if name.startswith("_") else SymbolType.GLOBAL
 
                             # Check if this is a label (code-relative) or constant (absolute)
                             is_label = name in [label_name for label_name, _ in self.resolver.get_all_labels()]
                             section = SymbolSection.CODE if is_label else SymbolSection.DATA
 
-                            object_writer.add_symbol(name, value, symbol_type, section)
+                            # For CODE symbols (labels), convert from logical address to offset
+                            # by subtracting the base address
+                            if section == SymbolSection.CODE and isinstance(value, int):
+                                symbol_value = value - base_address
+                            else:
+                                symbol_value = value
+
+                            object_writer.add_symbol(name, symbol_value, symbol_type, section)
 
                     if self.dump_symbols:
                         self.resolver.dump_symbol_map()
@@ -295,9 +349,8 @@ class Program:
             self.logger.error(e)
             return -1
         finally:
-            # Clean up object writer reference
-            if hasattr(self.resolver, "_object_writer"):
-                delattr(self.resolver, "_object_writer")
+            self.resolver.context.mode = previous_mode
+            self.resolver.context.object_writer = previous_writer
 
         self.logger.info("Success !")
         return 0
@@ -308,6 +361,7 @@ class Program:
         ips_file: Path,
         mapping: str | None = None,
         copier_header: bool = False,
+        prelude: str | None = None,
     ) -> int:
         if mapping is not None:
             address_mapping = {
@@ -322,7 +376,7 @@ class Program:
         with open(ips_file, "wb") as f:
             ips_emitter = IPSWriter(f, copier_header)
             ips_emitter.begin()
-            exit_code = self.assemble_with_emitter(asm_file, ips_emitter)
+            exit_code = self.assemble_with_emitter(asm_file, ips_emitter, prelude=prelude)
             ips_emitter.end()
             return exit_code
 

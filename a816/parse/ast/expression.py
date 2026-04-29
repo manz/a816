@@ -92,7 +92,7 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
     external_symbols: set[str] = set()
 
     # Check if we're compiling to an object file and need to defer external expressions
-    if hasattr(resolver, "_object_writer") and resolver._object_writer is not None:
+    if resolver.context.is_object_mode:
         for current in ordered:
             if current.token.type == TokenType.IDENTIFIER:
                 try:

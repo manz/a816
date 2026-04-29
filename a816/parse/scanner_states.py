@@ -233,6 +233,7 @@ KEYWORDS = {
     "struct",
     "istruct",
     "extern",
+    "import",
     "debug",
     "a8",
     "a16",
