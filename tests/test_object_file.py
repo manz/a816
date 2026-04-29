@@ -3,11 +3,12 @@ from pathlib import Path
 
 from a816.object_file import ObjectFile, RelocationType, SymbolSection, SymbolType
 
-# Header format for version 3: <IHIIII (22 bytes)
+# Header format for version 4: <IHIIIII (26 bytes)
 # magic (4), version (2), code_size (4), symbol_table_size (4),
-# relocation_table_size (4), expression_relocation_table_size (4)
-HEADER_SIZE = 22
-HEADER_FORMAT = "<IHIIII"
+# relocation_table_size (4), expression_relocation_table_size (4),
+# alias_table_size (4)
+HEADER_SIZE = 26
+HEADER_FORMAT = "<IHIIIII"
 
 
 def test_write_empty_object_file(tmp_path: Path) -> None:
@@ -17,9 +18,16 @@ def test_write_empty_object_file(tmp_path: Path) -> None:
 
     with open(test_filename, "rb") as f:
         header = f.read(HEADER_SIZE)
-        magic, version, code_size, symbol_table_size, relocation_table_size, expression_relocation_table_size = (
-            struct.unpack(HEADER_FORMAT, header)
-        )
+        (
+            magic,
+            version,
+            code_size,
+            symbol_table_size,
+            relocation_table_size,
+            expression_relocation_table_size,
+            alias_table_size,
+        ) = struct.unpack(HEADER_FORMAT, header)
+        assert alias_table_size == 2
         assert magic == ObjectFile.MAGIC_NUMBER
         assert version == ObjectFile.VERSION
         assert code_size == 0
@@ -42,9 +50,16 @@ def test_write_object_file_with_code(tmp_path: Path) -> None:
 
     with open(test_filename, "rb") as f:
         header = f.read(HEADER_SIZE)
-        magic, version, code_size, symbol_table_size, relocation_table_size, expression_relocation_table_size = (
-            struct.unpack(HEADER_FORMAT, header)
-        )
+        (
+            magic,
+            version,
+            code_size,
+            symbol_table_size,
+            relocation_table_size,
+            expression_relocation_table_size,
+            alias_table_size,
+        ) = struct.unpack(HEADER_FORMAT, header)
+        assert alias_table_size == 2
         assert magic == ObjectFile.MAGIC_NUMBER
         assert version == ObjectFile.VERSION
         assert code_size == len(code)
@@ -153,9 +168,16 @@ def test_write_object_file_with_expression_relocations(tmp_path: Path) -> None:
 
     with open(test_filename, "rb") as f:
         header = f.read(HEADER_SIZE)
-        magic, version, code_size, symbol_table_size, relocation_table_size, expression_relocation_table_size = (
-            struct.unpack(HEADER_FORMAT, header)
-        )
+        (
+            magic,
+            version,
+            code_size,
+            symbol_table_size,
+            relocation_table_size,
+            expression_relocation_table_size,
+            alias_table_size,
+        ) = struct.unpack(HEADER_FORMAT, header)
+        assert alias_table_size == 2
         assert magic == ObjectFile.MAGIC_NUMBER
         assert version == ObjectFile.VERSION
         assert code_size == 0

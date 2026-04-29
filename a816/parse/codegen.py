@@ -276,6 +276,30 @@ def generate_symbol(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
+    # If the RHS references a symbol already known to be external, register an
+    # alias eagerly so subsequent code-gen sees the LHS as external too. This
+    # only triggers when an extern is reachable at this point (forward refs to
+    # locally defined symbols still go through the lazy SymbolNode.pc_after path).
+    if isinstance(node.value, ExpressionAstNode) and resolver.context.is_object_mode:
+        from a816.parse.tokens import TokenType
+
+        references_extern = any(
+            term.token.type == TokenType.IDENTIFIER
+            and resolver.current_scope.is_external_symbol(term.token.value)
+            for term in node.value.tokens
+        )
+        if references_extern:
+            from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+
+            try:
+                eval_expression(node.value, resolver)
+            except (ExternalExpressionReference, ExternalSymbolReference) as e:
+                expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+                resolver.current_scope.add_external_alias(node.symbol, expr_str)
+                object_writer = resolver.context.object_writer
+                if object_writer is not None:
+                    object_writer.add_alias(node.symbol, expr_str)
+
     return [SymbolNode(node.symbol, node.value, resolver)]
 
 
@@ -285,6 +309,9 @@ def generate_extern(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
+    # Register the extern eagerly so subsequent code-gen sees it as external
+    # (e.g. when `font_ptr = extern_sym + N` is processed below this declaration).
+    resolver.current_scope.add_external_symbol(node.symbol)
     return [ExternNode(node.symbol, resolver)]
 
 
@@ -464,8 +491,23 @@ def generate_assign(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    value = eval_expression(node.value, resolver)
-    resolver.current_scope.add_symbol(node.symbol, value)
+    from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+
+    try:
+        value = eval_expression(node.value, resolver)
+        resolver.current_scope.add_symbol(node.symbol, value)
+    except (ExternalExpressionReference, ExternalSymbolReference) as e:
+        if not resolver.context.is_object_mode:
+            raise NodeError(
+                f"{node.symbol} = {node.value.to_canonical()}: "
+                f"external symbols only allowed in object compilation mode.",
+                file_info,
+            ) from e
+        expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+        resolver.current_scope.add_external_alias(node.symbol, expr_str)
+        object_writer = resolver.context.object_writer
+        if object_writer is not None:
+            object_writer.add_alias(node.symbol, expr_str)
 
     return []
 

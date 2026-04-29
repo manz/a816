@@ -24,7 +24,7 @@ class SymbolSection(Enum):
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x0003  # Version 3: 32-bit sizes to support large files
+    VERSION = 0x0004  # Version 4: alias table for symbols defined as deferred expressions
 
     def __init__(
         self,
@@ -32,11 +32,13 @@ class ObjectFile:
         symbols: list[tuple[str, int, SymbolType, SymbolSection]],
         relocations: list[tuple[int, str, RelocationType]],
         expression_relocations: list[tuple[int, str, int]] | None = None,  # (offset, expression_str, size_bytes)
+        aliases: list[tuple[str, str]] | None = None,  # (name, expression_str)
     ) -> None:
         self.code: bytes = code
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = symbols
         self.relocations: list[tuple[int, str, RelocationType]] = relocations
         self.expression_relocations: list[tuple[int, str, int]] = expression_relocations or []
+        self.aliases: list[tuple[str, str]] = aliases or []
 
     def write(self, filename: str) -> None:
         with open(filename, "wb") as f:
@@ -45,21 +47,24 @@ class ObjectFile:
             self._write_symbol_table(f)
             self._write_relocation_table(f)
             self._write_expression_relocation_table(f)
+            self._write_alias_table(f)
 
     def _write_header(self, f: BinaryIO) -> None:
         code_size = len(self.code)
         symbol_table_size = self._calculate_symbol_table_size()
         relocation_table_size = self._calculate_relocation_table_size()
         expression_relocation_table_size = self._calculate_expression_relocation_table_size()
+        alias_table_size = self._calculate_alias_table_size()
 
         header = struct.pack(
-            "<IHIIII",
+            "<IHIIIII",
             self.MAGIC_NUMBER,
             self.VERSION,
             code_size,
             symbol_table_size,
             relocation_table_size,
             expression_relocation_table_size,
+            alias_table_size,
         )
         f.write(header)
 
@@ -125,11 +130,27 @@ class ObjectFile:
             size += 1  # Size in bytes (1 byte)
         return size
 
+    def _write_alias_table(self, f: BinaryIO) -> None:
+        f.write(struct.pack("<H", len(self.aliases)))
+        for name, expression in self.aliases:
+            name_bytes = name.encode("utf-8")
+            expr_bytes = expression.encode("utf-8")
+            f.write(struct.pack("<B", len(name_bytes)))
+            f.write(name_bytes)
+            f.write(struct.pack("<H", len(expr_bytes)))
+            f.write(expr_bytes)
+
+    def _calculate_alias_table_size(self) -> int:
+        size = 2
+        for name, expression in self.aliases:
+            size += 1 + len(name) + 2 + len(expression)
+        return size
+
     @staticmethod
     def read(filename: str) -> "ObjectFile":
         with open(filename, "rb") as f:
-            # Read enough bytes for version 3 header (22 bytes)
-            header_data = f.read(22)
+            # Read enough bytes for the largest known header (v4 = 26 bytes)
+            header_data = f.read(26)
             if len(header_data) < 6:  # Minimum: magic + version
                 raise ValueError("Invalid file format")
 
@@ -139,6 +160,7 @@ class ObjectFile:
             if magic_number != ObjectFile.MAGIC_NUMBER:
                 raise ValueError("Invalid magic number")
 
+            alias_table_size = 0
             # Parse header based on version
             if version == 0x0001:
                 # Version 1: <IHHHI (14 bytes)
@@ -146,7 +168,6 @@ class ObjectFile:
                     raise ValueError("Invalid file format")
                 _, _, code_size, symbol_table_size, relocation_table_size = struct.unpack("<IHHHI", header_data[:14])
                 expression_relocation_table_size = 0
-                # Seek back if we read too much
                 f.seek(14)
             elif version == 0x0002:
                 # Version 2: <IHHHHI (16 bytes)
@@ -160,7 +181,6 @@ class ObjectFile:
                     relocation_table_size,
                     expression_relocation_table_size,
                 ) = struct.unpack("<IHHHHI", header_data[:16])
-                # Seek back if we read too much
                 f.seek(16)
             elif version == 0x0003:
                 # Version 3: <IHIIII (22 bytes) - 32-bit sizes
@@ -173,7 +193,21 @@ class ObjectFile:
                     symbol_table_size,
                     relocation_table_size,
                     expression_relocation_table_size,
-                ) = struct.unpack("<IHIIII", header_data)
+                ) = struct.unpack("<IHIIII", header_data[:22])
+                f.seek(22)
+            elif version == 0x0004:
+                # Version 4: <IHIIIII (26 bytes) - adds alias table
+                if len(header_data) < 26:
+                    raise ValueError("Invalid file format")
+                (
+                    _,
+                    _,
+                    code_size,
+                    symbol_table_size,
+                    relocation_table_size,
+                    expression_relocation_table_size,
+                    alias_table_size,
+                ) = struct.unpack("<IHIIIII", header_data)
             else:
                 raise ValueError(f"Unsupported version: {version}")
 
@@ -209,4 +243,14 @@ class ObjectFile:
                     size_bytes = struct.unpack("<B", f.read(1))[0]
                     expression_relocations.append((offset, expression, size_bytes))
 
-            return ObjectFile(code, symbols, relocations, expression_relocations)
+            aliases: list[tuple[str, str]] = []
+            if version >= 0x0004 and alias_table_size > 0:
+                num_aliases = struct.unpack("<H", f.read(2))[0]
+                for _ in range(num_aliases):
+                    name_length = struct.unpack("<B", f.read(1))[0]
+                    name = f.read(name_length).decode("utf-8")
+                    expr_length = struct.unpack("<H", f.read(2))[0]
+                    expression = f.read(expr_length).decode("utf-8")
+                    aliases.append((name, expression))
+
+            return ObjectFile(code, symbols, relocations, expression_relocations, aliases)

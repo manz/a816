@@ -112,8 +112,26 @@ class SymbolNode(NodeProtocol):
 
     def pc_after(self, current_pc: Address) -> Address:
         assert isinstance(self.expression, ExpressionAstNode)
-        value = eval_expression(self.expression, self.resolver)
-        self.resolver.current_scope.add_symbol(self.symbol_name, value)
+        try:
+            value = eval_expression(self.expression, self.resolver)
+            self.resolver.current_scope.add_symbol(self.symbol_name, value)
+        except (ExternalExpressionReference, ExternalSymbolReference) as e:
+            # RHS references external symbols. Register an alias so local
+            # references behave like externs and the linker resolves later.
+            if not self.resolver.context.is_object_mode:
+                raise NodeError(
+                    f"{self.symbol_name} = {self.expression.to_canonical()}: "
+                    f"external symbols only allowed in object compilation mode.",
+                    self.expression.file_info if hasattr(self.expression, "file_info") else current_pc,  # type: ignore[arg-type]
+                ) from e
+            if isinstance(e, ExternalSymbolReference):
+                expr_str = e.symbol_name
+            else:
+                expr_str = e.expression_str
+            self.resolver.current_scope.add_external_alias(self.symbol_name, expr_str)
+            object_writer = self.resolver.context.object_writer
+            if object_writer is not None:
+                object_writer.add_alias(self.symbol_name, expr_str)
         return current_pc
 
     def __str__(self) -> str:

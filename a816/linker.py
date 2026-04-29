@@ -22,6 +22,7 @@ class Linker:
         self.linked_symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
         self.linked_relocations: list[tuple[int, str, RelocationType]] = []
         self.linked_expression_relocations: list[tuple[int, str, int]] = []  # (offset, expression, size_bytes)
+        self.linked_aliases: list[tuple[str, str]] = []  # (name, expression)
         self.symbol_map: dict[str, int] = {}
 
     def link(self, base_address: int | None = None) -> ObjectFile:
@@ -37,13 +38,15 @@ class Linker:
         if base_address is not None:
             self.base_address = base_address
         self._resolve_symbols()
+        self._resolve_aliases()
+        self._check_unresolved()
         self._apply_relocations()
         self._apply_expression_relocations()
         return ObjectFile(bytes(self.linked_code), self.linked_symbols, self.linked_relocations)
 
     def _resolve_symbols(self) -> None:
         # First pass: collect external symbol requirements and global definitions
-        external_symbols_needed: set[str] = set()
+        self._external_symbols_needed: set[str] = set()
         current_code_offset = 0
         base_address = self.base_address
 
@@ -66,7 +69,7 @@ class Linker:
                     local_address = base_address + current_code_offset + address
                     self.linked_symbols.append((name, local_address, symbol_type, section))
                 elif symbol_type == SymbolType.EXTERNAL:
-                    external_symbols_needed.add(name)
+                    self._external_symbols_needed.add(name)
                 else:
                     raise ValueError(f"Unknown symbol type: {symbol_type}")
 
@@ -77,12 +80,41 @@ class Linker:
             for offset, expression, size_bytes in obj_file.expression_relocations:
                 self.linked_expression_relocations.append((current_code_offset + offset, expression, size_bytes))
 
+            # Collect alias entries
+            for alias_name, alias_expr in obj_file.aliases:
+                self.linked_aliases.append((alias_name, alias_expr))
+
             current_code_offset += len(obj_file.code)
 
-        # Check that all external symbols are satisfied by global symbols
-        unresolved_symbols = external_symbols_needed - set(self.symbol_map.keys())
+    def _check_unresolved(self) -> None:
+        unresolved_symbols = self._external_symbols_needed - set(self.symbol_map.keys())
         if unresolved_symbols:
             raise UnresolvedSymbolError(unresolved_symbols)
+
+    def _resolve_aliases(self) -> None:
+        """Resolve aliases iteratively. An alias may depend on another alias."""
+        if not self.linked_aliases:
+            return
+
+        remaining = list(self.linked_aliases)
+        progress = True
+        while remaining and progress:
+            progress = False
+            still_pending: list[tuple[str, str]] = []
+            for name, expression in remaining:
+                try:
+                    value = self._evaluate_expression(expression)
+                except ExpressionEvaluationError:
+                    still_pending.append((name, expression))
+                    continue
+                self.symbol_map[name] = value
+                self.linked_symbols.append((name, value, SymbolType.GLOBAL, SymbolSection.DATA))
+                progress = True
+            remaining = still_pending
+
+        if remaining:
+            unresolved = {name for name, _ in remaining}
+            raise UnresolvedSymbolError(unresolved)
 
     def _apply_relocations(self) -> None:
         base_address = self.base_address

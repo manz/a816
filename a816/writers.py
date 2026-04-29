@@ -75,6 +75,7 @@ class ObjectWriter(Writer):
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
         self.relocations: list[tuple[int, str, RelocationType]] = []
         self.expression_relocations: list[tuple[int, str, int]] = []  # (offset, expression_str, size_bytes)
+        self.aliases: list[tuple[str, str]] = []  # (name, expression_str)
         self.current_offset = 0
 
     def begin(self) -> None:
@@ -83,6 +84,7 @@ class ObjectWriter(Writer):
         self.symbols = []
         self.relocations = []
         self.expression_relocations = []
+        self.aliases = []
         self.current_offset = 0
 
     def write_block_header(self, block: bytes, block_address: int) -> None:
@@ -108,13 +110,21 @@ class ObjectWriter(Writer):
         """Add an expression relocation entry to the object file"""
         self.expression_relocations.append((offset, expression, size_bytes))
 
+    def add_alias(self, name: str, expression: str) -> None:
+        """Register a symbol whose value is a deferred expression resolved at link time."""
+        self.aliases.append((name, expression))
+
     def end(self) -> None:
         """Write the object file to disk"""
-        # Combine all code blocks into a single byte array
         total_code = bytearray()
         for block, _ in self.code_blocks:
             total_code.extend(block)
 
-        # Create and write the object file
-        obj_file = ObjectFile(bytes(total_code), self.symbols, self.relocations, self.expression_relocations)
+        obj_file = ObjectFile(
+            bytes(total_code),
+            self.symbols,
+            self.relocations,
+            self.expression_relocations,
+            self.aliases,
+        )
         obj_file.write(self.output_file)

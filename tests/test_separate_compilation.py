@@ -241,6 +241,49 @@ main:
                 linker.link()
             assert "missing_symbol" in exc_info.value.symbols
 
+    def test_constant_assignment_with_extern(self) -> None:
+        """A constant defined as `name = extern_sym + N` defers to link time."""
+
+        producer = """target:
+    lda #0x42
+    rts"""
+
+        consumer = """.extern target
+
+font_ptr = target + 0x10
+font_high = (target >> 16) & 0xFF
+
+main:
+    lda.w #(font_ptr & 0xFFFF)
+    sta 0x2000
+    lda #font_high
+    sta 0x2002
+    rts"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / "producer.s").write_text(producer)
+            (tmp / "consumer.s").write_text(consumer)
+
+            program_a = Program()
+            assert program_a.assemble_as_object(str(tmp / "producer.s"), tmp / "producer.o") == 0
+
+            program_b = Program()
+            assert program_b.assemble_as_object(str(tmp / "consumer.s"), tmp / "consumer.o") == 0
+
+            obj_consumer = ObjectFile.read(str(tmp / "consumer.o"))
+            assert ("font_ptr", "target + 0x10") in obj_consumer.aliases
+            assert any(name == "font_high" for name, _ in obj_consumer.aliases)
+
+            obj_producer = ObjectFile.read(str(tmp / "producer.o"))
+            linker = Linker([obj_producer, obj_consumer], base_address=0x8000)
+            linked = linker.link()
+            assert "font_ptr" in linker.symbol_map
+            assert linker.symbol_map["font_ptr"] == 0x8000 + 0x10
+            assert "font_high" in linker.symbol_map
+            assert linker.symbol_map["font_high"] == 0
+            assert len(linked.code) > 0
+
     def test_object_file_format_roundtrip(self) -> None:
         """Test that object file format can be written and read correctly"""
 

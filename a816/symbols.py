@@ -35,6 +35,10 @@ class Scope:
         self.symbols: dict[str, int | str] = {}
         self.code_symbols: dict[str, BlockAstNode] = {}
         self.external_symbols: set[str] = set()
+        # Aliased externals: name -> expression string (e.g. "extern_sym + 1").
+        # The alias name behaves like an external symbol locally; the linker
+        # resolves it once the underlying externs are known.
+        self.external_aliases: dict[str, str] = {}
         self.parent = parent
         self.resolver: Resolver = resolver
         self.table: Table | None = None
@@ -60,6 +64,16 @@ class Scope:
     def add_external_symbol(self, symbol: str) -> None:
         """Mark a symbol as external (defined in another object file)"""
         self.external_symbols.add(symbol)
+
+    def add_external_alias(self, symbol: str, expression_str: str) -> None:
+        """Register an alias whose value is a deferred expression over externs.
+
+        The alias is treated as an external symbol locally so references
+        emit deferred relocations. The linker resolves the alias by
+        evaluating ``expression_str`` against the final symbol map.
+        """
+        self.external_symbols.add(symbol)
+        self.external_aliases[symbol] = expression_str
 
     def is_external_symbol(self, symbol: str) -> bool:
         """Check if a symbol is marked as external"""
