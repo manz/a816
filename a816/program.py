@@ -313,9 +313,14 @@ class Program:
                     for name, value in self.resolver.get_all_symbols():
                         # Skip external symbols as they're already added by ExternNode
                         if not self.resolver.current_scope.is_external_symbol(name):
-                            # For object files, treat most symbols as global by default
-                            # Symbols starting with '_' are local (private to the module)
-                            symbol_type = SymbolType.LOCAL if name.startswith("_") else SymbolType.GLOBAL
+                            # Anonymous-block labels stay LOCAL (would otherwise
+                            # leak as globals); explicit `_` prefix also marks
+                            # private; everything reachable at the root scope
+                            # (or via a NamedScope dotted export) is GLOBAL.
+                            if name.startswith("_") or not self.resolver.is_root_scope_symbol(name):
+                                symbol_type = SymbolType.LOCAL
+                            else:
+                                symbol_type = SymbolType.GLOBAL
 
                             # Check if this is a label (code-relative) or constant (absolute)
                             is_label = name in [label_name for label_name, _ in self.resolver.get_all_labels()]

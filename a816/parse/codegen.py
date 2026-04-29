@@ -95,7 +95,15 @@ def generate_block(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    return _code_gen(node.body, resolver, macro_definitions)
+    # Anonymous `{}` blocks scope their labels — don't leak names like
+    # `loop`/`exit` into the parent scope.
+    resolver.append_scope()
+    resolver.use_next_scope()
+    code: list[NodeProtocol] = [ScopeNode(resolver)]
+    code += _code_gen(node.body, resolver, macro_definitions)
+    code.append(PopScopeNode(resolver))
+    resolver.restore_scope(exports=False)
+    return code
 
 
 def generate_scope(
@@ -309,9 +317,12 @@ def generate_extern(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    # Register the extern eagerly so subsequent code-gen sees it as external
-    # (e.g. when `font_ptr = extern_sym + N` is processed below this declaration).
-    resolver.current_scope.add_external_symbol(node.symbol)
+    # In object mode, register the extern eagerly so subsequent code-gen
+    # (e.g. `font_ptr = extern_sym + N`) sees it as external. In direct mode
+    # we leave it to ExternNode.pc_after to avoid shadowing real definitions
+    # provided by included files.
+    if resolver.context.is_object_mode:
+        resolver.current_scope.add_external_symbol(node.symbol)
     return [ExternNode(node.symbol, resolver)]
 
 
@@ -650,6 +661,8 @@ def generate_macro_application(
     resolver.append_scope()
     resolver.use_next_scope()
     code.append(ScopeNode(resolver))
+    from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+
     for index, arg in enumerate(macro_args):
         value = macro_args_values[index]
         try:
@@ -658,8 +671,15 @@ def generate_macro_application(
             else:
                 resolver.current_scope.add_symbol(arg, eval_expression(value, resolver))
         except SymbolNotDefined:
-            # defer the resolve to the emit part.
+            # Defer the resolve to the emit part.
             code.append(SymbolNode(arg, value, resolver))
+        except (ExternalExpressionReference, ExternalSymbolReference) as e:
+            # Macro argument expression references externs; treat the bound
+            # name as an alias locally. Do NOT publish to the object writer:
+            # the binding is invocation-local, and any extern relocations
+            # generated inside the macro body inline the alias on the way out.
+            expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+            resolver.current_scope.add_external_alias(arg, expr_str)
     code += _code_gen(macro_code.body, resolver, macro_definitions)
     code.append(PopScopeNode(resolver))
     resolver.restore_scope()

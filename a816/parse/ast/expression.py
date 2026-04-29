@@ -1,4 +1,5 @@
 import ctypes
+import re
 
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
 from a816.parse.ast.nodes import BinOp, ExpressionAstNode, ExprNode, Term, UnaryOp
@@ -102,8 +103,10 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
 
         # If expression contains external symbols, throw exception to defer evaluation
         if external_symbols:
-            # Reconstruct expression string from tokens
-            expression_str = reconstruct_expression(expression)
+            # Reconstruct expression string and inline any aliases so the
+            # exported relocation references concrete externs (macro-arg
+            # bindings would otherwise leak into the object file).
+            expression_str = _inline_aliases(reconstruct_expression(expression), resolver)
             raise ExternalExpressionReference(expression_str, external_symbols)
 
     values_stack: list[int | str] = []
@@ -182,6 +185,29 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
                 raise RuntimeError("Mismatched types in expression")
             values_stack.append(r)
     return values_stack.pop()
+
+
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+
+
+def _inline_aliases(expression_str: str, resolver: Resolver, depth: int = 0) -> str:
+    """Replace alias names in ``expression_str`` with their underlying expressions.
+
+    Macro-arg aliases bind a name to an expression that references real
+    externs; inlining keeps the relocation expression independent of the
+    transient scope where the alias lived.
+    """
+    if depth > 16:
+        return expression_str  # bail on suspected cycle
+
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        alias_expr = resolver.current_scope.lookup_alias(token)
+        if alias_expr is None or alias_expr == token:
+            return token
+        return "(" + _inline_aliases(alias_expr, resolver, depth + 1) + ")"
+
+    return _IDENT_RE.sub(replace, expression_str)
 
 
 def reconstruct_expression(expression: ExpressionAstNode) -> str:

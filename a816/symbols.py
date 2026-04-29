@@ -75,6 +75,15 @@ class Scope:
         self.external_symbols.add(symbol)
         self.external_aliases[symbol] = expression_str
 
+    def lookup_alias(self, symbol: str) -> str | None:
+        """Walk the scope chain looking for a registered external alias."""
+        scope: Scope | None = self
+        while scope is not None:
+            if symbol in scope.external_aliases:
+                return scope.external_aliases[symbol]
+            scope = scope.parent
+        return None
+
     def is_external_symbol(self, symbol: str) -> bool:
         """Check if a symbol is marked as external"""
         if symbol in self.external_symbols:
@@ -111,8 +120,11 @@ class Scope:
         if self.parent:
             if symbol in self.symbols or symbol in self.code_symbols:
                 return self[symbol]
-            else:
-                return self.parent.value_for(symbol)
+            # External alias declared at this level (e.g. macro arg bound to
+            # an extern expression) needs to be visible here so eval can defer.
+            if symbol in self.external_aliases:
+                return self[symbol]
+            return self.parent.value_for(symbol)
         else:
             try:
                 return self[symbol]
@@ -275,3 +287,25 @@ class Resolver:
                         symbols.append((name, symbol_value))
                         seen_symbols.add(name)
         return symbols
+
+    def is_root_scope_symbol(self, name: str) -> bool:
+        """Check whether ``name`` is defined directly in the root scope.
+
+        Used by the object-file emitter to decide whether a symbol should be
+        exported as GLOBAL (root scope or named scope) or LOCAL (nested
+        anonymous block).
+        """
+        if not self.scopes:
+            return False
+        root = self.scopes[0]
+        if name in root.symbols or name in root.code_symbols or name in root.labels:
+            return True
+        # NamedScope contributes its dotted exports back into the root via
+        # restore_scope(exports=True), so "name.foo" entries also live at the
+        # root once the scope is closed.
+        for scope in self.scopes:
+            if isinstance(scope, NamedScope):
+                qualified = f"{scope.name}.{name}"
+                if qualified in root.symbols or qualified in root.labels:
+                    return True
+        return False
