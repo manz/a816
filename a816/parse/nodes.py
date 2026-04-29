@@ -209,34 +209,26 @@ class LinkedModuleNode(NodeProtocol):
         self.symbols = symbols
         self.resolver = resolver
         self.expression_relocations = expression_relocations or []
-        self._symbols_bound = False
-        self._patched_code: bytes | None = None
 
     def emit(self, current_addr: Address) -> bytes:
-        # Apply expression relocations during emit when all symbols are resolved
-        if self._patched_code is None and self.expression_relocations:
-            self._patched_code = self._apply_expression_relocations()
-
-        if self._patched_code is not None:
-            return self._patched_code
+        # Apply expression relocations every emit; symbols may have moved between passes.
+        if self.expression_relocations:
+            return self._apply_expression_relocations()
         return self.code
 
     def pc_after(self, current_pc: Address) -> Address:
-        # Bind symbols with addresses adjusted for current position
-        if not self._symbols_bound:
-            from a816.object_file import SymbolSection, SymbolType
+        # Rebind every pass: write directly to the scope dicts to avoid
+        # add_symbol's duplicate-warning while keeping the symbol map current.
+        from a816.object_file import SymbolSection, SymbolType
 
-            base_address = current_pc.logical_value
-            for name, offset, sym_type, section in self.symbols:
-                if sym_type == SymbolType.GLOBAL.value:
-                    if section == SymbolSection.CODE.value:
-                        # CODE symbols: add base address to offset
-                        symbol_address = base_address + offset
-                        self.resolver.current_scope.add_symbol(name, symbol_address)
-                    else:
-                        # DATA symbols (constants): use raw value
-                        self.resolver.current_scope.add_symbol(name, offset)
-            self._symbols_bound = True
+        scope = self.resolver.current_scope
+        base_address = current_pc.logical_value
+        for name, offset, sym_type, section in self.symbols:
+            if sym_type == SymbolType.GLOBAL.value:
+                if section == SymbolSection.CODE.value:
+                    scope.symbols[name] = base_address + offset
+                else:
+                    scope.symbols[name] = offset
 
         return current_pc + len(self.code)
 

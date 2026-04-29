@@ -54,7 +54,7 @@ class Program:
         Args:
             path: Directory path to add to the search path.
         """
-        module_path = Path(path) if isinstance(path, str) else path
+        module_path = (Path(path) if isinstance(path, str) else path).resolve()
         if module_path not in self.resolver.context.module_paths:
             self.resolver.context.module_paths.append(module_path)
 
@@ -64,7 +64,7 @@ class Program:
         Args:
             path: Directory path to add to the search path.
         """
-        include_path = Path(path) if isinstance(path, str) else path
+        include_path = (Path(path) if isinstance(path, str) else path).resolve()
         if include_path not in self.resolver.context.include_paths:
             self.resolver.context.include_paths.append(include_path)
 

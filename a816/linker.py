@@ -15,25 +15,27 @@ SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
 
 class Linker:
-    def __init__(self, object_files: list[ObjectFile]) -> None:
+    def __init__(self, object_files: list[ObjectFile], base_address: int = 0) -> None:
         self.object_files = object_files
+        self.base_address = base_address
         self.linked_code: bytearray = bytearray()
         self.linked_symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
         self.linked_relocations: list[tuple[int, str, RelocationType]] = []
         self.linked_expression_relocations: list[tuple[int, str, int]] = []  # (offset, expression, size_bytes)
         self.symbol_map: dict[str, int] = {}
 
-    def link(self, base_address: int = 0) -> ObjectFile:
+    def link(self, base_address: int | None = None) -> ObjectFile:
         """Link object files into a single object file.
 
         Args:
-            base_address: Base ROM address for CODE section symbols (e.g., 0x8000 for SNES LoROM).
-                         This is added to CODE symbol addresses before evaluating expression relocations.
+            base_address: Optional override for the base ROM address. Defaults to value
+                         passed at construction time (0 if not specified).
 
         Returns:
             A linked ObjectFile containing combined code, resolved symbols, and remaining relocations.
         """
-        self._base_address = base_address
+        if base_address is not None:
+            self.base_address = base_address
         self._resolve_symbols()
         self._apply_relocations()
         self._apply_expression_relocations()
@@ -43,7 +45,7 @@ class Linker:
         # First pass: collect external symbol requirements and global definitions
         external_symbols_needed: set[str] = set()
         current_code_offset = 0
-        base_address = getattr(self, "_base_address", 0)
+        base_address = self.base_address
 
         for obj_file in self.object_files:
             self.linked_code.extend(obj_file.code)
@@ -83,7 +85,7 @@ class Linker:
             raise UnresolvedSymbolError(unresolved_symbols)
 
     def _apply_relocations(self) -> None:
-        base_address = getattr(self, "_base_address", 0)
+        base_address = self.base_address
 
         for offset, symbol_name, relocation_type in self.linked_relocations:
             if symbol_name not in self.symbol_map:
