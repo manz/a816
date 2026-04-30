@@ -372,6 +372,45 @@ target:
             assert "target" in linker.symbol_map
             assert linker.symbol_map["ptr_low"] == linker.symbol_map["target"] & 0xFFFF
 
+    def test_named_scope_labels_export_as_code_not_data(self) -> None:
+        """`.scope foo { bar: ... }` exports `foo.bar` as a CODE label.
+
+        Earlier the dotted name landed in the parent's symbols dict only,
+        so the section heuristic mis-tagged it DATA — propagating the
+        compile-time address as a constant across modules and breaking
+        cross-module JSR targets after relocation.
+        """
+        source = """.scope render_allocator {
+init_with_tile_id:
+    sta.l 0x702f00
+    rts
+init:
+    pha
+    rts
+}
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "scope.s"
+            obj = Path(tmpdir) / "scope.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+
+            o = ObjectFile.read(str(obj))
+            sym_table = {n: (a, t, s) for n, a, t, s in o.symbols}
+            assert "render_allocator.init_with_tile_id" in sym_table
+            _, _, section = sym_table["render_allocator.init_with_tile_id"]
+            assert section.value == 0, (
+                "scope-exported labels must be CODE so the linker rebases them, "
+                "not DATA constants frozen at the module's compile-time base"
+            )
+
+            # Linker rebases against new module placement.
+            linker = Linker([o], base_address=0x9000)
+            linker.link()
+            init_addr = linker.symbol_map["render_allocator.init_with_tile_id"]
+            # init_with_tile_id is the first label, offset 0 → linked at base.
+            assert init_addr & 0xFFFF == 0x9000
+
     def test_object_file_format_roundtrip(self) -> None:
         """Test that object file format can be written and read correctly"""
 
