@@ -52,93 +52,58 @@ class Instruction:
     length: int  # Total instruction length
 
     def format_operand(self, m_flag: bool = True, x_flag: bool = True, use_a816_syntax: bool = False) -> str:
-        """Format the operand based on addressing mode.
+        """Format operand for the addressing mode.
 
-        Args:
-            m_flag: True if accumulator is 8-bit
-            x_flag: True if index registers are 8-bit
-            use_a816_syntax: If True, use 0x prefix instead of $ for a816 compatibility
+        m_flag/x_flag select 8- vs 16-bit width for IMMEDIATE_M / IMMEDIATE_X.
+        use_a816_syntax: 0x prefix instead of $.
         """
         val = self.operand_value
-        mode = self.mode
 
-        # Helper for hex formatting
         def hex_val(v: int, width: int) -> str:
-            if use_a816_syntax:
-                return f"0x{v:0{width}X}"
-            else:
-                return f"${v:0{width}X}"
+            return (f"0x{v:0{width}X}") if use_a816_syntax else (f"${v:0{width}X}")
 
-        if mode == AddrMode.IMPLIED:
+        # Static templates: (width, format_string).
+        templates: dict[AddrMode, tuple[int, str]] = {
+            AddrMode.IMMEDIATE_8: (2, "#{}"),
+            AddrMode.IMMEDIATE_16: (4, "#{}"),
+            AddrMode.DIRECT: (2, "{}"),
+            AddrMode.DIRECT_X: (2, "{},x"),
+            AddrMode.DIRECT_Y: (2, "{},y"),
+            AddrMode.DIRECT_IND: (2, "({})"),
+            AddrMode.DIRECT_IND_X: (2, "({},x)"),
+            AddrMode.DIRECT_IND_Y: (2, "({}),y"),
+            AddrMode.DIRECT_IND_LONG: (2, "[{}]"),
+            AddrMode.DIRECT_IND_LONG_Y: (2, "[{}],y"),
+            AddrMode.ABSOLUTE: (4, "{}"),
+            AddrMode.ABSOLUTE_X: (4, "{},x"),
+            AddrMode.ABSOLUTE_Y: (4, "{},y"),
+            AddrMode.ABSOLUTE_LONG: (6, "{}"),
+            AddrMode.ABSOLUTE_LONG_X: (6, "{},x"),
+            AddrMode.ABSOLUTE_IND: (4, "({})"),
+            AddrMode.ABSOLUTE_IND_X: (4, "({},x)"),
+            AddrMode.ABSOLUTE_IND_LONG: (4, "[{}]"),
+            AddrMode.STACK_REL: (2, "{},s"),
+            AddrMode.STACK_REL_IND_Y: (2, "({},s),y"),
+        }
+
+        if self.mode == AddrMode.IMPLIED:
             return ""
-        elif mode == AddrMode.IMMEDIATE_8:
-            return f"#{hex_val(val, 2)}"
-        elif mode == AddrMode.IMMEDIATE_16:
-            return f"#{hex_val(val, 4)}"
-        elif mode == AddrMode.IMMEDIATE_M:
-            if m_flag:
-                return f"#{hex_val(val, 2)}"
-            else:
-                return f"#{hex_val(val, 4)}"
-        elif mode == AddrMode.IMMEDIATE_X:
-            if x_flag:
-                return f"#{hex_val(val, 2)}"
-            else:
-                return f"#{hex_val(val, 4)}"
-        elif mode == AddrMode.DIRECT:
-            return hex_val(val, 2)
-        elif mode == AddrMode.DIRECT_X:
-            return f"{hex_val(val, 2)},x"
-        elif mode == AddrMode.DIRECT_Y:
-            return f"{hex_val(val, 2)},y"
-        elif mode == AddrMode.DIRECT_IND:
-            return f"({hex_val(val, 2)})"
-        elif mode == AddrMode.DIRECT_IND_X:
-            return f"({hex_val(val, 2)},x)"
-        elif mode == AddrMode.DIRECT_IND_Y:
-            return f"({hex_val(val, 2)}),y"
-        elif mode == AddrMode.DIRECT_IND_LONG:
-            return f"[{hex_val(val, 2)}]"
-        elif mode == AddrMode.DIRECT_IND_LONG_Y:
-            return f"[{hex_val(val, 2)}],y"
-        elif mode == AddrMode.ABSOLUTE:
-            return hex_val(val, 4)
-        elif mode == AddrMode.ABSOLUTE_X:
-            return f"{hex_val(val, 4)},x"
-        elif mode == AddrMode.ABSOLUTE_Y:
-            return f"{hex_val(val, 4)},y"
-        elif mode == AddrMode.ABSOLUTE_LONG:
-            return hex_val(val, 6)
-        elif mode == AddrMode.ABSOLUTE_LONG_X:
-            return f"{hex_val(val, 6)},x"
-        elif mode == AddrMode.ABSOLUTE_IND:
-            return f"({hex_val(val, 4)})"
-        elif mode == AddrMode.ABSOLUTE_IND_X:
-            return f"({hex_val(val, 4)},x)"
-        elif mode == AddrMode.ABSOLUTE_IND_LONG:
-            return f"[{hex_val(val, 4)}]"
-        elif mode == AddrMode.STACK_REL:
-            return f"{hex_val(val, 2)},s"
-        elif mode == AddrMode.STACK_REL_IND_Y:
-            return f"({hex_val(val, 2)},s),y"
-        elif mode == AddrMode.RELATIVE:
-            # Calculate target address
-            offset = val if val < 128 else val - 256
+        if self.mode in templates:
+            width, fmt = templates[self.mode]
+            return fmt.format(hex_val(val, width))
+        if self.mode == AddrMode.IMMEDIATE_M:
+            return f"#{hex_val(val, 2 if m_flag else 4)}"
+        if self.mode == AddrMode.IMMEDIATE_X:
+            return f"#{hex_val(val, 2 if x_flag else 4)}"
+        if self.mode in (AddrMode.RELATIVE, AddrMode.RELATIVE_LONG):
+            cap = 256 if self.mode == AddrMode.RELATIVE else 65536
+            half = cap // 2
+            offset = val if val < half else val - cap
             target = self.address + self.length + offset
             return hex_val(target & 0xFFFF, 4)
-        elif mode == AddrMode.RELATIVE_LONG:
-            offset = val if val < 32768 else val - 65536
-            target = self.address + self.length + offset
-            return hex_val(target & 0xFFFF, 4)
-        elif mode == AddrMode.BLOCK_MOVE:
-            # Block move: first byte is dest bank, second is source bank
-            dst = val & 0xFF
-            src = (val >> 8) & 0xFF
-            return f"{hex_val(dst, 2)},{hex_val(src, 2)}"
-        else:
-            if use_a816_syntax:
-                return f"0x{val:X}"
-            return f"${val:X}"
+        if self.mode == AddrMode.BLOCK_MOVE:
+            return f"{hex_val(val & 0xFF, 2)},{hex_val((val >> 8) & 0xFF, 2)}"
+        return (f"0x{val:X}") if use_a816_syntax else (f"${val:X}")
 
     def get_size_hint(self) -> str:
         """Get the size hint suffix for a816 syntax (.b, .w, .l)."""
@@ -533,75 +498,49 @@ class Disassembler:
             return 1 if self.x_flag else 2
         return base_size
 
+    @staticmethod
+    def _decode_operand(operand_bytes: bytes) -> int:
+        return sum(b << (8 * i) for i, b in enumerate(operand_bytes))
+
+    @staticmethod
+    def _data_byte(address: int, opcode: int, raw: bytes) -> Instruction:
+        return Instruction(
+            address=address,
+            opcode=opcode,
+            mnemonic=".db",
+            mode=AddrMode.IMMEDIATE_8,
+            operand_bytes=raw,
+            operand_value=opcode,
+            length=1,
+        )
+
+    def _track_register_flags(self, mnemonic: str, operand_value: int) -> None:
+        if mnemonic not in ("rep", "sep"):
+            return
+        new_state = mnemonic == "sep"
+        if operand_value & 0x20:
+            self.m_flag = new_state
+        if operand_value & 0x10:
+            self.x_flag = new_state
+
     def decode_instruction(self, data: bytes, address: int) -> Instruction | None:
-        """
-        Decode a single instruction from bytes.
-
-        Args:
-            data: Bytes to decode (must have at least 1 byte)
-            address: SNES logical address of the instruction
-
-        Returns:
-            Decoded Instruction, or None if data is empty
-        """
+        """Decode a single instruction. Returns None on empty input."""
         if not data:
             return None
 
         opcode = data[0]
-
         if opcode not in OPCODE_TABLE:
-            # Unknown opcode - treat as data byte
-            return Instruction(
-                address=address,
-                opcode=opcode,
-                mnemonic=".db",
-                mode=AddrMode.IMMEDIATE_8,
-                operand_bytes=bytes([opcode]),
-                operand_value=opcode,
-                length=1,
-            )
+            return self._data_byte(address, opcode, bytes([opcode]))
 
         mnemonic, mode, base_size = OPCODE_TABLE[opcode]
         operand_size = self.get_operand_size(base_size)
-
-        # Check if we have enough data
         total_length = 1 + operand_size
         if len(data) < total_length:
-            # Not enough data - return partial
-            return Instruction(
-                address=address,
-                opcode=opcode,
-                mnemonic=".db",
-                mode=AddrMode.IMMEDIATE_8,
-                operand_bytes=data,
-                operand_value=opcode,
-                length=1,
-            )
+            return self._data_byte(address, opcode, data)
 
-        # Extract operand
-        operand_bytes = data[1 : 1 + operand_size]
-        if operand_size == 0:
-            operand_value = 0
-        elif operand_size == 1:
-            operand_value = operand_bytes[0]
-        elif operand_size == 2:
-            operand_value = operand_bytes[0] | (operand_bytes[1] << 8)
-        elif operand_size == 3:
-            operand_value = operand_bytes[0] | (operand_bytes[1] << 8) | (operand_bytes[2] << 16)
-        else:
-            operand_value = 0
-
-        # Track REP/SEP to update processor flags
-        if mnemonic == "rep":
-            if operand_value & 0x20:
-                self.m_flag = False
-            if operand_value & 0x10:
-                self.x_flag = False
-        elif mnemonic == "sep":
-            if operand_value & 0x20:
-                self.m_flag = True
-            if operand_value & 0x10:
-                self.x_flag = True
+        operand_bytes = data[1:total_length]
+        operand_value = self._decode_operand(operand_bytes)
+        self._track_register_flags(mnemonic, operand_value)
 
         return Instruction(
             address=address,

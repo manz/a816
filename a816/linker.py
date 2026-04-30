@@ -44,49 +44,43 @@ class Linker:
         self._apply_expression_relocations()
         return ObjectFile(bytes(self.linked_code), self.linked_symbols, self.linked_relocations)
 
+    def _resolved_address(self, address: int, section: SymbolSection, code_offset: int) -> int:
+        # CODE = base + module offset + symbol offset; DATA = absolute.
+        return address if section == SymbolSection.DATA else self.base_address + code_offset + address
+
+    def _ingest_symbol(self, sym: tuple[str, int, SymbolType, SymbolSection], code_offset: int) -> None:
+        name, address, symbol_type, section = sym
+        if symbol_type == SymbolType.EXTERNAL:
+            self._external_symbols_needed.add(name)
+            return
+        if symbol_type == SymbolType.GLOBAL:
+            if name in self.symbol_map:
+                raise DuplicateSymbolError(name)
+            final_address = self._resolved_address(address, section, code_offset)
+            self.symbol_map[name] = final_address
+            self.linked_symbols.append((name, final_address, symbol_type, section))
+            return
+        if symbol_type == SymbolType.LOCAL:
+            local_address = self._resolved_address(address, section, code_offset)
+            self.linked_symbols.append((name, local_address, symbol_type, section))
+            return
+        raise ValueError(f"Unknown symbol type: {symbol_type}")
+
+    def _ingest_object(self, obj_file: ObjectFile, code_offset: int) -> None:
+        self.linked_code.extend(obj_file.code)
+        for sym in obj_file.symbols:
+            self._ingest_symbol(sym, code_offset)
+        for offset, symbol_name, relocation_type in obj_file.relocations:
+            self.linked_relocations.append((code_offset + offset, symbol_name, relocation_type))
+        for offset, expression, size_bytes in obj_file.expression_relocations:
+            self.linked_expression_relocations.append((code_offset + offset, expression, size_bytes))
+        self.linked_aliases.extend(obj_file.aliases)
+
     def _resolve_symbols(self) -> None:
-        # First pass: collect external symbol requirements and global definitions
         self._external_symbols_needed: set[str] = set()
         current_code_offset = 0
-        base_address = self.base_address
-
         for obj_file in self.object_files:
-            self.linked_code.extend(obj_file.code)
-            for name, address, symbol_type, section in obj_file.symbols:
-                if symbol_type == SymbolType.GLOBAL:
-                    if name in self.symbol_map:
-                        raise DuplicateSymbolError(name)
-                    # Only add code offset for CODE section symbols (labels)
-                    # DATA section symbols (constants) are absolute values
-                    if section == SymbolSection.DATA:
-                        final_address = address
-                    else:
-                        # CODE symbols get base address + current offset + symbol's relative address
-                        final_address = base_address + current_code_offset + address
-                    self.symbol_map[name] = final_address
-                    self.linked_symbols.append((name, final_address, symbol_type, section))
-                elif symbol_type == SymbolType.LOCAL:
-                    if section == SymbolSection.DATA:
-                        local_address = address
-                    else:
-                        local_address = base_address + current_code_offset + address
-                    self.linked_symbols.append((name, local_address, symbol_type, section))
-                elif symbol_type == SymbolType.EXTERNAL:
-                    self._external_symbols_needed.add(name)
-                else:
-                    raise ValueError(f"Unknown symbol type: {symbol_type}")
-
-            for offset, symbol_name, relocation_type in obj_file.relocations:
-                self.linked_relocations.append((current_code_offset + offset, symbol_name, relocation_type))
-
-            # Collect expression relocations
-            for offset, expression, size_bytes in obj_file.expression_relocations:
-                self.linked_expression_relocations.append((current_code_offset + offset, expression, size_bytes))
-
-            # Collect alias entries
-            for alias_name, alias_expr in obj_file.aliases:
-                self.linked_aliases.append((alias_name, alias_expr))
-
+            self._ingest_object(obj_file, current_code_offset)
             current_code_offset += len(obj_file.code)
 
     def _check_unresolved(self) -> None:

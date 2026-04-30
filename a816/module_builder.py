@@ -213,80 +213,57 @@ class ModuleBuilder:
         obj_name = module_name.replace("/", "_") + ".o"
         return self.output_dir / obj_name
 
-    def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
-        """Build all modules and link them.
-
-        Args:
-            main_source: The main source file.
-            parsed_main_nodes: Optional pre-parsed AST for main_source.
-
-        Returns:
-            The linked ObjectFile.
-        """
+    def _compile_module(self, module_name: str, source_path: Path, obj_path: Path, constants: dict[str, int]) -> None:
         from a816.program import Program
 
-        self.discover_imports(main_source, parsed_main_nodes)
+        logger.info(f"Compiling {module_name}: {source_path} -> {obj_path}")
+        program = Program()
+        program.add_module_path(self.output_dir)
+        for path in self.module_paths:
+            program.add_module_path(path)
+        for inc_path in self.include_paths:
+            program.add_include_path(inc_path)
+        for name, value in self.symbols.items():
+            program.resolver.current_scope.add_symbol(name, value)
+        for name, value in constants.items():
+            program.resolver.current_scope.add_symbol(name, value)
+        result = program.assemble_as_object(str(source_path), obj_path, prelude=self._prelude_content)
+        if result != 0:
+            raise RuntimeError(f"Failed to compile module '{module_name}'")
 
-        # Get compilation order
-        compilation_order = self.graph.topological_sort()
-        logger.info(f"Compilation order: {compilation_order}")
-
-        # Ensure output directory exists
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Compile each module, accumulating DATA constants for downstream modules
+    @staticmethod
+    def _accumulate_constants(obj: ObjectFile, accumulated: dict[str, int]) -> None:
         from a816.object_file import SymbolSection as ObjSymbolSection
         from a816.object_file import SymbolType as ObjSymbolType
 
+        for name, value, sym_type, section in obj.symbols:
+            if sym_type == ObjSymbolType.GLOBAL and section == ObjSymbolSection.DATA:
+                accumulated[name] = value
+
+    def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
+        """Build all modules in topo order, then link."""
+        self.discover_imports(main_source, parsed_main_nodes)
+        compilation_order = self.graph.topological_sort()
+        logger.info(f"Compilation order: {compilation_order}")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
         object_files: list[ObjectFile] = []
         accumulated_constants: dict[str, int] = {}
-
         for module_name in compilation_order:
             source_path = self.graph.modules[module_name]
             obj_path = self._get_obj_path(module_name)
-
             if self._needs_recompilation(module_name):
-                logger.info(f"Compiling {module_name}: {source_path} -> {obj_path}")
-
-                program = Program()
-
-                # Add module paths for import resolution
-                program.add_module_path(self.output_dir)
-                for path in self.module_paths:
-                    program.add_module_path(path)
-                for inc_path in self.include_paths:
-                    program.add_include_path(inc_path)
-
-                # Add predefined symbols
-                for name, value in self.symbols.items():
-                    program.resolver.current_scope.add_symbol(name, value)
-
-                # Inject accumulated constants from previously compiled modules
-                for name, value in accumulated_constants.items():
-                    program.resolver.current_scope.add_symbol(name, value)
-
-                result = program.assemble_as_object(str(source_path), obj_path, prelude=self._prelude_content)
-                if result != 0:
-                    raise RuntimeError(f"Failed to compile module '{module_name}'")
+                self._compile_module(module_name, source_path, obj_path, accumulated_constants)
             else:
                 logger.info(f"Module {module_name} is up to date")
-
-            # Extract GLOBAL+DATA symbols (constants) for downstream modules
             obj = ObjectFile.read(str(obj_path))
-            for name, value, sym_type, section in obj.symbols:
-                if sym_type == ObjSymbolType.GLOBAL and section == ObjSymbolSection.DATA:
-                    accumulated_constants[name] = value
-
+            self._accumulate_constants(obj, accumulated_constants)
             object_files.append(obj)
 
-        # Link all object files
         if len(object_files) == 1:
             return object_files[0]
-
         logger.info(f"Linking {len(object_files)} modules")
-        linker = Linker(object_files)
-        # Default base address is 0x8000 for SNES LoROM
-        return linker.link(base_address=0x8000)
+        return Linker(object_files).link(base_address=0x8000)
 
 
 def _has_position_directives(nodes: list[AstNode]) -> bool:
@@ -385,6 +362,70 @@ def build_with_imports(
         return BuildResult(exit_code=1, diagnostics=[str(e)])
 
 
+def _compile_one_module_direct(
+    module_name: str,
+    source_path: Path,
+    obj_path: Path,
+    *,
+    output_dir: Path,
+    paths: list[Path],
+    include_paths: list[Path] | None,
+    symbols: dict[str, int | str] | None,
+    accumulated: dict[str, int],
+    prelude_content: str | None,
+) -> None:
+    from a816.program import Program
+
+    logger.info(f"Compiling module {module_name}: {source_path} -> {obj_path}")
+    program = Program()
+    program.add_module_path(output_dir)
+    for path in paths:
+        program.add_module_path(path)
+    for inc_path in include_paths or []:
+        program.add_include_path(inc_path)
+    for name, value in (symbols or {}).items():
+        program.resolver.current_scope.add_symbol(name, value)
+    for name, value in accumulated.items():
+        program.resolver.current_scope.add_symbol(name, value)
+    if program.assemble_as_object(str(source_path), obj_path, prelude=prelude_content) != 0:
+        raise RuntimeError(f"Failed to compile module '{module_name}'")
+
+
+def _assemble_main_direct(
+    main_source: Path,
+    output_file: Path,
+    output_format: str,
+    *,
+    output_dir: Path,
+    paths: list[Path],
+    include_paths: list[Path] | None,
+    symbols: dict[str, int | str] | None,
+    copier_header: bool,
+    prelude_content: str | None,
+) -> "tuple[int, Program] | BuildResult":  # noqa: F821
+    from a816.program import Program
+
+    program = Program()
+    program.add_module_path(output_dir)
+    for path in paths:
+        program.add_module_path(path)
+    for inc_path in include_paths or []:
+        program.add_include_path(inc_path)
+    for name, value in (symbols or {}).items():
+        program.resolver.current_scope.add_symbol(name, value)
+
+    if output_format == "ips":
+        exit_code = program.assemble_as_patch(
+            str(main_source), output_file, copier_header=copier_header, prelude=prelude_content
+        )
+    elif output_format == "sfc":
+        exit_code = program.assemble(str(main_source), output_file, prelude=prelude_content)
+    else:
+        logger.error(f"Unknown output format: {output_format}")
+        return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
+    return exit_code, program
+
+
 def build_with_imports_direct(
     main_source: str | Path,
     output_file: str | Path,
@@ -397,123 +438,58 @@ def build_with_imports_direct(
     prelude_file: Path | None = None,
     parsed_main_nodes: list[AstNode] | None = None,
 ) -> BuildResult:
-    """Build a project by directly assembling with import resolution.
-
-    This approach is for projects with position-dependent code (*= directives)
-    like ROM patches. Instead of compiling to object files and linking,
-    it pre-compiles modules and then assembles the main file directly,
-    resolving imported symbols from the compiled modules.
-
-    Args:
-        main_source: Path to the main source file.
-        output_file: Path to the output file (IPS or SFC).
-        output_format: Output format ("ips" or "sfc").
-        module_paths: Additional directories to search for modules.
-        output_dir: Directory for compiled object files.
-        symbols: Predefined symbols for conditional compilation.
-        copier_header: Whether to add copier header offset for IPS.
-        include_paths: Additional directories to search for .include files.
-        prelude_file: Config file prepended to every module compilation.
-
-    Returns:
-        BuildResult with exit_code, symbol_map, diagnostics, and program.
-    """
-    from a816.program import Program
-
+    """Pre-compile imported modules then assemble main directly (position-dependent ROM patches)."""
     main_source = Path(main_source)
     output_file = Path(output_file)
     output_dir = output_dir or Path("build/obj")
 
-    # Set up module paths
     paths = module_paths or []
     if main_source.parent not in paths:
         paths = [main_source.parent] + paths
 
-    # Read prelude content once
-    prelude_content: str | None = None
-    if prelude_file:
-        prelude_content = prelude_file.read_text(encoding="utf-8")
+    prelude_content: str | None = prelude_file.read_text(encoding="utf-8") if prelude_file else None
 
     try:
-        # 1. Discover imports and compile modules
-        builder = ModuleBuilder(
-            module_paths=paths,
-            output_dir=output_dir,
-            symbols=symbols,
-        )
+        builder = ModuleBuilder(module_paths=paths, output_dir=output_dir, symbols=symbols)
         builder.discover_imports(main_source, parsed_main_nodes)
-
-        # Get compilation order (excluding main)
-        compilation_order = builder.graph.topological_sort()
-        modules_to_compile = [m for m in compilation_order if m != "__main__"]
-
+        modules_to_compile = [m for m in builder.graph.topological_sort() if m != "__main__"]
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Compile each module to .o file, accumulating DATA constants
-        from a816.object_file import SymbolSection as ObjSymbolSection
-        from a816.object_file import SymbolType as ObjSymbolType
-
         accumulated_constants: dict[str, int] = {}
-
         for module_name in modules_to_compile:
             source_path = builder.graph.modules[module_name]
             obj_path = builder._get_obj_path(module_name)
-
             if builder._needs_recompilation(module_name):
-                logger.info(f"Compiling module {module_name}: {source_path} -> {obj_path}")
-
-                program = Program()
-                program.add_module_path(output_dir)
-                for path in paths:
-                    program.add_module_path(path)
-                for inc_path in include_paths or []:
-                    program.add_include_path(inc_path)
-
-                for name, value in (symbols or {}).items():
-                    program.resolver.current_scope.add_symbol(name, value)
-
-                # Inject accumulated constants from previously compiled modules
-                for name, value in accumulated_constants.items():
-                    program.resolver.current_scope.add_symbol(name, value)
-
-                compile_result = program.assemble_as_object(str(source_path), obj_path, prelude=prelude_content)
-                if compile_result != 0:
-                    raise RuntimeError(f"Failed to compile module '{module_name}'")
+                _compile_one_module_direct(
+                    module_name,
+                    source_path,
+                    obj_path,
+                    output_dir=output_dir,
+                    paths=paths,
+                    include_paths=include_paths,
+                    symbols=symbols,
+                    accumulated=accumulated_constants,
+                    prelude_content=prelude_content,
+                )
             else:
                 logger.info(f"Module {module_name} is up to date")
+            ModuleBuilder._accumulate_constants(ObjectFile.read(str(obj_path)), accumulated_constants)
 
-            # Extract GLOBAL+DATA symbols (constants) for downstream modules
-            obj = ObjectFile.read(str(obj_path))
-            for sym_name, sym_value, sym_type, section in obj.symbols:
-                if sym_type == ObjSymbolType.GLOBAL and section == ObjSymbolSection.DATA:
-                    accumulated_constants[sym_name] = sym_value
-
-        # 2. Assemble main file directly with module paths configured
         logger.info(f"Assembling main file: {main_source}")
-        program = Program()
-
-        # Add module paths for import resolution
-        program.add_module_path(output_dir)
-        for path in paths:
-            program.add_module_path(path)
-        for inc_path in include_paths or []:
-            program.add_include_path(inc_path)
-
-        # Add predefined symbols
-        for name, value in (symbols or {}).items():
-            program.resolver.current_scope.add_symbol(name, value)
-
-        # Assemble directly to output format
-        if output_format == "ips":
-            exit_code = program.assemble_as_patch(
-                str(main_source), output_file, copier_header=copier_header, prelude=prelude_content
-            )
-        elif output_format == "sfc":
-            exit_code = program.assemble(str(main_source), output_file, prelude=prelude_content)
-        else:
-            logger.error(f"Unknown output format: {output_format}")
-            return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
-
+        result = _assemble_main_direct(
+            main_source,
+            output_file,
+            output_format,
+            output_dir=output_dir,
+            paths=paths,
+            include_paths=include_paths,
+            symbols=symbols,
+            copier_header=copier_header,
+            prelude_content=prelude_content,
+        )
+        if isinstance(result, BuildResult):
+            return result
+        exit_code, program = result
         symbol_map = dict(program.resolver.get_all_labels())
         return BuildResult(exit_code=exit_code, symbol_map=symbol_map, program=program)
 
