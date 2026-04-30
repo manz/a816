@@ -243,6 +243,10 @@ class Resolver:
             scope = self.current_scope
             if scope.parent is not None:
                 scope.parent.symbols |= {f"{scope.name}.{k}": v for k, v in scope.symbols.items()}
+                # Propagate label-ness too so the object writer can tell that
+                # `scope.name` refers to a CODE address (and therefore needs
+                # rebasing at link time) instead of a DATA constant.
+                scope.parent.labels |= {f"{scope.name}.{k}": v for k, v in scope.labels.items()}
         if self.current_scope.parent is not None:
             self.current_scope = self.current_scope.parent
         else:
