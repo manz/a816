@@ -1,34 +1,57 @@
 # a816
-Another 65c816 assembler
+Another 65c816 assembler.
+
+Targets Super Famicom / SNES ROM hacking and patching. Ships a CLI assembler,
+an object-file linker, an LSP server, and `xdds` (a SNES-aware hex dump /
+disassembler).
 
 ## Usage
 
 ### Command line
+
 ```
 $ a816 --help
-usage: x816 [-h] [--verbose] [-o OUTPUT_FILE] [-f FORMAT] [-m MAPPING] [--copier-header] [--dump-symbols] [-D KEY=VALUE [KEY=VALUE ...]] input_file
-
-x816 usage
+usage: x816 [-h] [--verbose] [-o OUTPUT_FILE] [-f FORMAT] [-m MAPPING]
+            [--copier-header] [--dump-symbols] [-c]
+            [-D KEY=VALUE [KEY=VALUE ...]] [--no-auto-imports] [-I PATH]
+            [--obj-dir OBJ_DIR] [--include-path PATH] [--prelude PRELUDE_FILE]
+            input_files [input_files ...]
 
 positional arguments:
-  input_file            The asm file to assemble.
+  input_files           Input files (asm files or object files for linking)
 
 options:
-  -h, --help            show this help message and exit
-  --verbose             Displays all log levels.
-  -o OUTPUT_FILE, --output OUTPUT_FILE
+  -o, --output OUTPUT_FILE
                         Output file
-  -f FORMAT             Output format
-  -m MAPPING            Address Mapping
-  --copier-header       Adds 0x200 address delta corresponding to copier header in ips writer.
+  -f FORMAT             Output format (ips, sfc, obj)
+  -m MAPPING            Address mapping (low_rom, low_rom_2, high_rom)
+  --copier-header       Adds 0x200 address delta for ips writer.
   --dump-symbols        Dumps symbol table
-  -D KEY=VALUE [KEY=VALUE ...], --defines KEY=VALUE [KEY=VALUE ...]
+  -c, --compile-only    Compile to object files without linking.
+  -D, --defines KEY=VALUE [KEY=VALUE ...]
                         Defines symbols.
+  --no-auto-imports     Disable automatic import resolution.
+  -I, --module-path PATH
+                        Add directory to module search path.
+  --obj-dir OBJ_DIR     Directory for compiled object files (default:
+                        build/obj).
+  --include-path PATH   Add directory to include search path for .include.
+  --prelude PRELUDE_FILE
+                        Config file prepended to every module compilation.
 ```
 
-or directly from python code:
+### Separate compilation
 
-### From python code
+Compile each module to an object file, then link:
+
+```
+$ a816 --compile-only file1.s file2.s   # produces file1.o, file2.o
+$ a816 file1.o file2.o -o output.ips    # link to IPS
+$ a816 file1.o file2.o -f sfc -o output.sfc
+$ a816 file1.s file2.o -o output.ips    # mix sources and objects
+```
+
+### From Python
 
 ```python
 from a816.program import Program
@@ -41,7 +64,7 @@ def build_patch(input, output):
 
 ## Supported Syntax
 
-### Memonics
+### Mnemonics
 
 ```
 adc, and, asl, bcc, bcs, beq, bit, bmi, bne, bpl, bra, brk, brl, bvc, bvs, clc, cld, cli, clv, cmp, cop, cpx, cpy, db, dec, dex, dey, eor, inc, inx, iny, jml, jmp, jsl, jsr, lda, ldx, ldy, lsr, mvn, mvp, nop, ora, pea, pei, per, pha, phb, phd, phk, php, phx, phy, pla, plb, pld, plp, plx, ply, rep, rol, ror, rti, rtl, rts, sbc, sec, sed, sei, sep, sta, stp, stx, sty, stz, tax, tay, tcd, tcs, tdc, trb, tsb, tsc, tsx, txa, txs, txy, tya, tyx, wai, xba, xce
@@ -50,21 +73,14 @@ adc, and, asl, bcc, bcs, beq, bit, bmi, bne, bpl, bra, brk, brl, bvc, bvs, clc, 
 ## Macros
 
 ```ca65
-; define a macro
 .macro test(var_1, var_2) {
     lda.w var_1 << 16 + var_2
 }
 
-; use that macro
 test(0x10, 0x10)
-
-; should expand that way
-lda.w 0x10 << 16 + 0x10
-
-; code generated
-lda.w 0x1010
+; expands to: lda.w 0x10 << 16 + 0x10
+; emits:      lda.w 0x1010
 ```
-
 
 ## Code pointer relocation
 
@@ -73,7 +89,6 @@ lda.w 0x1010
     jsr.l _intro
 ```
 
-
 ## Scopes
 
 ```ca65
@@ -81,7 +96,7 @@ some_address = 0x54
 {
     lda.b some_address
     beq no_action
-    ; this label is only visible inside this scope
+    ; label only visible inside this scope
     no_action:
 }
 ```
@@ -101,9 +116,76 @@ named_scope {
 }
 
 *=0x019A52
-	load_system_menu_text_pointer(named_scope.youhou_text)
+    load_system_menu_text_pointer(named_scope.youhou_text)
 
 *=0x019A80
-	load_system_menu_text_pointer(named_scope.yaha_text)
+    load_system_menu_text_pointer(named_scope.yaha_text)
+```
 
+## Modules
+
+`.import "module"` resolves to a precompiled `.o` (preferred) or its `.s`
+source. The build driver discovers dependencies, topologically sorts, and
+recompiles by mtime. Symbols starting with `_` are LOCAL; others are GLOBAL
+and exported to the object file.
+
+```ca65
+.import "vwf"
+.import "dma"
+
+main:
+    jsr.l vwf.init
+    rts
+```
+
+## External symbols
+
+Declare symbols defined elsewhere with `.extern`:
+
+```ca65
+.extern external_func
+
+main:
+    lda #0x42
+    jsr.w external_func
+    rts
+```
+
+Workflow:
+
+```
+$ a816 --compile-only file1.s file2.s
+$ a816 file1.o file2.o -o output.ips
+```
+
+The linker verifies all externs are resolved.
+
+## LSP
+
+`a816-lsp-server` implements the Language Server Protocol. Configure per
+project with `a816.toml`:
+
+```toml
+entrypoint = "src/main.s"
+include-paths = ["src/include"]
+module-paths = ["src/modules"]
+```
+
+Provides diagnostics, goto-definition (including `.import`), and hover info.
+
+## Built-in symbols
+
+- `BUILD_DATE` — set automatically to the current date.
+
+`.text` strings expand `${VAR}` references against defined symbols.
+
+## xdds
+
+SNES-aware hex dump and disassembler.
+
+```
+$ xdds --help
+$ xdds rom.sfc --low-rom -s 0x008000 -l 256
+$ xdds rom.sfc --low-rom -d --m16 --x16 -n 32   # disassemble 32 instrs
+$ xdds rom.sfc --ips patch.ips -s '$01:FF40'   # apply IPS, dump from SNES addr
 ```
