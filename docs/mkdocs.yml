@@ -2,6 +2,12 @@ site_name: a816
 
 repo_url: https://github.com/manz/a816
 
+nav:
+  - Home: index.md
+  - Modules: modules.md
+  - LSP: lsp.md
+  - Python usage: python_usage.md
+
 markdown_extensions:
  - pymdownx.highlight:
     use_pygments: true

@@ -124,54 +124,36 @@ named_scope {
 
 ## Modules
 
-`.import "module"` resolves to a precompiled `.o` (preferred) or its `.s`
-source. The build driver discovers dependencies, topologically sorts, and
-recompiles by mtime. Symbols starting with `_` are LOCAL; others are GLOBAL
-and exported to the object file.
+`.import "module"` brings symbols from another translation unit; `.extern`
+declares cross-module references. See [Modules](modules.md) for the full
+workflow, visibility rules, and constants over externs.
 
 ```ca65
 .import "vwf"
-.import "dma"
-
-main:
-    jsr.l vwf.init
-    rts
-```
-
-## External symbols
-
-Declare symbols defined elsewhere with `.extern`:
-
-```ca65
 .extern external_func
 
 main:
-    lda #0x42
+    jsr.l vwf.init
     jsr.w external_func
     rts
 ```
 
-Workflow:
+## Project configuration (`a816.toml`)
 
-```
-$ a816 --compile-only file1.s file2.s
-$ a816 file1.o file2.o -o output.ips
-```
+Drop an `a816.toml` at the project root to declare the entrypoint and
+search paths. Currently consumed by the LSP server; see [LSP](lsp.md).
 
-The linker verifies all externs are resolved.
+```toml
+entrypoint    = "src/main.s"
+include-paths = ["src/include"]
+module-paths  = ["src/modules"]
+```
 
 ## LSP
 
-`a816-lsp-server` implements the Language Server Protocol. Configure per
-project with `a816.toml`:
-
-```toml
-entrypoint = "src/main.s"
-include-paths = ["src/include"]
-module-paths = ["src/modules"]
-```
-
-Provides diagnostics, goto-definition (including `.import`), and hover info.
+`a816-lsp-server` ships with the package: diagnostics, goto-definition
+(including `.import` targets), and hover info. See [LSP](lsp.md) for
+editor setup.
 
 ## Built-in symbols
 
