@@ -286,38 +286,28 @@ class Resolver:
                 labels.append((exported, value))
         return labels
 
+    @staticmethod
+    def _mangle(name: str, idx: int, mangle: bool) -> str:
+        # Names starting with `_` are explicitly local; keep their short form.
+        return f"__sc{idx}__{name}" if mangle and not name.startswith("_") else name
+
+    def _scope_int_symbols(self, scope: "Scope") -> list[tuple[str, int]]:
+        return [(name, value) for name, value in scope.symbols.items() if isinstance(value, int)]
+
     def get_all_symbols(self) -> list[tuple[str, int]]:
-        """Get all symbols including labels and assignments for object file export.
-
-        Labels and symbols defined in nested anonymous scopes are mangled with
-        the scope index (``__sc<idx>__<name>``) so two scopes with the same
-        local name (e.g. multiple macro invocations both defining ``return_addr``)
-        don't collide in the exported symbol table.
-        """
+        """All labels + int-valued assignments, mangled with __sc<idx>__ in nested anon scopes."""
         symbols: list[tuple[str, int]] = []
-        seen_symbols: set[str] = set()
-
+        seen: set[str] = set()
         for idx, scope in enumerate(self.scopes):
             if isinstance(scope, InternalScope):
                 continue
             mangle = idx > 0 and not isinstance(scope, NamedScope)
-
-            for name, value in scope.get_labels():
-                # Names that already start with `_` are explicitly local and
-                # not expected to collide with other scopes; keep their short
-                # form so callers can still find them by name.
-                exported = f"__sc{idx}__{name}" if mangle and not name.startswith("_") else name
-                if exported not in seen_symbols:
-                    symbols.append((exported, value))
-                    seen_symbols.add(exported)
-
-            for name, symbol_value in scope.symbols.items():
-                if not isinstance(symbol_value, int):
-                    continue
-                exported = f"__sc{idx}__{name}" if mangle and not name.startswith("_") else name
-                if exported not in seen_symbols:
-                    symbols.append((exported, symbol_value))
-                    seen_symbols.add(exported)
+            for source in (scope.get_labels(), self._scope_int_symbols(scope)):
+                for name, value in source:
+                    exported = self._mangle(name, idx, mangle)
+                    if exported not in seen:
+                        symbols.append((exported, value))
+                        seen.add(exported)
         return symbols
 
     def is_root_scope_symbol(self, name: str) -> bool:

@@ -315,69 +315,69 @@ def disassemble(
         print(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=a816_syntax))
 
 
-def xdds_main() -> None:
-    parser = create_parser()
-    args = parser.parse_args()
+def _apply_ips_to_temp(input_file: Path, ips_file: Path) -> tuple[Path, Path]:
+    """Apply IPS patch to a temp copy. Returns (patched_path, temp_path) for cleanup."""
+    if not ips_file.exists():
+        logger.error(f"IPS file not found: {ips_file}")
+        sys.exit(-1)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        logger.info(f"Applying IPS patch: {ips_file}")
+        apply_ips_patch(input_file, ips_file, tmp_path)
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(-1)
+    return tmp_path, tmp_path
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s - %(message)s")
 
-    # Default to low_rom if no mapping specified
+def _resolve_physical_start(args: argparse.Namespace, bus: Bus) -> int:
+    start_addr, is_snes = parse_address(args.start)
+    if not is_snes:
+        return start_addr
+    physical_start = logical_to_physical(bus, start_addr)
+    if physical_start is None:
+        logger.error(f"Cannot convert SNES address ${start_addr:06X} to physical offset (not in ROM range)")
+        sys.exit(-1)
+    logger.info(f"SNES address ${start_addr >> 16:02X}:{start_addr & 0xFFFF:04X} -> physical 0x{physical_start:X}")
+    return physical_start
+
+
+def _read_slice(input_file: Path, physical_start: int, length: int | None) -> bytes:
+    with open(input_file, "rb") as f:
+        f.seek(physical_start)
+        return f.read(length) if length else f.read()
+
+
+def _resolve_bus(args: argparse.Namespace) -> tuple[RomType, Bus]:
     rom_type = args.rom_type if args.rom_type else RomType.low_rom
     bus = get_bus_for_rom_type(rom_type)
-
     if bus is None:
         logger.error(f"No bus mapping available for {rom_type.name}")
         sys.exit(-1)
+    return rom_type, bus
 
+
+def xdds_main() -> None:
+    args = create_parser().parse_args()
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s - %(message)s")
+
+    rom_type, bus = _resolve_bus(args)
     if args.show_mappings:
         show_mapping_info(rom_type)
 
     input_file = args.input_file
-
-    # Handle IPS patching
+    tmp_path: Path | None = None
     if args.ips_file:
-        if not args.ips_file.exists():
-            logger.error(f"IPS file not found: {args.ips_file}")
-            sys.exit(-1)
-
-        # Create temporary patched file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".sfc") as tmp:
-            tmp_path = Path(tmp.name)
-
-        try:
-            logger.info(f"Applying IPS patch: {args.ips_file}")
-            apply_ips_patch(input_file, args.ips_file, tmp_path)
-            input_file = tmp_path
-        except ValueError as e:
-            logger.error(str(e))
-            sys.exit(-1)
+        input_file, tmp_path = _apply_ips_to_temp(input_file, args.ips_file)
 
     try:
         if not input_file.exists():
             logger.error(f"Input file not found: {input_file}")
             sys.exit(-1)
 
-        # Parse start address (supports both physical and SNES addresses)
-        start_addr, is_snes = parse_address(args.start)
-
-        if is_snes:
-            # Convert SNES logical address to physical ROM offset
-            physical_start = logical_to_physical(bus, start_addr)
-            if physical_start is None:
-                logger.error(f"Cannot convert SNES address ${start_addr:06X} to physical offset (not in ROM range)")
-                sys.exit(-1)
-            logger.info(
-                f"SNES address ${start_addr >> 16:02X}:{start_addr & 0xFFFF:04X} -> physical 0x{physical_start:X}"
-            )
-        else:
-            physical_start = start_addr
-
-        with open(input_file, "rb") as f:
-            f.seek(physical_start)
-            if args.length:
-                data = f.read(args.length)
-            else:
-                data = f.read()
+        physical_start = _resolve_physical_start(args, bus)
+        data = _read_slice(input_file, physical_start, args.length)
 
         if args.disasm:
             disassemble(
@@ -392,10 +392,8 @@ def xdds_main() -> None:
             )
         else:
             hexdump(data, bus, physical_start, args.cols, not args.no_ascii)
-
     finally:
-        # Clean up temporary file if we created one
-        if args.ips_file and tmp_path.exists():
+        if tmp_path is not None and tmp_path.exists():
             tmp_path.unlink()
 
 

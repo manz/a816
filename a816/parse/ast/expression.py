@@ -1,5 +1,6 @@
 import ctypes
 import re
+from collections.abc import Callable
 
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
 from a816.parse.ast.nodes import BinOp, ExpressionAstNode, ExprNode, Term, UnaryOp
@@ -37,6 +38,26 @@ def reverse_find_token(items: list[ExprNode], value: str) -> int:
     return -1
 
 
+def _pop_higher_precedence(
+    operator_stack: list[ExprNode], output_queue: list[ExprNode], current_precedence: int
+) -> None:
+    while (
+        operator_stack
+        and OPERATOR_PRECEDENCE[operator_stack[-1].token.value] <= current_precedence
+        and operator_stack[-1].token.value != "("
+    ):
+        output_queue.append(operator_stack.pop())
+
+
+def _pop_until_lparen(operator_stack: list[ExprNode], output_queue: list[ExprNode]) -> None:
+    lparen_index = reverse_find_token(operator_stack, "(")
+    if lparen_index < 0:
+        raise ValueError("mismatched parenthesis")
+    while len(operator_stack) > lparen_index + 1:
+        output_queue.append(operator_stack.pop())
+    operator_stack.pop()
+
+
 def shunting_yard(expr_nodes: list[ExprNode]) -> list[ExprNode]:
     output_queue: list[ExprNode] = []
     operator_stack: list[ExprNode] = []
@@ -44,32 +65,17 @@ def shunting_yard(expr_nodes: list[ExprNode]) -> list[ExprNode]:
     for expr in expr_nodes:
         if isinstance(expr, Term):
             output_queue.append(expr)
-        elif isinstance(expr, BinOp) or isinstance(expr, UnaryOp):
+        elif isinstance(expr, BinOp | UnaryOp):
             current_precedence = OPERATOR_PRECEDENCE[expr.token.value] if isinstance(expr, BinOp) else 2
-
-            while (
-                len(operator_stack) > 0
-                and OPERATOR_PRECEDENCE[operator_stack[-1].token.value] <= current_precedence
-                and operator_stack[-1].token.value != "("
-            ):
-                output_queue.append(operator_stack.pop())
+            _pop_higher_precedence(operator_stack, output_queue, current_precedence)
             operator_stack.append(expr)
         elif expr.token.type == TokenType.LPAREN:
             operator_stack.append(expr)
         elif expr.token.type == TokenType.RPAREN:
-            lparen_index = reverse_find_token(operator_stack, "(")
+            _pop_until_lparen(operator_stack, output_queue)
 
-            if lparen_index < 0:
-                raise ValueError("mismatched parenthesis")
-
-            while len(operator_stack) > lparen_index + 1:
-                op = operator_stack.pop()
-                output_queue.append(op)
-            operator_stack.pop()
-
-    while len(operator_stack) > 0:
+    while operator_stack:
         output_queue.append(operator_stack.pop())
-
     return output_queue
 
 
@@ -84,106 +90,107 @@ def eval_number(number: str) -> int:
     return int(number, base)
 
 
+_INT_BINOPS: dict[str, Callable[[int, int], int]] = {
+    "+": lambda a, b: a + b,
+    "-": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
+    "&": lambda a, b: a & b,
+    "|": lambda a, b: a | b,
+    ">>": lambda a, b: a >> b,
+    "<<": lambda a, b: a << b,
+    ">=": lambda a, b: a >= b,
+    "<=": lambda a, b: a <= b,
+    "<": lambda a, b: a < b,
+    ">": lambda a, b: a > b,
+    "==": lambda a, b: a == b,
+    "!=": lambda a, b: a != b,
+}
+
+_STR_BINOPS: dict[str, Callable[[str, str], int]] = {
+    "==": lambda a, b: a == b,
+    "!=": lambda a, b: a != b,
+}
+
+
+def _bitwise_not(value: int) -> int:
+    if value.bit_length() <= 8:
+        return ctypes.c_uint8(~value).value
+    if value.bit_length() <= 16:
+        return ctypes.c_uint16(~value).value
+    if value.bit_length() <= 32:
+        return ctypes.c_uint32(~value).value
+    raise RuntimeError("not only works up 32 bits integers.")
+
+
+def _apply_unary(op: str, value: int | str) -> int:
+    assert isinstance(value, int)
+    if op == "-":
+        return -value
+    if op == "~":
+        return _bitwise_not(value)
+    raise RuntimeError(f"Unsupported unary Operator {op}")
+
+
+def _apply_binary(op: str, v1: int | str, v2: int | str) -> int:
+    if isinstance(v1, int) and isinstance(v2, int):
+        try:
+            return _INT_BINOPS[op](v1, v2)
+        except KeyError as e:
+            raise RuntimeError("operator unknown") from e
+    if isinstance(v1, str) and isinstance(v2, str):
+        try:
+            return _STR_BINOPS[op](v1, v2)
+        except KeyError as e:
+            raise RuntimeError("operator unknown") from e
+    raise RuntimeError("Mismatched types in expression")
+
+
+def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> set[str]:
+    external_symbols: set[str] = set()
+    for current in ordered:
+        if current.token.type != TokenType.IDENTIFIER:
+            continue
+        try:
+            resolver.current_scope.value_for(current.token.value)
+        except ExternalSymbolReference as e:
+            external_symbols.add(e.symbol_name)
+    return external_symbols
+
+
+def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | str]) -> None:
+    if current.token.type == TokenType.NUMBER:
+        values_stack.append(eval_number(current.token.value))
+    elif current.token.type == TokenType.QUOTED_STRING:
+        values_stack.append(current.token.value[1:-1])
+    elif current.token.type == TokenType.IDENTIFIER:
+        resolved_value = resolver.current_scope.value_for(current.token.value)
+        if not isinstance(resolved_value, int | str):
+            raise RuntimeError(f"Unable  to resolve {current.token.value}")
+        values_stack.append(resolved_value)
+
+
 def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | str:
     """Evaluate an expression, detecting external symbol references"""
-    tokens = expression.tokens
-    ordered = shunting_yard(tokens)
+    ordered = shunting_yard(expression.tokens)
 
-    # First pass: collect external symbols referenced in this expression
-    external_symbols: set[str] = set()
-
-    # Check if we're compiling to an object file and need to defer external expressions
     if resolver.context.is_object_mode:
-        for current in ordered:
-            if current.token.type == TokenType.IDENTIFIER:
-                try:
-                    resolver.current_scope.value_for(current.token.value)
-                except ExternalSymbolReference as e:
-                    external_symbols.add(e.symbol_name)
-
-        # If expression contains external symbols, throw exception to defer evaluation
+        external_symbols = _collect_external_symbols(ordered, resolver)
         if external_symbols:
-            # Reconstruct expression string and inline any aliases so the
-            # exported relocation references concrete externs (macro-arg
-            # bindings would otherwise leak into the object file).
+            # Reconstruct + inline aliases so the relocation references real
+            # externs (macro-arg bindings otherwise leak into the object file).
             expression_str = _inline_aliases(reconstruct_expression(expression), resolver)
             raise ExternalExpressionReference(expression_str, external_symbols)
 
     values_stack: list[int | str] = []
-    r: int
-
     for current in ordered:
-        if current.token.type == TokenType.NUMBER:
-            values_stack.append(eval_number(current.token.value))
-        elif current.token.type == TokenType.QUOTED_STRING:
-            values_stack.append(current.token.value[1:-1])
-        elif current.token.type == TokenType.IDENTIFIER:
-            resolved_value = resolver.current_scope.value_for(current.token.value)
-            if isinstance(resolved_value, int) or isinstance(resolved_value, str):
-                values_stack.append(resolved_value)
-            else:
-                raise RuntimeError(f"Unable  to resolve {current.token.value}")
-        elif isinstance(current, UnaryOp):
-            v1 = values_stack.pop()
-            assert isinstance(v1, int)
-            if current.token.value == "-":
-                assert isinstance(v1, int)
-                r = -v1
-            elif current.token.value == "~":
-                if v1.bit_length() <= 8:
-                    r = ctypes.c_uint8(~v1).value
-                elif v1.bit_length() <= 16:
-                    r = ctypes.c_uint16(~v1).value
-                elif v1.bit_length() <= 32:
-                    r = ctypes.c_uint32(~v1).value
-                else:
-                    raise RuntimeError("not only works up 32 bits integers.")
-            else:
-                raise RuntimeError(f"Unsupported unary Operator {current.token}")
-
-            values_stack.append(r)
+        if isinstance(current, UnaryOp):
+            values_stack.append(_apply_unary(current.token.value, values_stack.pop()))
         elif isinstance(current, BinOp):
             v2 = values_stack.pop()
             v1 = values_stack.pop()
-            if isinstance(v1, int) and isinstance(v2, int):
-                if current.token.value == "+":
-                    r = v1 + v2
-                elif current.token.value == "-":
-                    r = v1 - v2
-                elif current.token.value == "*":
-                    r = v1 * v2
-                elif current.token.value == "&":
-                    r = v1 & v2
-                elif current.token.value == "|":
-                    r = v1 | v2
-                elif current.token.value == ">>":
-                    r = v1 >> v2
-                elif current.token.value == "<<":
-                    r = v1 << v2
-                elif current.token.value == ">=":
-                    r = v1 >= v2
-                elif current.token.value == "<=":
-                    r = v1 <= v2
-                elif current.token.value == "<":
-                    r = v1 < v2
-                elif current.token.value == ">":
-                    r = v1 > v2
-                elif current.token.value == "==":
-                    r = v1 == v2
-                elif current.token.value == "!=":
-                    r = v1 != v2
-                else:
-                    raise RuntimeError("operator unknown")
-            elif isinstance(v1, str) and isinstance(v2, str):
-                if current.token.value == "==":
-                    r = v1 == v2
-                elif current.token.value == "!=":
-                    r = v1 != v2
-                else:
-                    raise RuntimeError("operator unknown")
-            else:
-                raise RuntimeError("Mismatched types in expression")
-            values_stack.append(r)
+            values_stack.append(_apply_binary(current.token.value, v1, v2))
+        else:
+            _push_term(current, resolver, values_stack)
     return values_stack.pop()
 
 

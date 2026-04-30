@@ -279,73 +279,61 @@ class Program:
             self.logger.error(e)
             return -1
 
+    def _classify_object_symbol(
+        self, name: str, value: int, base_address: int, label_names: set[str]
+    ) -> tuple[SymbolType, SymbolSection, int]:
+        # Anonymous-block labels stay LOCAL (would otherwise leak as globals);
+        # `_` prefix marks private; root-scope (or NamedScope dotted) is GLOBAL.
+        if name.startswith("_") or not self.resolver.is_root_scope_symbol(name):
+            symbol_type = SymbolType.LOCAL
+        else:
+            symbol_type = SymbolType.GLOBAL
+        section = SymbolSection.CODE if name in label_names else SymbolSection.DATA
+        # CODE values are logical addresses; emit module-relative offsets.
+        symbol_value = value - base_address if section == SymbolSection.CODE and isinstance(value, int) else value
+        return symbol_type, section, symbol_value
+
+    def _export_object_symbols(self, object_writer: ObjectWriter, base_address: int) -> None:
+        label_names = {n for n, _ in self.resolver.get_all_labels(mangle_nested=True)}
+        for name, value in self.resolver.get_all_symbols():
+            if self.resolver.current_scope.is_external_symbol(name):
+                continue  # already added by ExternNode
+            sym_type, section, sym_value = self._classify_object_symbol(name, value, base_address, label_names)
+            object_writer.add_symbol(name, sym_value, sym_type, section)
+
     def assemble_with_object_emitter(
         self, asm_file: str, object_writer: ObjectWriter, prelude: str | None = None
     ) -> int:
-        """
-        Assemble with object file emission, collecting symbols and relocations.
-        """
+        """Assemble with object file emission, collecting symbols and relocations."""
         previous_mode = self.resolver.context.mode
         previous_writer = self.resolver.context.object_writer
         try:
-            # Set object compilation mode
             self.resolver.context.mode = AssemblyMode.OBJECT
             self.resolver.context.object_writer = object_writer
-
-            # Base logical address for converting symbol values to module-relative offsets.
             base_address = self.resolver.reloc_address.logical_value
 
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
-                if prelude:
-                    input_program = prelude + "\n" + input_program
-                try:
-                    error, nodes = self.parser.parse(input_program, asm_file)
+            if prelude:
+                input_program = prelude + "\n" + input_program
 
-                    if error is not None:
-                        self.logger.error(error)
-                        return -1
-
-                    self.logger.info("Resolving labels")
-                    self.resolve_labels(nodes)
-
-                    # Extract symbols from resolver and add to object file
-                    for name, value in self.resolver.get_all_symbols():
-                        # Skip external symbols as they're already added by ExternNode
-                        if not self.resolver.current_scope.is_external_symbol(name):
-                            # Anonymous-block labels stay LOCAL (would otherwise
-                            # leak as globals); explicit `_` prefix also marks
-                            # private; everything reachable at the root scope
-                            # (or via a NamedScope dotted export) is GLOBAL.
-                            if name.startswith("_") or not self.resolver.is_root_scope_symbol(name):
-                                symbol_type = SymbolType.LOCAL
-                            else:
-                                symbol_type = SymbolType.GLOBAL
-
-                            # Check if this is a label (code-relative) or constant (absolute)
-                            is_label = name in [
-                                label_name for label_name, _ in self.resolver.get_all_labels(mangle_nested=True)
-                            ]
-                            section = SymbolSection.CODE if is_label else SymbolSection.DATA
-
-                            # For CODE symbols (labels), convert from logical address to offset
-                            # by subtracting the base address
-                            if section == SymbolSection.CODE and isinstance(value, int):
-                                symbol_value = value - base_address
-                            else:
-                                symbol_value = value
-
-                            object_writer.add_symbol(name, symbol_value, symbol_type, section)
-
-                    if self.dump_symbols:
-                        self.resolver.dump_symbol_map()
-
-                    self.emit_with_relocations(nodes, object_writer)
-
-                except NodeError as e:
-                    logger.error(str(e))
+            try:
+                error, nodes = self.parser.parse(input_program, asm_file)
+                if error is not None:
+                    self.logger.error(error)
                     return -1
 
+                self.logger.info("Resolving labels")
+                self.resolve_labels(nodes)
+                self._export_object_symbols(object_writer, base_address)
+
+                if self.dump_symbols:
+                    self.resolver.dump_symbol_map()
+
+                self.emit_with_relocations(nodes, object_writer)
+            except NodeError as e:
+                logger.error(str(e))
+                return -1
         except RuntimeError as e:
             self.logger.error(e)
             return -1
