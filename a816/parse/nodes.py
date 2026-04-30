@@ -53,10 +53,12 @@ class ExpressionNode(ValueNodeProtocol):
                 from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
                 from a816.parse.tokens import TokenType
 
-                # Walk tokens; for each identifier that's a label in some
-                # scope, mangle it with the owning scope's index so two macro
-                # invocations defining the same name don't alias each other.
+                # Walk tokens; any identifier that resolves to a label in some
+                # scope of this module is module-relative and needs a link-time
+                # relocation. Nested-scope labels are mangled with the owning
+                # scope's index so two macro invocations don't alias.
                 rename: dict[str, str] = {}
+                touches_label = False
                 for t in self.expression.tokens:
                     tok = getattr(t, "token", None)
                     if tok is None or tok.type != TokenType.IDENTIFIER:
@@ -64,13 +66,14 @@ class ExpressionNode(ValueNodeProtocol):
                     owner = self.resolver.current_scope.find_label_scope(tok.value)
                     if owner is None:
                         continue
+                    touches_label = True
                     if owner is self.resolver.scopes[0]:
                         continue  # root labels keep their plain name
                     if tok.value.startswith("_"):
                         continue  # explicit-local names keep their short form
                     scope_idx = self.resolver.scopes.index(owner)
                     rename[tok.value] = f"__sc{scope_idx}__{tok.value}"
-                if rename:
+                if touches_label:
                     expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
                     for short, mangled in rename.items():
                         expr_str = re.sub(rf"\b{re.escape(short)}\b", mangled, expr_str)
