@@ -641,6 +641,19 @@ def generate_code_lookup(
         raise NodeError(f"{node.symbol} is not a code block ({value})", file_info)
 
 
+def _expression_touches_local_label(expr: "ExpressionAstNode", resolver: Resolver) -> bool:
+    """Return True if any identifier in ``expr`` resolves to a module-local CODE label."""
+    if not resolver.context.is_object_mode:
+        return False
+    for term in expr.tokens:
+        tok = getattr(term, "token", None)
+        if tok is None or tok.type != TokenType.IDENTIFIER:
+            continue
+        if resolver.current_scope.find_label_scope(tok.value) is not None:
+            return True
+    return False
+
+
 def generate_macro_application(
     node: MacroApplyAstNode,
     resolver: Resolver,
@@ -668,6 +681,15 @@ def generate_macro_application(
         try:
             if isinstance(value, BlockAstNode):
                 resolver.current_scope.add_symbol(arg, value)
+            elif isinstance(value, ExpressionAstNode) and _expression_touches_local_label(value, resolver):
+                # The macro arg expression references a module-local CODE label.
+                # Bake it as an alias (text expression) so eval at emit time goes
+                # through the relocation pipeline and the value reflects the
+                # module's final placement, not the compile-time base.
+                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+                expr_str = _inline_aliases(reconstruct_expression(value), resolver)
+                resolver.current_scope.add_external_alias(arg, expr_str)
             else:
                 resolver.current_scope.add_symbol(arg, eval_expression(value, resolver))
         except SymbolNotDefined:

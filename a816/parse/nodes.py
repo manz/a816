@@ -150,7 +150,17 @@ class SymbolNode(NodeProtocol):
         assert isinstance(self.expression, ExpressionAstNode)
         try:
             value = eval_expression(self.expression, self.resolver)
-            self.resolver.current_scope.add_symbol(self.symbol_name, value)
+            # If RHS references a module-local CODE label, register the symbol
+            # as an alias so references go through the relocation pipeline at
+            # link time. Otherwise the baked value is module-base-relative and
+            # breaks when the module is placed elsewhere.
+            if self.resolver.context.is_object_mode and self._references_local_label():
+                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+                expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+                self.resolver.current_scope.add_external_alias(self.symbol_name, expr_str)
+            else:
+                self.resolver.current_scope.add_symbol(self.symbol_name, value)
         except (ExternalExpressionReference, ExternalSymbolReference) as e:
             # RHS references external symbols. Register an alias so local
             # references behave like externs and the linker resolves later.
@@ -169,6 +179,19 @@ class SymbolNode(NodeProtocol):
             if object_writer is not None:
                 object_writer.add_alias(self.symbol_name, expr_str)
         return current_pc
+
+    def _references_local_label(self) -> bool:
+        from a816.parse.tokens import TokenType
+
+        if not isinstance(self.expression, ExpressionAstNode):
+            return False
+        for term in self.expression.tokens:
+            tok = getattr(term, "token", None)
+            if tok is None or tok.type != TokenType.IDENTIFIER:
+                continue
+            if self.resolver.current_scope.find_label_scope(tok.value) is not None:
+                return True
+        return False
 
     def __str__(self) -> str:
         return f"SymbolNode({self.symbol_name}, {self.expression})"
