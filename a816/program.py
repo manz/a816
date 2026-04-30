@@ -323,7 +323,9 @@ class Program:
                                 symbol_type = SymbolType.GLOBAL
 
                             # Check if this is a label (code-relative) or constant (absolute)
-                            is_label = name in [label_name for label_name, _ in self.resolver.get_all_labels()]
+                            is_label = name in [
+                                label_name for label_name, _ in self.resolver.get_all_labels(mangle_nested=True)
+                            ]
                             section = SymbolSection.CODE if is_label else SymbolSection.DATA
 
                             # For CODE symbols (labels), convert from logical address to offset

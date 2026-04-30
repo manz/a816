@@ -84,6 +84,15 @@ class Scope:
             scope = scope.parent
         return None
 
+    def find_label_scope(self, name: str) -> "Scope | None":
+        """Walk the scope chain looking for the scope that owns ``name`` as a label."""
+        scope: Scope | None = self
+        while scope is not None:
+            if name in scope.labels:
+                return scope
+            scope = scope.parent
+        return None
+
     def is_external_symbol(self, symbol: str) -> bool:
         """Check if a symbol is marked as external"""
         if symbol in self.external_symbols:
@@ -260,32 +269,55 @@ class Resolver:
                 print("Scope\n")
                 self._dump_symbols(scope.symbols)
 
-    def get_all_labels(self) -> list[tuple[str, int]]:
-        labels: list[tuple[str, int]] = []
-        for scope in self.scopes:
-            if not isinstance(scope, InternalScope):
-                labels += scope.get_labels()
+    def get_all_labels(self, mangle_nested: bool = False) -> list[tuple[str, int]]:
+        """Return labels across all non-internal scopes.
 
+        When ``mangle_nested`` is true, labels in nested anonymous scopes are
+        prefixed with ``__sc<idx>__`` to mirror the export naming used by
+        :meth:`get_all_symbols`.
+        """
+        labels: list[tuple[str, int]] = []
+        for idx, scope in enumerate(self.scopes):
+            if isinstance(scope, InternalScope):
+                continue
+            mangle = mangle_nested and idx > 0 and not isinstance(scope, NamedScope)
+            for name, value in scope.get_labels():
+                exported = f"__sc{idx}__{name}" if mangle and not name.startswith("_") else name
+                labels.append((exported, value))
         return labels
 
     def get_all_symbols(self) -> list[tuple[str, int]]:
-        """Get all symbols including labels and assignments for object file export"""
+        """Get all symbols including labels and assignments for object file export.
+
+        Labels and symbols defined in nested anonymous scopes are mangled with
+        the scope index (``__sc<idx>__<name>``) so two scopes with the same
+        local name (e.g. multiple macro invocations both defining ``return_addr``)
+        don't collide in the exported symbol table.
+        """
         symbols: list[tuple[str, int]] = []
         seen_symbols: set[str] = set()
 
-        for scope in self.scopes:
-            if not isinstance(scope, InternalScope):
-                # Add labels first (since labels are also in the symbols dict)
-                for name, value in scope.get_labels():
-                    if name not in seen_symbols:
-                        symbols.append((name, value))
-                        seen_symbols.add(name)
+        for idx, scope in enumerate(self.scopes):
+            if isinstance(scope, InternalScope):
+                continue
+            mangle = idx > 0 and not isinstance(scope, NamedScope)
 
-                # Add regular symbols (assignments) that aren't already labels
-                for name, symbol_value in scope.symbols.items():
-                    if isinstance(symbol_value, int) and name not in seen_symbols:  # Only export numeric symbols
-                        symbols.append((name, symbol_value))
-                        seen_symbols.add(name)
+            for name, value in scope.get_labels():
+                # Names that already start with `_` are explicitly local and
+                # not expected to collide with other scopes; keep their short
+                # form so callers can still find them by name.
+                exported = f"__sc{idx}__{name}" if mangle and not name.startswith("_") else name
+                if exported not in seen_symbols:
+                    symbols.append((exported, value))
+                    seen_symbols.add(exported)
+
+            for name, symbol_value in scope.symbols.items():
+                if not isinstance(symbol_value, int):
+                    continue
+                exported = f"__sc{idx}__{name}" if mangle and not name.startswith("_") else name
+                if exported not in seen_symbols:
+                    symbols.append((exported, symbol_value))
+                    seen_symbols.add(exported)
         return symbols
 
     def is_root_scope_symbol(self, name: str) -> bool:

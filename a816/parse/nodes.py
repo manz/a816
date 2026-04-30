@@ -53,15 +53,29 @@ class ExpressionNode(ValueNodeProtocol):
                 from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
                 from a816.parse.tokens import TokenType
 
-                local_labels = {name for name, _ in self.resolver.get_all_labels()}
-                tokens = self.expression.tokens
-                if any(
-                    getattr(t, "token", None) is not None
-                    and t.token.type == TokenType.IDENTIFIER
-                    and t.token.value in local_labels
-                    for t in tokens
-                ):
-                    self._deferred_expression = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+                # Walk tokens; for each identifier that's a label in some
+                # scope, mangle it with the owning scope's index so two macro
+                # invocations defining the same name don't alias each other.
+                rename: dict[str, str] = {}
+                for t in self.expression.tokens:
+                    tok = getattr(t, "token", None)
+                    if tok is None or tok.type != TokenType.IDENTIFIER:
+                        continue
+                    owner = self.resolver.current_scope.find_label_scope(tok.value)
+                    if owner is None:
+                        continue
+                    if owner is self.resolver.scopes[0]:
+                        continue  # root labels keep their plain name
+                    if tok.value.startswith("_"):
+                        continue  # explicit-local names keep their short form
+                    scope_idx = self.resolver.scopes.index(owner)
+                    rename[tok.value] = f"__sc{scope_idx}__{tok.value}"
+                if rename:
+                    expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+                    for short, mangled in rename.items():
+                        expr_str = re.sub(rf"\b{re.escape(short)}\b", mangled, expr_str)
+                    self._deferred_expression = expr_str
+                    self._local_label_renames = rename
             return value
         except ExternalExpressionReference as e:
             # Expression contains external symbols, defer to link time
