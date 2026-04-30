@@ -43,7 +43,26 @@ class ExpressionNode(ValueNodeProtocol):
 
     def get_value(self) -> int | str:  # type:ignore
         try:
-            return eval_expression(self.expression, self.resolver)
+            value = eval_expression(self.expression, self.resolver)
+            # In object mode, references to module-local CODE labels still
+            # need a relocation entry: the baked value matches the module's
+            # compile-time base, but the linker may place the module
+            # elsewhere. Record the original expression so the link step can
+            # re-evaluate against the final addresses.
+            if self.resolver.context.is_object_mode and isinstance(value, int):
+                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+                from a816.parse.tokens import TokenType
+
+                local_labels = {name for name, _ in self.resolver.get_all_labels()}
+                tokens = self.expression.tokens
+                if any(
+                    getattr(t, "token", None) is not None
+                    and t.token.type == TokenType.IDENTIFIER
+                    and t.token.value in local_labels
+                    for t in tokens
+                ):
+                    self._deferred_expression = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+            return value
         except ExternalExpressionReference as e:
             # Expression contains external symbols, defer to link time
             if self.resolver.context.is_object_mode:
@@ -241,12 +260,20 @@ class LinkedModuleNode(NodeProtocol):
 
         scope = self.resolver.current_scope
         base_address = current_pc.logical_value
+        # Module-private map for LOCAL labels (kept off of scope to avoid
+        # cross-module name clashes — e.g. two modules both define `loop`).
+        self._local_map: dict[str, int] = {}
         for name, offset, sym_type, section in self.symbols:
             if sym_type == SymbolType.GLOBAL.value:
                 if section == SymbolSection.CODE.value:
                     scope.symbols[name] = base_address + offset
                 else:
                     scope.symbols[name] = offset
+            elif sym_type == SymbolType.LOCAL.value:
+                if section == SymbolSection.CODE.value:
+                    self._local_map[name] = base_address + offset
+                else:
+                    self._local_map[name] = offset
 
         return current_pc + len(self.code)
 
@@ -256,28 +283,45 @@ class LinkedModuleNode(NodeProtocol):
 
         code_array = bytearray(self.code)
 
-        for offset, expr, size in self.expression_relocations:
-            try:
-                value = eval_expression_str(expr, self.resolver)
-                if not isinstance(value, int):
-                    logger.warning(f"Expression '{expr}' did not evaluate to int: {value}")
-                    continue
+        # Inject this module's LOCAL labels into the resolver's root scope
+        # for the duration of the eval; restore afterwards. Keeps two
+        # modules' identical local names from colliding with each other.
+        local_map = getattr(self, "_local_map", {})
+        root_scope = self.resolver.scopes[0]
+        saved: dict[str, int | str] = {}
+        for name, value in local_map.items():
+            if name in root_scope.symbols:
+                saved[name] = root_scope.symbols[name]
+            root_scope.symbols[name] = value
 
-                # Write the value at the offset with the specified size
-                if size == 1:
-                    code_array[offset] = value & 0xFF
-                elif size == 2:
-                    code_array[offset] = value & 0xFF
-                    code_array[offset + 1] = (value >> 8) & 0xFF
-                elif size == 3:
-                    code_array[offset] = value & 0xFF
-                    code_array[offset + 1] = (value >> 8) & 0xFF
-                    code_array[offset + 2] = (value >> 16) & 0xFF
+        try:
+            for offset, expr, size in self.expression_relocations:
+                try:
+                    value = eval_expression_str(expr, self.resolver)
+                    if not isinstance(value, int):
+                        logger.warning(f"Expression '{expr}' did not evaluate to int: {value}")
+                        continue
+
+                    if size == 1:
+                        code_array[offset] = value & 0xFF
+                    elif size == 2:
+                        code_array[offset] = value & 0xFF
+                        code_array[offset + 1] = (value >> 8) & 0xFF
+                    elif size == 3:
+                        code_array[offset] = value & 0xFF
+                        code_array[offset + 1] = (value >> 8) & 0xFF
+                        code_array[offset + 2] = (value >> 16) & 0xFF
+                    else:
+                        logger.warning(f"Unsupported relocation size {size} for expression '{expr}'")
+                except (SymbolNotDefined, NodeError, ValueError) as e:
+                    logger.warning(f"Failed to evaluate expression '{expr}': {e}")
+        finally:
+            # Restore root scope (remove our injected locals, restore overlaps).
+            for name in local_map:
+                if name in saved:
+                    root_scope.symbols[name] = saved[name]
                 else:
-                    logger.warning(f"Unsupported relocation size {size} for expression '{expr}'")
-
-            except (SymbolNotDefined, NodeError, ValueError) as e:
-                logger.warning(f"Failed to evaluate expression '{expr}': {e}")
+                    root_scope.symbols.pop(name, None)
 
         return bytes(code_array)
 

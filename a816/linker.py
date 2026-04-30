@@ -66,7 +66,10 @@ class Linker:
                     self.symbol_map[name] = final_address
                     self.linked_symbols.append((name, final_address, symbol_type, section))
                 elif symbol_type == SymbolType.LOCAL:
-                    local_address = base_address + current_code_offset + address
+                    if section == SymbolSection.DATA:
+                        local_address = address
+                    else:
+                        local_address = base_address + current_code_offset + address
                     self.linked_symbols.append((name, local_address, symbol_type, section))
                 elif symbol_type == SymbolType.EXTERNAL:
                     self._external_symbols_needed.add(name)
