@@ -14,7 +14,7 @@ from a816.parse.ast.expression import eval_expression, eval_expression_str
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol, OpcodeProtocol, ValueNodeProtocol
-from a816.symbols import Resolver
+from a816.symbols import Resolver, Scope
 from script import Table
 
 logger = logging.getLogger("a816.nodes")
@@ -41,65 +41,57 @@ class ExpressionNode(ValueNodeProtocol):
         self.resolver = resolver
         self.file_info = file_info
 
+    def _compute_local_label_renames(self) -> tuple[dict[str, str], bool]:
+        """Return (rename map, touches_any_label). Nested-scope label refs get mangled."""
+        from a816.parse.tokens import TokenType
+
+        rename: dict[str, str] = {}
+        touches_label = False
+        for t in self.expression.tokens:
+            tok = getattr(t, "token", None)
+            if tok is None or tok.type != TokenType.IDENTIFIER:
+                continue
+            owner = self.resolver.current_scope.find_label_scope(tok.value)
+            if owner is None:
+                continue
+            touches_label = True
+            if owner is self.resolver.scopes[0] or tok.value.startswith("_"):
+                continue
+            scope_idx = self.resolver.scopes.index(owner)
+            rename[tok.value] = f"__sc{scope_idx}__{tok.value}"
+        return rename, touches_label
+
+    def _record_local_label_relocation(self) -> None:
+        from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+        rename, touches_label = self._compute_local_label_renames()
+        if not touches_label:
+            return
+        expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+        for short, mangled in rename.items():
+            expr_str = re.sub(rf"\b{re.escape(short)}\b", mangled, expr_str)
+        self._deferred_expression = expr_str
+        self._local_label_renames = rename
+
     def get_value(self) -> int | str:  # type:ignore
         try:
             value = eval_expression(self.expression, self.resolver)
-            # In object mode, references to module-local CODE labels still
-            # need a relocation entry: the baked value matches the module's
-            # compile-time base, but the linker may place the module
-            # elsewhere. Record the original expression so the link step can
-            # re-evaluate against the final addresses.
             if self.resolver.context.is_object_mode and isinstance(value, int):
-                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
-                from a816.parse.tokens import TokenType
-
-                # Walk tokens; any identifier that resolves to a label in some
-                # scope of this module is module-relative and needs a link-time
-                # relocation. Nested-scope labels are mangled with the owning
-                # scope's index so two macro invocations don't alias.
-                rename: dict[str, str] = {}
-                touches_label = False
-                for t in self.expression.tokens:
-                    tok = getattr(t, "token", None)
-                    if tok is None or tok.type != TokenType.IDENTIFIER:
-                        continue
-                    owner = self.resolver.current_scope.find_label_scope(tok.value)
-                    if owner is None:
-                        continue
-                    touches_label = True
-                    if owner is self.resolver.scopes[0]:
-                        continue  # root labels keep their plain name
-                    if tok.value.startswith("_"):
-                        continue  # explicit-local names keep their short form
-                    scope_idx = self.resolver.scopes.index(owner)
-                    rename[tok.value] = f"__sc{scope_idx}__{tok.value}"
-                if touches_label:
-                    expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
-                    for short, mangled in rename.items():
-                        expr_str = re.sub(rf"\b{re.escape(short)}\b", mangled, expr_str)
-                    self._deferred_expression = expr_str
-                    self._local_label_renames = rename
+                # Module-local label refs: record the original expression so the
+                # linker can re-evaluate against the module's final placement.
+                self._record_local_label_relocation()
             return value
         except ExternalExpressionReference as e:
-            # Expression contains external symbols, defer to link time
             if self.resolver.context.is_object_mode:
-                # Store the deferred expression info for use by the caller
                 self._deferred_expression = e.expression_str
                 self._external_symbols = e.external_symbols
-                return 0  # Placeholder value - caller will generate expression relocation
-            else:
-                # Not compiling to object file, can't resolve external symbols
-                raise NodeError(f"Expression contains external symbols: {e.expression_str}", self.file_info) from e
+                return 0
+            raise NodeError(f"Expression contains external symbols: {e.expression_str}", self.file_info) from e
         except ExternalSymbolReference as e:
-            # Single external symbol reference
             if self.resolver.context.is_object_mode:
-                # Store the expression for later evaluation at link time
-                expression_str = self.expression.to_representation()[0]  # Get string representation
-                self._deferred_expression = expression_str
-                return 0  # Placeholder value
-            else:
-                # Not compiling to object file, can't resolve external symbol
-                raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
+                self._deferred_expression = self.expression.to_representation()[0]
+                return 0
+            raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
         except SymbolNotDefined as e:
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
 
@@ -146,41 +138,34 @@ class SymbolNode(NodeProtocol):
     def emit(self, current_addr: Address) -> bytes:
         return b""
 
+    def _register_alias(self, expr_str: str) -> None:
+        self.resolver.current_scope.add_external_alias(self.symbol_name, expr_str)
+        object_writer = self.resolver.context.object_writer
+        if object_writer is not None:
+            object_writer.add_alias(self.symbol_name, expr_str)
+
     def pc_after(self, current_pc: Address) -> Address:
         assert isinstance(self.expression, ExpressionAstNode)
         try:
             value = eval_expression(self.expression, self.resolver)
-            # If RHS references a module-local CODE label, register the symbol
-            # as an alias so references go through the relocation pipeline at
-            # link time. Otherwise the baked value is module-base-relative and
-            # breaks when the module is placed elsewhere.
-            if self.resolver.context.is_object_mode and self._references_local_label():
-                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
-
-                expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
-                self.resolver.current_scope.add_external_alias(self.symbol_name, expr_str)
-                object_writer = self.resolver.context.object_writer
-                if object_writer is not None:
-                    object_writer.add_alias(self.symbol_name, expr_str)
-            else:
-                self.resolver.current_scope.add_symbol(self.symbol_name, value)
         except (ExternalExpressionReference, ExternalSymbolReference) as e:
-            # RHS references external symbols. Register an alias so local
-            # references behave like externs and the linker resolves later.
             if not self.resolver.context.is_object_mode:
                 raise NodeError(
                     f"{self.symbol_name} = {self.expression.to_canonical()}: "
                     f"external symbols only allowed in object compilation mode.",
                     self.expression.file_info if hasattr(self.expression, "file_info") else current_pc,  # type: ignore[arg-type]
                 ) from e
-            if isinstance(e, ExternalSymbolReference):
-                expr_str = e.symbol_name
-            else:
-                expr_str = e.expression_str
-            self.resolver.current_scope.add_external_alias(self.symbol_name, expr_str)
-            object_writer = self.resolver.context.object_writer
-            if object_writer is not None:
-                object_writer.add_alias(self.symbol_name, expr_str)
+            self._register_alias(e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str)
+            return current_pc
+
+        if self.resolver.context.is_object_mode and self._references_local_label():
+            # RHS hits a module-local CODE label. Register an alias so refs go
+            # through the relocation pipeline; baked value is module-base-relative.
+            from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+            self._register_alias(_inline_aliases(reconstruct_expression(self.expression), self.resolver))
+        else:
+            self.resolver.current_scope.add_symbol(self.symbol_name, value)
         return current_pc
 
     def _references_local_label(self) -> bool:
@@ -320,52 +305,57 @@ class LinkedModuleNode(NodeProtocol):
 
         return current_pc + len(self.code)
 
-    def _apply_expression_relocations(self) -> bytes:
-        """Apply expression relocations to the module's code."""
+    @staticmethod
+    def _write_reloc(code_array: bytearray, offset: int, value: int, size: int, expr: str) -> None:
+        if size not in (1, 2, 3):
+            logger.warning(f"Unsupported relocation size {size} for expression '{expr}'")
+            return
+        for i in range(size):
+            code_array[offset + i] = (value >> (8 * i)) & 0xFF
+
+    def _eval_one_relocation(self, expr: str, offset: int, size: int, code_array: bytearray) -> None:
         from a816.parse.ast.expression import eval_expression_str
 
-        code_array = bytearray(self.code)
+        try:
+            value = eval_expression_str(expr, self.resolver)
+        except (SymbolNotDefined, NodeError, ValueError) as e:
+            logger.warning(f"Failed to evaluate expression '{expr}': {e}")
+            return
+        if not isinstance(value, int):
+            logger.warning(f"Expression '{expr}' did not evaluate to int: {value}")
+            return
+        self._write_reloc(code_array, offset, value, size, expr)
 
-        # Inject this module's LOCAL labels into the resolver's root scope
-        # for the duration of the eval; restore afterwards. Keeps two
-        # modules' identical local names from colliding with each other.
+    def _inject_locals(self, root_scope: Scope) -> dict[str, int | str]:
         local_map = getattr(self, "_local_map", {})
-        root_scope = self.resolver.scopes[0]
         saved: dict[str, int | str] = {}
         for name, value in local_map.items():
             if name in root_scope.symbols:
                 saved[name] = root_scope.symbols[name]
             root_scope.symbols[name] = value
+        return saved
 
+    def _restore_locals(self, root_scope: Scope, saved: dict[str, int | str]) -> None:
+        local_map = getattr(self, "_local_map", {})
+        for name in local_map:
+            if name in saved:
+                root_scope.symbols[name] = saved[name]
+            else:
+                root_scope.symbols.pop(name, None)
+
+    def _apply_expression_relocations(self) -> bytes:
+        """Apply expression relocations to the module's code."""
+        code_array = bytearray(self.code)
+        # Inject this module's LOCAL labels into the resolver's root scope
+        # for the duration of the eval; restore afterwards. Keeps two
+        # modules' identical local names from colliding with each other.
+        root_scope = self.resolver.scopes[0]
+        saved = self._inject_locals(root_scope)
         try:
             for offset, expr, size in self.expression_relocations:
-                try:
-                    value = eval_expression_str(expr, self.resolver)
-                    if not isinstance(value, int):
-                        logger.warning(f"Expression '{expr}' did not evaluate to int: {value}")
-                        continue
-
-                    if size == 1:
-                        code_array[offset] = value & 0xFF
-                    elif size == 2:
-                        code_array[offset] = value & 0xFF
-                        code_array[offset + 1] = (value >> 8) & 0xFF
-                    elif size == 3:
-                        code_array[offset] = value & 0xFF
-                        code_array[offset + 1] = (value >> 8) & 0xFF
-                        code_array[offset + 2] = (value >> 16) & 0xFF
-                    else:
-                        logger.warning(f"Unsupported relocation size {size} for expression '{expr}'")
-                except (SymbolNotDefined, NodeError, ValueError) as e:
-                    logger.warning(f"Failed to evaluate expression '{expr}': {e}")
+                self._eval_one_relocation(expr, offset, size, code_array)
         finally:
-            # Restore root scope (remove our injected locals, restore overlaps).
-            for name in local_map:
-                if name in saved:
-                    root_scope.symbols[name] = saved[name]
-                else:
-                    root_scope.symbols.pop(name, None)
-
+            self._restore_locals(root_scope, saved)
         return bytes(code_array)
 
     def __str__(self) -> str:

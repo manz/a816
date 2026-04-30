@@ -278,6 +278,28 @@ def generate_db(
     return _generate_data(node, ByteNode, resolver, file_info)
 
 
+def _expression_references_extern(value: ExpressionAstNode, resolver: Resolver) -> bool:
+    from a816.parse.tokens import TokenType
+
+    return any(
+        term.token.type == TokenType.IDENTIFIER and resolver.current_scope.is_external_symbol(term.token.value)
+        for term in value.tokens
+    )
+
+
+def _try_eager_register_alias(node: SymbolAffectationAstNode, resolver: Resolver) -> None:
+    from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+
+    try:
+        eval_expression(node.value, resolver)
+    except (ExternalExpressionReference, ExternalSymbolReference) as e:
+        expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+        resolver.current_scope.add_external_alias(node.symbol, expr_str)
+        object_writer = resolver.context.object_writer
+        if object_writer is not None:
+            object_writer.add_alias(node.symbol, expr_str)
+
+
 def generate_symbol(
     node: SymbolAffectationAstNode,
     resolver: Resolver,
@@ -285,27 +307,14 @@ def generate_symbol(
     file_info: Token,
 ) -> GenNodes:
     # If the RHS references a symbol already known to be external, register an
-    # alias eagerly so subsequent code-gen sees the LHS as external too. This
-    # only triggers when an extern is reachable at this point (forward refs to
-    # locally defined symbols still go through the lazy SymbolNode.pc_after path).
-    if isinstance(node.value, ExpressionAstNode) and resolver.context.is_object_mode:
-        from a816.parse.tokens import TokenType
-
-        references_extern = any(
-            term.token.type == TokenType.IDENTIFIER and resolver.current_scope.is_external_symbol(term.token.value)
-            for term in node.value.tokens
-        )
-        if references_extern:
-            from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
-
-            try:
-                eval_expression(node.value, resolver)
-            except (ExternalExpressionReference, ExternalSymbolReference) as e:
-                expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
-                resolver.current_scope.add_external_alias(node.symbol, expr_str)
-                object_writer = resolver.context.object_writer
-                if object_writer is not None:
-                    object_writer.add_alias(node.symbol, expr_str)
+    # alias eagerly so subsequent code-gen sees the LHS as external too. Forward
+    # refs to locally defined symbols still go through SymbolNode.pc_after.
+    if (
+        isinstance(node.value, ExpressionAstNode)
+        and resolver.context.is_object_mode
+        and _expression_references_extern(node.value, resolver)
+    ):
+        _try_eager_register_alias(node, resolver)
 
     return [SymbolNode(node.symbol, node.value, resolver)]
 
@@ -325,99 +334,80 @@ def generate_extern(
     return [ExternNode(node.symbol, resolver)]
 
 
+def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
+    paths: list[Path] = []
+    if file_info.position and file_info.position.file:
+        from a816.util import uri_to_path
+
+        paths.append(uri_to_path(file_info.position.file.filename).parent)
+    paths.extend(resolver.context.module_paths)
+    return paths
+
+
+def _import_from_object(
+    module_name: str,
+    obj_path: Path,
+    resolver: Resolver,
+    direct_mode: bool,
+) -> GenNodes | None:
+    from a816.object_file import ObjectFile, SymbolType
+
+    try:
+        obj_file = ObjectFile.read(str(obj_path))
+    except (FileNotFoundError, ValueError):
+        return None
+
+    if direct_mode:
+        symbols_data = [
+            (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
+        ]
+        expr_relocs = list(obj_file.expression_relocations) if obj_file.expression_relocations else []
+        return [LinkedModuleNode(module_name, obj_file.code, symbols_data, resolver, expr_relocs)]
+
+    return [ExternNode(name, resolver) for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
+
+
+def _import_from_source(
+    src_path: Path,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    direct_mode: bool,
+) -> GenNodes | None:
+    try:
+        if direct_mode:
+            from a816.parse.mzparser import MZParser
+
+            content = src_path.read_text(encoding="utf-8")
+            result = MZParser.parse_as_ast(content, str(src_path))
+            return _code_gen(result.nodes, resolver, macro_definitions) if result.nodes else []
+
+        return [ExternNode(symbol_name, resolver) for symbol_name in _extract_public_symbols_from_source(src_path)]
+    except OSError:
+        return None
+
+
 def generate_import(
     node: ImportAstNode,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    """Generate nodes for all public symbols in an imported module.
-
-    Module resolution order:
-    1. Try .o file (compiled object) - extracts GLOBAL symbols and code
-    2. Fall back to .s file (source) - extracts public labels (non-dot-prefixed)
-
-    When a .o file is found:
-    - If we're compiling to an object file (resolver has _object_writer), create ExternNode
-    - Otherwise (direct assembly), create LinkedModuleNode that emits code and binds symbols
-
-    The module is searched in:
-    1. Directory of the current file
-    2. Module search paths (if configured in resolver)
-    """
-    from a816.object_file import ObjectFile, SymbolType
-
+    """Resolve an .import to ExternNode (object/parse mode) or LinkedModuleNode/inline source (direct)."""
     module_name = node.module_name
-    code: GenNodes = []
+    direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
+    search_paths = _import_search_paths(resolver, file_info)
 
-    # Get the base directory from the current file
-    base_dir = None
-    if file_info.position and file_info.position.file:
-        from a816.util import uri_to_path
-
-        base_dir = uri_to_path(file_info.position.file.filename).parent
-
-    # Build search paths
-    search_paths: list[Path] = []
-    if base_dir:
-        search_paths.append(base_dir)
-    search_paths.extend(resolver.context.module_paths)
-
-    # Check compilation mode:
-    # - Object file compilation: generate ExternNode (external references)
-    # - Direct assembly mode: generate LinkedModuleNode (include code and bind symbols)
-    # - Other (parsing only, tests): generate ExternNode
-    compiling_to_object = resolver.context.is_object_mode
-    direct_assembly_mode = resolver.context.is_direct_mode
-
-    # Try to find .o file first
     obj_path = _resolve_module_path(module_name, ".o", search_paths)
     if obj_path:
-        try:
-            obj_file = ObjectFile.read(str(obj_path))
+        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
+        if nodes is not None:
+            return nodes
 
-            if direct_assembly_mode and not compiling_to_object:
-                # Direct assembly - create LinkedModuleNode that emits code and binds symbols
-                # Convert symbols to format expected by LinkedModuleNode
-                symbols_data = [
-                    (name, address, sym_type.value, section.value)
-                    for name, address, sym_type, section in obj_file.symbols
-                ]
-                # Pass expression relocations so they can be applied at emit time
-                expr_relocs = list(obj_file.expression_relocations) if obj_file.expression_relocations else []
-                code.append(LinkedModuleNode(module_name, obj_file.code, symbols_data, resolver, expr_relocs))
-            else:
-                # Object file compilation or parsing - mark symbols as external references
-                for name, _address, sym_type, _section in obj_file.symbols:
-                    if sym_type == SymbolType.GLOBAL:
-                        code.append(ExternNode(name, resolver))
-
-            return code
-        except (FileNotFoundError, ValueError):
-            pass  # Fall through to source file resolution
-
-    # Fall back to .s file
     src_path = _resolve_module_path(module_name, ".s", search_paths)
     if src_path:
-        try:
-            if direct_assembly_mode and not compiling_to_object:
-                # Direct assembly without .o file - parse and include the source file
-                # This is similar to .include but triggered by .import
-                from a816.parse.mzparser import MZParser
-
-                content = src_path.read_text(encoding="utf-8")
-                result = MZParser.parse_as_ast(content, str(src_path))
-                if result.nodes:
-                    code.extend(_code_gen(result.nodes, resolver, macro_definitions))
-                return code
-            else:
-                # Object file compilation or parsing - extract symbols as external references
-                symbols = _extract_public_symbols_from_source(src_path)
-                for symbol_name in symbols:
-                    code.append(ExternNode(symbol_name, resolver))
-                return code
-        except OSError:
-            pass
+        nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode)
+        if nodes is not None:
+            return nodes
 
     raise NodeError(f'Module not found: "{module_name}"', file_info)
 

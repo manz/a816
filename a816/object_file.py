@@ -149,110 +149,81 @@ class ObjectFile:
         return size
 
     @staticmethod
+    def _read_symbols(f: BinaryIO) -> list[tuple[str, int, SymbolType, SymbolSection]]:
+        num_symbols = struct.unpack("<H", f.read(2))[0]
+        symbols = []
+        for _ in range(num_symbols):
+            name_length = struct.unpack("<B", f.read(1))[0]
+            name = f.read(name_length).decode("utf-8")
+            address = struct.unpack("<I", f.read(4))[0]
+            symbol_type = SymbolType(struct.unpack("<B", f.read(1))[0])
+            section = SymbolSection(struct.unpack("<B", f.read(1))[0])
+            symbols.append((name, address, symbol_type, section))
+        return symbols
+
+    @staticmethod
+    def _read_relocations(f: BinaryIO) -> list[tuple[int, str, RelocationType]]:
+        num_relocations = struct.unpack("<H", f.read(2))[0]
+        relocations = []
+        for _ in range(num_relocations):
+            offset = struct.unpack("<I", f.read(4))[0]
+            name_length = struct.unpack("<B", f.read(1))[0]
+            name = f.read(name_length).decode("utf-8")
+            relocation_type = RelocationType(struct.unpack("<B", f.read(1))[0])
+            relocations.append((offset, name, relocation_type))
+        return relocations
+
+    @staticmethod
+    def _read_expression_relocations(f: BinaryIO, table_size: int) -> list[tuple[int, str, int]]:
+        if table_size == 0:
+            return []
+        num_expr_relocations = struct.unpack("<H", f.read(2))[0]
+        expression_relocations = []
+        for _ in range(num_expr_relocations):
+            offset = struct.unpack("<I", f.read(4))[0]
+            expr_length = struct.unpack("<H", f.read(2))[0]
+            expression = f.read(expr_length).decode("utf-8")
+            size_bytes = struct.unpack("<B", f.read(1))[0]
+            expression_relocations.append((offset, expression, size_bytes))
+        return expression_relocations
+
+    @staticmethod
+    def _read_aliases(f: BinaryIO, table_size: int) -> list[tuple[str, str]]:
+        if table_size == 0:
+            return []
+        num_aliases = struct.unpack("<H", f.read(2))[0]
+        aliases: list[tuple[str, str]] = []
+        for _ in range(num_aliases):
+            name_length = struct.unpack("<B", f.read(1))[0]
+            name = f.read(name_length).decode("utf-8")
+            expr_length = struct.unpack("<H", f.read(2))[0]
+            expression = f.read(expr_length).decode("utf-8")
+            aliases.append((name, expression))
+        return aliases
+
+    @staticmethod
     def read(filename: str) -> "ObjectFile":
         with open(filename, "rb") as f:
-            # Read enough bytes for the largest known header (v4 = 26 bytes)
             header_data = f.read(26)
-            if len(header_data) < 6:  # Minimum: magic + version
+            if len(header_data) < 26:
                 raise ValueError(INVALID_FILE_FORMAT)
-
-            # First read magic and version to determine format
-            magic_number, version = struct.unpack("<IH", header_data[:6])
-
+            (
+                magic_number,
+                version,
+                code_size,
+                _,
+                _,
+                expression_relocation_table_size,
+                alias_table_size,
+            ) = struct.unpack("<IHIIIII", header_data)
             if magic_number != ObjectFile.MAGIC_NUMBER:
                 raise ValueError("Invalid magic number")
-
-            alias_table_size = 0
-            # Parse header based on version
-            if version == 0x0001:
-                # Version 1: <IHHHI (14 bytes)
-                if len(header_data) < 14:
-                    raise ValueError(INVALID_FILE_FORMAT)
-                _, _, code_size, _, _ = struct.unpack("<IHHHI", header_data[:14])
-                expression_relocation_table_size = 0
-                f.seek(14)
-            elif version == 0x0002:
-                # Version 2: <IHHHHI (16 bytes)
-                if len(header_data) < 16:
-                    raise ValueError(INVALID_FILE_FORMAT)
-                (
-                    _,
-                    _,
-                    code_size,
-                    _,
-                    _,
-                    expression_relocation_table_size,
-                ) = struct.unpack("<IHHHHI", header_data[:16])
-                f.seek(16)
-            elif version == 0x0003:
-                # Version 3: <IHIIII (22 bytes) - 32-bit sizes
-                if len(header_data) < 22:
-                    raise ValueError(INVALID_FILE_FORMAT)
-                (
-                    _,
-                    _,
-                    code_size,
-                    _,
-                    _,
-                    expression_relocation_table_size,
-                ) = struct.unpack("<IHIIII", header_data[:22])
-                f.seek(22)
-            elif version == 0x0004:
-                # Version 4: <IHIIIII (26 bytes) - adds alias table
-                if len(header_data) < 26:
-                    raise ValueError(INVALID_FILE_FORMAT)
-                (
-                    _,
-                    _,
-                    code_size,
-                    _,
-                    _,
-                    expression_relocation_table_size,
-                    alias_table_size,
-                ) = struct.unpack("<IHIIIII", header_data)
-            else:
-                raise ValueError(f"Unsupported version: {version}")
+            if version != ObjectFile.VERSION:
+                raise ValueError(f"Unsupported version: {version} (expected {ObjectFile.VERSION})")
 
             code = f.read(code_size)
-
-            num_symbols = struct.unpack("<H", f.read(2))[0]
-            symbols = []
-            for _ in range(num_symbols):
-                name_length = struct.unpack("<B", f.read(1))[0]
-                name = f.read(name_length).decode("utf-8")
-                address = struct.unpack("<I", f.read(4))[0]
-                symbol_type = SymbolType(struct.unpack("<B", f.read(1))[0])
-                section = SymbolSection(struct.unpack("<B", f.read(1))[0])
-                symbols.append((name, address, symbol_type, section))
-
-            num_relocations = struct.unpack("<H", f.read(2))[0]
-            relocations = []
-            for _ in range(num_relocations):
-                offset = struct.unpack("<I", f.read(4))[0]
-                name_length = struct.unpack("<B", f.read(1))[0]
-                name = f.read(name_length).decode("utf-8")
-                relocation_type = RelocationType(struct.unpack("<B", f.read(1))[0])
-                relocations.append((offset, name, relocation_type))
-
-            # Read expression relocations if present (version 2+)
-            expression_relocations = []
-            if version >= 0x0002 and expression_relocation_table_size > 0:
-                num_expr_relocations = struct.unpack("<H", f.read(2))[0]
-                for _ in range(num_expr_relocations):
-                    offset = struct.unpack("<I", f.read(4))[0]
-                    expr_length = struct.unpack("<H", f.read(2))[0]
-                    expression = f.read(expr_length).decode("utf-8")
-                    size_bytes = struct.unpack("<B", f.read(1))[0]
-                    expression_relocations.append((offset, expression, size_bytes))
-
-            aliases: list[tuple[str, str]] = []
-            if version >= 0x0004 and alias_table_size > 0:
-                num_aliases = struct.unpack("<H", f.read(2))[0]
-                for _ in range(num_aliases):
-                    name_length = struct.unpack("<B", f.read(1))[0]
-                    name = f.read(name_length).decode("utf-8")
-                    expr_length = struct.unpack("<H", f.read(2))[0]
-                    expression = f.read(expr_length).decode("utf-8")
-                    aliases.append((name, expression))
-
+            symbols = ObjectFile._read_symbols(f)
+            relocations = ObjectFile._read_relocations(f)
+            expression_relocations = ObjectFile._read_expression_relocations(f, expression_relocation_table_size)
+            aliases = ObjectFile._read_aliases(f, alias_table_size)
             return ObjectFile(code, symbols, relocations, expression_relocations, aliases)
