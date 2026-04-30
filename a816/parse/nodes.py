@@ -471,7 +471,7 @@ class NodeError(Exception):
     def __str__(self) -> str:
         return self.format()
 
-    def format(self, use_colors: bool = True) -> str:
+    def format(self) -> str:
         """Format the error with source location and visual indicator."""
         # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import SourceLocation, format_error

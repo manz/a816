@@ -416,7 +416,7 @@ def generate_import(
                 for symbol_name in symbols:
                     code.append(ExternNode(symbol_name, resolver))
                 return code
-        except (FileNotFoundError, OSError):
+        except OSError:
             pass
 
     raise NodeError(f'Module not found: "{module_name}"', file_info)

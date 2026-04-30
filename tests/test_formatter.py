@@ -270,7 +270,7 @@ end:
         formatted = self.formatter.format_text(input_code)
         lines = [line for line in formatted.splitlines() if line]
         comment_columns = [line.index(";") for line in lines if ";" in line and not line.lstrip().startswith(";")]
-        self.assertTrue(len(set(comment_columns)) == 1)
+        self.assertEqual(len(set(comment_columns)), 1)
 
     def test_formatter_appends_blank_line_at_end(self) -> None:
         """Formatted files should end with a blank line"""

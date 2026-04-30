@@ -73,7 +73,7 @@ class BlockAstNode(AstNode):
         self.body = body
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, list(node.to_representation() for node in self.body)
+        return self.kind, [node.to_representation() for node in self.body]
 
     def to_canonical(self) -> str:
         return f"{{\n{'\n'.join([node.to_canonical() for node in self.body])}}}\n"
@@ -87,7 +87,7 @@ class CompoundAstNode(AstNode):
         self.body = body
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, list(node.to_representation() for node in self.body)
+        return self.kind, [node.to_representation() for node in self.body]
 
     def to_canonical(self) -> str:
         return "\n".join([node.to_canonical() for node in self.body])
@@ -314,17 +314,10 @@ class MacroApplyAstNode(AstNode):
         )
 
     def to_canonical(self) -> str:
-        if self.args:
-            args_list = []
-            for arg in self.args:
-                if isinstance(arg, ExpressionAstNode):
-                    args_list.append(arg.to_canonical())
-                else:
-                    args_list.append(arg.to_canonical())
-            args_str = ", ".join(args_list)
-            return f"{self.name}({args_str})"
-        else:
+        if not self.args:
             return f"{self.name}()"
+        args_str = ", ".join(arg.to_canonical() for arg in self.args)
+        return f"{self.name}({args_str})"
 
 
 class DataNode(AstNode):

@@ -377,7 +377,7 @@ def build_with_imports(
             logger.error(f"Unknown output format: {output_format}")
             return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
 
-        symbol_map = {name: value for name, value in program.resolver.get_all_labels()}
+        symbol_map = dict(program.resolver.get_all_labels())
         return BuildResult(exit_code=exit_code, symbol_map=symbol_map, program=program)
 
     except Exception as e:
@@ -514,7 +514,7 @@ def build_with_imports_direct(
             logger.error(f"Unknown output format: {output_format}")
             return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
 
-        symbol_map = {name: value for name, value in program.resolver.get_all_labels()}
+        symbol_map = dict(program.resolver.get_all_labels())
         return BuildResult(exit_code=exit_code, symbol_map=symbol_map, program=program)
 
     except Exception as e:

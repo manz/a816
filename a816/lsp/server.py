@@ -86,6 +86,8 @@ from a816.util import uri_to_path
 
 logger = logging.getLogger(__name__)
 
+FILE_URI_PREFIX = "file://"
+
 
 class A816Document:
     """Represents an a816 assembly document with analysis capabilities"""
@@ -368,13 +370,15 @@ class A816Document:
         if token.position:
             token_filename = token.position.file.filename
             # Convert file path to URI if it's not already one
-            if not token_filename.startswith("file://"):
+            if not token_filename.startswith(FILE_URI_PREFIX):
                 try:
                     # Handle relative paths by resolving them first
                     if not os.path.isabs(token_filename):
                         # Get the directory of the current document
                         current_doc_path = (
-                            Path(self.uri.replace("file://", "")) if self.uri.startswith("file://") else Path(self.uri)
+                            Path(self.uri.replace(FILE_URI_PREFIX, ""))
+                            if self.uri.startswith(FILE_URI_PREFIX)
+                            else Path(self.uri)
                         )
                         if current_doc_path.is_file():
                             base_dir = current_doc_path.parent
@@ -834,7 +838,7 @@ class A816LanguageServer:
                 workspace.replace_document(doc)
 
             # Send diagnostics
-            await self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+            self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
 
         @self.server.feature("textDocument/didChange")
         async def did_change(ls: LanguageServer, params: DidChangeTextDocumentParams) -> None:
@@ -863,7 +867,7 @@ class A816LanguageServer:
                 workspace.replace_document(doc)
 
             # Send updated diagnostics
-            await self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+            self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
 
             # IMPORTANT: Trigger semantic token refresh for real-time syntax highlighting
             # This ensures syntax highlighting updates as you type
@@ -901,7 +905,7 @@ class A816LanguageServer:
                 workspace.replace_document(doc)
 
             # Publish updated diagnostics
-            await self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+            self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
 
         @self.server.feature("textDocument/completion")
         async def completions(ls: LanguageServer, params: CompletionParams) -> CompletionList:
@@ -1667,48 +1671,30 @@ class A816LanguageServer:
                     }
                 )
                 return
-            elif isinstance(node, MacroApplyAstNode):
-                # Macro application/call - highlight as user-defined macro
-                tokens.append(
-                    {
-                        "line": pos.line,
-                        "char": pos.column,
-                        "length": len(token_text),
-                        "type": 7,  # macro (macro call)
-                    }
-                )
             elif isinstance(
                 node,
-                CodePositionAstNode
+                MacroApplyAstNode
+                | CodePositionAstNode
                 | MapAstNode
                 | IfAstNode
                 | MacroAstNode
                 | AssignAstNode
                 | ExternAstNode
-                | ImportAstNode,
+                | ImportAstNode
+                | DataNode,
             ):
-                # Assembler directives
+                # Macro calls, assembler directives, and data declarations.
                 tokens.append(
                     {
                         "line": pos.line,
                         "char": pos.column,
                         "length": len(token_text),
-                        "type": 7,  # macro (directive)
-                    }
-                )
-            elif isinstance(node, DataNode):
-                # Data declarations like .db, .dw
-                tokens.append(
-                    {
-                        "line": pos.line,
-                        "char": pos.column,
-                        "length": len(token_text),
-                        "type": 7,  # macro (directive)
+                        "type": 7,
                     }
                 )
             elif isinstance(node, ExpressionAstNode):
                 # Handle symbols and identifiers in expressions
-                self._analyze_expression_tokens(node, tokens, doc)
+                self._analyze_expression_tokens(node, tokens)
                 return  # Don't process children as we handle them in _analyze_expression_tokens
 
             # Handle compound nodes with child nodes
@@ -1729,9 +1715,7 @@ class A816LanguageServer:
         except (AttributeError, KeyError, IndexError, TypeError) as e:
             logger.debug(f"Error processing AST node {type(node).__name__}: {e}")
 
-    def _analyze_expression_tokens(
-        self, expr_node: ExpressionAstNode, tokens: list[dict[str, Any]], doc: A816Document
-    ) -> None:
+    def _analyze_expression_tokens(self, expr_node: ExpressionAstNode, tokens: list[dict[str, Any]]) -> None:
         """Analyze expression nodes for symbols and identifiers"""
         try:
             """This is borked"""
@@ -1815,7 +1799,7 @@ class A816LanguageServer:
             return tokens
 
         # Check for label
-        label_match = re.match(r"^(\s*)([a-zA-Z_][a-zA-Z0-9_]*):(.*)$", line)
+        label_match = re.match(r"^(\s*)([a-zA-Z_]\w*):(.*)$", line, flags=re.ASCII)
         if label_match:
             indent = len(label_match.group(1))
             label_name = label_match.group(2)
@@ -2129,7 +2113,7 @@ class A816LanguageServer:
         """Resolve include path relative to current document, then search workspace include paths"""
         try:
             # Convert URI to file path
-            if current_uri.startswith("file://"):
+            if current_uri.startswith(FILE_URI_PREFIX):
                 current_path = Path(current_uri[7:])  # Remove file:// prefix
             else:
                 current_path = Path(current_uri)
@@ -2250,7 +2234,7 @@ class A816LanguageServer:
 
         return "".join(lines)
 
-    async def _publish_diagnostics(self, uri: str, diagnostics: list[Diagnostic]) -> None:
+    def _publish_diagnostics(self, uri: str, diagnostics: list[Diagnostic]) -> None:
         """Publish diagnostics for a document"""
         self.server.publish_diagnostics(uri, diagnostics)
 

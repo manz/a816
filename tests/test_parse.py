@@ -395,7 +395,7 @@ class ParseTest(unittest.TestCase):
 
         self.assertEqual(len(nodes), 1)
         node = nodes[0]
-        self.assertTrue(isinstance(node, IncludeIpsAstNode))
+        self.assertIsInstance(node, IncludeIpsAstNode)
         ips_node = cast(IncludeIpsAstNode, node)
         self.assertEqual("whee.ips", ips_node.file_path)
         self.assertEqual(

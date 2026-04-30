@@ -40,7 +40,7 @@ class Table:
 
     @staticmethod
     def transform_byte_matches_to_int(value: str) -> list[int]:
-        return list(map(lambda b: int("".join(b), 16), zip(*[iter(value)] * 2, strict=True)))
+        return [int("".join(b), 16) for b in zip(*[iter(value)] * 2, strict=True)]
 
     def add_inverted_lookup(self, byte: list[int], text: str, ignore: int | None = None) -> None:
         if ignore is not None:

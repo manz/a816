@@ -126,7 +126,12 @@ class Opcode(OpcodeProtocol):
             resolver = value_node.resolver
             if resolver.context.is_object_mode:
                 # Determine size in bytes
-                size_bytes = 1 if size == "b" else 2 if size == "w" else 3
+                if size == "b":
+                    size_bytes = 1
+                elif size == "w":
+                    size_bytes = 2
+                else:
+                    size_bytes = 3
                 # Add expression relocation at current PC offset + 1 (after opcode byte)
                 current_offset = resolver.pc + 1
                 resolver.context.object_writer.add_expression_relocation(

@@ -2,6 +2,8 @@ import struct
 from enum import Enum
 from typing import BinaryIO
 
+INVALID_FILE_FORMAT = "Invalid file format"
+
 
 class RelocationType(Enum):
     ABSOLUTE_16 = 0x00
@@ -152,7 +154,7 @@ class ObjectFile:
             # Read enough bytes for the largest known header (v4 = 26 bytes)
             header_data = f.read(26)
             if len(header_data) < 6:  # Minimum: magic + version
-                raise ValueError("Invalid file format")
+                raise ValueError(INVALID_FILE_FORMAT)
 
             # First read magic and version to determine format
             magic_number, version = struct.unpack("<IH", header_data[:6])
@@ -165,46 +167,46 @@ class ObjectFile:
             if version == 0x0001:
                 # Version 1: <IHHHI (14 bytes)
                 if len(header_data) < 14:
-                    raise ValueError("Invalid file format")
-                _, _, code_size, symbol_table_size, relocation_table_size = struct.unpack("<IHHHI", header_data[:14])
+                    raise ValueError(INVALID_FILE_FORMAT)
+                _, _, code_size, _, _ = struct.unpack("<IHHHI", header_data[:14])
                 expression_relocation_table_size = 0
                 f.seek(14)
             elif version == 0x0002:
                 # Version 2: <IHHHHI (16 bytes)
                 if len(header_data) < 16:
-                    raise ValueError("Invalid file format")
+                    raise ValueError(INVALID_FILE_FORMAT)
                 (
                     _,
                     _,
                     code_size,
-                    symbol_table_size,
-                    relocation_table_size,
+                    _,
+                    _,
                     expression_relocation_table_size,
                 ) = struct.unpack("<IHHHHI", header_data[:16])
                 f.seek(16)
             elif version == 0x0003:
                 # Version 3: <IHIIII (22 bytes) - 32-bit sizes
                 if len(header_data) < 22:
-                    raise ValueError("Invalid file format")
+                    raise ValueError(INVALID_FILE_FORMAT)
                 (
                     _,
                     _,
                     code_size,
-                    symbol_table_size,
-                    relocation_table_size,
+                    _,
+                    _,
                     expression_relocation_table_size,
                 ) = struct.unpack("<IHIIII", header_data[:22])
                 f.seek(22)
             elif version == 0x0004:
                 # Version 4: <IHIIIII (26 bytes) - adds alias table
                 if len(header_data) < 26:
-                    raise ValueError("Invalid file format")
+                    raise ValueError(INVALID_FILE_FORMAT)
                 (
                     _,
                     _,
                     code_size,
-                    symbol_table_size,
-                    relocation_table_size,
+                    _,
+                    _,
                     expression_relocation_table_size,
                     alias_table_size,
                 ) = struct.unpack("<IHIIIII", header_data)

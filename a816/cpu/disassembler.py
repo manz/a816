@@ -525,7 +525,7 @@ class Disassembler:
         self.m_flag = m_flag
         self.x_flag = x_flag
 
-    def get_operand_size(self, mode: AddrMode, base_size: int) -> int:
+    def get_operand_size(self, base_size: int) -> int:
         """Get actual operand size based on processor flags."""
         if base_size == -1:  # M-dependent
             return 1 if self.m_flag else 2
@@ -562,7 +562,7 @@ class Disassembler:
             )
 
         mnemonic, mode, base_size = OPCODE_TABLE[opcode]
-        operand_size = self.get_operand_size(mode, base_size)
+        operand_size = self.get_operand_size(base_size)
 
         # Check if we have enough data
         total_length = 1 + operand_size

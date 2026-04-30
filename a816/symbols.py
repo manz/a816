@@ -135,11 +135,7 @@ class Scope:
                 return self[symbol]
             return self.parent.value_for(symbol)
         else:
-            try:
-                return self[symbol]
-            except ExternalSymbolReference as e:
-                # Re-raise the exception so expression evaluator can detect it
-                raise e
+            return self[symbol]
 
 
 class InternalScope(Scope):

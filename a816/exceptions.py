@@ -43,6 +43,8 @@ class FormattingError(A816Error):
 # Linker Errors
 # =============================================================================
 
+LINKER_ERROR_LABEL = "linker error"
+
 
 class LinkerError(A816Error):
     """Base class for all linker-related errors."""
@@ -52,7 +54,7 @@ class LinkerError(A816Error):
         # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import format_error_simple
 
-        return format_error_simple("linker error", str(self))
+        return format_error_simple(LINKER_ERROR_LABEL, str(self))
 
 
 class DuplicateSymbolError(LinkerError):
@@ -125,7 +127,7 @@ class RelocationError(LinkerError):
         from a816.errors import format_error_simple
 
         return format_error_simple(
-            "linker error",
+            LINKER_ERROR_LABEL,
             f"relocation for '{self.symbol_name}' failed",
             details=[
                 ("type", self.relocation_type),
@@ -148,7 +150,7 @@ class ExpressionEvaluationError(LinkerError):
         from a816.errors import format_error_simple
 
         return format_error_simple(
-            "linker error",
+            LINKER_ERROR_LABEL,
             "cannot evaluate expression",
             details=[
                 ("expression", self.expression),
