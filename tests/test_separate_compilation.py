@@ -284,6 +284,94 @@ main:
             assert linker.symbol_map["font_high"] == 0
             assert len(linked.code) > 0
 
+    def test_anonymous_block_label_does_not_leak_as_global(self) -> None:
+        """Labels declared inside `{}` blocks must export as LOCAL, never GLOBAL.
+
+        Two scopes can both define `loop`/`exit` (e.g. multiple `{...}` blocks
+        inside a module). They should not collide as GLOBAL exports.
+        """
+        source = """outer_func:
+    nop
+{
+loop:
+    nop
+exit:
+    rts
+}
+other_func:
+{
+loop:
+    nop
+    rts
+}
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "blocks.s"
+            obj = Path(tmpdir) / "blocks.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+
+            o = ObjectFile.read(str(obj))
+            globals_ = {n for n, _, t, _ in o.symbols if t == SymbolType.GLOBAL}
+            assert "outer_func" in globals_
+            assert "other_func" in globals_
+            # Block-scoped names never become GLOBAL — both `loop`/`exit`
+            # come from `{}` scopes and would otherwise collide.
+            assert "loop" not in globals_
+            assert "exit" not in globals_
+
+    def test_module_local_label_relocates_to_placement(self) -> None:
+        """Internal absolute refs (PEA internal_label) update when the module moves."""
+        source = """_entry:
+    pea.w internal_label & 0xFFFF
+    rts
+internal_label:
+    .db 0xAA
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "mod.s"
+            obj = Path(tmpdir) / "mod.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+
+            o = ObjectFile.read(str(obj))
+            assert any("internal_label" in expr for _, expr, _ in o.expression_relocations), (
+                "expected an expression relocation referencing the internal label"
+            )
+
+            # Place the module at base 0x9000 and verify the patched 16-bit
+            # operand reflects internal_label's new placement.
+            linker = Linker([o], base_address=0x9000)
+            linker.link()
+            target = linker.symbol_map["internal_label"] & 0xFFFF
+            patched = linker.linked_code[1] | (linker.linked_code[2] << 8)
+            assert patched == target, f"PEA operand {patched:#x} does not match relocated label {target:#x}"
+
+    def test_constant_aliases_to_local_label_get_relocated(self) -> None:
+        """A `name = local_label + N` binding must defer to link time, not bake."""
+        source = """ptr_low = target & 0xFFFF
+entry:
+    lda.w #ptr_low
+    rts
+target:
+    .db 0xCC
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "alias.s"
+            obj = Path(tmpdir) / "alias.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+
+            o = ObjectFile.read(str(obj))
+            alias_names = {name for name, _ in o.aliases}
+            assert "ptr_low" in alias_names, "ptr_low's RHS touches a local label, must be exported as alias"
+
+            # Linker evaluates alias against the linked symbol map.
+            linker = Linker([o], base_address=0x9000)
+            linker.link()
+            assert "target" in linker.symbol_map
+            assert linker.symbol_map["ptr_low"] == linker.symbol_map["target"] & 0xFFFF
+
     def test_object_file_format_roundtrip(self) -> None:
         """Test that object file format can be written and read correctly"""
 

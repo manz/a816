@@ -131,9 +131,7 @@ class A816Document:
         """Analyze document using the parser and extract symbols, labels, and diagnostics"""
         try:
             # Parse using the actual a816 parser
-            parser_result = MZParser.parse_as_ast(
-                self.content, self.uri, include_paths=self.include_paths
-            )
+            parser_result = MZParser.parse_as_ast(self.content, self.uri, include_paths=self.include_paths)
             self.ast_nodes = parser_result.nodes
             self.parse_error = parser_result.parse_error
 

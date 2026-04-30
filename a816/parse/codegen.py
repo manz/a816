@@ -292,8 +292,7 @@ def generate_symbol(
         from a816.parse.tokens import TokenType
 
         references_extern = any(
-            term.token.type == TokenType.IDENTIFIER
-            and resolver.current_scope.is_external_symbol(term.token.value)
+            term.token.type == TokenType.IDENTIFIER and resolver.current_scope.is_external_symbol(term.token.value)
             for term in node.value.tokens
         )
         if references_extern:

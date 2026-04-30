@@ -159,6 +159,9 @@ class SymbolNode(NodeProtocol):
 
                 expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
                 self.resolver.current_scope.add_external_alias(self.symbol_name, expr_str)
+                object_writer = self.resolver.context.object_writer
+                if object_writer is not None:
+                    object_writer.add_alias(self.symbol_name, expr_str)
             else:
                 self.resolver.current_scope.add_symbol(self.symbol_name, value)
         except (ExternalExpressionReference, ExternalSymbolReference) as e:
