@@ -9,6 +9,7 @@ import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
+from typing import Any
 
 MAGIC = b"ADBG"
 VERSION = 1
@@ -185,7 +186,7 @@ class _Cursor:
         self._buf = buf
         self._offset = 0
 
-    def read(self, fmt: str) -> tuple:
+    def read(self, fmt: str) -> tuple[Any, ...]:
         size = struct.calcsize(fmt)
         chunk = self._buf[self._offset : self._offset + size]
         if len(chunk) < size:

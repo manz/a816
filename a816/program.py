@@ -369,6 +369,22 @@ class Program:
             ips_emitter.end()
             return exit_code
 
+    def import_linked_symbols(self, linked_obj: ObjectFile) -> None:
+        """Register a linked ObjectFile's symbols into the resolver.
+
+        After Linker.link() resolves symbols to final addresses, the link-mode
+        callers (link_as_patch / link_as_sfc) need to expose those names to
+        exports_symbol_file and .adbg producers. CODE labels land in scope.labels
+        (so get_all_labels picks them up); DATA constants stay in scope.symbols.
+        """
+        scope = self.resolver.current_scope
+        for name, value, sym_type, section in linked_obj.symbols:
+            if sym_type == SymbolType.EXTERNAL:
+                continue
+            if section == SymbolSection.CODE:
+                scope.labels[name] = value
+            scope.symbols[name] = value
+
     def link_as_patch(
         self, linked_obj: ObjectFile, ips_file: Path, mapping: str | None = None, copier_header: bool = False
     ) -> int:
@@ -391,6 +407,7 @@ class Program:
             }
             self.resolver.rom_type = address_mapping[mapping]
 
+        self.import_linked_symbols(linked_obj)
         try:
             with open(ips_file, "wb") as f:
                 ips_emitter = IPSWriter(f, copier_header)
@@ -419,6 +436,7 @@ class Program:
         Returns:
             0 on success, -1 on failure.
         """
+        self.import_linked_symbols(linked_obj)
         try:
             with open(sfc_file, "wb") as f:
                 sfc_emitter = SFCWriter(f)
