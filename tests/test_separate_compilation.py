@@ -688,6 +688,40 @@ far_label:
             target = linker.symbol_map["far_label"] & 0xFFFF
             assert patched[0] | (patched[1] << 8) == target
 
+    def test_duplicate_import_emits_module_bytes_once_at_last_site(self) -> None:
+        """Two .import "foo" statements emit foo's bytes once, at the second site.
+
+        Regression: the same module being imported in an .include'd patch
+        file and again in the main source caused .import to materialize
+        the module's bytes at BOTH sites. The earlier emission landed at
+        whatever PC the prior *= happened to leave behind, clobbering
+        unrelated ROM. .import is now idempotent — only the last
+        occurrence emits, the earlier ones still publish the symbols via
+        pc_after so subsequent code can reference the module.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "mod.s"
+            mod.write_text("payload:\n    .db 0x42, 0x42, 0x42, 0x42\n")
+            assert Program().assemble_as_object(str(mod), tmp / "mod.o") == 0
+
+            main = tmp / "main.s"
+            main.write_text(
+                "*=0x008000\n"
+                '.import "mod"\n'  # first import — symbol-only
+                "*=0x009000\n"
+                '.import "mod"\n'  # second import — emits payload here
+            )
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            content = ips.read_bytes()
+            assert content.count(b"\x42\x42\x42\x42") == 1, (
+                f"module bytes must appear exactly once in the IPS, got {content.count(b'\\x42\\x42\\x42\\x42')}"
+            )
+
     def test_multiple_intra_region_expression_relocations_get_distinct_offsets(self) -> None:
         """Three references to the same forward label must record three offsets.
 

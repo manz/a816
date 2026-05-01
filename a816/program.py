@@ -165,12 +165,34 @@ class Program:
         """
         from a816.parse.nodes import LinkedModuleNode
 
+        # `.import "foo"` is idempotent across the program: a project may
+        # carry the import in both an included patch file and the main
+        # source for symbol-visibility reasons. Only the LAST occurrence
+        # of each module name materializes the bytes; earlier occurrences
+        # still let pc_after rebind globals.
+        last_module_index: dict[str, int] = {}
+        for idx, node in enumerate(program):
+            if isinstance(node, LinkedModuleNode):
+                last_module_index[node.module_name] = idx
+
         current_block = b""
         current_block_addr = self.resolver.pc
-        for node in program:
+        for idx, node in enumerate(program):
             pre_emit_addr = self.resolver.reloc_address.logical_value
 
             if isinstance(node, LinkedModuleNode):
+                if last_module_index.get(node.module_name) != idx:
+                    # Symbols already (re-)bound in pc_after; advance the
+                    # resolver in lockstep with pc_after's first-region
+                    # delta so any inline code that follows this earlier
+                    # `.import` lands at the right address even though no
+                    # bytes are emitted here.
+                    if node.regions:
+                        advance = len(node.regions[0].code)
+                        self.resolver.pc += advance
+                        self.resolver.reloc_address += advance
+                        current_block_addr = self.resolver.pc
+                    continue
                 # Multi-region modules emit separate blocks at their own
                 # absolute base addresses; flush the pending block first so
                 # writes don't get re-keyed under the module's address.
