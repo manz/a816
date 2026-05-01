@@ -34,6 +34,7 @@ class BuildResult:
     symbol_map: dict[str, int] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
     program: "Program | None" = None
+    debug_info_path: Path | None = None
 
 
 class ModuleGraph:
@@ -402,10 +403,13 @@ def _assemble_main_direct(
     symbols: dict[str, int | str] | None,
     copier_header: bool,
     prelude_content: str | None,
+    capture_debug: bool = False,
 ) -> "tuple[int, Program] | BuildResult":  # noqa: F821
     from a816.program import Program
 
     program = Program()
+    if capture_debug:
+        program.enable_debug_capture()
     program.add_module_path(output_dir)
     for path in paths:
         program.add_module_path(path)
@@ -437,6 +441,7 @@ def build_with_imports_direct(
     include_paths: list[Path] | None = None,
     prelude_file: Path | None = None,
     parsed_main_nodes: list[AstNode] | None = None,
+    emit_debug_info: bool = True,
 ) -> BuildResult:
     """Pre-compile imported modules then assemble main directly (position-dependent ROM patches)."""
     main_source = Path(main_source)
@@ -486,12 +491,25 @@ def build_with_imports_direct(
             symbols=symbols,
             copier_header=copier_header,
             prelude_content=prelude_content,
+            capture_debug=emit_debug_info,
         )
         if isinstance(result, BuildResult):
             return result
         exit_code, program = result
         symbol_map = dict(program.resolver.get_all_labels())
-        return BuildResult(exit_code=exit_code, symbol_map=symbol_map, program=program)
+
+        debug_path: Path | None = None
+        if emit_debug_info and exit_code == 0:
+            from a816.debug_info import write as write_debug_info
+
+            debug_path = output_file.with_suffix(output_file.suffix + ".adbg")
+            write_debug_info(program.build_debug_info(main_source), debug_path)
+        return BuildResult(
+            exit_code=exit_code,
+            symbol_map=symbol_map,
+            program=program,
+            debug_info_path=debug_path,
+        )
 
     except Exception as e:
         logger.error(f"Build failed: {e}")

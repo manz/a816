@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Any
 
 from a816.context import AssemblyMode
 from a816.cpu.cpu_65c816 import RomType
@@ -47,6 +48,11 @@ class Program:
         self.logger = logging.getLogger("a816")
         self.dump_symbols = dump_symbols
         self.parser = parser or MZParser(self.resolver)
+        self._debug_capture: bool = False
+        # (address, filename, line, column) recorded during emit() when capture is on.
+        self._debug_lines: list[tuple[int, str, int, int]] = []
+        self._linked_modules: list[Any] = []  # list[LinkedModuleNode]; typed loosely to avoid cycle
+        self._program_nodes: list[NodeProtocol] = []
 
     def add_module_path(self, path: str | Path) -> None:
         """Add a directory to the module search path for .import directives.
@@ -138,9 +144,11 @@ class Program:
         current_block = b""
         current_block_addr = self.resolver.pc
         for node in program:
+            pre_emit_addr = self.resolver.reloc_address.logical_value
             node_bytes = node.emit(self.resolver.reloc_address)
 
             if node_bytes:
+                self._record_debug_line(node, pre_emit_addr)
                 current_block += node_bytes
                 self.resolver.pc += len(node_bytes)
                 self.resolver.reloc_address += len(node_bytes)
@@ -157,6 +165,18 @@ class Program:
 
         if len(current_block) > 0:
             writer.write_block(current_block, current_block_addr)
+
+    def _record_debug_line(self, node: NodeProtocol, address: int) -> None:
+        """If debug capture is on, record one line entry for the node."""
+        if not getattr(self, "_debug_capture", False):
+            return
+        info = getattr(node, "file_info", None)
+        if info is None:
+            return
+        position = getattr(info, "position", None)
+        if position is None or position.file is None:
+            return
+        self._debug_lines.append((address, position.file.filename, position.line, position.column))
 
     def emit_with_relocations(self, program: list[NodeProtocol], object_writer: ObjectWriter) -> None:
         """
@@ -216,6 +236,9 @@ class Program:
         if self.dump_symbols:
             self.resolver.dump_symbol_map()
 
+        # Stash the resolved node list so the .adbg producer can introspect
+        # LinkedModuleNode placements after emission.
+        self._program_nodes = list(nodes)
         self.emit(nodes, emitter)
 
         return None
@@ -368,6 +391,80 @@ class Program:
             exit_code = self.assemble_with_emitter(asm_file, ips_emitter, prelude=prelude)
             ips_emitter.end()
             return exit_code
+
+    def enable_debug_capture(self) -> None:
+        """Turn on per-node line capture for `.adbg` emission."""
+        self._debug_capture = True
+        self._debug_lines = []
+
+    def build_debug_info(self, main_source: Path | str) -> "Any":
+        """Build a DebugInfo from captured state. Returns a a816.debug_info.DebugInfo."""
+        from a816.debug_info import DebugInfo, LineEntry, ModuleEntry, SymbolEntry, SymbolKind, SymbolScope
+        from a816.parse.nodes import LinkedModuleNode
+
+        info = DebugInfo()
+        main_path = str(Path(main_source))
+        info.add_file(main_path)
+        # Index 0 covers the entry-point translation unit; module 0 is __main__.
+        info.modules.append(ModuleEntry(name="__main__", file_idx=0, base=0))
+
+        # One entry per LinkedModuleNode: source file, name, load base.
+        module_index_by_name: dict[str, int] = {"__main__": 0}
+        for node in self._program_nodes:
+            if not isinstance(node, LinkedModuleNode):
+                continue
+            base = getattr(node, "base_address", 0)
+            file_idx = info.add_file(node.module_name + ".s")
+            module_index_by_name[node.module_name] = info.add_module(node.module_name, file_idx, base)
+
+        # Symbols: every label gets a SymbolEntry. Module ownership resolves
+        # by walking known module bases; falls back to NO_MODULE for the main TU.
+        for name, value in self.resolver.get_all_labels():
+            module_idx = self._guess_module(value, info)
+            info.symbols.append(
+                SymbolEntry(
+                    name=name,
+                    address=value,
+                    scope=SymbolScope.GLOBAL,
+                    module_idx=module_idx,
+                    kind=SymbolKind.LABEL,
+                )
+            )
+
+        # Line entries collected during emit().
+        for address, filename, line, column in self._debug_lines:
+            file_idx = info.add_file(filename)
+            module_idx = self._guess_module_by_filename(filename, module_index_by_name)
+            info.lines.append(
+                LineEntry(
+                    address=address,
+                    file_idx=file_idx,
+                    line=line,
+                    column=column,
+                    module_idx=module_idx,
+                )
+            )
+
+        return info
+
+    def _guess_module(self, address: int, info: "Any") -> int:
+        """Pick the module whose base is closest to (and ≤) `address`."""
+        from a816.debug_info import NO_MODULE
+
+        best_idx = NO_MODULE
+        best_base = -1
+        for idx, module in enumerate(info.modules):
+            if module.base <= address and module.base > best_base:
+                best_idx = idx
+                best_base = module.base
+        return best_idx
+
+    def _guess_module_by_filename(self, filename: str, by_name: dict[str, int]) -> int:
+        from a816.debug_info import NO_MODULE
+
+        # Module sources end with `<name>.s`; match by basename without extension.
+        stem = Path(filename).stem
+        return by_name.get(stem, NO_MODULE)
 
     def import_linked_symbols(self, linked_obj: ObjectFile) -> None:
         """Register a linked ObjectFile's symbols into the resolver.
