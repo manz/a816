@@ -256,7 +256,7 @@ class ModuleBuilder:
                 self._compile_module(module_name, source_path, obj_path, accumulated_constants)
             else:
                 logger.info(f"Module {module_name} is up to date")
-            obj = ObjectFile.read(str(obj_path))
+            obj = ObjectFile.from_file(str(obj_path))
             self._accumulate_constants(obj, accumulated_constants)
             object_files.append(obj)
 
@@ -473,7 +473,7 @@ def build_with_imports_direct(
                 )
             else:
                 logger.info(f"Module {module_name} is up to date")
-            ModuleBuilder._accumulate_constants(ObjectFile.read(str(obj_path)), accumulated_constants)
+            ModuleBuilder._accumulate_constants(ObjectFile.from_file(str(obj_path)), accumulated_constants)
 
         logger.info(f"Assembling main file: {main_source}")
         result = _assemble_main_direct(

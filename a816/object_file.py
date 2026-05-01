@@ -202,7 +202,7 @@ class ObjectFile:
         return aliases
 
     @staticmethod
-    def read(filename: str) -> "ObjectFile":
+    def from_file(filename: str) -> "ObjectFile":
         with open(filename, "rb") as f:
             header_data = f.read(26)
             if len(header_data) < 26:

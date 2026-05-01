@@ -353,7 +353,7 @@ def _import_from_object(
     from a816.object_file import ObjectFile, SymbolType
 
     try:
-        obj_file = ObjectFile.read(str(obj_path))
+        obj_file = ObjectFile.from_file(str(obj_path))
     except (FileNotFoundError, ValueError):
         return None
 

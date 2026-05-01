@@ -210,7 +210,7 @@ def test_read_write(tmp_path: Path) -> None:
         [(0x02, "sym1", RelocationType.RELATIVE_16)],
     )
     obj.write(str(tmp_path / "test.o"))
-    obj2 = ObjectFile.read(str(tmp_path / "test.o"))
+    obj2 = ObjectFile.from_file(str(tmp_path / "test.o"))
     assert obj.code == obj2.code
     assert obj.symbols == obj2.symbols
     assert obj.relocations == obj2.relocations
@@ -224,7 +224,7 @@ def test_read_write_with_expression_relocations(tmp_path: Path) -> None:
         [(0x04, "sym2 + 10", 2)],
     )
     obj.write(str(tmp_path / "test.o"))
-    obj2 = ObjectFile.read(str(tmp_path / "test.o"))
+    obj2 = ObjectFile.from_file(str(tmp_path / "test.o"))
     assert obj.code == obj2.code
     assert obj.symbols == obj2.symbols
     assert obj.relocations == obj2.relocations
@@ -262,7 +262,7 @@ second_label:
     assert result == 0, "Assembly should succeed"
 
     # Read the object file and check symbol offsets
-    obj = ObjectFile.read(str(obj_file))
+    obj = ObjectFile.from_file(str(obj_file))
 
     # Build a map of symbol name to offset
     symbol_offsets = {name: offset for name, offset, _, _ in obj.symbols}
@@ -313,7 +313,7 @@ final:
     result = program.assemble_as_object(str(src_file), obj_file)
     assert result == 0, "Assembly should succeed"
 
-    obj = ObjectFile.read(str(obj_file))
+    obj = ObjectFile.from_file(str(obj_file))
     symbol_offsets = {name: offset for name, offset, _, _ in obj.symbols}
 
     # All offsets should be small (relative to start of code, not logical addresses)

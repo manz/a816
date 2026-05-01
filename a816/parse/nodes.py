@@ -144,9 +144,10 @@ class SymbolNode(NodeProtocol):
         if object_writer is not None:
             object_writer.add_alias(self.symbol_name, expr_str)
 
-    def pc_after(
-        self, current_pc: Address
-    ) -> Address:  # NOSONAR S3516 - protocol method; SymbolNode emits nothing so PC is unchanged
+    def pc_after(self, current_pc: Address) -> Address:
+        # SymbolNode emits no bytes; current_pc is returned unchanged. The
+        # method exists to register the symbol's value (or alias) at resolution
+        # time. Protocol contract requires returning the PC.
         assert isinstance(self.expression, ExpressionAstNode)
         try:
             value = eval_expression(self.expression, self.resolver)
@@ -158,16 +159,16 @@ class SymbolNode(NodeProtocol):
                     self.expression.file_info if hasattr(self.expression, "file_info") else current_pc,  # type: ignore[arg-type]
                 ) from e
             self._register_alias(e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str)
-            return current_pc
-
-        if self.resolver.context.is_object_mode and self._references_local_label():
-            # RHS hits a module-local CODE label. Register an alias so refs go
-            # through the relocation pipeline; baked value is module-base-relative.
-            from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
-
-            self._register_alias(_inline_aliases(reconstruct_expression(self.expression), self.resolver))
         else:
-            self.resolver.current_scope.add_symbol(self.symbol_name, value)
+            if self.resolver.context.is_object_mode and self._references_local_label():
+                # RHS hits a module-local CODE label. Register an alias so refs
+                # go through the relocation pipeline; baked value is
+                # module-base-relative.
+                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+                self._register_alias(_inline_aliases(reconstruct_expression(self.expression), self.resolver))
+            else:
+                self.resolver.current_scope.add_symbol(self.symbol_name, value)
         return current_pc
 
     def _references_local_label(self) -> bool:

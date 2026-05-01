@@ -146,7 +146,7 @@ def _run_compile_only(args: argparse.Namespace) -> int:
 
 def _load_or_compile_object(input_file: Path, args: argparse.Namespace) -> ObjectFile:
     if input_file.suffix == ".o":
-        return ObjectFile.read(str(input_file))
+        return ObjectFile.from_file(str(input_file))
     if input_file.suffix not in _ASM_SUFFIXES:
         logger.error(f"Unknown file type: {input_file}")
         sys.exit(-1)
@@ -159,7 +159,7 @@ def _load_or_compile_object(input_file: Path, args: argparse.Namespace) -> Objec
     if exit_code != 0:
         sys.exit(exit_code)
     try:
-        return ObjectFile.read(str(temp_obj_file))
+        return ObjectFile.from_file(str(temp_obj_file))
     finally:
         temp_obj_file.unlink()
 

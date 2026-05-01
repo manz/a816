@@ -32,7 +32,7 @@ def test_link() -> None:
     linked_obj.write("linked.o")
 
     # You can now read the linked object file to check the result
-    linked_obj_read = ObjectFile.read("linked.o")
+    linked_obj_read = ObjectFile.from_file("linked.o")
 
     print(f"Linked code: {linked_obj_read.code!r}")
     print(f"Linked symbols: {linked_obj_read.symbols}")

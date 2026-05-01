@@ -487,6 +487,28 @@ class A816Formatter:
         formatted.extend(self._indent_block_lines(block_lines))
         formatted.append("}")
 
+    def _node_positions_sorted(self, nodes: list[AstNode]) -> list[tuple[int, AstNode]]:
+        positioned: list[tuple[int, AstNode]] = []
+        for n in nodes:
+            line = self._node_line_num(n)
+            if line is not None:
+                positioned.append((line, n))
+        return sorted(positioned, key=lambda x: x[0])
+
+    def _emit_non_compound(
+        self, node: AstNode, node_line: int | None, last_line: int | None, in_label: bool, formatted: list[str]
+    ) -> bool:
+        node_lines = self._format_ast(node)
+        if isinstance(node, LabelAstNode):
+            return self._emit_label(node_lines, formatted)
+        if isinstance(node, CommentAstNode):
+            self._emit_comment(node_lines, node_line, last_line, in_label, formatted)
+            return in_label
+        if isinstance(node, self._instruction_like_nodes):
+            return self._emit_instruction_like(node, node_lines, in_label, formatted)
+        formatted.extend(node_lines)
+        return False
+
     def _format_with_preserved_blanks(self, content: str, nodes: list[AstNode]) -> str:
         """Format AST nodes preserving original blank lines."""
         original_lines = content.splitlines()
@@ -496,14 +518,7 @@ class A816Formatter:
         in_label_section = False
         last_emitted_line_num: int | None = None
 
-        positioned: list[tuple[int, AstNode]] = []
-        for n in nodes:
-            line = self._node_line_num(n)
-            if line is not None:
-                positioned.append((line, n))
-        node_positions = sorted(positioned, key=lambda x: x[0])
-
-        for line_num, node in node_positions:
+        for line_num, node in self._node_positions_sorted(nodes):
             current_idx = self._emit_preserved_blanks(original_lines, processed, current_idx, line_num, formatted)
             node_line = self._node_line_num(node)
 
@@ -512,16 +527,9 @@ class A816Formatter:
                 self._emit_compound(node, formatted)
                 last_emitted_line_num = None
             else:
-                node_lines = self._format_ast(node)
-                if isinstance(node, LabelAstNode):
-                    in_label_section = self._emit_label(node_lines, formatted)
-                elif isinstance(node, CommentAstNode):
-                    self._emit_comment(node_lines, node_line, last_emitted_line_num, in_label_section, formatted)
-                elif isinstance(node, self._instruction_like_nodes):
-                    in_label_section = self._emit_instruction_like(node, node_lines, in_label_section, formatted)
-                else:
-                    in_label_section = False
-                    formatted.extend(node_lines)
+                in_label_section = self._emit_non_compound(
+                    node, node_line, last_emitted_line_num, in_label_section, formatted
+                )
                 if node_line is not None:
                     last_emitted_line_num = node_line
 

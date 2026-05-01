@@ -33,7 +33,7 @@ class TestSeparateCompilation:
             assert obj_file.exists()
 
             # Verify object file can be read
-            obj = ObjectFile.read(str(obj_file))
+            obj = ObjectFile.from_file(str(obj_file))
             assert len(obj.code) > 0
             assert len(obj.symbols) > 0
 
@@ -78,8 +78,8 @@ class TestSeparateCompilation:
             assert obj_file2.exists()
 
             # Link object files
-            obj1 = ObjectFile.read(str(obj_file1))
-            obj2 = ObjectFile.read(str(obj_file2))
+            obj1 = ObjectFile.from_file(str(obj_file1))
+            obj2 = ObjectFile.from_file(str(obj_file2))
 
             linker = Linker([obj1, obj2])
             linked_obj = linker.link()
@@ -114,7 +114,7 @@ main:
             assert result == 0
 
             # Link (single file)
-            obj = ObjectFile.read(str(obj_file))
+            obj = ObjectFile.from_file(str(obj_file))
             linker = Linker([obj])
             linked_obj = linker.link()
 
@@ -152,7 +152,7 @@ main:
             assert obj_file.exists()
 
             # Verify object file contains external symbol
-            obj = ObjectFile.read(str(obj_file))
+            obj = ObjectFile.from_file(str(obj_file))
             symbol_names = [name for name, _, symbol_type, _ in obj.symbols]
             symbol_types = {name: symbol_type for name, _, symbol_type, _ in obj.symbols}
 
@@ -198,8 +198,8 @@ main:
             assert result2 == 0
 
             # Link object files
-            provider_obj_data = ObjectFile.read(str(provider_obj))
-            consumer_obj_data = ObjectFile.read(str(consumer_obj))
+            provider_obj_data = ObjectFile.from_file(str(provider_obj))
+            consumer_obj_data = ObjectFile.from_file(str(consumer_obj))
 
             linker = Linker([provider_obj_data, consumer_obj_data])
             linked_obj = linker.link()
@@ -233,7 +233,7 @@ main:
             assert result == 0
 
             # Try to link with unresolved external
-            obj = ObjectFile.read(str(obj_file))
+            obj = ObjectFile.from_file(str(obj_file))
             linker = Linker([obj])
 
             # Should raise error for unresolved symbol
@@ -271,11 +271,11 @@ main:
             program_b = Program()
             assert program_b.assemble_as_object(str(tmp / "consumer.s"), tmp / "consumer.o") == 0
 
-            obj_consumer = ObjectFile.read(str(tmp / "consumer.o"))
+            obj_consumer = ObjectFile.from_file(str(tmp / "consumer.o"))
             assert ("font_ptr", "target + 0x10") in obj_consumer.aliases
             assert any(name == "font_high" for name, _ in obj_consumer.aliases)
 
-            obj_producer = ObjectFile.read(str(tmp / "producer.o"))
+            obj_producer = ObjectFile.from_file(str(tmp / "producer.o"))
             linker = Linker([obj_producer, obj_consumer], base_address=0x8000)
             linked = linker.link()
             assert "font_ptr" in linker.symbol_map
@@ -311,7 +311,7 @@ loop:
             asm.write_text(source)
             assert Program().assemble_as_object(str(asm), obj) == 0
 
-            o = ObjectFile.read(str(obj))
+            o = ObjectFile.from_file(str(obj))
             globals_ = {n for n, _, t, _ in o.symbols if t == SymbolType.GLOBAL}
             assert "outer_func" in globals_
             assert "other_func" in globals_
@@ -334,7 +334,7 @@ internal_label:
             asm.write_text(source)
             assert Program().assemble_as_object(str(asm), obj) == 0
 
-            o = ObjectFile.read(str(obj))
+            o = ObjectFile.from_file(str(obj))
             assert any("internal_label" in expr for _, expr, _ in o.expression_relocations), (
                 "expected an expression relocation referencing the internal label"
             )
@@ -362,7 +362,7 @@ target:
             asm.write_text(source)
             assert Program().assemble_as_object(str(asm), obj) == 0
 
-            o = ObjectFile.read(str(obj))
+            o = ObjectFile.from_file(str(obj))
             alias_names = {name for name, _ in o.aliases}
             assert "ptr_low" in alias_names, "ptr_low's RHS touches a local label, must be exported as alias"
 
@@ -395,7 +395,7 @@ init:
             asm.write_text(source)
             assert Program().assemble_as_object(str(asm), obj) == 0
 
-            o = ObjectFile.read(str(obj))
+            o = ObjectFile.from_file(str(obj))
             sym_table = {n: (a, t, s) for n, a, t, s in o.symbols}
             assert "render_allocator.init_with_tile_id" in sym_table
             _, _, section = sym_table["render_allocator.init_with_tile_id"]
@@ -432,7 +432,7 @@ init:
             original_obj.write(str(obj_file))
 
             # Read it back
-            loaded_obj = ObjectFile.read(str(obj_file))
+            loaded_obj = ObjectFile.from_file(str(obj_file))
 
             # Verify all data matches
             assert loaded_obj.code == test_code
@@ -460,7 +460,7 @@ main:
             assert result == 0
 
             # Link (single file)
-            obj = ObjectFile.read(str(obj_file))
+            obj = ObjectFile.from_file(str(obj_file))
             linker = Linker([obj])
             linked_obj = linker.link()
 
@@ -492,7 +492,7 @@ main:
             result = program.assemble_as_object(str(asm_file), obj_file)
             assert result == 0
 
-            obj = ObjectFile.read(str(obj_file))
+            obj = ObjectFile.from_file(str(obj_file))
             linker = Linker([obj])
             linked_obj = linker.link()
 
@@ -520,7 +520,7 @@ main:
             result = program.assemble_as_object(str(asm_file), obj_file)
             assert result == 0
 
-            obj = ObjectFile.read(str(obj_file))
+            obj = ObjectFile.from_file(str(obj_file))
             linker = Linker([obj])
             linked_obj = linker.link()
 

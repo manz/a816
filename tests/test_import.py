@@ -193,8 +193,8 @@ main:
             assert result == 0
 
             # Link both object files
-            module_obj = ObjectFile.read(str(module_obj_path))
-            consumer_obj = ObjectFile.read(str(consumer_obj_path))
+            module_obj = ObjectFile.from_file(str(module_obj_path))
+            consumer_obj = ObjectFile.from_file(str(consumer_obj_path))
 
             linker = Linker([module_obj, consumer_obj])
             linked = linker.link()
@@ -254,9 +254,9 @@ main:
             assert result == 0
 
             # Link all object files
-            module_a_obj = ObjectFile.read(str(module_a_obj_path))
-            module_b_obj = ObjectFile.read(str(module_b_obj_path))
-            consumer_obj = ObjectFile.read(str(consumer_obj_path))
+            module_a_obj = ObjectFile.from_file(str(module_a_obj_path))
+            module_b_obj = ObjectFile.from_file(str(module_b_obj_path))
+            consumer_obj = ObjectFile.from_file(str(consumer_obj_path))
 
             linker = Linker([module_a_obj, module_b_obj, consumer_obj])
             linked = linker.link()
@@ -351,7 +351,7 @@ _private_label:
             program.assemble_as_object(str(module_file), obj_path)
 
             # Check exported symbols
-            obj = ObjectFile.read(str(obj_path))
+            obj = ObjectFile.from_file(str(obj_path))
             global_symbols = [name for name, _, sym_type, _ in obj.symbols if sym_type == SymbolType.GLOBAL]
             local_symbols = [name for name, _, sym_type, _ in obj.symbols if sym_type == SymbolType.LOCAL]
 
@@ -453,7 +453,7 @@ get_data_plus2:
             Program().assemble_as_object(str(module_file), obj_path)
 
             # Verify the object file has expression relocations
-            obj = ObjectFile.read(str(obj_path))
+            obj = ObjectFile.from_file(str(obj_path))
             assert len(obj.expression_relocations) >= 1, "Module should have expression relocations"
 
             # Create main file that defines the external symbol and imports module
@@ -528,7 +528,7 @@ func2:
             Program().assemble_as_object(str(module_file), obj_path)
 
             # Verify multiple relocations exist
-            obj = ObjectFile.read(str(obj_path))
+            obj = ObjectFile.from_file(str(obj_path))
             expr_reloc_count = len(obj.expression_relocations)
             assert expr_reloc_count >= 2, f"Expected multiple relocations, got {expr_reloc_count}"
 
