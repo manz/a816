@@ -1,45 +1,37 @@
 import struct
 import typing
 import warnings
-from enum import Enum
-from typing import Literal, Protocol
+
+from a816.cpu.types import AddressingMode, RomType, ValueSize
+from a816.exceptions import MissingOperandError
+from a816.protocols import OpcodeProtocol, ValueNodeProtocol
 
 if typing.TYPE_CHECKING:  # pragma: nocover
-    from a816.parse.nodes import ValueNodeProtocol
     from a816.symbols import Resolver
 
-ValueSize = Literal["b", "w", "l", ""]
+# Re-export types for backward compatibility
+__all__ = [
+    "AddressingMode",
+    "RomType",
+    "ValueSize",
+    "OpcodeProtocol",
+    "NoOpcodeForOperandSize",
+    "snes_opcode_table",
+    "rom_to_snes",
+    "snes_to_rom",
+    "get_opcodes_with_addressing",
+    "guess_value_size",
+]
 
 
 class NoOpcodeForOperandSize(Exception):
+    """Raised when an opcode doesn't support the requested operand size.
+
+    This is an internal exception that gets caught and converted to a
+    more informative OperandSizeError with opcode context.
+    """
+
     pass
-
-
-class AddressingMode(Enum):
-    none = 0
-    immediate = 1
-    direct = 2
-    direct_indexed = 3
-    indirect = 4
-    indirect_indexed = 5
-    indirect_long = 6
-    indirect_indexed_long = 7
-    dp_or_sr_indirect_indexed = 8
-    stack_indexed_indirect_indexed = 9
-
-
-# IDEA: OpcodeProtocol & Opcode With Value
-class OpcodeProtocol(Protocol):
-    def emit(
-        self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
-        size: ValueSize | None = None,
-    ) -> bytes:
-        """"""
-
-    def supposed_length(self, value_node: "ValueNodeProtocol | None", size: ValueSize | None = None) -> int:
-        """"""
 
 
 class OpcodeWithoutOperand(OpcodeProtocol):
@@ -66,16 +58,19 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         size: ValueSize | None = None,
     ) -> bytes:
         if value_node is None:
-            raise RuntimeError("Nope.")
+            raise MissingOperandError("branch")
         value = value_node.get_value()
-        from a816.parse.nodes import ExpressionNode
 
-        if isinstance(value_node, ExpressionNode):
+        # Use duck typing: ExpressionNode has 'expression' attribute, ValueNode does not
+        if hasattr(value_node, "expression"):
             pc = resolver.pc
             physical_destination = resolver.get_bus().get_address(value).physical
 
             if physical_destination is None:
-                raise RuntimeError("Jumping from ram is not supported.")
+                raise RuntimeError(
+                    f"Cannot compute relative jump: target address {value:#x} "
+                    "has no physical mapping (RAM addresses not supported)"
+                )
 
             delta = physical_destination - pc
             delta -= 2
@@ -83,21 +78,35 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
             delta = value
         try:
             return super().emit(value_node, resolver, size) + struct.pack("b", delta)
-        except struct.error:
-            print(value_node)
-            raise
+        except struct.error as e:
+            raise RuntimeError(
+                f"Branch target out of range: offset {delta} exceeds signed 8-bit range (-128 to 127)"
+            ) from e
 
     def supposed_length(self, value_node: "ValueNodeProtocol | None", size: ValueSize | None = None) -> int:
         return 2
 
 
-def guess_value_size(value_node: "ValueNodeProtocol", size: ValueSize | None) -> ValueSize:
+def guess_value_size(
+    value_node: "ValueNodeProtocol",
+    size: ValueSize | None,
+    resolver: "Resolver | None" = None,
+    is_a: bool = False,
+    is_x: bool = False,
+) -> ValueSize:
     if value_node is None:
-        raise RuntimeError("Nope.")
+        raise MissingOperandError("opcode")
     if size:
         return size
-    else:
-        return value_node.get_operand_size()
+
+    # Use resolver state for A/X register operations when no explicit size
+    if resolver is not None:
+        if is_a and resolver.a_size == 16:
+            return "w"
+        if is_x and resolver.i_size == 16:
+            return "w"
+
+    return value_node.get_operand_size()
 
 
 class Opcode(OpcodeProtocol):
@@ -109,6 +118,26 @@ class Opcode(OpcodeProtocol):
 
     def emit_value(self, value_node: "ValueNodeProtocol", size: ValueSize) -> bytes:
         value = value_node.get_value()
+
+        # Check if this is an ExpressionNode with a deferred expression from external symbols
+        # Use duck typing: check for resolver attribute (ExpressionNode has it, ValueNode doesn't)
+        if hasattr(value_node, "resolver") and hasattr(value_node, "_deferred_expression"):
+            # Generate expression relocation instead of regular relocation
+            resolver = value_node.resolver
+            if resolver.context.is_object_mode:
+                # Determine size in bytes
+                if size == "b":
+                    size_bytes = 1
+                elif size == "w":
+                    size_bytes = 2
+                else:
+                    size_bytes = 3
+                # Add expression relocation at current PC offset + 1 (after opcode byte)
+                current_offset = resolver.pc + 1
+                resolver.context.object_writer.add_expression_relocation(
+                    current_offset, value_node._deferred_expression, size_bytes
+                )
+
         if size == "b":
             return struct.pack("B", value & 0xFF)
         elif size == "w":
@@ -119,7 +148,7 @@ class Opcode(OpcodeProtocol):
 
     def supposed_length(self, value_node: "ValueNodeProtocol | None", size: ValueSize | None = None) -> int:
         if value_node is None:
-            raise RuntimeError(f"value node cannot be none for opcode {self.opcode_def}")
+            raise MissingOperandError(f"opcode (def: {self.opcode_def})")
 
         value_size = guess_value_size(value_node, size)
         return 2 + self.size_opcode_map[value_size]
@@ -141,9 +170,9 @@ class Opcode(OpcodeProtocol):
         size: ValueSize | None = None,
     ) -> bytes:
         if value_node is None:
-            raise RuntimeError(f"value node cannot be none for opcode {self.opcode_def}")
+            raise MissingOperandError(f"opcode (def: {self.opcode_def})")
 
-        value_size = guess_value_size(value_node, size)
+        value_size = guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
         opcode_byte = self.get_opcode_byte(value_size)
 
         operand_bytes = self.emit_value(value_node, value_size)
@@ -192,11 +221,12 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {
             "x": Opcode([None, 0x1D, 0x1F], is_a=True),
             "y": Opcode([None, 0x19, None], is_a=True),
+            "s": Opcode([0x03, None, None]),
         },
         AddressingMode.indirect_indexed_long: {"y": Opcode([0x17])},
     },
     "eor": {
-        AddressingMode.immediate: Opcode([0x49]),
+        AddressingMode.immediate: Opcode([0x49, 0x49]),
         AddressingMode.direct: Opcode([0x45, 0x4D, 0x4F]),
         AddressingMode.direct_indexed: {
             "x": Opcode([None, 0x5D, 0x5F]),
@@ -230,6 +260,7 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct: Opcode([None, 0x4C, 0x5C]),
         AddressingMode.indirect: Opcode([None, 0x6C, None]),
         AddressingMode.indirect_long: Opcode([None, 0xDC, None]),
+        AddressingMode.dp_or_sr_indirect_indexed: Opcode([None, 0x7C, None]),
     },
     "inc": {
         AddressingMode.none: OpcodeWithoutOperand(0x1A),
@@ -290,6 +321,7 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {
             "x": Opcode([None, 0xDD, 0xDF], is_a=True),
             "y": Opcode([None, 0xD9, None], is_a=True),
+            "s": Opcode([0xC3, None, None], is_a=True),
         },
     },
     "pea": {AddressingMode.direct: Opcode([None, 0xF4])},
@@ -328,6 +360,7 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {
             "x": Opcode([0xF5, 0xFD, 0xFF]),
             "y": Opcode([None, 0xF9]),
+            "s": Opcode([0xE3]),
         },
         AddressingMode.indirect: Opcode([0xF2]),
         AddressingMode.indirect_indexed: {"y": Opcode([0xF1])},
@@ -380,12 +413,6 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "xba": {AddressingMode.none: OpcodeWithoutOperand(0xEB)},
     "xce": {AddressingMode.none: OpcodeWithoutOperand(0xFB)},
 }
-
-
-class RomType(Enum):
-    low_rom = 0
-    low_rom_2 = 1
-    high_rom = 2
 
 
 def rom_to_snes(address: int, mode: RomType) -> int:

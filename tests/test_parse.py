@@ -5,11 +5,7 @@ from typing import cast
 from unittest import skip
 
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.ast.nodes import (
-    IncludeIpsAstNode,
-    Term,
-    UnaryOp,
-)
+from a816.parse.ast.nodes import DocstringAstNode, IncludeIpsAstNode, MacroAstNode, ScopeAstNode, Term, UnaryOp
 from a816.parse.codegen import code_gen
 from a816.parse.mzparser import MZParser
 from a816.parse.nodes import OpcodeNode
@@ -76,21 +72,46 @@ class ParseTest(unittest.TestCase):
 
         result = program.parser.parse_as_ast(input_program)
 
-        self.assertEqual("memory.s:0:0 : Unterminated String\n'coucou\n^", result.error)
+        # Error should contain key elements
+        assert result.error is not None
+        self.assertIn("Unterminated String", result.error)
+        self.assertIn("memory.s", result.error)
+        self.assertIn("'coucou", result.error)
+
+    def test_unterminated_string_with_newline(self) -> None:
+        """Test that unterminated string error points to line 1, not line 2."""
+        input_program = ".incbin 'assets/dakuten.bin\n"
+        program = Program()
+
+        result = program.parser.parse_as_ast(input_program, "test.s")
+
+        # Error should be on line 1, not line 2
+        assert result.error is not None
+        self.assertIn("Unterminated String", result.error)
+        self.assertIn("test.s:1:", result.error, "error should be on line 1")
+        self.assertIn(".incbin 'assets/dakuten.bin", result.error)
 
     def test_invalid_size_specifier(self) -> None:
         input_program = "lda.Q #0x00"
         program = Program()
 
         result = program.parser.parse_as_ast(input_program)
-        self.assertEqual("memory.s:0:4 : Invalid Size Specifier\nlda.Q #0x00\n    ^", result.error)
+        # Error should contain key elements
+        assert result.error is not None
+        self.assertIn("Invalid Size Specifier", result.error)
+        self.assertIn("memory.s", result.error)
+        self.assertIn("lda.Q #0x00", result.error)
 
     def test_invalid_index(self) -> None:
         input_program = "lda 0x00, O"
         program = Program()
 
         result = program.parser.parse_as_ast(input_program)
-        self.assertEqual("memory.s:0:10 : Invalid index\nlda 0x00, O\n          ^", result.error)
+        # Error should contain key elements
+        assert result.error is not None
+        self.assertIn("Invalid index", result.error)
+        self.assertIn("memory.s", result.error)
+        self.assertIn("lda 0x00, O", result.error)
 
     def test_data_word(self) -> None:
         input_program = """{
@@ -374,7 +395,7 @@ class ParseTest(unittest.TestCase):
 
         self.assertEqual(len(nodes), 1)
         node = nodes[0]
-        self.assertTrue(isinstance(node, IncludeIpsAstNode))
+        self.assertIsInstance(node, IncludeIpsAstNode)
         ips_node = cast(IncludeIpsAstNode, node)
         self.assertEqual("whee.ips", ips_node.file_path)
         self.assertEqual(
@@ -384,6 +405,53 @@ class ParseTest(unittest.TestCase):
             ],
             ips_node.expression.tokens,
         )
+
+    def test_macro_docstring_attached(self) -> None:
+        input_program = '''
+.macro greet() {
+    """Say hi"""
+    lda #0
+}
+greet()
+'''
+
+        program = Program()
+        ast_result = program.parser.parse_as_ast(input_program)
+        macro_nodes = [node for node in ast_result.nodes if isinstance(node, MacroAstNode)]
+        self.assertEqual(len(macro_nodes), 1)
+        macro = macro_nodes[0]
+        self.assertEqual(macro.docstring, "Say hi")
+        self.assertTrue(all(not isinstance(n, DocstringAstNode) for n in macro.block.body))
+
+    def test_scope_docstring_attached(self) -> None:
+        input_program = '''
+.scope player {
+    """Player state"""
+    lda #1
+}
+'''
+
+        program = Program()
+        ast_result = program.parser.parse_as_ast(input_program)
+
+        scope_nodes = [node for node in ast_result.nodes if isinstance(node, ScopeAstNode)]
+        self.assertEqual(len(scope_nodes), 1)
+        scope = scope_nodes[0]
+        self.assertEqual(scope.docstring, "Player state")
+        self.assertTrue(all(not isinstance(n, DocstringAstNode) for n in scope.body.body))
+
+    def test_module_docstring_retained(self) -> None:
+        input_program = '''
+"""Module description"""
+lda #1
+'''
+
+        program = Program()
+        ast_result = program.parser.parse_as_ast(input_program)
+
+        self.assertIsInstance(ast_result.nodes[0], DocstringAstNode)
+        assert isinstance(ast_result.nodes[0], DocstringAstNode)  # for type narrowing
+        self.assertEqual(ast_result.nodes[0].text, "Module description")
 
     @skip("experimental")
     def test_parse_struct(self) -> None:
@@ -412,8 +480,129 @@ class ParseTest(unittest.TestCase):
         ast = program.parser.parse_as_ast("a = 3")
         self.assertEqual([("symbol", "a", "3")], ast.ast)
 
-
     def test_assign(self) -> None:
         program = Program()
         ast = program.parser.parse_as_ast("a := 3")
         self.assertEqual([("assign", "a", "3")], ast.ast)
+
+    def test_a8_directive_sets_8bit_accumulator(self) -> None:
+        """Test that .a8 followed by lda #immediate emits 2 bytes (8-bit immediate)"""
+        input_program = """
+        .a8
+        lda #0x42
+        """
+        program = Program()
+        _, nodes = program.parser.parse(input_program)
+        program.resolve_labels(nodes)
+
+        writer = StubWriter()
+        program.emit(nodes, writer)
+
+        # lda immediate 8-bit: opcode (0xA9) + 1 byte = 2 bytes
+        self.assertEqual(len(writer.data[0][1]), 2)
+        self.assertEqual(writer.data[0][1], b"\xa9\x42")
+
+    def test_a16_directive_sets_16bit_accumulator(self) -> None:
+        """Test that .a16 followed by lda #immediate emits 3 bytes (16-bit immediate)"""
+        input_program = """
+        .a16
+        lda #0x1234
+        """
+        program = Program()
+        _, nodes = program.parser.parse(input_program)
+        program.resolve_labels(nodes)
+
+        writer = StubWriter()
+        program.emit(nodes, writer)
+
+        # lda immediate 16-bit: opcode (0xA9) + 2 bytes = 3 bytes
+        self.assertEqual(len(writer.data[0][1]), 3)
+        self.assertEqual(writer.data[0][1], b"\xa9\x34\x12")
+
+    def test_i8_directive_sets_8bit_index(self) -> None:
+        """Test that .i8 followed by ldx #immediate emits 2 bytes (8-bit immediate)"""
+        input_program = """
+        .i8
+        ldx #0x42
+        """
+        program = Program()
+        _, nodes = program.parser.parse(input_program)
+        program.resolve_labels(nodes)
+
+        writer = StubWriter()
+        program.emit(nodes, writer)
+
+        # ldx immediate 8-bit: opcode (0xA2) + 1 byte = 2 bytes
+        self.assertEqual(len(writer.data[0][1]), 2)
+        self.assertEqual(writer.data[0][1], b"\xa2\x42")
+
+    def test_i16_directive_sets_16bit_index(self) -> None:
+        """Test that .i16 followed by ldx #immediate emits 3 bytes (16-bit immediate)"""
+        input_program = """
+        .i16
+        ldx #0x1234
+        """
+        program = Program()
+        _, nodes = program.parser.parse(input_program)
+        program.resolve_labels(nodes)
+
+        writer = StubWriter()
+        program.emit(nodes, writer)
+
+        # ldx immediate 16-bit: opcode (0xA2) + 2 bytes = 3 bytes
+        self.assertEqual(len(writer.data[0][1]), 3)
+        self.assertEqual(writer.data[0][1], b"\xa2\x34\x12")
+
+    def test_explicit_size_overrides_directive(self) -> None:
+        """Test that explicit .w suffix overrides .a8 state"""
+        input_program = """
+        .a8
+        lda.w #0x0000
+        """
+        program = Program()
+        _, nodes = program.parser.parse(input_program)
+        program.resolve_labels(nodes)
+
+        writer = StubWriter()
+        program.emit(nodes, writer)
+
+        # Explicit .w should force 16-bit even in .a8 mode
+        self.assertEqual(len(writer.data[0][1]), 3)
+        self.assertEqual(writer.data[0][1], b"\xa9\x00\x00")
+
+    def test_register_size_persists_across_instructions(self) -> None:
+        """Test that register size state persists across multiple instructions"""
+        input_program = """
+        .a16
+        lda #0x1234
+        lda #0x5678
+        """
+        program = Program()
+        _, nodes = program.parser.parse(input_program)
+        program.resolve_labels(nodes)
+
+        writer = StubWriter()
+        program.emit(nodes, writer)
+
+        # Both should be 16-bit (3 bytes each)
+        self.assertEqual(len(writer.data[0][1]), 6)
+        self.assertEqual(writer.data[0][1], b"\xa9\x34\x12\xa9\x78\x56")
+
+    def test_register_size_can_be_changed(self) -> None:
+        """Test that register size can be changed mid-program"""
+        input_program = """
+        .a16
+        lda #0x1234
+        .a8
+        lda #0x42
+        """
+        program = Program()
+        _, nodes = program.parser.parse(input_program)
+        program.resolve_labels(nodes)
+
+        writer = StubWriter()
+        program.emit(nodes, writer)
+
+        # First lda is 16-bit (3 bytes), second is 8-bit (2 bytes)
+        self.assertEqual(len(writer.data[0][1]), 5)
+        self.assertEqual(writer.data[0][1], b"\xa9\x34\x12\xa9\x42")

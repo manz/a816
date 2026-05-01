@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from a816.parse.ast.nodes import AstNode
 from a816.parse.errors import ParserSyntaxError
@@ -9,10 +10,11 @@ logger = logging.getLogger("a816.parser")
 
 
 class Parser:
-    def __init__(self, tokens: list[Token], initial_state: "StateFunc"):
+    def __init__(self, tokens: list[Token], initial_state: "StateFunc", include_paths: list[Path] | None = None):
         self.tokens: list[Token] = tokens
         self.pos = 0
         self.initial_state: StateFunc = initial_state
+        self.include_paths: list[Path] = include_paths or []
 
     def parse(self) -> list[AstNode]:
         try:

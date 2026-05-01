@@ -1,6 +1,7 @@
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Protocol, cast
 
-from a816.cpu.cpu_65c816 import AddressingMode
+from a816.cpu.types import AddressingMode
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import (
@@ -11,11 +12,18 @@ from a816.parse.ast.nodes import (
     CodeLookupAstNode,
     CodePositionAstNode,
     CodeRelocationAstNode,
+    CommentAstNode,
     CompoundAstNode,
     DataNode,
+    DebugAstNode,
+    DocstringAstNode,
     ExpressionAstNode,
+    ExternAstNode,
+    FileInfoAstNode,
     ForAstNode,
     IfAstNode,
+    ImportAstNode,
+    IncludeAstNode,
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
     LabelAstNode,
@@ -23,6 +31,7 @@ from a816.parse.ast.nodes import (
     MacroAstNode,
     MapAstNode,
     OpcodeAstNode,
+    RegisterSizeAstNode,
     ScopeAstNode,
     SymbolAffectationAstNode,
     TableAstNode,
@@ -34,14 +43,17 @@ from a816.parse.nodes import (
     BinaryNode,
     ByteNode,
     CodePositionNode,
+    DebugNode,
     ExpressionNode,
+    ExternNode,
     IncludeIpsNode,
     LabelNode,
+    LinkedModuleNode,
     LongNode,
     NodeError,
-    NodeProtocol,
     OpcodeNode,
     PopScopeNode,
+    RegisterSizeNode,
     RelocationAddressNode,
     ScopeNode,
     SymbolNode,
@@ -50,6 +62,7 @@ from a816.parse.nodes import (
     WordNode,
 )
 from a816.parse.tokens import Token, TokenType
+from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
 
 MacroDefinitions = dict[str, Any]
@@ -82,7 +95,15 @@ def generate_block(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    return _code_gen(node.body, resolver, macro_definitions)
+    # Anonymous `{}` blocks scope their labels — don't leak names like
+    # `loop`/`exit` into the parent scope.
+    resolver.append_scope()
+    resolver.use_next_scope()
+    code: list[NodeProtocol] = [ScopeNode(resolver)]
+    code += _code_gen(node.body, resolver, macro_definitions)
+    code.append(PopScopeNode(resolver))
+    resolver.restore_scope(exports=False)
+    return code
 
 
 def generate_scope(
@@ -184,6 +205,29 @@ def generate_include_ips(
     return [IncludeIpsNode(node.file_path, resolver, node.expression)]
 
 
+def generate_include(
+    node: IncludeAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Inline the AST captured from an .include directive while honouring original scoping."""
+    code: GenNodes = []
+    if node.included_nodes:
+        code.extend(_code_gen(node.included_nodes, resolver, macro_definitions))
+    return code
+
+
+def generate_docstring(
+    node: DocstringAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Docstrings are metadata-only and do not emit code."""
+    return []
+
+
 def generate_incbin(
     node: IncludeBinaryAstNode,
     resolver: Resolver,
@@ -193,17 +237,27 @@ def generate_incbin(
     return [BinaryNode(node.file_path, resolver)]
 
 
+def _generate_data(
+    node: DataNode,
+    node_type: type[ByteNode] | type[WordNode] | type[LongNode],
+    resolver: Resolver,
+    file_info: Token,
+) -> GenNodes:
+    """Generate data nodes for .db, .dw, or .dl directives."""
+    code: GenNodes = []
+    for expr in node.data:
+        assert isinstance(expr, ExpressionAstNode)
+        code.append(node_type(ExpressionNode(expr, resolver, file_info)))
+    return code
+
+
 def generate_dl(
     node: DataNode,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    code: list[NodeProtocol] = []
-    for expr in node.data:
-        assert isinstance(expr, ExpressionAstNode)
-        code.append(LongNode(ExpressionNode(expr, resolver, file_info)))
-    return code
+    return _generate_data(node, LongNode, resolver, file_info)
 
 
 def generate_dw(
@@ -212,11 +266,7 @@ def generate_dw(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    code: GenNodes = []
-    for expr in node.data:
-        assert isinstance(expr, ExpressionAstNode)
-        code.append(WordNode(ExpressionNode(expr, resolver, file_info)))
-    return code
+    return _generate_data(node, WordNode, resolver, file_info)
 
 
 def generate_db(
@@ -225,11 +275,29 @@ def generate_db(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    code: GenNodes = []
-    for expr in node.data:
-        assert isinstance(expr, ExpressionAstNode)
-        code.append(ByteNode(ExpressionNode(expr, resolver, file_info)))
-    return code
+    return _generate_data(node, ByteNode, resolver, file_info)
+
+
+def _expression_references_extern(value: ExpressionAstNode, resolver: Resolver) -> bool:
+    from a816.parse.tokens import TokenType
+
+    return any(
+        term.token.type == TokenType.IDENTIFIER and resolver.current_scope.is_external_symbol(term.token.value)
+        for term in value.tokens
+    )
+
+
+def _try_eager_register_alias(node: SymbolAffectationAstNode, resolver: Resolver) -> None:
+    from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+
+    try:
+        eval_expression(node.value, resolver)
+    except (ExternalExpressionReference, ExternalSymbolReference) as e:
+        expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+        resolver.current_scope.add_external_alias(node.symbol, expr_str)
+        object_writer = resolver.context.object_writer
+        if object_writer is not None:
+            object_writer.add_alias(node.symbol, expr_str)
 
 
 def generate_symbol(
@@ -238,7 +306,183 @@ def generate_symbol(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
+    # If the RHS references a symbol already known to be external, register an
+    # alias eagerly so subsequent code-gen sees the LHS as external too. Forward
+    # refs to locally defined symbols still go through SymbolNode.pc_after.
+    if (
+        isinstance(node.value, ExpressionAstNode)
+        and resolver.context.is_object_mode
+        and _expression_references_extern(node.value, resolver)
+    ):
+        _try_eager_register_alias(node, resolver)
+
     return [SymbolNode(node.symbol, node.value, resolver)]
+
+
+def generate_extern(
+    node: ExternAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    # In object mode, register the extern eagerly so subsequent code-gen
+    # (e.g. `font_ptr = extern_sym + N`) sees it as external. In direct mode
+    # we leave it to ExternNode.pc_after to avoid shadowing real definitions
+    # provided by included files.
+    if resolver.context.is_object_mode:
+        resolver.current_scope.add_external_symbol(node.symbol)
+    return [ExternNode(node.symbol, resolver)]
+
+
+def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
+    paths: list[Path] = []
+    if file_info.position and file_info.position.file:
+        from a816.util import uri_to_path
+
+        paths.append(uri_to_path(file_info.position.file.filename).parent)
+    paths.extend(resolver.context.module_paths)
+    return paths
+
+
+def _import_from_object(
+    module_name: str,
+    obj_path: Path,
+    resolver: Resolver,
+    direct_mode: bool,
+) -> GenNodes | None:
+    from a816.object_file import ObjectFile, SymbolType
+
+    try:
+        obj_file = ObjectFile.from_file(str(obj_path))
+    except (FileNotFoundError, ValueError):
+        return None
+
+    if direct_mode:
+        symbols_data = [
+            (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
+        ]
+        expr_relocs = list(obj_file.expression_relocations) if obj_file.expression_relocations else []
+        return [LinkedModuleNode(module_name, obj_file.code, symbols_data, resolver, expr_relocs)]
+
+    return [ExternNode(name, resolver) for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
+
+
+def _import_from_source(
+    src_path: Path,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    direct_mode: bool,
+) -> GenNodes | None:
+    try:
+        if direct_mode:
+            from a816.parse.mzparser import MZParser
+
+            content = src_path.read_text(encoding="utf-8")
+            result = MZParser.parse_as_ast(content, str(src_path))
+            return _code_gen(result.nodes, resolver, macro_definitions) if result.nodes else []
+
+        return [ExternNode(symbol_name, resolver) for symbol_name in _extract_public_symbols_from_source(src_path)]
+    except OSError:
+        return None
+
+
+def generate_import(
+    node: ImportAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Resolve an .import to ExternNode (object/parse mode) or LinkedModuleNode/inline source (direct)."""
+    module_name = node.module_name
+    direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
+    search_paths = _import_search_paths(resolver, file_info)
+
+    obj_path = _resolve_module_path(module_name, ".o", search_paths)
+    if obj_path:
+        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
+        if nodes is not None:
+            return nodes
+
+    src_path = _resolve_module_path(module_name, ".s", search_paths)
+    if src_path:
+        nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode)
+        if nodes is not None:
+            return nodes
+
+    raise NodeError(f'Module not found: "{module_name}"', file_info)
+
+
+def _resolve_module_path(module_name: str, extension: str, search_paths: list[Path]) -> Path | None:
+    """Resolve a module name to a file path.
+
+    Args:
+        module_name: The module name (e.g., "vwf" or "battle/sram")
+        extension: File extension to try (e.g., ".o" or ".s")
+        search_paths: List of directories to search
+
+    Returns:
+        Path to the module file if found, None otherwise
+    """
+    # Module name can contain path separators (e.g., "battle/sram")
+    module_file = module_name + extension
+
+    for search_path in search_paths:
+        candidate = search_path / module_file
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def _extract_public_symbols_from_source(source_path: Path) -> list[str]:
+    """Extract public symbols from a source file using the AST parser.
+
+    Public symbols are:
+    - Labels that don't start with a dot (.)
+    - Symbol assignments that don't start with a dot
+
+    Uses the full parser to correctly handle comments, strings, conditionals, etc.
+    """
+    from a816.parse.mzparser import MZParser
+
+    symbols: list[str] = []
+    content = source_path.read_text(encoding="utf-8")
+
+    # Parse using the actual parser
+    result = MZParser.parse_as_ast(content, str(source_path))
+
+    # Extract symbols from AST nodes
+    _collect_public_symbols(result.nodes, symbols)
+
+    return symbols
+
+
+def _collect_public_symbols(nodes: list[AstNode], symbols: list[str]) -> None:
+    """Recursively collect public symbols from AST nodes.
+
+    Public symbols don't start with underscore (_); underscored symbols are
+    treated as module-private.
+    """
+    from a816.parse.ast.visitor import walk
+
+    for node in walk(nodes):
+        name: str | None = None
+        if isinstance(node, LabelAstNode):
+            name = node.label
+        elif isinstance(node, SymbolAffectationAstNode | AssignAstNode):
+            name = node.symbol
+
+        if name is not None and not name.startswith("_") and name not in symbols:
+            symbols.append(name)
+
+
+def generate_register_size(
+    node: RegisterSizeAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    return [RegisterSizeNode(node.register, node.size, resolver)]
 
 
 def generate_assign(
@@ -247,8 +491,23 @@ def generate_assign(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    value = eval_expression(node.value, resolver)
-    resolver.current_scope.add_symbol(node.symbol, value)
+    from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+
+    try:
+        value = eval_expression(node.value, resolver)
+        resolver.current_scope.add_symbol(node.symbol, value)
+    except (ExternalExpressionReference, ExternalSymbolReference) as e:
+        if not resolver.context.is_object_mode:
+            raise NodeError(
+                f"{node.symbol} = {node.value.to_canonical()}: "
+                f"external symbols only allowed in object compilation mode.",
+                file_info,
+            ) from e
+        expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+        resolver.current_scope.add_external_alias(node.symbol, expr_str)
+        object_writer = resolver.context.object_writer
+        if object_writer is not None:
+            object_writer.add_alias(node.symbol, expr_str)
 
     return []
 
@@ -314,8 +573,8 @@ def generate_for(
     file_info: Token,
 ) -> GenNodes:
     code: GenNodes = []
-    from_val = eval_expression(node.min_value, resolver)
-    to_val = eval_expression(node.max_value, resolver)
+    from_val = cast(int, eval_expression(node.min_value, resolver))
+    to_val = cast(int, eval_expression(node.max_value, resolver))
     for k in range(from_val, to_val):
         resolver.append_internal_scope()
         resolver.use_next_scope()
@@ -346,6 +605,9 @@ def generate_if(
     try:
         condition = eval_expression(node.expression, resolver)
     except (KeyError, SymbolNotDefined):
+        # Symbol not yet defined - this can happen with forward label references
+        # like `.if END_OF_FREE_SPACE > 0x1ffff`. Labels are resolved in a later
+        # pass, so we treat unresolved symbols as false during code generation.
         condition = False
     if condition:
         code += _code_gen(if_branch_true.body, resolver, macro_definitions)
@@ -368,6 +630,19 @@ def generate_code_lookup(
         raise NodeError(f"{node.symbol} is not a code block ({value})", file_info)
 
 
+def _expression_touches_local_label(expr: "ExpressionAstNode", resolver: Resolver) -> bool:
+    """Return True if any identifier in ``expr`` resolves to a module-local CODE label."""
+    if not resolver.context.is_object_mode:
+        return False
+    for term in expr.tokens:
+        tok = getattr(term, "token", None)
+        if tok is None or tok.type != TokenType.IDENTIFIER:
+            continue
+        if resolver.current_scope.find_label_scope(tok.value) is not None:
+            return True
+    return False
+
+
 def generate_macro_application(
     node: MacroApplyAstNode,
     resolver: Resolver,
@@ -379,19 +654,43 @@ def generate_macro_application(
     macro_code = macro_def.block
     macro_args = macro_def.args
     macro_args_values = node.args
+
+    if len(macro_args_values) != len(macro_args):
+        raise NodeError(
+            f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}", file_info
+        )
+
     resolver.append_scope()
     resolver.use_next_scope()
     code.append(ScopeNode(resolver))
+    from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+
     for index, arg in enumerate(macro_args):
         value = macro_args_values[index]
         try:
             if isinstance(value, BlockAstNode):
                 resolver.current_scope.add_symbol(arg, value)
+            elif isinstance(value, ExpressionAstNode) and _expression_touches_local_label(value, resolver):
+                # The macro arg expression references a module-local CODE label.
+                # Bake it as an alias (text expression) so eval at emit time goes
+                # through the relocation pipeline and the value reflects the
+                # module's final placement, not the compile-time base.
+                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+                expr_str = _inline_aliases(reconstruct_expression(value), resolver)
+                resolver.current_scope.add_external_alias(arg, expr_str)
             else:
                 resolver.current_scope.add_symbol(arg, eval_expression(value, resolver))
         except SymbolNotDefined:
-            # defer the resolve to the emit part.
+            # Defer the resolve to the emit part.
             code.append(SymbolNode(arg, value, resolver))
+        except (ExternalExpressionReference, ExternalSymbolReference) as e:
+            # Macro argument expression references externs; treat the bound
+            # name as an alias locally. Do NOT publish to the object writer:
+            # the binding is invocation-local, and any extern relocations
+            # generated inside the macro body inline the alias on the way out.
+            expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+            resolver.current_scope.add_external_alias(arg, expr_str)
     code += _code_gen(macro_code.body, resolver, macro_definitions)
     code.append(PopScopeNode(resolver))
     resolver.restore_scope()
@@ -424,6 +723,19 @@ def generate_compound(
     return code
 
 
+def generate_comment(
+    node: CommentAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: FileInfoAstNode
+) -> list[NodeProtocol]:
+    # Comments don't generate executable code, so return empty list
+    return []
+
+
+def generate_debug(
+    node: DebugAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: FileInfoAstNode
+) -> list[NodeProtocol]:
+    return [DebugNode(node.message, resolver)]
+
+
 generators = {
     "block": generate_block,
     "scope": generate_scope,
@@ -444,11 +756,18 @@ generators = {
     "dl": generate_dl,
     "pointer": generate_dl,
     "symbol": generate_symbol,
+    "extern": generate_extern,
+    "import": generate_import,
     "assign": generate_assign,
     "label": generate_label,
     "opcode": generate_opcode,
     "incbin": generate_incbin,
+    "docstring": generate_docstring,
+    "include": generate_include,
     "include_ips": generate_include_ips,
+    "comment": generate_comment,
+    "debug": generate_debug,
+    "register_size": generate_register_size,
 }
 
 

@@ -10,10 +10,13 @@ from a816.parse.tokens import EOF, TokenType
 opcodes = snes_opcode_table.keys()
 opcodes_without_operand = get_opcodes_with_addressing(AddressingMode.none)
 
+# Character sets for identifier parsing
+IDENTIFIER_START_CHARS = "_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+IDENTIFIER_CHARS = IDENTIFIER_START_CHARS + "0123456789"
+
 
 def lex_identifier(s: "Scanner") -> None:
-    identifier_chars = "_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz0123456789"
-    s.accept_run(identifier_chars)
+    s.accept_run(IDENTIFIER_CHARS)
 
     if s.peek() == ":" and s.peek(1) != "=":
         s.emit(TokenType.LABEL)
@@ -24,23 +27,55 @@ def lex_identifier(s: "Scanner") -> None:
         # handle scoped identifiers
         if s.peek() == ".":
             s.next()
-            s.accept_run(identifier_chars)
+            s.accept_run(IDENTIFIER_CHARS)
 
         s.emit(TokenType.IDENTIFIER)
 
 
-def lex_quoted_string(s: "Scanner") -> None:
+def _lex_string(s: "Scanner", quote_char: str) -> None:
+    """Scan a string delimited by quote_char."""
+    # Capture position at the start of the string (the opening quote)
+    start_position = s.get_position()
     c = s.next()
-    while c != "'":
+    while c != quote_char:
         if c == "\n" or c is None:
-            raise ScannerException("Unterminated String", s.get_position())
+            raise ScannerException("Unterminated String", start_position)
 
-        if c == "\\" and s.peek() == "'":
+        if c == "\\" and s.peek() == quote_char:
             s.next()
 
         c = s.next()
 
     s.emit(TokenType.QUOTED_STRING)
+
+
+def lex_quoted_string(s: "Scanner") -> None:
+    """Scan a single-quoted string."""
+    _lex_string(s, "'")
+
+
+def lex_double_quoted_string(s: "Scanner") -> None:
+    """Scan a double-quoted string."""
+    _lex_string(s, '"')
+
+
+def lex_docstring(s: "Scanner", quote_char: str) -> None:
+    """Scan a triple-quoted docstring delimited by quote_char."""
+    # Capture position at the start of the docstring
+    start_position = s.get_position()
+    while True:
+        c = s.next()
+        if c is None:
+            raise ScannerException("Unterminated docstring", start_position)
+        if c == "\\":
+            # Skip escaped characters so they don't terminate the string early
+            s.next()
+            continue
+        if c == quote_char and s.peek() == quote_char and s.peek(1) == quote_char:
+            # Consume the remaining two quote characters of the terminator
+            s.pos += 2
+            break
+    s.emit(TokenType.DOCSTRING)
 
 
 def accept_opcode(s: "Scanner") -> bool:
@@ -63,9 +98,29 @@ def lex_expression(s: "Scanner") -> None:
         s.ignore_run(" ")
         if s.accept("0123456789"):
             lex_number(s)
-        elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
+        elif s.accept(IDENTIFIER_START_CHARS):
             lex_identifier(s)
-        elif s.accept("+-*/&|~") or s.accept_prefix("<<") or s.accept_prefix(">>"):
+        elif s.peek() == '"' and s.peek(1) == '"' and s.peek(2) == '"':
+            s.pos += 3
+            lex_docstring(s, '"')
+        elif s.peek() == "'" and s.peek(1) == "'" and s.peek(2) == "'":
+            s.pos += 3
+            lex_docstring(s, "'")
+        elif s.accept("'"):
+            lex_quoted_string(s)
+        elif s.accept('"'):
+            lex_double_quoted_string(s)
+        elif (
+            s.accept("+-*/&|~")
+            or s.accept_prefix("<<")
+            or s.accept_prefix(">>")
+            or s.accept_prefix("!=")
+            or s.accept_prefix("==")
+            or s.accept_prefix(">=")
+            or s.accept_prefix("<=")
+            or s.accept_prefix(">")
+            or s.accept_prefix("<")
+        ):
             s.emit(TokenType.OPERATOR)
         elif s.accept("("):
             s.emit(TokenType.LPAREN)
@@ -177,28 +232,19 @@ KEYWORDS = {
     "for",
     "struct",
     "istruct",
+    "extern",
+    "import",
+    "debug",
+    "a8",
+    "a16",
+    "i8",
+    "i16",
 }
-
-
-def lex_macro_arg(s: "Scanner") -> None:
-    s.ignore_run(" ")
-
-    if s.next() == ",":
-        s.emit(TokenType.COMMA)
-    lex_identifier(s)
-
-
-def lex_macro_args_def(s: "Scanner") -> None:
-    s.emit(TokenType.LPAREN)
-    while s.peek() != ")":
-        lex_macro_arg(s)
-
-    s.emit(TokenType.RPAREN)
 
 
 def lex_keyword(s: "Scanner") -> None:
     s.ignore()
-    s.accept_run("abcdefghijklmnopqrstuvwxyz_")
+    s.accept_run("abcdefghijklmnopqrstuvwxyz_0123456789")
     if s.current_token_text() in KEYWORDS:
         s.emit(TokenType.KEYWORD)
     else:
@@ -234,10 +280,9 @@ def lex_initial(s: Scanner) -> None:
 
     s.ignore_run(" \t\n")
     if s.accept(";"):
-        while s.next() not in ["\n", None]:
+        while s.peek() not in ["\n", EOF]:
             # eat the comment until end of  line.
-            pass
-
+            s.next()
         s.emit(TokenType.COMMENT)
     elif s.accept("0123456789"):
         lex_number(s)
@@ -251,13 +296,13 @@ def lex_initial(s: Scanner) -> None:
         s.emit(TokenType.OPERATOR)
     elif s.accept_prefix("<<"):
         s.emit(TokenType.OPERATOR)
-    elif s.accept_prefix(">") or s.accept_prefix("<") or s.accept_prefix(">=") or s.accept_prefix("<="):
+    elif s.accept_prefix(">=") or s.accept_prefix("<=") or s.accept_prefix(">") or s.accept_prefix("<"):
         s.emit(TokenType.OPERATOR)
     # elif l.accept_prefix('True') or l.accept_prefix('False'):
     #     l.emit(TokenType.BOOLEAN)
     # elif s.accept_prefix("byte") or s.accept_prefix("word") or s.accept_prefix("long"):
     #    s.emit(TokenType.TYPE)
-    elif s.accept("_ABCEDFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz"):
+    elif s.accept(IDENTIFIER_START_CHARS):
         s.backup()
         # check if not an opcode
         if accept_opcode(s):
@@ -277,8 +322,16 @@ def lex_initial(s: Scanner) -> None:
             s.emit(TokenType.STAR_EQ)
         else:
             s.emit(TokenType.OPERATOR)
+    elif s.peek() == '"' and s.peek(1) == '"' and s.peek(2) == '"':
+        s.pos += 3
+        lex_docstring(s, '"')
+    elif s.peek() == "'" and s.peek(1) == "'" and s.peek(2) == "'":
+        s.pos += 3
+        lex_docstring(s, "'")
     elif s.accept("'"):
         lex_quoted_string(s)
+    elif s.accept('"'):
+        lex_double_quoted_string(s)
     elif s.accept("("):
         s.emit(TokenType.LPAREN)
     elif s.accept(")"):
@@ -305,4 +358,4 @@ def lex_initial(s: Scanner) -> None:
         s.emit(TokenType.COMMENT)
     else:
         if s.next() is not None:
-            raise ScannerException(f"Invalid Input {s.input[s.start:]}", s.get_position())
+            raise ScannerException(f"Invalid Input {s.input[s.start :]}", s.get_position())

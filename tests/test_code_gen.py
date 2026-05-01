@@ -1,7 +1,7 @@
 import unittest
 
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.nodes import LabelNode, OpcodeNode, RelocationAddressNode, ValueNode
+from a816.parse.nodes import LabelNode, NodeError, OpcodeNode, RelocationAddressNode, ValueNode
 from a816.program import Program
 
 
@@ -31,3 +31,36 @@ class CodeGenTest(unittest.TestCase):
         )
 
         self.assertEqual(program.resolver.current_scope["miaou"], 0x7F0000)
+
+    def test_if_with_undefined_symbol_evaluates_to_false(self) -> None:
+        """Test that .if with undefined symbol evaluates to false.
+
+        This is intentional - labels are resolved in a later pass, so forward
+        references like `.if END_OF_FREE_SPACE > 0x1ffff` need to work.
+        """
+        program_text = """
+.if UNDEFINED_SYMBOL {
+    .db 0x42
+}
+"""
+        program = Program()
+        # Should not raise - undefined symbols evaluate to false
+        _, nodes = program.parser.parse(program_text)
+        # The .db should not be generated since condition is false
+        self.assertEqual(len(nodes), 0)
+
+    def test_macro_wrong_argument_count_raises_error(self) -> None:
+        """Test that calling a macro with wrong number of arguments raises a descriptive error."""
+        program_text = """
+.macro my_macro(arg1, arg2) {
+    .db arg1
+    .db arg2
+}
+my_macro(1)
+"""
+        program = Program()
+        with self.assertRaises(NodeError) as context:
+            program.parser.parse(program_text)
+        self.assertIn("my_macro", str(context.exception))
+        self.assertIn("2", str(context.exception))  # expected count
+        self.assertIn("1", str(context.exception))  # actual count

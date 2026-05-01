@@ -12,3 +12,10 @@ coverage.xml
 .tox
 .hatch
 .fleet
+.goose
+intellij
+tmp
+a.out
+*.o
+license.http
+llm.txt

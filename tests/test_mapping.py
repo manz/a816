@@ -35,11 +35,8 @@ class MappingTest(unittest.TestCase):
 
     def test_unmap(self) -> None:
         self.bus.unmap("1")
-        self.assertFalse(
-            "1" in self.bus.mappings,
-            "Mapping with identifier 1 should have been removed.",
-        )
-        self.assertTrue("2" in self.bus.mappings, "Mapping with identifier 2 should have been kept.")
+        self.assertNotIn("1", self.bus.mappings, "Mapping with identifier 1 should have been removed.")
+        self.assertIn("2", self.bus.mappings, "Mapping with identifier 2 should have been kept.")
 
     def test_unmap_not_editable_bus_should_raise(self) -> None:
         bus = Bus("test ro")

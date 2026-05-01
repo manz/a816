@@ -1,46 +1,23 @@
 import logging
+import re
 import struct
-from typing import Literal, Protocol
 
 from a816.cpu.cpu_65c816 import (
-    AddressingMode,
     NoOpcodeForOperandSize,
-    OpcodeProtocol,
-    ValueSize,
     guess_value_size,
     snes_opcode_table,
 )
 from a816.cpu.mapping import Address
-from a816.exceptions import SymbolNotDefined
-from a816.parse.ast.expression import eval_expression
+from a816.cpu.types import AddressingMode, ValueSize
+from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
+from a816.parse.ast.expression import eval_expression, eval_expression_str
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.tokens import Token
-from a816.symbols import Resolver
+from a816.protocols import NodeProtocol, OpcodeProtocol, ValueNodeProtocol
+from a816.symbols import Resolver, Scope
 from script import Table
 
 logger = logging.getLogger("a816.nodes")
-
-
-class ValueNodeProtocol(Protocol):
-    def get_value(self) -> int:
-        """Returns the value of the node as an int."""
-
-    def get_value_string_len(self) -> int:
-        """Returns the length in bytes of the value."""
-
-    def get_operand_size(self) -> Literal["b", "w", "l"]:
-        """Returns the operand size as b w l"""
-        retval: Literal["b", "w", "l"]
-
-        value_length = self.get_value_string_len()
-        if value_length <= 2:
-            retval = "b"
-        elif value_length <= 4:
-            retval = "w"
-        else:
-            retval = "l"
-
-        return retval
 
 
 class ValueNode(ValueNodeProtocol):
@@ -64,25 +41,68 @@ class ExpressionNode(ValueNodeProtocol):
         self.resolver = resolver
         self.file_info = file_info
 
-    def get_value(self) -> int:
+    def _compute_local_label_renames(self) -> tuple[dict[str, str], bool]:
+        """Return (rename map, touches_any_label). Nested-scope label refs get mangled."""
+        from a816.parse.tokens import TokenType
+
+        rename: dict[str, str] = {}
+        touches_label = False
+        for t in self.expression.tokens:
+            tok = getattr(t, "token", None)
+            if tok is None or tok.type != TokenType.IDENTIFIER:
+                continue
+            owner = self.resolver.current_scope.find_label_scope(tok.value)
+            if owner is None:
+                continue
+            touches_label = True
+            if owner is self.resolver.scopes[0] or tok.value.startswith("_"):
+                continue
+            scope_idx = self.resolver.scopes.index(owner)
+            rename[tok.value] = f"__sc{scope_idx}__{tok.value}"
+        return rename, touches_label
+
+    def _record_local_label_relocation(self) -> None:
+        from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+        rename, touches_label = self._compute_local_label_renames()
+        if not touches_label:
+            return
+        expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+        for short, mangled in rename.items():
+            expr_str = re.sub(rf"\b{re.escape(short)}\b", mangled, expr_str)
+        self._deferred_expression = expr_str
+        self._local_label_renames = rename
+
+    def get_value(self) -> int | str:  # type:ignore
         try:
-            return eval_expression(self.expression, self.resolver)
+            value = eval_expression(self.expression, self.resolver)
+            if self.resolver.context.is_object_mode and isinstance(value, int):
+                # Module-local label refs: record the original expression so the
+                # linker can re-evaluate against the module's final placement.
+                self._record_local_label_relocation()
+            return value
+        except ExternalExpressionReference as e:
+            if self.resolver.context.is_object_mode:
+                self._deferred_expression = e.expression_str
+                self._external_symbols = e.external_symbols
+                return 0
+            raise NodeError(f"Expression contains external symbols: {e.expression_str}", self.file_info) from e
+        except ExternalSymbolReference as e:
+            if self.resolver.context.is_object_mode:
+                self._deferred_expression = self.expression.to_representation()[0]
+                return 0
+            raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
         except SymbolNotDefined as e:
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
 
     def get_value_string_len(self) -> int:
-        return len(hex(self.get_value())) - 2
+        value = self.get_value()
+        if not isinstance(value, int):
+            raise TypeError(f"Expected int, got {type(value).__name__}")
+        return len(hex(value)) - 2
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.expression.to_representation()[0]})"
-
-
-class NodeProtocol(Protocol):
-    def emit(self, current_addr: Address) -> bytes:
-        """Emits the node as bytes"""
-
-    def pc_after(self, current_pc: Address) -> Address:
-        """Returns the program counter address after the node was emitted."""
 
 
 class LabelNode(NodeProtocol):
@@ -118,14 +138,104 @@ class SymbolNode(NodeProtocol):
     def emit(self, current_addr: Address) -> bytes:
         return b""
 
+    def _register_alias(self, expr_str: str) -> None:
+        self.resolver.current_scope.add_external_alias(self.symbol_name, expr_str)
+        object_writer = self.resolver.context.object_writer
+        if object_writer is not None:
+            object_writer.add_alias(self.symbol_name, expr_str)
+
     def pc_after(self, current_pc: Address) -> Address:
+        # SymbolNode emits no bytes; current_pc is returned unchanged. The
+        # method exists to register the symbol's value (or alias) at resolution
+        # time. Protocol contract requires returning the PC.
         assert isinstance(self.expression, ExpressionAstNode)
-        value = eval_expression(self.expression, self.resolver)
-        self.resolver.current_scope.add_symbol(self.symbol_name, value)
+        try:
+            value = eval_expression(self.expression, self.resolver)
+        except (ExternalExpressionReference, ExternalSymbolReference) as e:
+            if not self.resolver.context.is_object_mode:
+                raise NodeError(
+                    f"{self.symbol_name} = {self.expression.to_canonical()}: "
+                    f"external symbols only allowed in object compilation mode.",
+                    self.expression.file_info if hasattr(self.expression, "file_info") else current_pc,  # type: ignore[arg-type]
+                ) from e
+            self._register_alias(e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str)
+        else:
+            if self.resolver.context.is_object_mode and self._references_local_label():
+                # RHS hits a module-local CODE label. Register an alias so refs
+                # go through the relocation pipeline; baked value is
+                # module-base-relative.
+                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+                self._register_alias(_inline_aliases(reconstruct_expression(self.expression), self.resolver))
+            else:
+                self.resolver.current_scope.add_symbol(self.symbol_name, value)
         return current_pc
+
+    def _references_local_label(self) -> bool:
+        from a816.parse.tokens import TokenType
+
+        if not isinstance(self.expression, ExpressionAstNode):
+            return False
+        for term in self.expression.tokens:
+            tok = getattr(term, "token", None)
+            if tok is None or tok.type != TokenType.IDENTIFIER:
+                continue
+            if self.resolver.current_scope.find_label_scope(tok.value) is not None:
+                return True
+        return False
 
     def __str__(self) -> str:
         return f"SymbolNode({self.symbol_name}, {self.expression})"
+
+
+class ExternNode(NodeProtocol):
+    def __init__(self, symbol_name: str, resolver: Resolver) -> None:
+        self.symbol_name = symbol_name
+        self.resolver = resolver
+
+    def emit(self, current_addr: Address) -> bytes:
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        # Mark symbol as external in the current scope
+        # Late import: intentional to avoid circular dependency with object_file module
+        from a816.object_file import SymbolSection, SymbolType
+
+        # Add external symbol to the resolver's scope
+        self.resolver.current_scope.add_external_symbol(self.symbol_name)
+
+        # Add external symbol to the object writer if we're in object compilation mode
+        object_writer = self.resolver.context.object_writer
+        if self.resolver.context.is_object_mode and object_writer is not None:
+            object_writer.add_symbol(self.symbol_name, 0, SymbolType.EXTERNAL, SymbolSection.CODE)
+
+        return current_pc
+
+    def __str__(self) -> str:
+        return f"ExternNode({self.symbol_name})"
+
+
+class RegisterSizeNode(NodeProtocol):
+    """Node for register size directives (.a8, .a16, .i8, .i16)"""
+
+    def __init__(self, register: str, size: int, resolver: Resolver) -> None:
+        self.register = register  # "a" for accumulator, "i" for index
+        self.size = size  # 8 or 16
+        self.resolver = resolver
+
+    def emit(self, current_addr: Address) -> bytes:
+        # Update resolver state during emission
+        if self.register == "a":
+            self.resolver.a_size = self.size
+        else:
+            self.resolver.i_size = self.size
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        return current_pc
+
+    def __str__(self) -> str:
+        return f"RegisterSizeNode({self.register}{self.size})"
 
 
 class BinaryNode(NodeProtocol):
@@ -146,12 +256,128 @@ class BinaryNode(NodeProtocol):
         return retval
 
 
+class LinkedModuleNode(NodeProtocol):
+    """Node that emits code from a compiled module and binds its symbols.
+
+    This is used by .import for position-dependent code (like ROM patches).
+    It loads the module's compiled code and adjusts symbol addresses based
+    on the current PC position.
+    """
+
+    def __init__(
+        self,
+        module_name: str,
+        code: bytes,
+        symbols: list[tuple[str, int, int, int]],  # (name, offset, type, section)
+        resolver: Resolver,
+        expression_relocations: list[tuple[int, str, int]] | None = None,  # (offset, expr, size)
+    ) -> None:
+        self.module_name = module_name
+        self.code = code
+        self.symbols = symbols
+        self.resolver = resolver
+        self.expression_relocations = expression_relocations or []
+
+    def emit(self, current_addr: Address) -> bytes:
+        # Apply expression relocations every emit; symbols may have moved between passes.
+        if self.expression_relocations:
+            return self._apply_expression_relocations()
+        return self.code
+
+    def pc_after(self, current_pc: Address) -> Address:
+        # Rebind every pass: write directly to the scope dicts to avoid
+        # add_symbol's duplicate-warning while keeping the symbol map current.
+        from a816.object_file import SymbolSection, SymbolType
+
+        scope = self.resolver.current_scope
+        base_address = current_pc.logical_value
+        # Module-private map for LOCAL labels (kept off of scope to avoid
+        # cross-module name clashes — e.g. two modules both define `loop`).
+        self._local_map: dict[str, int] = {}
+        for name, offset, sym_type, section in self.symbols:
+            if sym_type == SymbolType.GLOBAL.value:
+                if section == SymbolSection.CODE.value:
+                    scope.symbols[name] = base_address + offset
+                else:
+                    scope.symbols[name] = offset
+            elif sym_type == SymbolType.LOCAL.value:
+                if section == SymbolSection.CODE.value:
+                    self._local_map[name] = base_address + offset
+                else:
+                    self._local_map[name] = offset
+
+        return current_pc + len(self.code)
+
+    @staticmethod
+    def _write_reloc(code_array: bytearray, offset: int, value: int, size: int, expr: str) -> None:
+        if size not in (1, 2, 3):
+            logger.warning(f"Unsupported relocation size {size} for expression '{expr}'")
+            return
+        for i in range(size):
+            code_array[offset + i] = (value >> (8 * i)) & 0xFF
+
+    def _eval_one_relocation(self, expr: str, offset: int, size: int, code_array: bytearray) -> None:
+        from a816.parse.ast.expression import eval_expression_str
+
+        try:
+            value = eval_expression_str(expr, self.resolver)
+        except (SymbolNotDefined, NodeError, ValueError) as e:
+            logger.warning(f"Failed to evaluate expression '{expr}': {e}")
+            return
+        if not isinstance(value, int):
+            logger.warning(f"Expression '{expr}' did not evaluate to int: {value}")
+            return
+        self._write_reloc(code_array, offset, value, size, expr)
+
+    def _inject_locals(self, root_scope: Scope) -> dict[str, int | str]:
+        local_map = getattr(self, "_local_map", {})
+        saved: dict[str, int | str] = {}
+        for name, value in local_map.items():
+            if name in root_scope.symbols:
+                saved[name] = root_scope.symbols[name]
+            root_scope.symbols[name] = value
+        return saved
+
+    def _restore_locals(self, root_scope: Scope, saved: dict[str, int | str]) -> None:
+        local_map = getattr(self, "_local_map", {})
+        for name in local_map:
+            if name in saved:
+                root_scope.symbols[name] = saved[name]
+            else:
+                root_scope.symbols.pop(name, None)
+
+    def _apply_expression_relocations(self) -> bytes:
+        """Apply expression relocations to the module's code."""
+        code_array = bytearray(self.code)
+        # Inject this module's LOCAL labels into the resolver's root scope
+        # for the duration of the eval; restore afterwards. Keeps two
+        # modules' identical local names from colliding with each other.
+        root_scope = self.resolver.scopes[0]
+        saved = self._inject_locals(root_scope)
+        try:
+            for offset, expr, size in self.expression_relocations:
+                self._eval_one_relocation(expr, offset, size, code_array)
+        finally:
+            self._restore_locals(root_scope, saved)
+        return bytes(code_array)
+
+    def __str__(self) -> str:
+        return f"LinkedModuleNode({self.module_name}, {len(self.code)} bytes, {len(self.symbols)} symbols)"
+
+
 class LongNode(NodeProtocol):
     def __init__(self, value_node: ValueNodeProtocol) -> None:
         self.value_node = value_node
 
     def emit(self, current_address: Address) -> bytes:
         value = self.value_node.get_value()
+        # Check for deferred expression (external symbols)
+        if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
+            resolver = self.value_node.resolver
+            if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+                resolver.context.object_writer.add_expression_relocation(
+                    resolver.pc, self.value_node._deferred_expression, 3
+                )
         return struct.pack("<HB", value & 0xFFFF, (value >> 16) & 0xFF)
 
     def pc_after(self, current_pc: Address) -> Address:
@@ -163,10 +389,47 @@ class WordNode(NodeProtocol):
         self.value_node = value_node
 
     def emit(self, current_address: Address) -> bytes:
-        return struct.pack("<H", self.value_node.get_value() & 0xFFFF)
+        value = self.value_node.get_value()
+        # Check for deferred expression (external symbols)
+        if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
+            resolver = self.value_node.resolver
+            if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+                resolver.context.object_writer.add_expression_relocation(
+                    resolver.pc, self.value_node._deferred_expression, 2
+                )
+        return struct.pack("<H", value & 0xFFFF)
 
     def pc_after(self, current_pc: Address) -> Address:
         return current_pc + 2
+
+
+class DebugNode(NodeProtocol):
+    def __init__(self, message: str, resolver: Resolver) -> None:
+        self.message = message
+        self.resolver = resolver
+
+    def emit(self, current_address: Address) -> bytes:
+        message = self.message
+        matches = re.finditer(r"\{([^}]+)}", self.message)
+
+        for match in matches:
+            expression_str = match.group(1)
+
+            _value = eval_expression_str(expression_str, self.resolver)
+
+            match _value:
+                case int():
+                    value = hex(_value)
+                case str():
+                    value = _value
+
+            message = message.replace(match.group(0), value)
+
+        print(message)
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        return current_pc
 
 
 class ByteNode(NodeProtocol):
@@ -174,7 +437,15 @@ class ByteNode(NodeProtocol):
         self.value_node = value_node
 
     def emit(self, current_address: Address) -> bytes:
-        return struct.pack("B", self.value_node.get_value() & 0xFF)
+        value = self.value_node.get_value()
+        # Check for deferred expression (external symbols)
+        if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
+            resolver = self.value_node.resolver
+            if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+                resolver.context.object_writer.add_expression_relocation(
+                    resolver.pc, self.value_node._deferred_expression, 1
+                )
+        return struct.pack("B", value & 0xFF)
 
     def pc_after(self, current_pc: Address) -> Address:
         return current_pc + 1
@@ -191,11 +462,29 @@ class NodeError(Exception):
         self.message = message
 
     def __str__(self) -> str:
-        error_message = f'"{self.message}"'
-        if self.file_info is not None and self.file_info.position is not None:
-            error_message += f" at\n{self.file_info.position.file.filename}:{self.file_info.position.line} {self.file_info.position.get_line()}"
+        return self.format()
 
-        return error_message
+    def format(self) -> str:
+        """Format the error with source location and visual indicator."""
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.errors import SourceLocation, format_error
+
+        location = None
+        if self.file_info is not None and self.file_info.position is not None:
+            pos = self.file_info.position
+            try:
+                source_line = pos.get_line()
+            except (IndexError, AttributeError):
+                source_line = ""
+            location = SourceLocation(
+                filename=pos.file.filename,
+                line=pos.line,
+                column=pos.column,
+                source_line=source_line,
+                length=len(self.file_info.value) if self.file_info.value else 1,
+            )
+
+        return format_error(self.message, location)
 
 
 class OpcodeNode(NodeProtocol):
@@ -386,6 +675,29 @@ class AbstractTextNode(NodeProtocol):
         return self.binary_text
 
 
+def variable_expansion(value: str, resolver: Resolver) -> str:
+    if value is not None and isinstance(value, str):
+
+        def replace_match(match: re.Match[str]) -> str:
+            lookup = match.groups("lookup")[0]
+            variable_value = resolver.current_scope.value_for(lookup)
+            if variable_value is None:
+                raise ValueError(f"Error while resolving variable {lookup} in {value} variable value is None.")
+            # Convert to string for substitution
+            if isinstance(variable_value, int):
+                return str(variable_value)
+            elif isinstance(variable_value, str):
+                return variable_value
+            else:
+                # BlockAstNode - convert to string representation
+                return str(variable_value)
+
+        try:
+            return re.sub(r"\${(?P<lookup>[^}]+)}", replace_match, value) or value
+        except ValueError:
+            return value
+
+
 class TextNode(AbstractTextNode):
     def __init__(self, text: str, resolver: Resolver, file_info: Token) -> None:
         super().__init__(text, resolver)
@@ -399,7 +711,7 @@ class TextNode(AbstractTextNode):
                 f"table_is_not_defined ({self}) is not defined in the current scope.",
                 self.file_info,
             )
-        return self.table.to_bytes(self.text)
+        return self.table.to_bytes(variable_expansion(self.text, self.resolver))
 
 
 class AsciiNode(AbstractTextNode):

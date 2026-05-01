@@ -14,7 +14,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
 ]
 
-dependencies = []
+dependencies = ["pygls==1.3.1", "lsprotocol==2023.0.1"]
 
 dynamic = ["version"]
 
@@ -33,10 +33,19 @@ repository = "https://github.com/manz/a816"
 [project.scripts]
 x816 = "a816.cli:cli_main"
 a816 = "a816.cli:cli_main"
+xdds = "a816.xdds:xdds_main"
+a816-lsp-server = "a816.lsp.server:lsp_main"
+a816-fluff = "a816.fluff:fluff_main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+]
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -66,7 +75,7 @@ relative_files = true
 
 [tool.hatch.envs.tests]
 detached = true
-dependencies = ["pygls", "pytest", "pytest-cov", "mypy", "ruff"]
+dependencies = ["pygls==1.3.1", "lsprotocol==2023.0.1", "pytest", "pytest-cov", "mypy", "ruff"]
 
 [tool.hatch.envs.tests.scripts]
 coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov=script --cov-branch tests"

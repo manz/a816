@@ -1,6 +1,8 @@
 import struct
 from typing import BinaryIO, Protocol
 
+from a816.object_file import ObjectFile, RelocationType, SymbolSection, SymbolType
+
 
 class Writer(Protocol):
     def begin(self) -> None:
@@ -64,3 +66,65 @@ class SFCWriter(Writer):
 
     def end(self) -> None:
         """SFC is contiguous it only needs to implement write_block."""
+
+
+class ObjectWriter(Writer):
+    def __init__(self, output_file: str) -> None:
+        self.output_file = output_file
+        self.code_blocks: list[tuple[bytes, int]] = []
+        self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
+        self.relocations: list[tuple[int, str, RelocationType]] = []
+        self.expression_relocations: list[tuple[int, str, int]] = []  # (offset, expression_str, size_bytes)
+        self.aliases: list[tuple[str, str]] = []  # (name, expression_str)
+        self.current_offset = 0
+
+    def begin(self) -> None:
+        """Initialize object file creation"""
+        self.code_blocks = []
+        self.symbols = []
+        self.relocations = []
+        self.expression_relocations = []
+        self.aliases = []
+        self.current_offset = 0
+
+    def write_block_header(self, block: bytes, block_address: int) -> None:
+        """Object files don't use block headers"""
+        pass
+
+    def write_block(self, block: bytes, block_address: int) -> None:
+        """Collect code blocks for object file"""
+        self.code_blocks.append((block, self.current_offset))
+        self.current_offset += len(block)
+
+    def add_symbol(
+        self, name: str, address: int, symbol_type: SymbolType, section: SymbolSection = SymbolSection.CODE
+    ) -> None:
+        """Add a symbol to the object file"""
+        self.symbols.append((name, address, symbol_type, section))
+
+    def add_relocation(self, offset: int, symbol_name: str, relocation_type: RelocationType) -> None:
+        """Add a relocation entry to the object file"""
+        self.relocations.append((offset, symbol_name, relocation_type))
+
+    def add_expression_relocation(self, offset: int, expression: str, size_bytes: int) -> None:
+        """Add an expression relocation entry to the object file"""
+        self.expression_relocations.append((offset, expression, size_bytes))
+
+    def add_alias(self, name: str, expression: str) -> None:
+        """Register a symbol whose value is a deferred expression resolved at link time."""
+        self.aliases.append((name, expression))
+
+    def end(self) -> None:
+        """Write the object file to disk"""
+        total_code = bytearray()
+        for block, _ in self.code_blocks:
+            total_code.extend(block)
+
+        obj_file = ObjectFile(
+            bytes(total_code),
+            self.symbols,
+            self.relocations,
+            self.expression_relocations,
+            self.aliases,
+        )
+        obj_file.write(self.output_file)
