@@ -102,6 +102,30 @@ class Program:
         self.resolver.last_used_scope = 0
         self.resolver.current_scope = self.resolver.scopes[0]
 
+    @staticmethod
+    def _mark_import_winners(program_nodes: list[NodeProtocol]) -> None:
+        """Tag every duplicate `.import "foo"` LinkedModuleNode except the
+        last as `is_loser=True`.
+
+        `.import` is idempotent across the program: a module may appear
+        in an `.include`'d patch file as well as the main source for
+        symbol-visibility reasons. Only the last occurrence emits bytes
+        and consumes PC space; earlier ones still bind symbols (for
+        scope visibility in the surrounding source) but otherwise are
+        no-ops in both `pc_after` and `emit`. Marking happens before
+        `resolve_labels` so the winner/loser distinction is consistent
+        across the address-resolution and emission passes.
+        """
+        from a816.parse.nodes import LinkedModuleNode
+
+        last_idx: dict[str, int] = {}
+        for idx, node in enumerate(program_nodes):
+            if isinstance(node, LinkedModuleNode):
+                last_idx[node.module_name] = idx
+        for idx, node in enumerate(program_nodes):
+            if isinstance(node, LinkedModuleNode):
+                node.is_loser = last_idx[node.module_name] != idx
+
     def resolve_labels(self, program_nodes: list[NodeProtocol]) -> None:
         """Resolve all labels and symbols through multi-pass processing.
 
@@ -165,36 +189,17 @@ class Program:
         """
         from a816.parse.nodes import LinkedModuleNode
 
-        # `.import "foo"` is idempotent across the program: a project may
-        # carry the import in both an included patch file and the main
-        # source for symbol-visibility reasons. Only the LAST occurrence
-        # of each module name materializes the bytes; earlier occurrences
-        # still let pc_after rebind globals.
-        last_module_index: dict[str, int] = {}
-        for idx, node in enumerate(program):
-            if isinstance(node, LinkedModuleNode):
-                last_module_index[node.module_name] = idx
-
         current_block = b""
         current_block_addr = self.resolver.pc
-        for idx, node in enumerate(program):
+        for node in program:
             pre_emit_addr = self.resolver.reloc_address.logical_value
 
             if isinstance(node, LinkedModuleNode):
-                if last_module_index.get(node.module_name) != idx:
-                    # Symbols already (re-)bound in pc_after; this earlier
-                    # `.import` is symbol-only. Flush the pending block at
-                    # its original address before advancing the PC so the
-                    # next current_block_addr reflects the post-skip
-                    # position rather than re-keying old bytes there.
-                    if node.regions:
-                        if len(current_block) > 0:
-                            writer.write_block(current_block, current_block_addr)
-                            current_block = b""
-                        advance = len(node.regions[0].code)
-                        self.resolver.pc += advance
-                        self.resolver.reloc_address += advance
-                        current_block_addr = self.resolver.pc
+                if node.is_loser:
+                    # Loser duplicate `.import`: pc_after did not advance,
+                    # symbols already bound elsewhere. Treat as a pure
+                    # no-op — leave current_block untouched so surrounding
+                    # inline source keeps its address layout.
                     continue
                 # Multi-region modules emit separate blocks at their own
                 # absolute base addresses; flush the pending block first so
@@ -313,6 +318,7 @@ class Program:
         if error is not None:
             return error
 
+        self._mark_import_winners(nodes)
         self.logger.info("Resolving labels")
         self.resolve_labels(nodes)
 
@@ -428,6 +434,7 @@ class Program:
                     self.logger.error(error)
                     return -1
 
+                self._mark_import_winners(nodes)
                 self.logger.info("Resolving labels")
                 self.resolve_labels(nodes)
                 self._export_object_symbols(object_writer)

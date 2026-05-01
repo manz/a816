@@ -688,6 +688,56 @@ far_label:
             target = linker.symbol_map["far_label"] & 0xFFFF
             assert patched[0] | (patched[1] << 8) == target
 
+    def test_loser_import_does_not_shift_surrounding_layout(self) -> None:
+        """A skipped duplicate `.import` must consume zero PC — not its size.
+
+        Regression: the loser `.import` used to advance both pc_after and
+        the emit driver's PC by `len(region 0)`. When the loser sat in
+        a source-inlined patch file (e.g. ff4-modules' battle/sram.s
+        carrying `.import "dakuten"` while ff4.s also imports dakuten
+        later), the surrounding inline source ended up shifted forward
+        by the module's size, producing a phantom gap in the IPS that
+        the CPU later executed as garbage.
+
+        Layout under the fix: the `.import` site between the two inline
+        labels takes zero space; the labels straddle exactly the inline
+        bytes that follow, with the module placed once at its winning
+        site.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "mod.s"
+            mod.write_text("payload:\n    .db 0xCC, 0xCC, 0xCC, 0xCC\n")
+            assert Program().assemble_as_object(str(mod), tmp / "mod.o") == 0
+
+            inline_patch = tmp / "patch.s"
+            inline_patch.write_text('before_import:\n    .db 0xAA\n.import "mod"\nafter_import:\n    .db 0xBB\n')
+
+            main = tmp / "main.s"
+            # *=0x008000  -> inline patch (loser .import inside)
+            #             -> *=0x009000 -> winner .import "mod"
+            main.write_text('*=0x008000\n.include "patch.s"\n*=0x009000\n.import "mod"\n')
+
+            program = Program()
+            program.add_module_path(tmp)
+            program.add_include_path(tmp)
+            ips = tmp / "out.ips"
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            scope = program.resolver.current_scope
+            before = scope.labels.get("before_import")
+            after = scope.labels.get("after_import")
+            assert before is not None and after is not None
+            # Two labels with one inline byte between them — and crucially
+            # NOT separated by the (4-byte) module size. The loser must
+            # not advance the importer's PC.
+            assert (after.logical_value if hasattr(after, "logical_value") else after) - (
+                before.logical_value if hasattr(before, "logical_value") else before
+            ) == 1, "loser .import must consume zero PC space"
+
+            # Module payload still appears once, at the winning *=0x009000 site.
+            assert ips.read_bytes().count(b"\xcc\xcc\xcc\xcc") == 1
+
     def test_skipped_import_flushes_pending_block_before_advancing(self) -> None:
         """Inline bytes around a skipped duplicate .import keep their addresses.
 

@@ -280,6 +280,12 @@ class LinkedModuleNode(NodeProtocol):
         self.symbols = symbols
         self.resolver = resolver
         self.relocatable = relocatable
+        # Set by Program._mark_import_winners: True for every duplicate
+        # `.import` of the same module except the last occurrence in
+        # program order. Losers bind symbols (so the loser's source can
+        # still reference them) but do NOT advance the PC and do NOT
+        # emit bytes — the winner is the canonical placement.
+        self.is_loser: bool = False
         self._delta = 0
         # Cache placed regions for emit_blocks; refreshed on every pc_after.
         self._placed: list[tuple[int, bytes]] = []
@@ -326,6 +332,13 @@ class LinkedModuleNode(NodeProtocol):
                     scope.labels[name] = final
             elif sym_type == SymbolType.LOCAL.value:
                 self._local_map[name] = final
+
+        # Loser duplicates publish symbols (winner overwrites later via
+        # last-pass) but must not consume PC space — otherwise inline
+        # source surrounding the loser .import shifts forward by the
+        # module's size and lands on top of unrelated ROM.
+        if self.is_loser:
+            return current_pc
 
         # Only region 0 advances the importer's PC; later regions sit at
         # their declared absolute addresses and do not consume linear
