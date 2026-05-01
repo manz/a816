@@ -206,8 +206,25 @@ class A816Formatter:
         else:
             return f"{opcode}"
 
+    @staticmethod
+    def _format_immediate(operand: str, _comma: str, _index: str | None) -> str:
+        return operand if operand.startswith("#") else f"#{operand}"
+
+    @staticmethod
+    def _format_indirect(operand: str, _comma: str, _index: str | None) -> str:
+        return f"({operand})"
+
+    @staticmethod
+    def _format_indirect_long(operand: str, _comma: str, _index: str | None) -> str:
+        return f"[{operand}]"
+
+    @staticmethod
+    def _format_dp_or_sr(operand: str, comma: str, index: str | None) -> str:
+        inner = f"{operand}{comma}{index}" if index else operand
+        return f"({inner})"
+
     def _format_operand(self, opcode_ast: OpcodeAstNode) -> str:
-        """Format an opcode operand according to its addressing mode"""
+        """Format an opcode operand for its addressing mode."""
         if not opcode_ast.operand:
             return ""
 
@@ -219,21 +236,24 @@ class A816Formatter:
         def with_index(base: str) -> str:
             return f"{base}{comma}{index}" if index else base
 
-        if addressing_mode == AddressingMode.immediate:
-            return operand if operand.startswith("#") else f"#{operand}"
-        if addressing_mode == AddressingMode.indirect:
-            return f"({operand})"
-        if addressing_mode == AddressingMode.indirect_indexed:
-            return with_index(f"({operand})")
-        if addressing_mode == AddressingMode.indirect_long:
-            return f"[{operand}]"
-        if addressing_mode == AddressingMode.indirect_indexed_long:
-            return with_index(f"[{operand}]")
-        if addressing_mode == AddressingMode.dp_or_sr_indirect_indexed:
-            inner = f"{operand}{comma}{index}" if index else operand
-            return f"({inner})"
-        if addressing_mode == AddressingMode.stack_indexed_indirect_indexed:
-            return with_index(f"({operand}{comma}s)")
+        # Modes that wrap base then optionally append index.
+        wrappers: dict[AddressingMode, Callable[[str], str]] = {
+            AddressingMode.indirect_indexed: lambda o: with_index(f"({o})"),
+            AddressingMode.indirect_indexed_long: lambda o: with_index(f"[{o}]"),
+            AddressingMode.stack_indexed_indirect_indexed: lambda o: with_index(f"({o}{comma}s)"),
+        }
+        if addressing_mode in wrappers:
+            return wrappers[addressing_mode](operand)
+
+        # Modes with no index dependency.
+        simple: dict[AddressingMode, Callable[[str, str, str | None], str]] = {
+            AddressingMode.immediate: self._format_immediate,
+            AddressingMode.indirect: self._format_indirect,
+            AddressingMode.indirect_long: self._format_indirect_long,
+            AddressingMode.dp_or_sr_indirect_indexed: self._format_dp_or_sr,
+        }
+        if addressing_mode in simple:
+            return simple[addressing_mode](operand, comma, index)
         return with_index(operand)
 
     def _format_data(self, data_ast: DataNode) -> str:
@@ -476,10 +496,12 @@ class A816Formatter:
         in_label_section = False
         last_emitted_line_num: int | None = None
 
-        node_positions = sorted(
-            ((line, n) for n in nodes if (line := self._node_line_num(n)) is not None),
-            key=lambda x: x[0],
-        )
+        positioned: list[tuple[int, AstNode]] = []
+        for n in nodes:
+            line = self._node_line_num(n)
+            if line is not None:
+                positioned.append((line, n))
+        node_positions = sorted(positioned, key=lambda x: x[0])
 
         for line_num, node in node_positions:
             current_idx = self._emit_preserved_blanks(original_lines, processed, current_idx, line_num, formatted)

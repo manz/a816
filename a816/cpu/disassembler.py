@@ -4,6 +4,7 @@
 Provides instruction decoding with support for all addressing modes.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -86,6 +87,23 @@ class Instruction:
             AddrMode.STACK_REL_IND_Y: (2, "({},s),y"),
         }
 
+        return self._dispatch_operand_format(val, templates, hex_val, m_flag, x_flag, use_a816_syntax)
+
+    def _format_relative_target(self, val: int, hex_val: Callable[[int, int], str]) -> str:
+        cap = 256 if self.mode == AddrMode.RELATIVE else 65536
+        half = cap // 2
+        offset = val if val < half else val - cap
+        return hex_val((self.address + self.length + offset) & 0xFFFF, 4)
+
+    def _dispatch_operand_format(
+        self,
+        val: int,
+        templates: dict[AddrMode, tuple[int, str]],
+        hex_val: Callable[[int, int], str],
+        m_flag: bool,
+        x_flag: bool,
+        use_a816_syntax: bool,
+    ) -> str:
         if self.mode == AddrMode.IMPLIED:
             return ""
         if self.mode in templates:
@@ -96,11 +114,7 @@ class Instruction:
         if self.mode == AddrMode.IMMEDIATE_X:
             return f"#{hex_val(val, 2 if x_flag else 4)}"
         if self.mode in (AddrMode.RELATIVE, AddrMode.RELATIVE_LONG):
-            cap = 256 if self.mode == AddrMode.RELATIVE else 65536
-            half = cap // 2
-            offset = val if val < half else val - cap
-            target = self.address + self.length + offset
-            return hex_val(target & 0xFFFF, 4)
+            return self._format_relative_target(val, hex_val)
         if self.mode == AddrMode.BLOCK_MOVE:
             return f"{hex_val(val & 0xFF, 2)},{hex_val((val >> 8) & 0xFF, 2)}"
         return (f"0x{val:X}") if use_a816_syntax else (f"${val:X}")

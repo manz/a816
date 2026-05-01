@@ -1,6 +1,6 @@
 import struct
 from enum import Enum
-from typing import BinaryIO
+from typing import IO
 
 INVALID_FILE_FORMAT = "Invalid file format"
 
@@ -51,7 +51,7 @@ class ObjectFile:
             self._write_expression_relocation_table(f)
             self._write_alias_table(f)
 
-    def _write_header(self, f: BinaryIO) -> None:
+    def _write_header(self, f: IO[bytes]) -> None:
         code_size = len(self.code)
         symbol_table_size = self._calculate_symbol_table_size()
         relocation_table_size = self._calculate_relocation_table_size()
@@ -70,10 +70,10 @@ class ObjectFile:
         )
         f.write(header)
 
-    def _write_code_data_section(self, f: BinaryIO) -> None:
+    def _write_code_data_section(self, f: IO[bytes]) -> None:
         f.write(self.code)
 
-    def _write_symbol_table(self, f: BinaryIO) -> None:
+    def _write_symbol_table(self, f: IO[bytes]) -> None:
         num_symbols = len(self.symbols)
         f.write(struct.pack("<H", num_symbols))
         for name, address, symbol_type, section in self.symbols:
@@ -84,7 +84,7 @@ class ObjectFile:
             f.write(struct.pack("<B", symbol_type.value))
             f.write(struct.pack("<B", section.value))
 
-    def _write_relocation_table(self, f: BinaryIO) -> None:
+    def _write_relocation_table(self, f: IO[bytes]) -> None:
         num_relocations = len(self.relocations)
         f.write(struct.pack("<H", num_relocations))
         for offset, symbol_name, relocation_type in self.relocations:
@@ -113,7 +113,7 @@ class ObjectFile:
             size += 1  # Relocation Type (1 byte)
         return size
 
-    def _write_expression_relocation_table(self, f: BinaryIO) -> None:
+    def _write_expression_relocation_table(self, f: IO[bytes]) -> None:
         num_expr_relocations = len(self.expression_relocations)
         f.write(struct.pack("<H", num_expr_relocations))
         for offset, expression, size_bytes in self.expression_relocations:
@@ -132,7 +132,7 @@ class ObjectFile:
             size += 1  # Size in bytes (1 byte)
         return size
 
-    def _write_alias_table(self, f: BinaryIO) -> None:
+    def _write_alias_table(self, f: IO[bytes]) -> None:
         f.write(struct.pack("<H", len(self.aliases)))
         for name, expression in self.aliases:
             name_bytes = name.encode("utf-8")
@@ -149,7 +149,7 @@ class ObjectFile:
         return size
 
     @staticmethod
-    def _read_symbols(f: BinaryIO) -> list[tuple[str, int, SymbolType, SymbolSection]]:
+    def _read_symbols(f: IO[bytes]) -> list[tuple[str, int, SymbolType, SymbolSection]]:
         num_symbols = struct.unpack("<H", f.read(2))[0]
         symbols = []
         for _ in range(num_symbols):
@@ -162,7 +162,7 @@ class ObjectFile:
         return symbols
 
     @staticmethod
-    def _read_relocations(f: BinaryIO) -> list[tuple[int, str, RelocationType]]:
+    def _read_relocations(f: IO[bytes]) -> list[tuple[int, str, RelocationType]]:
         num_relocations = struct.unpack("<H", f.read(2))[0]
         relocations = []
         for _ in range(num_relocations):
@@ -174,7 +174,7 @@ class ObjectFile:
         return relocations
 
     @staticmethod
-    def _read_expression_relocations(f: BinaryIO, table_size: int) -> list[tuple[int, str, int]]:
+    def _read_expression_relocations(f: IO[bytes], table_size: int) -> list[tuple[int, str, int]]:
         if table_size == 0:
             return []
         num_expr_relocations = struct.unpack("<H", f.read(2))[0]
@@ -188,7 +188,7 @@ class ObjectFile:
         return expression_relocations
 
     @staticmethod
-    def _read_aliases(f: BinaryIO, table_size: int) -> list[tuple[str, str]]:
+    def _read_aliases(f: IO[bytes], table_size: int) -> list[tuple[str, str]]:
         if table_size == 0:
             return []
         num_aliases = struct.unpack("<H", f.read(2))[0]

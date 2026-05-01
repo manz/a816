@@ -144,7 +144,9 @@ class SymbolNode(NodeProtocol):
         if object_writer is not None:
             object_writer.add_alias(self.symbol_name, expr_str)
 
-    def pc_after(self, current_pc: Address) -> Address:
+    def pc_after(
+        self, current_pc: Address
+    ) -> Address:  # NOSONAR S3516 - protocol method; SymbolNode emits nothing so PC is unchanged
         assert isinstance(self.expression, ExpressionAstNode)
         try:
             value = eval_expression(self.expression, self.resolver)

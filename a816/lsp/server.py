@@ -345,39 +345,27 @@ class A816Document:
         self.label_docstrings.clear()
         self._docstrings_collect_nodes(self.ast_nodes)
 
-    def _get_file_uri_for_token(self, token: Token) -> str:
-        """Get the file URI for a token, handling both current and included files"""
-        if token.position:
-            token_filename = token.position.file.filename
-            # Convert file path to URI if it's not already one
-            if not token_filename.startswith(FILE_URI_PREFIX):
-                try:
-                    # Handle relative paths by resolving them first
-                    if not os.path.isabs(token_filename):
-                        # Get the directory of the current document
-                        current_doc_path = (
-                            Path(self.uri.replace(FILE_URI_PREFIX, ""))
-                            if self.uri.startswith(FILE_URI_PREFIX)
-                            else Path(self.uri)
-                        )
-                        if current_doc_path.is_file():
-                            base_dir = current_doc_path.parent
-                        else:
-                            base_dir = current_doc_path
+    def _resolve_relative_token_file(self, token_filename: str) -> str:
+        current_doc_path = (
+            Path(self.uri.replace(FILE_URI_PREFIX, "")) if self.uri.startswith(FILE_URI_PREFIX) else Path(self.uri)
+        )
+        base_dir = current_doc_path.parent if current_doc_path.is_file() else current_doc_path
+        return (base_dir / token_filename).resolve().as_uri()
 
-                        # Resolve the relative path
-                        resolved_path = (base_dir / token_filename).resolve()
-                        return resolved_path.as_uri()
-                    else:
-                        # Absolute path
-                        return Path(token_filename).as_uri()
-                except (ValueError, OSError) as e:
-                    # If path resolution fails, fall back to current document URI
-                    logger.debug(f"Failed to resolve token file path '{token_filename}': {e}")
-                    return self.uri
+    def _get_file_uri_for_token(self, token: Token) -> str:
+        """Return file URI for a token (handles same- and included-file tokens)."""
+        if not token.position:
+            return self.uri
+        token_filename = token.position.file.filename
+        if token_filename.startswith(FILE_URI_PREFIX):
             return token_filename
-        # Default to current document URI
-        return self.uri
+        try:
+            if os.path.isabs(token_filename):
+                return Path(token_filename).as_uri()
+            return self._resolve_relative_token_file(token_filename)
+        except (ValueError, OSError) as e:
+            logger.debug(f"Failed to resolve token file path '{token_filename}': {e}")
+            return self.uri
 
     def _generate_diagnostics(self) -> None:
         """Generate diagnostics from parse errors and AST analysis"""
@@ -595,25 +583,30 @@ class WorkspaceIndex:
                 return path.resolve()
         return None
 
-    def _entry_from_config(self) -> Path | None:
-        if not self.root_path or tomllib is None:
+    def _find_a816_toml(self) -> Path | None:
+        if self.root_path is None:
             return None
-
         current = self.root_path
-        config_file: Path | None = None
-
         while True:
             candidate = current / "a816.toml"
             if candidate.exists():
-                config_file = candidate
-                break
+                return candidate
             if current.parent == current:
-                break
+                return None
             current = current.parent
 
-        if not config_file:
-            return None
+    def _merge_path_list(self, target: list[Path], config_root: Path, paths: list[str]) -> None:
+        for p in paths:
+            resolved = (config_root / p).resolve()
+            if resolved not in target:
+                target.append(resolved)
 
+    def _entry_from_config(self) -> Path | None:
+        if tomllib is None:
+            return None
+        config_file = self._find_a816_toml()
+        if config_file is None:
+            return None
         try:
             with config_file.open("rb") as handle:
                 data = tomllib.load(handle)
@@ -621,18 +614,8 @@ class WorkspaceIndex:
             return None
 
         config_root = config_file.parent
-
-        # Read include-paths from config
-        for p in data.get("include-paths", []):
-            resolved = (config_root / p).resolve()
-            if resolved not in self.include_paths:
-                self.include_paths.append(resolved)
-
-        # Read module-paths from config
-        for p in data.get("module-paths", []):
-            resolved = (config_root / p).resolve()
-            if resolved not in self.module_paths:
-                self.module_paths.append(resolved)
+        self._merge_path_list(self.include_paths, config_root, data.get("include-paths", []))
+        self._merge_path_list(self.module_paths, config_root, data.get("module-paths", []))
 
         entry = data.get("entrypoint")
         if not entry:
@@ -674,45 +657,27 @@ class WorkspaceIndex:
             self._store_document(A816Document(current.as_uri(), content, include_paths=self.include_paths))
             queue.extend(include for include in self._extract_includes(current, content) if include not in visited)
 
+    @staticmethod
+    def _resolve_in_paths(file_name: str, file_dir: Path, search_paths: list[Path]) -> Path | None:
+        candidate = (file_dir / file_name).resolve()
+        if candidate.exists():
+            return candidate
+        for search_dir in search_paths:
+            candidate = (search_dir / file_name).resolve()
+            if candidate.exists():
+                return candidate
+        return None
+
     def _extract_includes(self, file_path: Path, content: str) -> list[Path]:
         found_paths: set[Path] = set()
-
-        # Extract .include directives
         for match in re.finditer(r"\.include\s+['\"]([^'\"]+)['\"]", content, re.IGNORECASE):
-            raw_path = match.group(1).strip()
-            # Try relative to parent file first
-            candidate = (file_path.parent / raw_path).resolve()
-            if candidate.exists():
-                found_paths.add(candidate)
-            else:
-                # Fall back to configured include paths
-                for search_dir in self.include_paths:
-                    candidate = (search_dir / raw_path).resolve()
-                    if candidate.exists():
-                        found_paths.add(candidate)
-                        break
-
-        # Extract .import directives and resolve to source files
+            resolved = self._resolve_in_paths(match.group(1).strip(), file_path.parent, self.include_paths)
+            if resolved:
+                found_paths.add(resolved)
         for match in re.finditer(r"\.import\s+['\"]([^'\"]+)['\"]", content, re.IGNORECASE):
-            module_name = match.group(1).strip()
-            module_file = module_name + ".s"
-            found = False
-
-            # 1. Check same directory as file
-            candidate = (file_path.parent / module_file).resolve()
-            if candidate.exists():
-                found_paths.add(candidate)
-                found = True
-
-            # 2. Check configured module paths
-            if not found:
-                for search_dir in self.module_paths:
-                    candidate = (search_dir / module_file).resolve()
-                    if candidate.exists():
-                        found_paths.add(candidate)
-                        found = True
-                        break
-
+            resolved = self._resolve_in_paths(match.group(1).strip() + ".s", file_path.parent, self.module_paths)
+            if resolved:
+                found_paths.add(resolved)
         return list(found_paths)
 
     def _index_labels(self, doc: A816Document) -> set[str]:
@@ -761,23 +726,26 @@ class WorkspaceIndex:
         self.doc_scope_docstrings[doc.uri] = set(doc.scope_docstrings.keys())
         self.doc_macro_params[doc.uri] = set(doc.macro_params.keys())
 
+    @staticmethod
+    def _drop_owned(
+        store: dict[str, tuple[Position, str]],
+        names: set[str],
+        uri: str,
+        lookup: dict[str, str] | None = None,
+    ) -> None:
+        for name in names:
+            entry = store.get(name)
+            if entry and entry[1] == uri:
+                store.pop(name, None)
+                if lookup is not None:
+                    lookup.pop(name.lower(), None)
+
     def _prune_previous_entries(self, uri: str) -> None:
-        for label in self.doc_labels.get(uri, set()):
-            entry = self.labels.get(label)
-            if entry and entry[1] == uri:
-                self.labels.pop(label, None)
-                self.label_name_lookup.pop(label.lower(), None)
-        for symbol in self.doc_symbols.get(uri, set()):
-            entry = self.symbols.get(symbol)
-            if entry and entry[1] == uri:
-                self.symbols.pop(symbol, None)
+        self._drop_owned(self.labels, self.doc_labels.get(uri, set()), uri, self.label_name_lookup)
+        self._drop_owned(self.symbols, self.doc_symbols.get(uri, set()), uri)
+        self._drop_owned(self.macros, self.doc_macros.get(uri, set()), uri, self.macro_name_lookup)
         for macro in self.doc_macros.get(uri, set()):
-            entry = self.macros.get(macro)
-            if entry and entry[1] == uri:
-                self.macros.pop(macro, None)
-                self.macro_name_lookup.pop(macro.lower(), None)
-            if macro in self.macro_params:
-                self.macro_params.pop(macro, None)
+            self.macro_params.pop(macro, None)
         for key in self.doc_label_docstrings.get(uri, set()):
             self.label_docstrings.pop(key, None)
         for key in self.doc_macro_docstrings.get(uri, set()):
@@ -785,13 +753,16 @@ class WorkspaceIndex:
         for key in self.doc_scope_docstrings.get(uri, set()):
             self.scope_docstrings.pop(key, None)
             self.scope_name_lookup.pop(key, None)
-        self.doc_labels.pop(uri, None)
-        self.doc_symbols.pop(uri, None)
-        self.doc_macros.pop(uri, None)
-        self.doc_label_docstrings.pop(uri, None)
-        self.doc_macro_docstrings.pop(uri, None)
-        self.doc_scope_docstrings.pop(uri, None)
-        self.doc_macro_params.pop(uri, None)
+        for store in (
+            self.doc_labels,
+            self.doc_symbols,
+            self.doc_macros,
+            self.doc_label_docstrings,
+            self.doc_macro_docstrings,
+            self.doc_scope_docstrings,
+            self.doc_macro_params,
+        ):
+            store.pop(uri, None)
 
 
 class A816LanguageServer:
@@ -1253,19 +1224,25 @@ class A816LanguageServer:
         return out
 
     @staticmethod
+    def _scan_definitions(
+        stores: tuple[dict[str, tuple[Position, str]], ...],
+        word: str,
+        defs: set[tuple[str, int, int]],
+        force_uri: str | None = None,
+    ) -> None:
+        for store in stores:
+            for name, (position, store_uri) in store.items():
+                if name == word:
+                    defs.add((force_uri or store_uri, position.line, position.character))
+
+    @staticmethod
     def _collect_definition_locations(
         doc: A816Document, uri: str, word: str, workspace: WorkspaceIndex | None
     ) -> set[tuple[str, int, int]]:
         defs: set[tuple[str, int, int]] = set()
-        for container in (doc.labels, doc.symbols, doc.macros):
-            for name, (position, _) in container.items():
-                if name == word:
-                    defs.add((uri, position.line, position.character))
+        A816LanguageServer._scan_definitions((doc.labels, doc.symbols, doc.macros), word, defs, force_uri=uri)
         if workspace:
-            for store in (workspace.labels, workspace.symbols, workspace.macros):
-                for name, (position, store_uri) in store.items():
-                    if name == word:
-                        defs.add((store_uri, position.line, position.character))
+            A816LanguageServer._scan_definitions((workspace.labels, workspace.symbols, workspace.macros), word, defs)
         return defs
 
     def _handle_references(self, params: ReferenceParams) -> list[Location] | None:
@@ -1927,8 +1904,7 @@ class A816LanguageServer:
                 else Path(current_uri)
             )
             if os.path.isabs(include_path):
-                resolved_path = Path(include_path).resolve()
-                return str(resolved_path) if resolved_path.exists() else str(resolved_path)
+                return str(Path(include_path).resolve())
 
             resolved_path = (current_path.parent / include_path).resolve()
             if resolved_path.exists():
