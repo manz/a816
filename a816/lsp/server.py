@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -1869,75 +1870,54 @@ class A816LanguageServer:
 
         return tokens
 
-    def _tokenize_operand(self, operand: str, line_num: int, start_pos: int) -> list[dict[str, Any]]:
-        """Tokenize operand for semantic highlighting"""
-        tokens: list[dict[str, Any]] = []
+    @staticmethod
+    def _consume_hex_digits(operand: str, i: int) -> int:
+        while i < len(operand) and operand[i] in "0123456789ABCDEFabcdef":
+            i += 1
+        return i
 
-        # Simple tokenization for numbers, strings, and registers
+    @staticmethod
+    def _consume_decimal(operand: str, i: int) -> int:
+        while i < len(operand) and operand[i].isdigit():
+            i += 1
+        return i
+
+    def _consume_number(self, operand: str, i: int) -> int:
+        """Advance past a number literal (hex / decimal / #-prefixed immediate)."""
+        if operand.startswith(("0x", "0X"), i):
+            return self._consume_hex_digits(operand, i + 2)
+        if operand[i] == "#":
+            i += 1
+            if operand.startswith(("0x", "0X"), i):
+                return self._consume_hex_digits(operand, i + 2)
+            return self._consume_decimal(operand, i)
+        return self._consume_decimal(operand, i)
+
+    @staticmethod
+    def _is_register_at(operand: str, i: int) -> bool:
+        return operand[i].upper() in "XYS" and (i == 0 or not operand[i - 1].isalnum())
+
+    def _tokenize_operand(self, operand: str, line_num: int, start_pos: int) -> list[dict[str, Any]]:
+        """Tokenize operand for semantic highlighting."""
+        tokens: list[dict[str, Any]] = []
         i = 0
         while i < len(operand):
             char = operand[i]
-
             if char.isspace():
                 i += 1
                 continue
-
-            # Numbers (hex, decimal, immediate values)
             if operand.startswith(("0x", "0X"), i) or char.isdigit() or char == "#":
                 start = i
-                if operand.startswith(("0x", "0X"), i):
-                    i += 2
-                    while i < len(operand) and operand[i] in "0123456789ABCDEFabcdef":
-                        i += 1
-                elif char == "#":  # Immediate
-                    i += 1
-                    if operand.startswith(("0x", "0X"), i):
-                        i += 2
-                        while i < len(operand) and operand[i] in "0123456789ABCDEFabcdef":
-                            i += 1
-                    else:
-                        while i < len(operand) and operand[i].isdigit():
-                            i += 1
-                else:  # Decimal
-                    while i < len(operand) and operand[i].isdigit():
-                        i += 1
-
-                tokens.append(
-                    {
-                        "line": line_num,
-                        "char": start_pos + start,
-                        "length": i - start,
-                        "type": 3,  # number
-                    }
-                )
-
-            # Registers
-            elif char.upper() in "XYS" and (i == 0 or not operand[i - 1].isalnum()):
-                tokens.append(
-                    {
-                        "line": line_num,
-                        "char": start_pos + i,
-                        "length": 1,
-                        "type": 6,  # variable (register)
-                    }
-                )
+                i = self._consume_number(operand, i)
+                tokens.append({"line": line_num, "char": start_pos + start, "length": i - start, "type": 3})
+            elif self._is_register_at(operand, i):
+                tokens.append({"line": line_num, "char": start_pos + i, "length": 1, "type": 6})
                 i += 1
-
-            # Operators and punctuation
             elif char in "()[],.+-*&|":
-                tokens.append(
-                    {
-                        "line": line_num,
-                        "char": start_pos + i,
-                        "length": 1,
-                        "type": 5,  # operator
-                    }
-                )
+                tokens.append({"line": line_num, "char": start_pos + i, "length": 1, "type": 5})
                 i += 1
-
             else:
                 i += 1
-
         return tokens
 
     def _build_opcode_completions(self) -> list[CompletionItem]:
@@ -2053,93 +2033,93 @@ class A816LanguageServer:
             return parent.as_posix()
         return None
 
+    @staticmethod
+    def _quoted_span(line: str, match: re.Match[str]) -> tuple[int, int] | None:
+        delimiter = '"' if '"' in match.group(0) else "'"
+        quote_start = line.find(delimiter, match.start())
+        if quote_start == -1:
+            return None
+        quote_end = line.find(delimiter, quote_start + 1)
+        if quote_end == -1:
+            return None
+        return quote_start, quote_end
+
+    @staticmethod
+    def _file_location(path: str) -> Location:
+        return Location(
+            uri=Path(path).as_uri(),
+            range=Range(start=Position(line=0, character=0), end=Position(line=0, character=0)),
+        )
+
+    def _try_directive_location(
+        self,
+        line: str,
+        char_pos: int,
+        pattern: str,
+        resolve: Callable[[str], str | None],
+    ) -> Location | None:
+        match = re.search(pattern, line, re.IGNORECASE)
+        if not match:
+            return None
+        span = self._quoted_span(line, match)
+        if span is None:
+            return None
+        quote_start, quote_end = span
+        if not (quote_start <= char_pos <= quote_end):
+            return None
+        resolved_path = resolve(match.group(1))
+        if resolved_path and os.path.exists(resolved_path):
+            return self._file_location(resolved_path)
+        return None
+
     def _check_include_directive(
         self, doc: A816Document, line_num: int, char_pos: int, current_uri: str
     ) -> Location | None:
-        """Check if the cursor is on an .include or .import directive and return the file location"""
+        """Return Location if cursor is on an .include or .import directive's path."""
         try:
             if line_num >= len(doc.lines):
                 return None
-
             line = doc.lines[line_num]
-
-            # Match .include 'filename' or .include "filename"
-            include_match = re.search(r'\.include\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
-            if include_match:
-                include_path = include_match.group(1)
-                delimiter = '"' if '"' in include_match.group(0) else "'"
-                quote_start = line.find(delimiter, include_match.start())
-                quote_end = line.find(delimiter, quote_start + 1) if quote_start != -1 else -1
-                if quote_start == -1 or quote_end == -1:
-                    return None
-
-                # Check if cursor is within the quoted filename
-                if quote_start <= char_pos <= quote_end:
-                    resolved_path = self._resolve_include_path(include_path, current_uri)
-                    if resolved_path and os.path.exists(resolved_path):
-                        file_uri = Path(resolved_path).as_uri()
-                        return Location(
-                            uri=file_uri,
-                            range=Range(start=Position(line=0, character=0), end=Position(line=0, character=0)),
-                        )
-
-            # Match .import 'module' or .import "module"
-            import_match = re.search(r'\.import\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
-            if import_match:
-                module_name = import_match.group(1)
-                delimiter = '"' if '"' in import_match.group(0) else "'"
-                quote_start = line.find(delimiter, import_match.start())
-                quote_end = line.find(delimiter, quote_start + 1) if quote_start != -1 else -1
-                if quote_start == -1 or quote_end == -1:
-                    return None
-
-                # Check if cursor is within the quoted module name
-                if quote_start <= char_pos <= quote_end:
-                    resolved_path = self._resolve_module_path(module_name, current_uri)
-                    if resolved_path and os.path.exists(resolved_path):
-                        file_uri = Path(resolved_path).as_uri()
-                        return Location(
-                            uri=file_uri,
-                            range=Range(start=Position(line=0, character=0), end=Position(line=0, character=0)),
-                        )
-
-            return None
-
+            location = self._try_directive_location(
+                line,
+                char_pos,
+                r'\.include\s+[\'"]([^\'"]+)[\'"]',
+                lambda p: self._resolve_include_path(p, current_uri),
+            )
+            if location is not None:
+                return location
+            return self._try_directive_location(
+                line,
+                char_pos,
+                r'\.import\s+[\'"]([^\'"]+)[\'"]',
+                lambda m: self._resolve_module_path(m, current_uri),
+            )
         except (OSError, ValueError, AttributeError) as e:
             logger.debug(f"Error checking include directive: {e}")
             return None
 
     def _resolve_include_path(self, include_path: str, current_uri: str) -> str | None:
-        """Resolve include path relative to current document, then search workspace include paths"""
+        """Resolve include path against current dir, falling back to workspace include paths."""
         try:
-            # Convert URI to file path
-            if current_uri.startswith(FILE_URI_PREFIX):
-                current_path = Path(current_uri[7:])  # Remove file:// prefix
-            else:
-                current_path = Path(current_uri)
-
-            current_dir = current_path.parent
-
+            current_path = (
+                Path(current_uri[len(FILE_URI_PREFIX) :])
+                if current_uri.startswith(FILE_URI_PREFIX)
+                else Path(current_uri)
+            )
             if os.path.isabs(include_path):
                 resolved_path = Path(include_path).resolve()
-                if resolved_path.exists():
-                    return str(resolved_path)
-            else:
-                # Try relative to current file first
-                resolved_path = (current_dir / include_path).resolve()
-                if resolved_path.exists():
-                    return str(resolved_path)
+                return str(resolved_path) if resolved_path.exists() else str(resolved_path)
 
-                # Fall back to searching workspace include paths
-                workspace = self.workspace_index
-                if workspace:
-                    for search_dir in workspace.include_paths:
-                        candidate = (search_dir / include_path).resolve()
-                        if candidate.exists():
-                            return str(candidate)
-
+            resolved_path = (current_path.parent / include_path).resolve()
+            if resolved_path.exists():
+                return str(resolved_path)
+            workspace = self.workspace_index
+            if workspace:
+                for search_dir in workspace.include_paths:
+                    candidate = (search_dir / include_path).resolve()
+                    if candidate.exists():
+                        return str(candidate)
             return str(resolved_path)
-
         except (OSError, ValueError) as e:
             logger.debug(f"Error resolving include path '{include_path}' from '{current_uri}': {e}")
             return None
@@ -2176,63 +2156,51 @@ class A816LanguageServer:
         """Apply an incremental text change to content"""
 
         if not hasattr(change, "range") or change.range is None:
-            # Full document replacement
             return change.text
 
-        # Split content into lines for easier manipulation
         lines = content.splitlines(keepends=True)
-
-        # Get change coordinates
         start_line = change.range.start.line
         start_char = change.range.start.character
         end_line = change.range.end.line
         end_char = change.range.end.character
 
-        # Handle bounds checking
         if start_line >= len(lines):
-            # Change is beyond document, just append
             return content + change.text
-
         if end_line >= len(lines):
             end_line = len(lines) - 1
             end_char = len(lines[end_line])
 
-        # Apply the change
         if start_line == end_line:
-            # Single line change
-            line = lines[start_line] if start_line < len(lines) else ""
-            if not line.endswith("\n") and start_line < len(lines) - 1:
-                line += "\n"
-
-            # Replace part of the line
-            before = line[:start_char] if start_char < len(line) else line
-            after = line[end_char:] if end_char < len(line) else ""
-            lines[start_line] = before + change.text + after
+            self._apply_single_line_change(lines, start_line, start_char, end_char, change.text)
         else:
-            # Multi-line change
-            start_line_content = lines[start_line] if start_line < len(lines) else ""
-            end_line_content = lines[end_line] if end_line < len(lines) else ""
-
-            # Keep part of start line before change
-            before = start_line_content[:start_char] if start_char < len(start_line_content) else start_line_content
-            # Keep part of end line after change
-            after = end_line_content[end_char:] if end_char < len(end_line_content) else ""
-
-            # Replace the range with new content
-            new_content = before + change.text + after
-
-            # Remove the lines that were changed
-            del lines[start_line : end_line + 1]
-
-            # Insert the new content
-            if new_content:
-                new_lines = new_content.splitlines(keepends=True)
-                # Ensure last line has newline if it should
-                if new_content.endswith("\n") and new_lines and not new_lines[-1].endswith("\n"):
-                    new_lines[-1] += "\n"
-                lines[start_line:start_line] = new_lines
-
+            self._apply_multi_line_change(lines, start_line, start_char, end_line, end_char, change.text)
         return "".join(lines)
+
+    @staticmethod
+    def _apply_single_line_change(lines: list[str], line_idx: int, start_char: int, end_char: int, text: str) -> None:
+        line = lines[line_idx] if line_idx < len(lines) else ""
+        if not line.endswith("\n") and line_idx < len(lines) - 1:
+            line += "\n"
+        before = line[:start_char] if start_char < len(line) else line
+        after = line[end_char:] if end_char < len(line) else ""
+        lines[line_idx] = before + text + after
+
+    @staticmethod
+    def _apply_multi_line_change(
+        lines: list[str], start_line: int, start_char: int, end_line: int, end_char: int, text: str
+    ) -> None:
+        start_content = lines[start_line] if start_line < len(lines) else ""
+        end_content = lines[end_line] if end_line < len(lines) else ""
+        before = start_content[:start_char] if start_char < len(start_content) else start_content
+        after = end_content[end_char:] if end_char < len(end_content) else ""
+        new_content = before + text + after
+        del lines[start_line : end_line + 1]
+        if not new_content:
+            return
+        new_lines = new_content.splitlines(keepends=True)
+        if new_content.endswith("\n") and new_lines and not new_lines[-1].endswith("\n"):
+            new_lines[-1] += "\n"
+        lines[start_line:start_line] = new_lines
 
     def _publish_diagnostics(self, uri: str, diagnostics: list[Diagnostic]) -> None:
         """Publish diagnostics for a document"""
