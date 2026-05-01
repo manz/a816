@@ -174,76 +174,76 @@ class A816Document:
             logger.warning("Error extracting symbols from AST: %s", e)
             # Continue without symbols rather than crashing
 
+    def _record_token_position(self, token: Token, target: dict[str, tuple[Position, str]], name: str) -> None:
+        if token.position:
+            pos = Position(line=token.position.line, character=token.position.column)
+            target[name] = (pos, self._get_file_uri_for_token(token))
+
+    def _record_label(self, node: LabelAstNode) -> None:
+        self._record_token_position(node.file_info, self.labels, node.label)
+
+    def _record_symbol_assignment(self, node: AstNode) -> None:
+        symbol = getattr(node, "symbol", None)
+        if symbol:
+            self._record_token_position(node.file_info, self.symbols, symbol)
+
+    def _record_macro(self, node: MacroAstNode) -> None:
+        if not getattr(node, "name", None):
+            return
+        self._record_token_position(node.file_info, self.macros, node.name)
+        if not node.file_info.position:
+            return
+        if hasattr(node, "parameters") and node.parameters:
+            self.macro_params[node.name] = [param.name for param in node.parameters if hasattr(param, "name")]
+        if hasattr(node, "docstring") and node.docstring:
+            self.macro_docstrings[node.name.lower()] = node.docstring
+
+    def _record_import(self, node: ImportAstNode) -> None:
+        if node.module_name and node.module_name not in self.imports:
+            self.imports.append(node.module_name)
+
+    def _visit_include(self, node: IncludeAstNode) -> None:
+        for child in node.included_nodes:
+            if isinstance(child, AstNode):
+                self._visit_node_for_symbols(child)
+
+    def _visit_children(self, node: AstNode) -> None:
+        body = getattr(node, "body", None)
+        if isinstance(body, list):
+            for child in body:
+                self._visit_node_for_symbols(child)
+        elif isinstance(body, AstNode):
+            self._visit_node_for_symbols(body)
+        block = getattr(node, "block", None)
+        if isinstance(block, AstNode):
+            self._visit_node_for_symbols(block)
+        else_block = getattr(node, "else_block", None)
+        if isinstance(else_block, AstNode):
+            self._visit_node_for_symbols(else_block)
+
     def _visit_node_for_symbols(self, node: AstNode) -> None:
-        """Recursively visit AST nodes to extract symbols and labels"""
+        """Recursively visit AST nodes to extract symbols and labels."""
         if isinstance(node, DocstringAstNode):
             return
         if isinstance(node, LabelAstNode):
-            # Convert token position to LSP Position
-            token = node.file_info
-            if token.position:
-                pos = Position(line=token.position.line, character=token.position.column)  # Already 0-indexed
-                file_uri = self._get_file_uri_for_token(token)
-                self.labels[node.label] = (pos, file_uri)
+            self._record_label(node)
         elif isinstance(node, AssignAstNode | SymbolAffectationAstNode):
-            # Extract symbol assignments/definitions
-            if hasattr(node, "symbol") and node.symbol:
-                token = node.file_info
-                if token.position:
-                    pos = Position(line=token.position.line, character=token.position.column)
-                    file_uri = self._get_file_uri_for_token(token)
-                    self.symbols[node.symbol] = (pos, file_uri)
+            self._record_symbol_assignment(node)
         elif isinstance(node, ExternAstNode):
-            # Track external symbol declarations (but don't add to symbols - they're not definitions)
-            if hasattr(node, "symbol") and node.symbol:
+            if getattr(node, "symbol", None):
                 self.externs.add(node.symbol)
         elif isinstance(node, ScopeAstNode):
             if node.docstring:
                 self.scope_docstrings[node.name.lower()] = node.docstring
         elif isinstance(node, MacroAstNode):
-            # Extract macro definitions
-            if hasattr(node, "name") and node.name:
-                token = node.file_info
-                if token.position:
-                    pos = Position(line=token.position.line, character=token.position.column)
-                    file_uri = self._get_file_uri_for_token(token)
-                    self.macros[node.name] = (pos, file_uri)
-
-                    # Extract macro parameters if available
-                    if hasattr(node, "parameters") and node.parameters:
-                        self.macro_params[node.name] = [
-                            param.name for param in node.parameters if hasattr(param, "name")
-                        ]
-                    if hasattr(node, "docstring") and node.docstring:
-                        self.macro_docstrings[node.name.lower()] = node.docstring
+            self._record_macro(node)
         elif isinstance(node, ImportAstNode):
-            # Track imported module names for cross-module symbol resolution
-            if node.module_name and node.module_name not in self.imports:
-                self.imports.append(node.module_name)
+            self._record_import(node)
         elif isinstance(node, IncludeAstNode):
-            for child in node.included_nodes:
-                if isinstance(child, AstNode):
-                    self._visit_node_for_symbols(child)
+            self._visit_include(node)
             return
-        elif isinstance(node, MacroApplyAstNode):
-            # Extract macro applications/calls
-            if hasattr(node, "name") and node.name:
-                # Mark as a macro usage for semantic highlighting - handled in AST traversal
-                pass
 
-        # Handle compound nodes with body attributes
-        if hasattr(node, "body"):
-            if isinstance(node.body, list):
-                for child in node.body:
-                    self._visit_node_for_symbols(child)
-            else:
-                self._visit_node_for_symbols(node.body)
-
-        # Handle other node types with child nodes
-        if hasattr(node, "block") and node.block:
-            self._visit_node_for_symbols(node.block)
-        if hasattr(node, "else_block") and node.else_block:
-            self._visit_node_for_symbols(node.else_block)
+        self._visit_children(node)
 
     def _collect_docstrings(self) -> None:
         """Associate docstrings with labels, macros, and scopes"""
