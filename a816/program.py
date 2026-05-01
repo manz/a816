@@ -211,8 +211,11 @@ class Program:
                 for base, block in blocks:
                     if block:
                         writer.write_block(block, self._to_physical(base))
-                if blocks:
-                    first_base, first_code = blocks[0]
+                # Pinned modules don't consume linear PC at the import
+                # site; only relocatable modules advance the importer's
+                # PC by their first-region size (matching pc_after).
+                if blocks and node.relocatable:
+                    first_code = blocks[0][1]
                     advance = len(first_code)
                     self.resolver.pc += advance
                     self.resolver.reloc_address += advance

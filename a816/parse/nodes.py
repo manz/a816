@@ -340,9 +340,14 @@ class LinkedModuleNode(NodeProtocol):
         if self.is_loser:
             return current_pc
 
-        # Only region 0 advances the importer's PC; later regions sit at
-        # their declared absolute addresses and do not consume linear
-        # space at the import site.
+        # Pinned modules (any explicit `*=`) land at their declared
+        # absolute base addresses; the importer's PC stays where it was
+        # because the module does not occupy linear space at the import
+        # site. Only relocatable single-region modules advance the
+        # importer's PC by their first-region size.
+        if not self.relocatable:
+            return current_pc
+
         first = self.regions[0]
         first_end = first.base_address + self._delta + len(first.code)
         return self.resolver.get_bus().get_address(first_end)

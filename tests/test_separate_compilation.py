@@ -688,6 +688,51 @@ far_label:
             target = linker.symbol_map["far_label"] & 0xFFFF
             assert patched[0] | (patched[1] << 8) == target
 
+    def test_pinned_module_import_does_not_advance_importer_pc(self) -> None:
+        """A `.import` of a pinned (`*=`) module must not consume PC.
+
+        Regression: LinkedModuleNode.pc_after used to return
+        `regions[0].base_address + len(regions[0].code)` for every
+        module, including pinned ones. For ff4-modules' assets module,
+        that landed the importer's PC at SNES $0B0000 (end of region
+        0 at $0AF000 + 0x1000), so any label following `.import "assets"`
+        was bound inside WRAM mirror space, and JSL operands compiled
+        against those labels jumped to RAM and BRK'd.
+
+        Pinned modules drop their code at their declared absolute
+        addresses; the importer's PC must stay where it was, so a label
+        defined right after `.import` on a pinned module sits next to
+        whatever inline code preceded the import.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "pinned.s"
+            # *=0x208000 makes this a pinned, non-relocatable module.
+            mod.write_text("*=0x208000\npayload:\n    .db 0x77, 0x77, 0x77, 0x77\n")
+            assert Program().assemble_as_object(str(mod), tmp / "pinned.o") == 0
+
+            main = tmp / "main.s"
+            main.write_text('*=0x008000\nbefore:\n.db 0xAA\n.import "pinned"\nafter:\n.db 0xBB\n')
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            scope = program.resolver.current_scope
+            before = scope.labels.get("before")
+            after = scope.labels.get("after")
+            assert before is not None and after is not None
+            before_v = before.logical_value if hasattr(before, "logical_value") else before
+            after_v = after.logical_value if hasattr(after, "logical_value") else after
+            # Only the inline 0xAA byte separates `before` and `after`.
+            assert after_v - before_v == 1, (
+                f"pinned-module .import advanced importer PC; after-before = {after_v - before_v}"
+            )
+
+            # Pinned bytes still land at the module's declared base.
+            content = ips.read_bytes()
+            assert b"\x77\x77\x77\x77" in content
+
     def test_loser_import_does_not_shift_surrounding_layout(self) -> None:
         """A skipped duplicate `.import` must consume zero PC — not its size.
 
