@@ -892,7 +892,7 @@ class A816LanguageServer:
         self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
         try:
             self.server.send_notification("workspace/semanticTokens/refresh")
-        except (AttributeError, RuntimeError) as e:
+        except (AttributeError, RuntimeError, TypeError) as e:
             logger.debug(f"Could not refresh semantic tokens: {e}")
 
     def _handle_did_close(self, params: DidCloseTextDocumentParams) -> None:
