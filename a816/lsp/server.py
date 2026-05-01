@@ -835,613 +835,51 @@ class A816LanguageServer:
         self._register_completions = self._build_register_completions()
 
     def _setup_handlers(self) -> None:
-        """Setup all LSP handlers"""
+        """Register all LSP handlers; thin wrappers delegate to _handle_* methods."""
 
         @self.server.feature("textDocument/didOpen")
         async def did_open(ls: LanguageServer, params: DidOpenTextDocumentParams) -> None:
-            """Handle document open event"""
-            workspace = self._ensure_workspace_index()
-            include_paths = workspace.include_paths if workspace else []
-            doc = A816Document(params.text_document.uri, params.text_document.text, include_paths=include_paths)
-            self.documents[params.text_document.uri] = doc
-            if workspace:
-                workspace.replace_document(doc)
-
-            # Send diagnostics
-            self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+            self._handle_did_open(params)
 
         @self.server.feature("textDocument/didChange")
         async def did_change(ls: LanguageServer, params: DidChangeTextDocumentParams) -> None:
-            """Handle document change event with proper incremental updates"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc or not params.content_changes:
-                return
-
-            # Apply all content changes in order
-            current_content = doc.content
-
-            for change in params.content_changes:
-                if isinstance(change, TextDocumentContentChangeEvent_Type2):
-                    # Full document replacement
-                    current_content = change.text
-                    logger.debug("Full document replacement")
-                else:
-                    # Incremental change - apply to current content
-                    logger.debug(f"Incremental change at {change.range.start.line}:{change.range.start.character}")
-                    current_content = self._apply_text_change(current_content, change)
-
-            # Update document with final content
-            doc.update_content(current_content)
-            workspace = self._ensure_workspace_index()
-            if workspace:
-                workspace.replace_document(doc)
-
-            # Send updated diagnostics
-            self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
-
-            # IMPORTANT: Trigger semantic token refresh for real-time syntax highlighting
-            # This ensures syntax highlighting updates as you type
-            try:
-                # Send a semantic tokens refresh request to the client using pygls
-                self.server.send_notification("workspace/semanticTokens/refresh")
-            except (AttributeError, RuntimeError) as e:
-                logger.debug(f"Could not refresh semantic tokens: {e}")
-                # This is optional - some clients don't support refresh
+            self._handle_did_change(params)
 
         @self.server.feature("textDocument/didClose")
         async def did_close(ls: LanguageServer, params: DidCloseTextDocumentParams) -> None:
-            """Handle document close event"""
-            self.documents.pop(params.text_document.uri, None)
-            workspace = self._ensure_workspace_index()
-            if workspace:
-                workspace.reload_document_from_disk(params.text_document.uri)
+            self._handle_did_close(params)
 
         @self.server.feature("textDocument/didSave")
         async def did_save(ls: LanguageServer, params: DidSaveTextDocumentParams) -> None:
-            """Handle document save event - re-analyze and publish diagnostics"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return
-
-            # If the save includes text, use it; otherwise re-analyze existing content
-            if params.text is not None:
-                doc.update_content(params.text)
-            else:
-                # Re-analyze with current content to ensure diagnostics are fresh
-                doc.analyze()
-
-            workspace = self._ensure_workspace_index()
-            if workspace:
-                workspace.replace_document(doc)
-
-            # Publish updated diagnostics
-            self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+            self._handle_did_save(params)
 
         @self.server.feature("textDocument/completion")
         async def completions(ls: LanguageServer, params: CompletionParams) -> CompletionList:
-            """Provide completion suggestions"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return CompletionList(is_incomplete=False, items=[])
-
-            line_num = params.position.line
-            if line_num >= len(doc.lines):
-                return CompletionList(is_incomplete=False, items=[])
-
-            line = doc.lines[line_num]
-            char_pos = params.position.character
-
-            # Get current word context
-            word_start = char_pos
-            while word_start > 0 and line[word_start - 1].isalnum():
-                word_start -= 1
-
-            current_word = line[word_start:char_pos].lower()
-
-            # Combine all completions
-            all_items = []
-            all_items.extend(self._opcode_completions)
-            all_items.extend(self._keyword_completions)
-            all_items.extend(self._register_completions)
-            all_items.extend(self._build_labels_completions(doc))
-            # Add local symbols, labels, and macros
-            for label in doc.labels:
-                label_doc = doc.label_docstrings.get(label.lower())
-                all_items.append(
-                    CompletionItem(
-                        label=label,
-                        kind=CompletionItemKind.Function,
-                        detail="Label",
-                        documentation=label_doc,
-                    )
-                )
-
-            for symbol in doc.symbols:
-                all_items.append(CompletionItem(label=symbol, kind=CompletionItemKind.Variable, detail="Symbol"))
-
-            for macro_name in doc.macros:
-                macro_parameters = doc.macro_params.get(macro_name, [])
-                param_sig = f"({', '.join(macro_parameters)})" if params else ""
-                macro_doc = doc.macro_docstrings.get(macro_name.lower())
-                documentation = macro_doc or (
-                    f"User-defined macro with {len(macro_parameters)} parameters"
-                    if macro_parameters
-                    else "User-defined macro"
-                )
-                all_items.append(
-                    CompletionItem(
-                        label=macro_name,
-                        kind=CompletionItemKind.Function,
-                        detail=f"User Macro{param_sig}",
-                        documentation=documentation,
-                    )
-                )
-            workspace = self._ensure_workspace_index()
-            if workspace:
-                all_items.extend(self._build_workspace_label_completions(doc, workspace))
-                all_items.extend(self._build_workspace_symbol_completions(doc, workspace))
-                all_items.extend(self._build_workspace_macro_completions(doc, workspace))
-
-            # Filter by current word
-            if current_word:
-                filtered_items = [item for item in all_items if item.label.lower().startswith(current_word)]
-            else:
-                filtered_items = all_items
-
-            return CompletionList(is_incomplete=False, items=filtered_items[:50])  # Limit results
+            return self._handle_completions(params)
 
         @self.server.feature("textDocument/hover")
         async def hover(ls: LanguageServer, params: HoverParams) -> Hover | None:
-            """Provide hover information"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return None
-
-            line_num = params.position.line
-            if line_num >= len(doc.lines):
-                return None
-
-            line = doc.lines[line_num]
-            char_pos = params.position.character
-
-            # Find word at position
-            word_start = char_pos
-            while word_start > 0 and (line[word_start - 1].isalnum() or line[word_start - 1] == "_"):
-                word_start -= 1
-
-            word_end = char_pos
-            while word_end < len(line) and (line[word_end].isalnum() or line[word_end] == "_"):
-                word_end += 1
-
-            if word_start >= word_end:
-                return None
-
-            raw_word = line[word_start:word_end]
-            word = raw_word.lower()
-
-            # Check if it's an opcode
-            base_word = word.split(".")[0] if "." in word else word
-            if base_word in snes_opcode_table:
-                return Hover(
-                    contents=MarkupContent(
-                        kind=MarkupKind.Markdown,
-                        value=f"**{word.upper()}** - 65c816 Instruction\n\nSupported addressing modes: {len(snes_opcode_table[base_word])}",
-                    )
-                )
-
-            # Check if it's a keyword
-            if base_word in KEYWORDS:
-                return Hover(
-                    contents=MarkupContent(kind=MarkupKind.Markdown, value=f"**{word.upper()}** - Assembler directive")
-                )
-
-            workspace = self._ensure_workspace_index()
-
-            label_doc = doc.label_docstrings.get(word)
-            if not label_doc and workspace:
-                label_doc = workspace.get_label_doc(raw_word)
-            if label_doc:
-                return Hover(
-                    contents=MarkupContent(
-                        kind=MarkupKind.Markdown,
-                        value=f"**{raw_word}**\n\n{label_doc}",
-                    )
-                )
-
-            scope_doc = doc.scope_docstrings.get(word)
-            if not scope_doc and workspace:
-                scope_doc = workspace.get_scope_doc(raw_word)
-            if scope_doc:
-                return Hover(
-                    contents=MarkupContent(
-                        kind=MarkupKind.Markdown,
-                        value=f"**{raw_word}**\n\n{scope_doc}",
-                    )
-                )
-
-            macro_name = next((name for name in doc.macros if name.lower() == word), None)
-            if macro_name:
-                doc_text = doc.macro_docstrings.get(word)
-                if doc_text:
-                    param_list = doc.macro_params.get(macro_name, [])
-                    params_str = f"({', '.join(param_list)})" if param_list else "()"
-                    return Hover(
-                        contents=MarkupContent(
-                            kind=MarkupKind.Markdown,
-                            value=f"**{macro_name}{params_str}**\n\n{doc_text}",
-                        )
-                    )
-
-            if workspace:
-                macro_location = workspace.get_macro_location(raw_word)
-                if macro_location:
-                    _, actual_macro_name = macro_location
-                    doc_text = workspace.get_macro_doc(actual_macro_name)
-                    if doc_text:
-                        param_list = workspace.get_macro_params(actual_macro_name)
-                        params_str = f"({', '.join(param_list)})" if param_list else "()"
-                        return Hover(
-                            contents=MarkupContent(
-                                kind=MarkupKind.Markdown,
-                                value=f"**{actual_macro_name}{params_str}**\n\n{doc_text}",
-                            )
-                        )
-
-            return None
+            return self._handle_hover(params)
 
         @self.server.feature("textDocument/documentSymbol")
         async def document_symbols(ls: LanguageServer, params: DocumentSymbolParams) -> list[DocumentSymbol]:
-            """Provide document symbols (labels, macros, and symbols)"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return []
-
-            symbols = []
-
-            # Add labels
-            for label, (pos, file_uri) in doc.labels.items():
-                # Only include symbols from current document
-                if file_uri == params.text_document.uri:
-                    symbols.append(
-                        DocumentSymbol(
-                            name=label,
-                            kind=SymbolKind.Function,
-                            range=Range(start=pos, end=Position(line=pos.line, character=pos.character + len(label))),
-                            selection_range=Range(
-                                start=pos, end=Position(line=pos.line, character=pos.character + len(label))
-                            ),
-                        )
-                    )
-
-            # Add macros
-            for macro_name, (pos, file_uri) in doc.macros.items():
-                # Only include symbols from current document
-                if file_uri == params.text_document.uri:
-                    param_info = ""
-                    if macro_name in doc.macro_params:
-                        macro_parameters = doc.macro_params[macro_name]
-                        param_info = f"({', '.join(macro_parameters)})" if macro_parameters else "()"
-                    detail = None
-                    doc_text = doc.macro_docstrings.get(macro_name.lower())
-                    if doc_text:
-                        detail = doc_text.splitlines()[0]
-
-                    symbols.append(
-                        DocumentSymbol(
-                            name=f"{macro_name}{param_info}",
-                            kind=SymbolKind.Method,
-                            range=Range(
-                                start=pos, end=Position(line=pos.line, character=pos.character + len(macro_name))
-                            ),
-                            selection_range=Range(
-                                start=pos, end=Position(line=pos.line, character=pos.character + len(macro_name))
-                            ),
-                            detail=detail,
-                        )
-                    )
-
-            # Add symbols/variables
-            for symbol, (pos, file_uri) in doc.symbols.items():
-                # Only include symbols from current document
-                if file_uri == params.text_document.uri:
-                    symbols.append(
-                        DocumentSymbol(
-                            name=symbol,
-                            kind=SymbolKind.Variable,
-                            range=Range(start=pos, end=Position(line=pos.line, character=pos.character + len(symbol))),
-                            selection_range=Range(
-                                start=pos, end=Position(line=pos.line, character=pos.character + len(symbol))
-                            ),
-                        )
-                    )
-
-            return symbols
+            return self._handle_document_symbols(params)
 
         @self.server.feature("textDocument/definition")
         async def go_to_definition(ls: LanguageServer, params: TextDocumentPositionParams) -> list[Location] | None:
-            """Provide go-to-definition for labels, macros, and symbols"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return None
-
-            line_num = params.position.line
-            if line_num >= len(doc.lines):
-                return None
-
-            line = doc.lines[line_num]
-            char_pos = params.position.character
-
-            # Find word at position
-            word_start = char_pos
-            while word_start > 0 and (line[word_start - 1].isalnum() or line[word_start - 1] == "_"):
-                word_start -= 1
-
-            word_end = char_pos
-            while word_end < len(line) and (line[word_end].isalnum() or line[word_end] == "_"):
-                word_end += 1
-
-            if word_start >= word_end:
-                return None
-
-            word = line[word_start:word_end]
-
-            # If word is an extern declaration, skip local lookups and find actual definition
-            is_extern = word in doc.externs
-
-            # Check if it's a known label (skip if extern - it won't be here anyway)
-            if not is_extern and word in doc.labels:
-                pos, file_uri = doc.labels[word]
-                return [
-                    Location(
-                        uri=file_uri,
-                        range=Range(start=pos, end=Position(line=pos.line, character=pos.character + len(word))),
-                    )
-                ]
-
-            # Check if it's a known macro
-            if not is_extern and word in doc.macros:
-                pos, file_uri = doc.macros[word]
-                return [
-                    Location(
-                        uri=file_uri,
-                        range=Range(start=pos, end=Position(line=pos.line, character=pos.character + len(word))),
-                    )
-                ]
-
-            # Check if it's a known symbol (skip if extern - we want the actual definition)
-            if not is_extern and word in doc.symbols:
-                pos, file_uri = doc.symbols[word]
-                return [
-                    Location(
-                        uri=file_uri,
-                        range=Range(start=pos, end=Position(line=pos.line, character=pos.character + len(word))),
-                    )
-                ]
-
-            # Look in workspace for cross-file definitions (including extern symbols)
-            workspace = self._ensure_workspace_index()
-            if workspace:
-                label_location = workspace.get_label_location(word)
-                if label_location:
-                    return [label_location]
-                symbol_location = workspace.get_symbol_location(word)
-                if symbol_location:
-                    return [symbol_location]
-                macro_location = workspace.get_macro_location(word)
-                if macro_location:
-                    location, _ = macro_location
-                    return [location]
-
-            # Check if we're on an .include directive
-            include_location = self._check_include_directive(doc, line_num, char_pos, params.text_document.uri)
-            if include_location:
-                return [include_location]
-
-            return None
+            return self._handle_definition(params)
 
         @self.server.feature("workspace/symbol")
         async def workspace_symbol(ls: LanguageServer, params: WorkspaceSymbolParams) -> list[SymbolInformation]:
-            """Provide workspace-wide symbol lookup"""
-            workspace = self._ensure_workspace_index()
-            if not workspace:
-                return []
-
-            query = (params.query or "").strip().lower()
-            results: list[SymbolInformation] = []
-
-            def matches(name: str) -> bool:
-                return not query or query in name.lower()
-
-            for label, (position, uri) in workspace.labels.items():
-                if not matches(label):
-                    continue
-                end = Position(line=position.line, character=position.character + len(label))
-                container = self._workspace_container_name(uri, workspace)
-                results.append(
-                    SymbolInformation(
-                        name=label,
-                        kind=SymbolKind.Function,
-                        location=Location(uri=uri, range=Range(start=position, end=end)),
-                        container_name=container,
-                    )
-                )
-
-            for symbol, (position, uri) in workspace.symbols.items():
-                if not matches(symbol):
-                    continue
-                end = Position(line=position.line, character=position.character + len(symbol))
-                container = self._workspace_container_name(uri, workspace)
-                results.append(
-                    SymbolInformation(
-                        name=symbol,
-                        kind=SymbolKind.Variable,
-                        location=Location(uri=uri, range=Range(start=position, end=end)),
-                        container_name=container,
-                    )
-                )
-
-            for macro, (position, uri) in workspace.macros.items():
-                if not matches(macro):
-                    continue
-                end = Position(line=position.line, character=position.character + len(macro))
-                container = self._workspace_container_name(uri, workspace)
-                results.append(
-                    SymbolInformation(
-                        name=macro,
-                        kind=SymbolKind.Method,
-                        location=Location(uri=uri, range=Range(start=position, end=end)),
-                        container_name=container,
-                    )
-                )
-
-            return results[:100]
+            return self._handle_workspace_symbol(params)
 
         @self.server.feature("textDocument/references")
         async def find_references(ls: LanguageServer, params: ReferenceParams) -> list[Location] | None:
-            """Find all references to a symbol"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return None
-
-            line_num = params.position.line
-            if line_num >= len(doc.lines):
-                return None
-
-            line = doc.lines[line_num]
-            char_pos = params.position.character
-
-            # Find word at position
-            word_start = char_pos
-            while word_start > 0 and (line[word_start - 1].isalnum() or line[word_start - 1] == "_"):
-                word_start -= 1
-
-            word_end = char_pos
-            while word_end < len(line) and (line[word_end].isalnum() or line[word_end] == "_"):
-                word_end += 1
-
-            if word_start >= word_end:
-                return None
-
-            word = line[word_start:word_end]
-
-            # Find all references to this word
-            include_declaration = getattr(getattr(params, "context", None), "include_declaration", True)
-            pattern = re.compile(r"\b" + re.escape(word) + r"\b")
-
-            references: list[Location] = []
-            seen: set[tuple[str, int, int]] = set()
-
-            def add_references_from_document(document: A816Document, uri: str) -> None:
-                for i, doc_line in enumerate(document.lines):
-                    for match in pattern.finditer(doc_line):
-                        start = Position(line=i, character=match.start())
-                        end = Position(line=i, character=match.end())
-                        key = (uri, i, match.start())
-                        if key in seen:
-                            continue
-                        references.append(Location(uri=uri, range=Range(start=start, end=end)))
-                        seen.add(key)
-
-            add_references_from_document(doc, params.text_document.uri)
-
-            workspace = self._ensure_workspace_index()
-            if workspace:
-                for uri, workspace_doc in workspace.documents.items():
-                    if uri == params.text_document.uri:
-                        continue
-                    add_references_from_document(workspace_doc, uri)
-
-            if not references:
-                return None
-
-            if not include_declaration:
-                definition_locations: set[tuple[str, int, int]] = set()
-
-                def collect_definition_locations(document: A816Document, uri: str) -> None:
-                    for container in (document.labels, document.symbols, document.macros):
-                        for name, (position, _) in container.items():
-                            if name == word:
-                                definition_locations.add((uri, position.line, position.character))
-
-                collect_definition_locations(doc, params.text_document.uri)
-
-                if workspace:
-                    for name, (position, uri) in workspace.labels.items():
-                        if name == word:
-                            definition_locations.add((uri, position.line, position.character))
-                    for name, (position, uri) in workspace.symbols.items():
-                        if name == word:
-                            definition_locations.add((uri, position.line, position.character))
-                    for name, (position, uri) in workspace.macros.items():
-                        if name == word:
-                            definition_locations.add((uri, position.line, position.character))
-
-                references = [
-                    loc
-                    for loc in references
-                    if (loc.uri, loc.range.start.line, loc.range.start.character) not in definition_locations
-                ]
-
-            return references if references else None
+            return self._handle_references(params)
 
         @self.server.feature("textDocument/signatureHelp")
         async def signature_help(ls: LanguageServer, params: SignatureHelpParams) -> SignatureHelp | None:
-            """Provide signature help for instructions"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return None
-
-            line_num = params.position.line
-            if line_num >= len(doc.lines):
-                return None
-
-            line = doc.lines[line_num][: params.position.character]
-
-            # Find the current instruction
-            words = line.strip().split()
-            if not words:
-                return None
-
-            # Skip label if present
-            if words[0].endswith(":"):
-                words = words[1:]
-
-            if not words:
-                return None
-
-            opcode = words[0].lower()
-            base_opcode = opcode.split(".")[0] if "." in opcode else opcode
-
-            if base_opcode in snes_opcode_table:
-                addressing_modes = snes_opcode_table[base_opcode]
-                mode_descriptions = []
-
-                for mode, _ in addressing_modes.items():
-                    if mode == AddressingMode.none:
-                        mode_descriptions.append("No operand")
-                    elif mode == AddressingMode.immediate:
-                        mode_descriptions.append("#value")
-                    elif mode == AddressingMode.direct:
-                        mode_descriptions.append("address")
-                    elif mode == AddressingMode.direct_indexed:
-                        mode_descriptions.append("address,X or address,Y")
-                    elif mode == AddressingMode.indirect:
-                        mode_descriptions.append("(address)")
-                    elif mode == AddressingMode.indirect_indexed:
-                        mode_descriptions.append("(address),Y")
-                    elif mode == AddressingMode.indirect_long:
-                        mode_descriptions.append("[address]")
-                    else:
-                        mode_descriptions.append(str(mode.name))
-
-                signature_info = SignatureInformation(
-                    label=f"{opcode.upper()}",
-                    documentation=f"Supported addressing modes: {', '.join(mode_descriptions)}",
-                )
-
-                return SignatureHelp(signatures=[signature_info], active_signature=0, active_parameter=0)
-
-            return None
+            return self._handle_signature_help(params)
 
         @self.server.feature(
             "textDocument/semanticTokens/full",
@@ -1461,56 +899,491 @@ class A816LanguageServer:
             ),
         )
         async def semantic_tokens_full(ls: LanguageServer, params: SemanticTokensParams) -> SemanticTokens | None:
-            """Provide semantic tokens for syntax highlighting"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return None
-
-            tokens = self._analyze_semantic_tokens(doc)
-            return SemanticTokens(data=tokens)
+            return self._handle_semantic_tokens_full(params)
 
         @self.server.feature("textDocument/formatting")
         async def format_document(ls: LanguageServer, params: DocumentFormattingParams) -> list[TextEdit] | None:
-            """Format entire document"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return None
-
-            # Create formatting options from LSP formatting options
-            formatting_options = self._create_formatting_options(params.options)
-            original_formatter = self.formatter
-            self.formatter = A816Formatter(formatting_options)
-
-            try:
-                # Format the document content
-                formatted_content = self.formatter.format_text(doc.content)
-
-                # Create a text edit that replaces the entire document
-                if formatted_content != doc.content:
-                    full_range = self._full_document_range(doc)
-                    return [TextEdit(range=full_range, new_text=formatted_content)]
-                else:
-                    return []
-            except FormattingError as exc:
-                logger.error("Formatter failed for %s: %s", doc.uri, exc)
-                self.server.show_message(str(exc), MessageType.Error)
-                return []
-            finally:
-                # Restore original formatter
-                self.formatter = original_formatter
+            return self._handle_format_document(params)
 
         @self.server.feature("textDocument/rangeFormatting")
         async def format_range(ls: LanguageServer, params: DocumentRangeFormattingParams) -> list[TextEdit] | None:
-            """Format document range"""
-            doc = self.documents.get(params.text_document.uri)
-            if not doc:
-                return None
-
-            # For simplicity, format the entire document for now
-            # In a more advanced implementation, you could extract and format only the selected range
-            return await format_document(
-                ls, DocumentFormattingParams(text_document=params.text_document, options=params.options)
+            return self._handle_format_document(
+                DocumentFormattingParams(text_document=params.text_document, options=params.options)
             )
+
+    def _handle_did_open(self, params: DidOpenTextDocumentParams) -> None:
+        workspace = self._ensure_workspace_index()
+        include_paths = workspace.include_paths if workspace else []
+        doc = A816Document(params.text_document.uri, params.text_document.text, include_paths=include_paths)
+        self.documents[params.text_document.uri] = doc
+        if workspace:
+            workspace.replace_document(doc)
+        self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+
+    def _apply_content_changes(self, doc: A816Document, changes: list[Any]) -> str:
+        current_content = doc.content
+        for change in changes:
+            if isinstance(change, TextDocumentContentChangeEvent_Type2):
+                current_content = change.text
+                logger.debug("Full document replacement")
+            else:
+                logger.debug(f"Incremental change at {change.range.start.line}:{change.range.start.character}")
+                current_content = self._apply_text_change(current_content, change)
+        return current_content
+
+    def _handle_did_change(self, params: DidChangeTextDocumentParams) -> None:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc or not params.content_changes:
+            return
+        doc.update_content(self._apply_content_changes(doc, list(params.content_changes)))
+        workspace = self._ensure_workspace_index()
+        if workspace:
+            workspace.replace_document(doc)
+        self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+        try:
+            self.server.send_notification("workspace/semanticTokens/refresh")
+        except (AttributeError, RuntimeError) as e:
+            logger.debug(f"Could not refresh semantic tokens: {e}")
+
+    def _handle_did_close(self, params: DidCloseTextDocumentParams) -> None:
+        self.documents.pop(params.text_document.uri, None)
+        workspace = self._ensure_workspace_index()
+        if workspace:
+            workspace.reload_document_from_disk(params.text_document.uri)
+
+    def _handle_did_save(self, params: DidSaveTextDocumentParams) -> None:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return
+        if params.text is not None:
+            doc.update_content(params.text)
+        else:
+            doc.analyze()
+        workspace = self._ensure_workspace_index()
+        if workspace:
+            workspace.replace_document(doc)
+        self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+
+    def _local_completions(self, doc: A816Document) -> list[CompletionItem]:
+        items: list[CompletionItem] = []
+        for label in doc.labels:
+            items.append(
+                CompletionItem(
+                    label=label,
+                    kind=CompletionItemKind.Function,
+                    detail="Label",
+                    documentation=doc.label_docstrings.get(label.lower()),
+                )
+            )
+        for symbol in doc.symbols:
+            items.append(CompletionItem(label=symbol, kind=CompletionItemKind.Variable, detail="Symbol"))
+        for macro_name in doc.macros:
+            macro_parameters = doc.macro_params.get(macro_name, [])
+            param_sig = f"({', '.join(macro_parameters)})" if macro_parameters else "()"
+            macro_doc = doc.macro_docstrings.get(macro_name.lower())
+            documentation = macro_doc or (
+                f"User-defined macro with {len(macro_parameters)} parameters"
+                if macro_parameters
+                else "User-defined macro"
+            )
+            items.append(
+                CompletionItem(
+                    label=macro_name,
+                    kind=CompletionItemKind.Function,
+                    detail=f"User Macro{param_sig}",
+                    documentation=documentation,
+                )
+            )
+        return items
+
+    def _handle_completions(self, params: CompletionParams) -> CompletionList:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return CompletionList(is_incomplete=False, items=[])
+        line_num = params.position.line
+        if line_num >= len(doc.lines):
+            return CompletionList(is_incomplete=False, items=[])
+
+        line = doc.lines[line_num]
+        char_pos = params.position.character
+        word_start = char_pos
+        while word_start > 0 and line[word_start - 1].isalnum():
+            word_start -= 1
+        current_word = line[word_start:char_pos].lower()
+
+        all_items: list[CompletionItem] = []
+        all_items.extend(self._opcode_completions)
+        all_items.extend(self._keyword_completions)
+        all_items.extend(self._register_completions)
+        all_items.extend(self._build_labels_completions(doc))
+        all_items.extend(self._local_completions(doc))
+        workspace = self._ensure_workspace_index()
+        if workspace:
+            all_items.extend(self._build_workspace_label_completions(doc, workspace))
+            all_items.extend(self._build_workspace_symbol_completions(doc, workspace))
+            all_items.extend(self._build_workspace_macro_completions(doc, workspace))
+
+        filtered = (
+            [item for item in all_items if item.label.lower().startswith(current_word)] if current_word else all_items
+        )
+        return CompletionList(is_incomplete=False, items=filtered[:50])
+
+    @staticmethod
+    def _word_span(line: str, char_pos: int) -> tuple[int, int]:
+        start = char_pos
+        while start > 0 and (line[start - 1].isalnum() or line[start - 1] == "_"):
+            start -= 1
+        end = char_pos
+        while end < len(line) and (line[end].isalnum() or line[end] == "_"):
+            end += 1
+        return start, end
+
+    @staticmethod
+    def _markdown_hover(value: str) -> Hover:
+        return Hover(contents=MarkupContent(kind=MarkupKind.Markdown, value=value))
+
+    def _hover_for_opcode_or_keyword(self, base_word: str, word: str) -> Hover | None:
+        if base_word in snes_opcode_table:
+            return self._markdown_hover(
+                f"**{word.upper()}** - 65c816 Instruction\n\nSupported addressing modes: {len(snes_opcode_table[base_word])}"
+            )
+        if base_word in KEYWORDS:
+            return self._markdown_hover(f"**{word.upper()}** - Assembler directive")
+        return None
+
+    def _hover_for_label_or_scope(
+        self, doc: A816Document, workspace: WorkspaceIndex | None, raw_word: str, word: str
+    ) -> Hover | None:
+        label_doc = doc.label_docstrings.get(word) or (workspace.get_label_doc(raw_word) if workspace else None)
+        if label_doc:
+            return self._markdown_hover(f"**{raw_word}**\n\n{label_doc}")
+        scope_doc = doc.scope_docstrings.get(word) or (workspace.get_scope_doc(raw_word) if workspace else None)
+        if scope_doc:
+            return self._markdown_hover(f"**{raw_word}**\n\n{scope_doc}")
+        return None
+
+    def _hover_for_macro(
+        self, doc: A816Document, workspace: WorkspaceIndex | None, raw_word: str, word: str
+    ) -> Hover | None:
+        macro_name = next((name for name in doc.macros if name.lower() == word), None)
+        if macro_name:
+            doc_text = doc.macro_docstrings.get(word)
+            if doc_text:
+                params_str = self._format_macro_params(doc.macro_params.get(macro_name, []))
+                return self._markdown_hover(f"**{macro_name}{params_str}**\n\n{doc_text}")
+        if workspace:
+            macro_location = workspace.get_macro_location(raw_word)
+            if macro_location:
+                _, actual = macro_location
+                doc_text = workspace.get_macro_doc(actual)
+                if doc_text:
+                    params_str = self._format_macro_params(workspace.get_macro_params(actual))
+                    return self._markdown_hover(f"**{actual}{params_str}**\n\n{doc_text}")
+        return None
+
+    @staticmethod
+    def _format_macro_params(param_list: list[str]) -> str:
+        return f"({', '.join(param_list)})" if param_list else "()"
+
+    def _handle_hover(self, params: HoverParams) -> Hover | None:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return None
+        line_num = params.position.line
+        if line_num >= len(doc.lines):
+            return None
+        line = doc.lines[line_num]
+        word_start, word_end = self._word_span(line, params.position.character)
+        if word_start >= word_end:
+            return None
+        raw_word = line[word_start:word_end]
+        word = raw_word.lower()
+        base_word = word.split(".")[0] if "." in word else word
+
+        opcode_or_keyword = self._hover_for_opcode_or_keyword(base_word, word)
+        if opcode_or_keyword:
+            return opcode_or_keyword
+        workspace = self._ensure_workspace_index()
+        return self._hover_for_label_or_scope(doc, workspace, raw_word, word) or self._hover_for_macro(
+            doc, workspace, raw_word, word
+        )
+
+    @staticmethod
+    def _doc_symbol_range(pos: Position, name_len: int) -> Range:
+        return Range(start=pos, end=Position(line=pos.line, character=pos.character + name_len))
+
+    def _doc_symbols_for_labels(self, doc: A816Document, uri: str) -> list[DocumentSymbol]:
+        return [
+            DocumentSymbol(
+                name=label,
+                kind=SymbolKind.Function,
+                range=self._doc_symbol_range(pos, len(label)),
+                selection_range=self._doc_symbol_range(pos, len(label)),
+            )
+            for label, (pos, file_uri) in doc.labels.items()
+            if file_uri == uri
+        ]
+
+    def _doc_symbols_for_macros(self, doc: A816Document, uri: str) -> list[DocumentSymbol]:
+        symbols: list[DocumentSymbol] = []
+        for macro_name, (pos, file_uri) in doc.macros.items():
+            if file_uri != uri:
+                continue
+            param_info = (
+                self._format_macro_params(doc.macro_params.get(macro_name, []))
+                if macro_name in doc.macro_params
+                else ""
+            )
+            doc_text = doc.macro_docstrings.get(macro_name.lower())
+            detail = doc_text.splitlines()[0] if doc_text else None
+            symbols.append(
+                DocumentSymbol(
+                    name=f"{macro_name}{param_info}",
+                    kind=SymbolKind.Method,
+                    range=self._doc_symbol_range(pos, len(macro_name)),
+                    selection_range=self._doc_symbol_range(pos, len(macro_name)),
+                    detail=detail,
+                )
+            )
+        return symbols
+
+    def _doc_symbols_for_symbols(self, doc: A816Document, uri: str) -> list[DocumentSymbol]:
+        return [
+            DocumentSymbol(
+                name=symbol,
+                kind=SymbolKind.Variable,
+                range=self._doc_symbol_range(pos, len(symbol)),
+                selection_range=self._doc_symbol_range(pos, len(symbol)),
+            )
+            for symbol, (pos, file_uri) in doc.symbols.items()
+            if file_uri == uri
+        ]
+
+    def _handle_document_symbols(self, params: DocumentSymbolParams) -> list[DocumentSymbol]:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return []
+        uri = params.text_document.uri
+        return [
+            *self._doc_symbols_for_labels(doc, uri),
+            *self._doc_symbols_for_macros(doc, uri),
+            *self._doc_symbols_for_symbols(doc, uri),
+        ]
+
+    @staticmethod
+    def _location_for(pos: Position, file_uri: str, word_len: int) -> Location:
+        return Location(
+            uri=file_uri,
+            range=Range(start=pos, end=Position(line=pos.line, character=pos.character + word_len)),
+        )
+
+    def _local_definition(self, doc: A816Document, word: str) -> Location | None:
+        for container in (doc.labels, doc.macros, doc.symbols):
+            if word in container:
+                pos, file_uri = container[word]
+                return self._location_for(pos, file_uri, len(word))
+        return None
+
+    @staticmethod
+    def _workspace_definition(workspace: WorkspaceIndex, word: str) -> Location | None:
+        location = workspace.get_label_location(word) or workspace.get_symbol_location(word)
+        if location:
+            return location
+        macro_location = workspace.get_macro_location(word)
+        return macro_location[0] if macro_location else None
+
+    def _handle_definition(self, params: TextDocumentPositionParams) -> list[Location] | None:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return None
+        line_num = params.position.line
+        if line_num >= len(doc.lines):
+            return None
+        line = doc.lines[line_num]
+        word_start, word_end = self._word_span(line, params.position.character)
+        if word_start >= word_end:
+            return None
+        word = line[word_start:word_end]
+
+        if word not in doc.externs:
+            local = self._local_definition(doc, word)
+            if local:
+                return [local]
+        workspace = self._ensure_workspace_index()
+        if workspace:
+            ws_location = self._workspace_definition(workspace, word)
+            if ws_location:
+                return [ws_location]
+        include_location = self._check_include_directive(
+            doc, line_num, params.position.character, params.text_document.uri
+        )
+        return [include_location] if include_location else None
+
+    def _workspace_symbol_entries(
+        self,
+        items: dict[str, tuple[Position, str]],
+        kind: SymbolKind,
+        query: str,
+        workspace: WorkspaceIndex,
+    ) -> list[SymbolInformation]:
+        results: list[SymbolInformation] = []
+        for name, (position, uri) in items.items():
+            if query and query not in name.lower():
+                continue
+            end = Position(line=position.line, character=position.character + len(name))
+            results.append(
+                SymbolInformation(
+                    name=name,
+                    kind=kind,
+                    location=Location(uri=uri, range=Range(start=position, end=end)),
+                    container_name=self._workspace_container_name(uri, workspace),
+                )
+            )
+        return results
+
+    def _handle_workspace_symbol(self, params: WorkspaceSymbolParams) -> list[SymbolInformation]:
+        workspace = self._ensure_workspace_index()
+        if not workspace:
+            return []
+        query = (params.query or "").strip().lower()
+        results = self._workspace_symbol_entries(workspace.labels, SymbolKind.Function, query, workspace)
+        results.extend(self._workspace_symbol_entries(workspace.symbols, SymbolKind.Variable, query, workspace))
+        results.extend(self._workspace_symbol_entries(workspace.macros, SymbolKind.Method, query, workspace))
+        return results[:100]
+
+    @staticmethod
+    def _refs_in_document(
+        document: A816Document, uri: str, pattern: re.Pattern[str], seen: set[tuple[str, int, int]]
+    ) -> list[Location]:
+        out: list[Location] = []
+        for i, doc_line in enumerate(document.lines):
+            for match in pattern.finditer(doc_line):
+                key = (uri, i, match.start())
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    Location(
+                        uri=uri,
+                        range=Range(
+                            start=Position(line=i, character=match.start()),
+                            end=Position(line=i, character=match.end()),
+                        ),
+                    )
+                )
+        return out
+
+    @staticmethod
+    def _collect_definition_locations(
+        doc: A816Document, uri: str, word: str, workspace: WorkspaceIndex | None
+    ) -> set[tuple[str, int, int]]:
+        defs: set[tuple[str, int, int]] = set()
+        for container in (doc.labels, doc.symbols, doc.macros):
+            for name, (position, _) in container.items():
+                if name == word:
+                    defs.add((uri, position.line, position.character))
+        if workspace:
+            for store in (workspace.labels, workspace.symbols, workspace.macros):
+                for name, (position, store_uri) in store.items():
+                    if name == word:
+                        defs.add((store_uri, position.line, position.character))
+        return defs
+
+    def _handle_references(self, params: ReferenceParams) -> list[Location] | None:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return None
+        line_num = params.position.line
+        if line_num >= len(doc.lines):
+            return None
+        line = doc.lines[line_num]
+        word_start, word_end = self._word_span(line, params.position.character)
+        if word_start >= word_end:
+            return None
+        word = line[word_start:word_end]
+        include_declaration = getattr(getattr(params, "context", None), "include_declaration", True)
+        pattern = re.compile(r"\b" + re.escape(word) + r"\b")
+        seen: set[tuple[str, int, int]] = set()
+        references = self._refs_in_document(doc, params.text_document.uri, pattern, seen)
+        workspace = self._ensure_workspace_index()
+        if workspace:
+            for uri, ws_doc in workspace.documents.items():
+                if uri == params.text_document.uri:
+                    continue
+                references.extend(self._refs_in_document(ws_doc, uri, pattern, seen))
+        if not references:
+            return None
+        if not include_declaration:
+            defs = self._collect_definition_locations(doc, params.text_document.uri, word, workspace)
+            references = [
+                loc for loc in references if (loc.uri, loc.range.start.line, loc.range.start.character) not in defs
+            ]
+        return references or None
+
+    @staticmethod
+    def _addressing_mode_label(mode: AddressingMode) -> str:
+        labels = {
+            AddressingMode.none: "No operand",
+            AddressingMode.immediate: "#value",
+            AddressingMode.direct: "address",
+            AddressingMode.direct_indexed: "address,X or address,Y",
+            AddressingMode.indirect: "(address)",
+            AddressingMode.indirect_indexed: "(address),Y",
+            AddressingMode.indirect_long: "[address]",
+        }
+        return labels.get(mode, str(mode.name))
+
+    def _handle_signature_help(self, params: SignatureHelpParams) -> SignatureHelp | None:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return None
+        line_num = params.position.line
+        if line_num >= len(doc.lines):
+            return None
+        line = doc.lines[line_num][: params.position.character]
+        words = line.strip().split()
+        if not words:
+            return None
+        if words[0].endswith(":"):
+            words = words[1:]
+        if not words:
+            return None
+        opcode = words[0].lower()
+        base_opcode = opcode.split(".")[0] if "." in opcode else opcode
+        if base_opcode not in snes_opcode_table:
+            return None
+        addressing_modes = snes_opcode_table[base_opcode]
+        mode_descriptions = [self._addressing_mode_label(mode) for mode in addressing_modes]
+        signature_info = SignatureInformation(
+            label=f"{opcode.upper()}",
+            documentation=f"Supported addressing modes: {', '.join(mode_descriptions)}",
+        )
+        return SignatureHelp(signatures=[signature_info], active_signature=0, active_parameter=0)
+
+    def _handle_semantic_tokens_full(self, params: SemanticTokensParams) -> SemanticTokens | None:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return None
+        return SemanticTokens(data=self._analyze_semantic_tokens(doc))
+
+    def _handle_format_document(self, params: DocumentFormattingParams) -> list[TextEdit] | None:
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return None
+        formatting_options = self._create_formatting_options(params.options)
+        original_formatter = self.formatter
+        self.formatter = A816Formatter(formatting_options)
+        try:
+            formatted_content = self.formatter.format_text(doc.content)
+            if formatted_content != doc.content:
+                return [TextEdit(range=self._full_document_range(doc), new_text=formatted_content)]
+            return []
+        except FormattingError as exc:
+            logger.error("Formatter failed for %s: %s", doc.uri, exc)
+            self.server.show_message(str(exc), MessageType.Error)
+            return []
+        finally:
+            self.formatter = original_formatter
 
     def _create_formatting_options(self, lsp_options: LSPFormattingOptions) -> FormattingOptions:
         """Convert LSP formatting options to A816 formatting options"""
