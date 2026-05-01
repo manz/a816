@@ -246,125 +246,104 @@ class A816Document:
 
         self._visit_children(node)
 
-    def _collect_docstrings(self) -> None:
-        """Associate docstrings with labels, macros, and scopes"""
-        self.label_docstrings.clear()
+    def _set_docstring(self, target: tuple[str, str], text: str) -> None:
+        cleaned = text.strip()
+        if not cleaned:
+            return
+        kind, name = target
+        store = {
+            "label": self.label_docstrings,
+            "macro": self.macro_docstrings,
+            "scope": self.scope_docstrings,
+        }.get(kind)
+        if store is not None:
+            store[name] = cleaned
 
-        def set_doc(target: tuple[str, str], text: str) -> None:
-            cleaned = text.strip()
-            if not cleaned:
-                return
-            kind, name = target
-            if kind == "label":
-                self.label_docstrings[name] = cleaned
-            elif kind == "macro":
-                self.macro_docstrings[name] = cleaned
-            elif kind == "scope":
-                self.scope_docstrings[name] = cleaned
-
-        def collect_nodes(
-            nodes: list[AstNode], pending_doc: str | None = None, pending_target: tuple[str, str] | None = None
-        ) -> tuple[str | None, tuple[str, str] | None]:
-            doc_buffer = pending_doc
-            target = pending_target
-
-            for node in nodes:
-                if isinstance(node, DocstringAstNode):
-                    text = node.text.strip()
-                    if not text:
-                        continue
-                    if target:
-                        set_doc(target, text)
-                        target = None
-                    else:
-                        doc_buffer = text
-                    continue
-
-                doc_buffer, target = handle_node(node, doc_buffer, target)
-
-            return doc_buffer, target
-
-        def collect_block(
-            block: AstNode | list[AstNode] | None,
-            pending_doc: str | None = None,
-            pending_target: tuple[str, str] | None = None,
-        ) -> tuple[str | None, tuple[str, str] | None]:
-            if block is None:
-                return pending_doc, pending_target
-            if isinstance(block, BlockAstNode):
-                return collect_nodes(block.body, pending_doc, pending_target)
-            if isinstance(block, CompoundAstNode):
-                return collect_nodes(block.body, pending_doc, pending_target)
-            if isinstance(block, list):
-                return collect_nodes(block, pending_doc, pending_target)
-            if isinstance(block, AstNode):
-                return collect_nodes([block], pending_doc, pending_target)
+    def _docstrings_collect_block(
+        self,
+        block: AstNode | list[AstNode] | None,
+        pending_doc: str | None = None,
+        pending_target: tuple[str, str] | None = None,
+    ) -> tuple[str | None, tuple[str, str] | None]:
+        if block is None:
             return pending_doc, pending_target
+        if isinstance(block, BlockAstNode | CompoundAstNode):
+            return self._docstrings_collect_nodes(block.body, pending_doc, pending_target)
+        if isinstance(block, list):
+            return self._docstrings_collect_nodes(block, pending_doc, pending_target)
+        if isinstance(block, AstNode):
+            return self._docstrings_collect_nodes([block], pending_doc, pending_target)
+        return pending_doc, pending_target
 
-        def handle_node(
-            node: AstNode, doc_buffer: str | None, target: tuple[str, str] | None
-        ) -> tuple[str | None, tuple[str, str] | None]:
-            buffer = doc_buffer
-            pending_target = target
+    def _docstrings_handle_targeted(
+        self, kind: str, name: str, doc_text: str | None, buffer: str | None
+    ) -> tuple[str | None, tuple[str, str] | None]:
+        key = (kind, name)
+        text = (doc_text or buffer or "").strip()
+        if text:
+            self._set_docstring(key, text)
+            return None, None
+        return buffer, key
 
-            if isinstance(node, LabelAstNode):
-                key = ("label", node.label.lower())
-                if buffer:
-                    set_doc(key, buffer)
-                    buffer = None
-                    pending_target = None
-                else:
-                    pending_target = key
-                return buffer, pending_target
+    def _docstrings_handle_node(
+        self, node: AstNode, doc_buffer: str | None, target: tuple[str, str] | None
+    ) -> tuple[str | None, tuple[str, str] | None]:
+        if isinstance(node, LabelAstNode):
+            return self._docstrings_handle_targeted("label", node.label.lower(), None, doc_buffer)
+        if isinstance(node, MacroAstNode):
+            buffer, pending = self._docstrings_handle_targeted("macro", node.name.lower(), node.docstring, doc_buffer)
+            self._docstrings_collect_block(node.block)
+            return buffer, pending
+        if isinstance(node, ScopeAstNode):
+            buffer, pending = self._docstrings_handle_targeted("scope", node.name.lower(), node.docstring, doc_buffer)
+            self._docstrings_collect_block(node.body)
+            return buffer, pending
+        if isinstance(node, CompoundAstNode | BlockAstNode):
+            return self._docstrings_collect_nodes(node.body, doc_buffer, target)
+        if isinstance(node, IncludeAstNode):
+            included = [child for child in node.included_nodes if isinstance(child, AstNode)]
+            self._docstrings_collect_nodes(included)
+            return doc_buffer, None
+        if isinstance(node, CommentAstNode):
+            return doc_buffer, target
+        body = getattr(node, "body", None)
+        if isinstance(body, list):
+            self._docstrings_collect_nodes(body)
+        block = getattr(node, "block", None)
+        if block is not None:
+            self._docstrings_collect_block(block)
+        else_block = getattr(node, "else_block", None)
+        if else_block is not None:
+            self._docstrings_collect_block(else_block)
+        return doc_buffer, None
 
-            if isinstance(node, MacroAstNode):
-                key = ("macro", node.name.lower())
-                doc_text = (node.docstring or buffer or "").strip()
-                if doc_text:
-                    set_doc(key, doc_text)
-                    buffer = None
-                    pending_target = None
-                else:
-                    pending_target = key
-                collect_block(node.block)
-                return buffer, pending_target
+    def _docstrings_handle_docstring(
+        self, node: DocstringAstNode, doc_buffer: str | None, target: tuple[str, str] | None
+    ) -> tuple[str | None, tuple[str, str] | None]:
+        text = node.text.strip()
+        if not text:
+            return doc_buffer, target
+        if target:
+            self._set_docstring(target, text)
+            return doc_buffer, None
+        return text, target
 
-            if isinstance(node, ScopeAstNode):
-                key = ("scope", node.name.lower())
-                doc_text = (node.docstring or buffer or "").strip()
-                if doc_text:
-                    set_doc(key, doc_text)
-                    buffer = None
-                    pending_target = None
-                else:
-                    pending_target = key
-                collect_block(node.body)
-                return buffer, pending_target
+    def _docstrings_collect_nodes(
+        self, nodes: list[AstNode], pending_doc: str | None = None, pending_target: tuple[str, str] | None = None
+    ) -> tuple[str | None, tuple[str, str] | None]:
+        doc_buffer = pending_doc
+        target = pending_target
+        for node in nodes:
+            if isinstance(node, DocstringAstNode):
+                doc_buffer, target = self._docstrings_handle_docstring(node, doc_buffer, target)
+                continue
+            doc_buffer, target = self._docstrings_handle_node(node, doc_buffer, target)
+        return doc_buffer, target
 
-            if isinstance(node, CompoundAstNode):
-                return collect_nodes(node.body, buffer, pending_target)
-
-            if isinstance(node, BlockAstNode):
-                return collect_nodes(node.body, buffer, pending_target)
-
-            if isinstance(node, IncludeAstNode):
-                included_nodes = [child for child in node.included_nodes if isinstance(child, AstNode)]
-                collect_nodes(included_nodes)
-                return buffer, None
-
-            if isinstance(node, CommentAstNode):
-                return buffer, pending_target
-
-            if hasattr(node, "body") and isinstance(node.body, list):
-                collect_nodes(node.body)
-            if hasattr(node, "block"):
-                collect_block(node.block)
-            if hasattr(node, "else_block"):
-                collect_block(node.else_block)
-
-            return buffer, None
-
-        collect_nodes(self.ast_nodes)
+    def _collect_docstrings(self) -> None:
+        """Associate docstrings with labels, macros, and scopes."""
+        self.label_docstrings.clear()
+        self._docstrings_collect_nodes(self.ast_nodes)
 
     def _get_file_uri_for_token(self, token: Token) -> str:
         """Get the file URI for a token, handling both current and included files"""
