@@ -689,10 +689,16 @@ far_label:
             assert patched[0] | (patched[1] << 8) == target
 
     def test_multi_region_module_writes_multiple_ips_blocks(self) -> None:
-        """Linking a multi-region module emits one IPS block per region."""
+        """Linking a multi-region module emits one IPS block per region.
+
+        IPS records are keyed by physical (file) offset, so logical
+        SNES addresses must go through the LoROM bus mapping at the
+        write boundary — the same translation Program.emit() applies
+        via resolver.pc.
+        """
         source = """*=0x008000
 .db 0x11, 0x22
-*=0x018000
+*=0x028000
 .db 0x33
 """
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -706,6 +712,10 @@ far_label:
             assert Program().link_as_patch(linked, ips_path) == 0
             content = ips_path.read_bytes()
             assert content.startswith(b"PATCH")
-            # Both region bases must show up as IPS block headers (24-bit big-endian).
-            assert b"\x00\x80\x00" in content  # 0x008000
-            assert b"\x01\x80\x00" in content  # 0x018000
+            # Headers are 24-bit big-endian physical offsets:
+            #   *=0x008000 (LoROM) → physical 0x000000
+            #   *=0x028000 (LoROM) → physical 0x010000
+            # Length 2 then payload "\x11\x22" for region 0,
+            # length 1 then "\x33" for region 1.
+            assert b"\x00\x00\x00\x00\x02\x11\x22" in content
+            assert b"\x01\x00\x00\x00\x01\x33" in content

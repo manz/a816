@@ -130,6 +130,28 @@ class Program:
             previous_pc = node.pc_after(previous_pc)
         self.resolver_reset()
 
+    def _to_physical(self, logical_address: int) -> int:
+        """Translate a logical SNES bus address to its physical ROM offset.
+
+        IPS/SFC writers expect physical (file) offsets. The legacy emit()
+        path got this for free because resolver.pc tracks physical, but
+        regions carry logical bases — convert at the write boundary.
+
+        Falls back to the logical address if no mapping is configured for
+        the current rom_type (some rom types have no default bus); the
+        caller would have written the logical address pre-multi-region
+        anyway, so the fallback preserves existing behavior.
+        """
+        try:
+            bus = self.resolver.get_bus()
+            addr = bus.get_address(logical_address)
+            physical = addr.physical
+        except KeyError:
+            return logical_address
+        if physical is None:
+            return logical_address
+        return physical
+
     def emit(self, program: list[NodeProtocol], writer: Writer) -> None:
         """Emit machine code from resolved nodes to a writer.
 
@@ -158,7 +180,7 @@ class Program:
                 blocks = node.emit_blocks(self.resolver.reloc_address)
                 for base, block in blocks:
                     if block:
-                        writer.write_block(block, base)
+                        writer.write_block(block, self._to_physical(base))
                 if blocks:
                     first_base, first_code = blocks[0]
                     advance = len(first_code)
@@ -592,7 +614,7 @@ class Program:
 
                 for region in linked_obj.regions:
                     if region.code:
-                        ips_emitter.write_block(region.code, region.base_address)
+                        ips_emitter.write_block(region.code, self._to_physical(region.base_address))
 
                 ips_emitter.end()
                 self.write_debug_info_for_linked(linked_obj, ips_file)
@@ -621,7 +643,7 @@ class Program:
 
                 for region in linked_obj.regions:
                     if region.code:
-                        sfc_emitter.write_block(region.code, region.base_address)
+                        sfc_emitter.write_block(region.code, self._to_physical(region.base_address))
 
                 sfc_emitter.end()
                 self.write_debug_info_for_linked(linked_obj, sfc_file)
