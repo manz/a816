@@ -315,10 +315,19 @@ class LinkedModuleNode(NodeProtocol):
 
         return current_pc + len(self.code)
 
-    @staticmethod
-    def _write_reloc(code_array: bytearray, offset: int, value: int, size: int, expr: str) -> None:
+    def _reloc_context(self, offset: int) -> str:
+        return f"module '{self.module_name}' offset 0x{offset:x}/0x{len(self.code):x}"
+
+    def _write_reloc(self, code_array: bytearray, offset: int, value: int, size: int, expr: str) -> None:
+        ctx = self._reloc_context(offset)
         if size not in (1, 2, 3):
-            logger.warning(f"Unsupported relocation size {size} for expression '{expr}'")
+            logger.warning(f"Unsupported relocation size {size} for expression '{expr}' [{ctx}]")
+            return
+        if offset + size > len(code_array):
+            logger.warning(
+                f"Relocation runs past module code: offset 0x{offset:x} + size {size} "
+                f"> 0x{len(code_array):x} for expression '{expr}' [{ctx}]"
+            )
             return
         for i in range(size):
             code_array[offset + i] = (value >> (8 * i)) & 0xFF
@@ -326,13 +335,14 @@ class LinkedModuleNode(NodeProtocol):
     def _eval_one_relocation(self, expr: str, offset: int, size: int, code_array: bytearray) -> None:
         from a816.parse.ast.expression import eval_expression_str
 
+        ctx = self._reloc_context(offset)
         try:
             value = eval_expression_str(expr, self.resolver)
         except (SymbolNotDefined, NodeError, ValueError) as e:
-            logger.warning(f"Failed to evaluate expression '{expr}': {e}")
+            logger.warning(f"Failed to evaluate expression '{expr}': {e} [{ctx}]")
             return
         if not isinstance(value, int):
-            logger.warning(f"Expression '{expr}' did not evaluate to int: {value}")
+            logger.warning(f"Expression '{expr}' did not evaluate to int: {value} [{ctx}]")
             return
         self._write_reloc(code_array, offset, value, size, expr)
 
