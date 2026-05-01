@@ -166,6 +166,16 @@ class Program:
         if len(current_block) > 0:
             writer.write_block(current_block, current_block_addr)
 
+    def _record_object_line(self, node: NodeProtocol, offset: int, object_writer: ObjectWriter) -> None:
+        """Record an addr->line entry on the ObjectWriter so .o files carry line info."""
+        info = getattr(node, "file_info", None)
+        if info is None:
+            return
+        position = getattr(info, "position", None)
+        if position is None or position.file is None:
+            return
+        object_writer.add_line(offset, position.file.filename, position.line, position.column)
+
     def _record_debug_line(self, node: NodeProtocol, address: int) -> None:
         """If debug capture is on, record one line entry for the node."""
         if not getattr(self, "_debug_capture", False):
@@ -198,9 +208,11 @@ class Program:
                 # The OpcodeNode and ExpressionNode classes already create relocations
                 # when they encounter external symbols (via ExternalSymbolReference).
                 # Here we simply emit the code - relocations are stored in the ObjectWriter.
+                pre_emit_offset = self.resolver.pc
                 node_bytes = node.emit(self.resolver.reloc_address)
 
                 if node_bytes:
+                    self._record_object_line(node, pre_emit_offset, object_writer)
                     current_block += node_bytes
                     self.resolver.pc += len(node_bytes)
                     self.resolver.reloc_address += len(node_bytes)
@@ -482,6 +494,48 @@ class Program:
                 scope.labels[name] = value
             scope.symbols[name] = value
 
+    def write_debug_info_for_linked(self, linked_obj: ObjectFile, output_path: Path) -> Path | None:
+        """Write a `.adbg` next to a linked output. Returns the written path."""
+        from a816.debug_info import (
+            DebugInfo,
+            LineEntry,
+            ModuleEntry,
+            SymbolEntry,
+            SymbolKind,
+            SymbolScope,
+        )
+
+        if not linked_obj.symbols and not linked_obj.lines:
+            return None
+
+        info = DebugInfo()
+        info.files = list(linked_obj.files)
+        if not info.files:
+            info.files = ["<linked>"]
+        # Without per-object module names available at this layer, fold every
+        # linked symbol under module 0 ("<linked>").
+        info.modules.append(ModuleEntry(name="<linked>", file_idx=0, base=self._get_code_start_address(linked_obj)))
+        for name, value, sym_type, section in linked_obj.symbols:
+            scope_kind = (
+                SymbolScope.GLOBAL
+                if sym_type == SymbolType.GLOBAL
+                else SymbolScope.LOCAL
+                if sym_type == SymbolType.LOCAL
+                else SymbolScope.EXTERNAL
+            )
+            kind = SymbolKind.LABEL if section == SymbolSection.CODE else SymbolKind.CONSTANT
+            info.symbols.append(SymbolEntry(name=name, address=value, scope=scope_kind, module_idx=0, kind=kind))
+        for offset, file_idx, line, column, flags in linked_obj.lines:
+            info.lines.append(
+                LineEntry(address=offset, file_idx=file_idx, line=line, column=column, module_idx=0, flags=flags)
+            )
+
+        from a816.debug_info import write as write_debug_info
+
+        adbg_path = output_path.with_suffix(output_path.suffix + ".adbg")
+        write_debug_info(info, adbg_path)
+        return adbg_path
+
     def link_as_patch(
         self, linked_obj: ObjectFile, ips_file: Path, mapping: str | None = None, copier_header: bool = False
     ) -> int:
@@ -516,6 +570,7 @@ class Program:
                     ips_emitter.write_block(linked_obj.code, start_address)
 
                 ips_emitter.end()
+                self.write_debug_info_for_linked(linked_obj, ips_file)
                 self.logger.info("Successfully created IPS patch")
                 return 0
 
@@ -545,6 +600,7 @@ class Program:
                     sfc_emitter.write_block(linked_obj.code, start_address)
 
                 sfc_emitter.end()
+                self.write_debug_info_for_linked(linked_obj, sfc_file)
                 self.logger.info("Successfully created SFC file")
                 return 0
 

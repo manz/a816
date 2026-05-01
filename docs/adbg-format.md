@@ -112,8 +112,8 @@ the empty string.
   resolution pass.
 - `SYMBOLS` is filled from the resolver's labels and symbols at the
   end of assembly, after module GLOBAL symbols have been merged in.
-- The CLI link path (`a816 file1.o file2.o -o out.ips`) currently
-  produces a `.adbg` only for the symbols and modules it can see in
-  the linked object file; line tables in that path are limited to what
-  was already baked into each `.o`. Direct-mode builds
-  (`build_with_imports_direct`) emit full line info.
+- The CLI link path (`a816 file1.o file2.o -o out.ips`) propagates
+  line tables from each `.o` through the linker. Object files carry a
+  `LINES` section themselves (object-file format v5+), so debug info
+  survives the compile/link split. Direct-mode builds
+  (`build_with_imports_direct`) emit full line info too.

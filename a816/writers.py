@@ -76,6 +76,10 @@ class ObjectWriter(Writer):
         self.relocations: list[tuple[int, str, RelocationType]] = []
         self.expression_relocations: list[tuple[int, str, int]] = []  # (offset, expression_str, size_bytes)
         self.aliases: list[tuple[str, str]] = []  # (name, expression_str)
+        self.files: list[str] = []
+        # (offset, file_idx, line, column, flags) — offset is bytes from code start.
+        self.lines: list[tuple[int, int, int, int, int]] = []
+        self._file_index: dict[str, int] = {}
         self.current_offset = 0
 
     def begin(self) -> None:
@@ -85,7 +89,22 @@ class ObjectWriter(Writer):
         self.relocations = []
         self.expression_relocations = []
         self.aliases = []
+        self.files = []
+        self.lines = []
+        self._file_index = {}
         self.current_offset = 0
+
+    def add_file(self, path: str) -> int:
+        if path in self._file_index:
+            return self._file_index[path]
+        idx = len(self.files)
+        self.files.append(path)
+        self._file_index[path] = idx
+        return idx
+
+    def add_line(self, offset: int, file_path: str, line: int, column: int, flags: int = 0) -> None:
+        file_idx = self.add_file(file_path)
+        self.lines.append((offset, file_idx, line, column, flags))
 
     def write_block_header(self, block: bytes, block_address: int) -> None:
         """Object files don't use block headers"""
@@ -126,5 +145,7 @@ class ObjectWriter(Writer):
             self.relocations,
             self.expression_relocations,
             self.aliases,
+            files=self.files,
+            lines=self.lines,
         )
         obj_file.write(self.output_file)

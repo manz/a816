@@ -23,6 +23,9 @@ class Linker:
         self.linked_relocations: list[tuple[int, str, RelocationType]] = []
         self.linked_expression_relocations: list[tuple[int, str, int]] = []  # (offset, expression, size_bytes)
         self.linked_aliases: list[tuple[str, str]] = []  # (name, expression)
+        self.linked_files: list[str] = []
+        self.linked_lines: list[tuple[int, int, int, int, int]] = []
+        self._file_index: dict[str, int] = {}
         self.symbol_map: dict[str, int] = {}
 
     def link(self, base_address: int | None = None) -> ObjectFile:
@@ -42,7 +45,13 @@ class Linker:
         self._check_unresolved()
         self._apply_relocations()
         self._apply_expression_relocations()
-        return ObjectFile(bytes(self.linked_code), self.linked_symbols, self.linked_relocations)
+        return ObjectFile(
+            bytes(self.linked_code),
+            self.linked_symbols,
+            self.linked_relocations,
+            files=self.linked_files,
+            lines=self.linked_lines,
+        )
 
     def _resolved_address(self, address: int, section: SymbolSection, code_offset: int) -> int:
         # CODE = base + module offset + symbol offset; DATA = absolute.
@@ -66,6 +75,26 @@ class Linker:
             return
         raise ValueError(f"Unknown symbol type: {symbol_type}")
 
+    def _ingest_lines(self, obj_file: ObjectFile, code_offset: int) -> None:
+        if not obj_file.lines:
+            return
+        # Map per-object file indices into the linked file table.
+        local_to_linked: dict[int, int] = {}
+        for local_idx, path in enumerate(obj_file.files):
+            if path in self._file_index:
+                local_to_linked[local_idx] = self._file_index[path]
+            else:
+                new_idx = len(self.linked_files)
+                self.linked_files.append(path)
+                self._file_index[path] = new_idx
+                local_to_linked[local_idx] = new_idx
+        for offset, file_idx, line, column, flags in obj_file.lines:
+            mapped = local_to_linked.get(file_idx, 0)
+            # Bake the final logical address so consumers don't have to know
+            # the linker's base/code-offset math.
+            final_offset = self.base_address + code_offset + offset
+            self.linked_lines.append((final_offset, mapped, line, column, flags))
+
     def _ingest_object(self, obj_file: ObjectFile, code_offset: int) -> None:
         self.linked_code.extend(obj_file.code)
         for sym in obj_file.symbols:
@@ -75,6 +104,7 @@ class Linker:
         for offset, expression, size_bytes in obj_file.expression_relocations:
             self.linked_expression_relocations.append((code_offset + offset, expression, size_bytes))
         self.linked_aliases.extend(obj_file.aliases)
+        self._ingest_lines(obj_file, code_offset)
 
     def _resolve_symbols(self) -> None:
         self._external_symbols_needed: set[str] = set()
