@@ -613,3 +613,99 @@ helper:
             result = program.link_as_sfc(empty_obj, sfc_file)
             assert result == 0
             assert sfc_file.exists()
+
+    def test_multi_region_module_compiles_to_separate_regions(self) -> None:
+        """A module with two `*=` directives produces two regions in the .o."""
+        source = """*=0x008000
+first_label:
+    nop
+*=0x018000
+second_label:
+    nop
+    nop
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "multi.s"
+            obj = Path(tmpdir) / "multi.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+
+            o = ObjectFile.from_file(str(obj))
+            assert o.relocatable is False, "explicit *= must mark module as pinned"
+            bases = [r.base_address for r in o.regions]
+            assert 0x008000 in bases
+            assert 0x018000 in bases
+            by_base = {r.base_address: r for r in o.regions}
+            assert by_base[0x008000].code == b"\xea"
+            assert by_base[0x018000].code == b"\xea\xea"
+
+            by_name = {name: address for name, address, _, _ in o.symbols}
+            assert by_name["first_label"] == 0x008000
+            assert by_name["second_label"] == 0x018000
+
+    def test_multi_region_link_keeps_regions_at_declared_bases(self) -> None:
+        """Pinned multi-region modules ignore the linker base_address."""
+        source = """*=0x008000
+entry:
+    nop
+*=0x018000
+data:
+    .db 0x42
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "mod.s"
+            obj = Path(tmpdir) / "mod.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+            o = ObjectFile.from_file(str(obj))
+
+            linker = Linker([o], base_address=0x9000)
+            linked = linker.link()
+            assert {r.base_address for r in linked.regions} == {0x008000, 0x018000}
+            assert linker.symbol_map["entry"] == 0x008000
+            assert linker.symbol_map["data"] == 0x018000
+
+    def test_multi_region_cross_region_symbol_reloc(self) -> None:
+        """A reference from region A to a label in region B patches the right region."""
+        source = """*=0x008000
+entry:
+    .dw far_label & 0xFFFF
+*=0x018000
+far_label:
+    .db 0x77
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "cross.s"
+            obj = Path(tmpdir) / "cross.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+            o = ObjectFile.from_file(str(obj))
+
+            linker = Linker([o], base_address=0)
+            linked = linker.link()
+            by_base = {r.base_address: r for r in linked.regions}
+            patched = by_base[0x008000].code
+            target = linker.symbol_map["far_label"] & 0xFFFF
+            assert patched[0] | (patched[1] << 8) == target
+
+    def test_multi_region_module_writes_multiple_ips_blocks(self) -> None:
+        """Linking a multi-region module emits one IPS block per region."""
+        source = """*=0x008000
+.db 0x11, 0x22
+*=0x018000
+.db 0x33
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "two.s"
+            obj = Path(tmpdir) / "two.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+            linked = Linker([ObjectFile.from_file(str(obj))]).link()
+
+            ips_path = Path(tmpdir) / "out.ips"
+            assert Program().link_as_patch(linked, ips_path) == 0
+            content = ips_path.read_bytes()
+            assert content.startswith(b"PATCH")
+            # Both region bases must show up as IPS block headers (24-bit big-endian).
+            assert b"\x00\x80\x00" in content  # 0x008000
+            assert b"\x01\x80\x00" in content  # 0x018000

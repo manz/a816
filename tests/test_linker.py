@@ -5,7 +5,7 @@ from a816.object_file import ObjectFile, RelocationType, SymbolSection, SymbolTy
 def test_link() -> None:
     # Create some example object files
     obj1 = ObjectFile(
-        b"\x01\x02\x03",
+        b"\x01\x02\x00\x00",
         [
             ("global_sym", 0x01, SymbolType.GLOBAL, SymbolSection.CODE),
             ("local_sym", 0x00, SymbolType.LOCAL, SymbolSection.CODE),
@@ -14,7 +14,7 @@ def test_link() -> None:
     )
 
     obj2 = ObjectFile(
-        b"\x04\x05\x06",
+        b"\x00\x00\x05\x06",
         [
             ("global_sym2", 0x01, SymbolType.GLOBAL, SymbolSection.CODE),
             ("local_sym2", 0x00, SymbolType.LOCAL, SymbolSection.CODE),
