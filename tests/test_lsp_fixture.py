@@ -27,7 +27,6 @@ from lsprotocol.types import (
 )
 
 from a816.lsp.server import A816LanguageServer
-
 from tests.lsp_helpers import (
     fixture_uri,
     locate_in_fixture,
@@ -172,6 +171,163 @@ def test_format_document_returns_edits_or_empty() -> None:
     edits = server._handle_format_document(params)
     # Either empty (already formatted) or a single full-document edit; both are valid.
     assert edits is not None
+
+
+def test_did_close_drops_document() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    uri = fixture_uri("src/main.s")
+    assert uri in server.documents
+    from lsprotocol.types import DidCloseTextDocumentParams
+
+    server._handle_did_close(DidCloseTextDocumentParams(text_document=TextDocumentIdentifier(uri=uri)))
+    assert uri not in server.documents
+
+
+def test_did_save_with_text_updates_document() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    uri = fixture_uri("src/main.s")
+    from lsprotocol.types import DidSaveTextDocumentParams
+
+    server._handle_did_save(
+        DidSaveTextDocumentParams(
+            text_document=TextDocumentIdentifier(uri=uri),
+            text="; saved\nmain:\n    rts\n",
+        )
+    )
+    assert "; saved" in server.documents[uri].content
+
+
+def test_did_save_without_text_reanalyzes() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    uri = fixture_uri("src/main.s")
+    from lsprotocol.types import DidSaveTextDocumentParams
+
+    server._handle_did_save(DidSaveTextDocumentParams(text_document=TextDocumentIdentifier(uri=uri), text=None))
+    assert uri in server.documents
+
+
+def test_hover_returns_none_on_unknown_word() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    line, char = locate_in_fixture("src/main.s", "main:")
+    # Cursor on an empty / non-identifier column.
+    hover = server._handle_hover(
+        HoverParams(
+            text_document=TextDocumentIdentifier(uri=fixture_uri("src/main.s")),
+            position=Position(line=line + 99, character=0),
+        )
+    )
+    assert hover is None
+
+
+def test_definition_returns_none_for_unknown_word() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    locations = server._handle_definition(make_position_params("src/main.s", 0, 5))
+    # First line is a comment; cursor on whitespace, no definition expected.
+    assert locations is None
+
+
+def test_definition_jumps_to_include_target() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    line, _ = locate_in_fixture("src/main.s", "constants.s")
+    # Cursor inside the quoted "constants.s" path.
+    char = locate_in_fixture("src/main.s", "constants.s")[1]
+    locs = server._handle_definition(make_position_params("src/main.s", line, char))
+    assert locs is not None
+    assert any("constants.s" in loc.uri for loc in locs)
+
+
+def test_references_excluding_declaration() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    _open(server, "modules/vwf.s")
+    line, char = locate_in_fixture("modules/vwf.s", "vwf_render")
+    params = ReferenceParams(
+        text_document=TextDocumentIdentifier(uri=fixture_uri("modules/vwf.s")),
+        position=Position(line=line, character=char),
+        context=ReferenceContext(include_declaration=False),
+    )
+    locs = server._handle_references(params)
+    if locs is not None:
+        # Declaration line in vwf.s should not appear.
+        decl_doc_uri = fixture_uri("modules/vwf.s")
+        for loc in locs:
+            if loc.uri == decl_doc_uri:
+                assert loc.range.start.line != line
+
+
+def test_workspace_symbol_empty_workspace_returns_empty() -> None:
+    server = server_with_fixture_workspace()
+    server.workspace_index = None
+    server._ensure_workspace_index = lambda: None  # type: ignore[method-assign]
+    assert server._handle_workspace_symbol(WorkspaceSymbolParams(query="main")) == []
+
+
+def test_hover_on_cross_file_macro() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    line, char = locate_in_fixture("src/main.s", "vwf_init")
+    hover = server._handle_hover(
+        HoverParams(
+            text_document=TextDocumentIdentifier(uri=fixture_uri("src/main.s")),
+            position=Position(line=line, character=char),
+        )
+    )
+    assert hover is not None
+    assert isinstance(hover.contents, MarkupContent)
+    assert "Initialise" in hover.contents.value
+
+
+def test_hover_on_label_with_docstring() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "modules/vwf.s")
+    line, char = locate_in_fixture("modules/vwf.s", "vwf_render:")
+    hover = server._handle_hover(
+        HoverParams(
+            text_document=TextDocumentIdentifier(uri=fixture_uri("modules/vwf.s")),
+            position=Position(line=line, character=char),
+        )
+    )
+    assert hover is not None
+    assert isinstance(hover.contents, MarkupContent)
+    assert "Render" in hover.contents.value
+
+
+def test_document_symbols_for_module_with_macros() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "modules/vwf.s")
+    params = DocumentSymbolParams(text_document=TextDocumentIdentifier(uri=fixture_uri("modules/vwf.s")))
+    symbols = server._handle_document_symbols(params)
+    names = {sym.name for sym in symbols}
+    assert "vwf_render" in names
+    assert any(name.startswith("vwf_init") for name in names)
+
+
+def test_definition_resolves_extern_via_workspace() -> None:
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    line, char = locate_in_fixture("src/main.s", "target_addr", occurrence=1)
+    locs = server._handle_definition(make_position_params("src/main.s", line, char))
+    # target_addr is declared extern in main.s and dma.s; workspace lookup may
+    # resolve to either, but result must point at one of them.
+    assert locs is not None
+    assert any("dma.s" in loc.uri or "main.s" in loc.uri for loc in locs)
+
+
+def test_workspace_index_remove_document() -> None:
+    server = server_with_fixture_workspace()
+    ws = server.workspace_index
+    assert ws is not None
+    vwf_uri = fixture_uri("modules/vwf.s")
+    assert vwf_uri in ws.documents
+    ws.remove_document(vwf_uri)
+    assert vwf_uri not in ws.documents
+    assert "vwf_render" not in ws.labels
 
 
 def test_did_change_updates_document_content() -> None:
