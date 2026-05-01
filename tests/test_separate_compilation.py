@@ -688,6 +688,39 @@ far_label:
             target = linker.symbol_map["far_label"] & 0xFFFF
             assert patched[0] | (patched[1] << 8) == target
 
+    def test_multiple_intra_region_expression_relocations_get_distinct_offsets(self) -> None:
+        """Three references to the same forward label must record three offsets.
+
+        Regression: ObjectWriter.relocation_offset() used to read only
+        _region_bytes_emitted, which only advances on write_block. Inside
+        a single region, every reloc emitted before the next *= boundary
+        therefore reported the same offset (the last flushed position),
+        and the linker patched only one of them — the other call sites
+        kept the compile-time placeholder and jumped to garbage.
+        """
+        source = """\
+caller1:
+    jsr.w target
+caller2:
+    jsr.w target
+caller3:
+    jsr.w target
+target:
+    rts
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "fanout.s"
+            obj = Path(tmpdir) / "fanout.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+            o = ObjectFile.from_file(str(obj))
+            offsets = sorted(off for r in o.regions for off, expr, _ in r.expression_relocations if expr == "target")
+            assert len(offsets) == 3, f"expected 3 expression relocations, got {len(offsets)}: {offsets}"
+            assert len(set(offsets)) == 3, f"expected 3 distinct offsets, got {offsets}"
+            # Each jsr.w is 3 bytes (opcode + 2-byte operand). Reloc points
+            # to the operand byte, so offsets are 1, 4, 7.
+            assert offsets == [1, 4, 7]
+
     def test_multi_region_module_writes_multiple_ips_blocks(self) -> None:
         """Linking a multi-region module emits one IPS block per region.
 

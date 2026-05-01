@@ -93,6 +93,11 @@ class ObjectWriter(Writer):
         self._current_region: Region | None = None
         self._pending_base_address: int = 0
         self._region_bytes_emitted: int = 0
+        # Bytes emitted from the active node but not yet flushed to the
+        # region via write_block. The driver (emit_with_relocations) calls
+        # mark_emitted(len(node_bytes)) after each node so relocation
+        # offsets recorded mid-emit reflect the right intra-region position.
+        self._pending_emit_bytes: int = 0
         self._has_explicit_position: bool = False
 
     def begin(self) -> None:
@@ -104,7 +109,18 @@ class ObjectWriter(Writer):
         self._current_region = None
         self._pending_base_address = 0
         self._region_bytes_emitted = 0
+        self._pending_emit_bytes = 0
         self._has_explicit_position = False
+
+    def mark_emitted(self, count: int) -> None:
+        """Advance the per-region emit cursor by ``count`` bytes.
+
+        Reloc emit sites query relocation_offset() before write_block is
+        called for the surrounding block, so this method lets the emit
+        driver advance the cursor in lockstep with bytes returned from
+        each NodeProtocol.emit().
+        """
+        self._pending_emit_bytes += count
 
     def start_region(self, base_address: int, explicit: bool = False) -> None:
         """Open a new region at base_address, closing any current region.
@@ -119,12 +135,13 @@ class ObjectWriter(Writer):
         self._pending_base_address = base_address
         self._current_region = None
         self._region_bytes_emitted = 0
+        self._pending_emit_bytes = 0
         if explicit:
             self._has_explicit_position = True
 
     def relocation_offset(self, pending_block_bytes: int = 0) -> int:
         """Byte offset where the next emitted byte will land in the region."""
-        return self._region_bytes_emitted + pending_block_bytes
+        return self._region_bytes_emitted + self._pending_emit_bytes + pending_block_bytes
 
     def add_file(self, path: str) -> int:
         if path in self._file_index:
@@ -146,6 +163,8 @@ class ObjectWriter(Writer):
         region = self._ensure_region()
         region.code = region.code + block
         self._region_bytes_emitted = len(region.code)
+        # Bytes are now part of the region, drop the pending counter.
+        self._pending_emit_bytes = 0
 
     def add_symbol(
         self, name: str, address: int, symbol_type: SymbolType, section: SymbolSection = SymbolSection.CODE

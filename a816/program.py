@@ -257,6 +257,7 @@ class Program:
                 if node_bytes:
                     self._record_object_line(node, object_writer.relocation_offset(), object_writer)
                     current_block += node_bytes
+                    object_writer.mark_emitted(len(node_bytes))
                     self.resolver.pc += len(node_bytes)
                     self.resolver.reloc_address += len(node_bytes)
 
