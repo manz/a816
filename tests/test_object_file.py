@@ -3,12 +3,10 @@ from pathlib import Path
 
 from a816.object_file import ObjectFile, RelocationType, SymbolSection, SymbolType
 
-# Header format for version 4: <IHIIIII (26 bytes)
-# magic (4), version (2), code_size (4), symbol_table_size (4),
-# relocation_table_size (4), expression_relocation_table_size (4),
-# alias_table_size (4)
-HEADER_SIZE = 26
-HEADER_FORMAT = "<IHIIIII"
+# Header format for version 5: <IHIIIIIII (34 bytes).
+# Adds u32 file_table_size and u32 line_table_size after the v4 layout.
+HEADER_SIZE = 34
+HEADER_FORMAT = "<IHIIIIIII"
 
 
 def test_write_empty_object_file(tmp_path: Path) -> None:
@@ -26,6 +24,8 @@ def test_write_empty_object_file(tmp_path: Path) -> None:
             relocation_table_size,
             expression_relocation_table_size,
             alias_table_size,
+            file_table_size,
+            line_table_size,
         ) = struct.unpack(HEADER_FORMAT, header)
         assert alias_table_size == 2
         assert magic == ObjectFile.MAGIC_NUMBER
@@ -58,6 +58,8 @@ def test_write_object_file_with_code(tmp_path: Path) -> None:
             relocation_table_size,
             expression_relocation_table_size,
             alias_table_size,
+            file_table_size,
+            line_table_size,
         ) = struct.unpack(HEADER_FORMAT, header)
         assert alias_table_size == 2
         assert magic == ObjectFile.MAGIC_NUMBER
@@ -176,6 +178,8 @@ def test_write_object_file_with_expression_relocations(tmp_path: Path) -> None:
             relocation_table_size,
             expression_relocation_table_size,
             alias_table_size,
+            file_table_size,
+            line_table_size,
         ) = struct.unpack(HEADER_FORMAT, header)
         assert alias_table_size == 2
         assert magic == ObjectFile.MAGIC_NUMBER

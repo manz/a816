@@ -26,7 +26,7 @@ class SymbolSection(Enum):
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x0004  # Version 4: alias table for symbols defined as deferred expressions
+    VERSION = 0x0005  # Version 5: optional source-line + file table for .adbg propagation.
 
     def __init__(
         self,
@@ -35,12 +35,17 @@ class ObjectFile:
         relocations: list[tuple[int, str, RelocationType]],
         expression_relocations: list[tuple[int, str, int]] | None = None,  # (offset, expression_str, size_bytes)
         aliases: list[tuple[str, str]] | None = None,  # (name, expression_str)
+        files: list[str] | None = None,
+        # (offset, file_idx, line, column, flags) — offset is relative to code start.
+        lines: list[tuple[int, int, int, int, int]] | None = None,
     ) -> None:
         self.code: bytes = code
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = symbols
         self.relocations: list[tuple[int, str, RelocationType]] = relocations
         self.expression_relocations: list[tuple[int, str, int]] = expression_relocations or []
         self.aliases: list[tuple[str, str]] = aliases or []
+        self.files: list[str] = files or []
+        self.lines: list[tuple[int, int, int, int, int]] = lines or []
 
     def write(self, filename: str) -> None:
         with open(filename, "wb") as f:
@@ -50,6 +55,8 @@ class ObjectFile:
             self._write_relocation_table(f)
             self._write_expression_relocation_table(f)
             self._write_alias_table(f)
+            self._write_file_table(f)
+            self._write_line_table(f)
 
     def _write_header(self, f: IO[bytes]) -> None:
         code_size = len(self.code)
@@ -57,9 +64,13 @@ class ObjectFile:
         relocation_table_size = self._calculate_relocation_table_size()
         expression_relocation_table_size = self._calculate_expression_relocation_table_size()
         alias_table_size = self._calculate_alias_table_size()
+        file_table_size = self._calculate_file_table_size()
+        line_table_size = self._calculate_line_table_size()
 
+        # Only the current version is supported; bump VERSION when the layout
+        # changes and update the reader in lockstep.
         header = struct.pack(
-            "<IHIIIII",
+            "<IHIIIIIII",
             self.MAGIC_NUMBER,
             self.VERSION,
             code_size,
@@ -67,6 +78,8 @@ class ObjectFile:
             relocation_table_size,
             expression_relocation_table_size,
             alias_table_size,
+            file_table_size,
+            line_table_size,
         )
         f.write(header)
 
@@ -148,6 +161,50 @@ class ObjectFile:
             size += 1 + len(name) + 2 + len(expression)
         return size
 
+    def _write_file_table(self, f: IO[bytes]) -> None:
+        f.write(struct.pack("<H", len(self.files)))
+        for path in self.files:
+            encoded = path.encode("utf-8")
+            f.write(struct.pack("<H", len(encoded)))
+            f.write(encoded)
+
+    def _calculate_file_table_size(self) -> int:
+        size = 2
+        for path in self.files:
+            size += 2 + len(path.encode("utf-8"))
+        return size
+
+    def _write_line_table(self, f: IO[bytes]) -> None:
+        f.write(struct.pack("<I", len(self.lines)))
+        for offset, file_idx, line, column, flags in self.lines:
+            f.write(struct.pack("<IIIHB", offset, file_idx, line, column & 0xFFFF, flags & 0xFF))
+
+    def _calculate_line_table_size(self) -> int:
+        # Each entry: u32 offset + u32 file_idx + u32 line + u16 column + u8 flags = 15 bytes.
+        return 4 + 15 * len(self.lines)
+
+    @staticmethod
+    def _read_file_table(f: IO[bytes], table_size: int) -> list[str]:
+        if table_size == 0:
+            return []
+        count = struct.unpack("<H", f.read(2))[0]
+        files: list[str] = []
+        for _ in range(count):
+            length = struct.unpack("<H", f.read(2))[0]
+            files.append(f.read(length).decode("utf-8"))
+        return files
+
+    @staticmethod
+    def _read_line_table(f: IO[bytes], table_size: int) -> list[tuple[int, int, int, int, int]]:
+        if table_size == 0:
+            return []
+        count = struct.unpack("<I", f.read(4))[0]
+        lines: list[tuple[int, int, int, int, int]] = []
+        for _ in range(count):
+            offset, file_idx, line, column, flags = struct.unpack("<IIIHB", f.read(15))
+            lines.append((offset, file_idx, line, column, flags))
+        return lines
+
     @staticmethod
     def _read_symbols(f: IO[bytes]) -> list[tuple[str, int, SymbolType, SymbolSection]]:
         num_symbols = struct.unpack("<H", f.read(2))[0]
@@ -204,8 +261,8 @@ class ObjectFile:
     @staticmethod
     def from_file(filename: str) -> "ObjectFile":
         with open(filename, "rb") as f:
-            header_data = f.read(26)
-            if len(header_data) < 26:
+            header_data = f.read(34)
+            if len(header_data) < 34:
                 raise ValueError(INVALID_FILE_FORMAT)
             (
                 magic_number,
@@ -215,7 +272,9 @@ class ObjectFile:
                 _,
                 expression_relocation_table_size,
                 alias_table_size,
-            ) = struct.unpack("<IHIIIII", header_data)
+                file_table_size,
+                line_table_size,
+            ) = struct.unpack("<IHIIIIIII", header_data)
             if magic_number != ObjectFile.MAGIC_NUMBER:
                 raise ValueError("Invalid magic number")
             if version != ObjectFile.VERSION:
@@ -226,4 +285,6 @@ class ObjectFile:
             relocations = ObjectFile._read_relocations(f)
             expression_relocations = ObjectFile._read_expression_relocations(f, expression_relocation_table_size)
             aliases = ObjectFile._read_aliases(f, alias_table_size)
-            return ObjectFile(code, symbols, relocations, expression_relocations, aliases)
+            files = ObjectFile._read_file_table(f, file_table_size)
+            lines = ObjectFile._read_line_table(f, line_table_size)
+            return ObjectFile(code, symbols, relocations, expression_relocations, aliases, files=files, lines=lines)

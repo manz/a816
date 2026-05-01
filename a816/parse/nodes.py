@@ -291,13 +291,20 @@ class LinkedModuleNode(NodeProtocol):
 
         scope = self.resolver.current_scope
         base_address = current_pc.logical_value
+        # Track this module's load base so the producer of .sym/.adbg can
+        # report the resolved address range without re-walking the linker.
+        self.base_address = base_address
         # Module-private map for LOCAL labels (kept off of scope to avoid
         # cross-module name clashes — e.g. two modules both define `loop`).
         self._local_map: dict[str, int] = {}
         for name, offset, sym_type, section in self.symbols:
             if sym_type == SymbolType.GLOBAL.value:
                 if section == SymbolSection.CODE.value:
-                    scope.symbols[name] = base_address + offset
+                    final = base_address + offset
+                    scope.symbols[name] = final
+                    # Without this the symbol never reaches get_all_labels,
+                    # so .sym output drops every module-defined label.
+                    scope.labels[name] = final
                 else:
                     scope.symbols[name] = offset
             elif sym_type == SymbolType.LOCAL.value:
