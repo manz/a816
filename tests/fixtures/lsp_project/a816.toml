@@ -1,0 +1,3 @@
+entrypoint    = "src/main.s"
+include-paths = ["src"]
+module-paths  = ["modules"]
