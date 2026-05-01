@@ -182,12 +182,15 @@ class Program:
 
             if isinstance(node, LinkedModuleNode):
                 if last_module_index.get(node.module_name) != idx:
-                    # Symbols already (re-)bound in pc_after; advance the
-                    # resolver in lockstep with pc_after's first-region
-                    # delta so any inline code that follows this earlier
-                    # `.import` lands at the right address even though no
-                    # bytes are emitted here.
+                    # Symbols already (re-)bound in pc_after; this earlier
+                    # `.import` is symbol-only. Flush the pending block at
+                    # its original address before advancing the PC so the
+                    # next current_block_addr reflects the post-skip
+                    # position rather than re-keying old bytes there.
                     if node.regions:
+                        if len(current_block) > 0:
+                            writer.write_block(current_block, current_block_addr)
+                            current_block = b""
                         advance = len(node.regions[0].code)
                         self.resolver.pc += advance
                         self.resolver.reloc_address += advance

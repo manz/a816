@@ -688,6 +688,72 @@ far_label:
             target = linker.symbol_map["far_label"] & 0xFFFF
             assert patched[0] | (patched[1] << 8) == target
 
+    def test_skipped_import_flushes_pending_block_before_advancing(self) -> None:
+        """Inline bytes around a skipped duplicate .import keep their addresses.
+
+        Regression: when an earlier `.import` was demoted to symbol-only
+        (because a later `.import` of the same module became the winner),
+        the emit driver advanced the PC by the module's size *without*
+        flushing the pending current_block first. The next flush keyed
+        the previously-accumulated bytes against the post-skip address
+        instead of where they were really emitted, so any inline code
+        sitting between two .imports overwrote unrelated ROM downstream.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "mod.s"
+            mod.write_text("payload:\n    .db 0xCC, 0xCC, 0xCC, 0xCC\n")
+            assert Program().assemble_as_object(str(mod), tmp / "mod.o") == 0
+
+            # *=0x008000  -> 3 inline bytes (0xAA AA AA) -> first .import
+            # (skipped) -> 2 more inline bytes (0xBB BB) -> *=0x009000 ->
+            # second .import (emits payload). The pre-skip flush bug
+            # would push the BB BB pair past the module size and into
+            # ROM that was meant to stay untouched.
+            main = tmp / "main.s"
+            main.write_text(
+                '*=0x008000\n.db 0xAA, 0xAA, 0xAA\n.import "mod"\n.db 0xBB, 0xBB\n*=0x009000\n.import "mod"\n'
+            )
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            content = ips.read_bytes()
+            # Module payload appears once, at the second .import site
+            # (SNES 0x009000 → LoROM physical 0x000800).
+            assert content.count(b"\xcc\xcc\xcc\xcc") == 1
+            # Inline AA AA AA must land at SNES 0x008000 → physical 0,
+            # and BB BB at PC 3 + len(mod region) (physical 0x000007 in
+            # LoROM since region is 4 bytes).
+            records = self._parse_ips_records(content)
+            placements = {phys: data for phys, data in records}
+            assert placements.get(0x000000, b"")[:3] == b"\xaa\xaa\xaa"
+            # BB BB must immediately follow the module-sized gap, not
+            # land somewhere far away thanks to a stale current_block_addr.
+            bb_seen = any(b"\xbb\xbb" in data for _, data in records)
+            assert bb_seen, "inline bytes after skipped .import did not land in IPS"
+
+    @staticmethod
+    def _parse_ips_records(content: bytes) -> list[tuple[int, bytes]]:
+        """Walk an IPS file and return [(physical_offset, data), ...]."""
+        out: list[tuple[int, bytes]] = []
+        i = 5  # skip "PATCH"
+        while i < len(content) - 3:
+            if content[i : i + 3] == b"EOF":
+                break
+            offset = int.from_bytes(content[i : i + 3], "big")
+            i += 3
+            size = int.from_bytes(content[i : i + 2], "big")
+            i += 2
+            if size == 0:
+                # RLE record — skip; not produced by a816's IPS writer.
+                i += 3
+                continue
+            out.append((offset, content[i : i + size]))
+            i += size
+        return out
+
     def test_duplicate_import_emits_module_bytes_once_at_last_site(self) -> None:
         """Two .import "foo" statements emit foo's bytes once, at the second site.
 

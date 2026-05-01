@@ -136,9 +136,7 @@ class Opcode(OpcodeProtocol):
                 writer = resolver.context.object_writer
                 if writer is not None:
                     current_offset = writer.relocation_offset(pending_block_bytes=1)
-                    writer.add_expression_relocation(
-                        current_offset, value_node._deferred_expression, size_bytes
-                    )
+                    writer.add_expression_relocation(current_offset, value_node._deferred_expression, size_bytes)
 
         if size == "b":
             return struct.pack("B", value & 0xFF)

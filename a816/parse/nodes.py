@@ -369,8 +369,7 @@ class LinkedModuleNode(NodeProtocol):
 
     def _reloc_context(self, offset: int, region: Region) -> str:
         return (
-            f"module '{self.module_name}' region@0x{region.base_address:x} "
-            f"offset 0x{offset:x}/0x{len(region.code):x}"
+            f"module '{self.module_name}' region@0x{region.base_address:x} offset 0x{offset:x}/0x{len(region.code):x}"
         )
 
     def _write_reloc(
@@ -389,9 +388,7 @@ class LinkedModuleNode(NodeProtocol):
         for i in range(size):
             code_array[offset + i] = (value >> (8 * i)) & 0xFF
 
-    def _eval_one_relocation(
-        self, expr: str, offset: int, size: int, code_array: bytearray, region: Region
-    ) -> None:
+    def _eval_one_relocation(self, expr: str, offset: int, size: int, code_array: bytearray, region: Region) -> None:
         from a816.parse.ast.expression import eval_expression_str
 
         ctx = self._reloc_context(offset, region)
