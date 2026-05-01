@@ -288,17 +288,18 @@ class LinkedModuleNode(NodeProtocol):
         # Single-region modules still flow through the legacy single-bytes
         # path used by writers that don't know about emit_blocks.
         del current_addr
-        if not self._placed:
+        placed = self._compute_placement()
+        if not placed:
             return b""
-        if len(self._placed) == 1:
-            return self._placed[0][1]
+        if len(placed) == 1:
+            return placed[0][1]
         # Multi-region modules must go through emit_blocks; returning the
         # concatenation here would silently corrupt the output.
         return b""
 
     def emit_blocks(self, current_addr: Address) -> list[tuple[int, bytes]]:
         del current_addr
-        return list(self._placed)
+        return self._compute_placement()
 
     def pc_after(self, current_pc: Address) -> Address:
         from a816.object_file import SymbolSection, SymbolType
@@ -315,7 +316,6 @@ class LinkedModuleNode(NodeProtocol):
         # Shifted base of region 0 — used for the .sym/.adbg producer to
         # report where the module actually landed.
         self.base_address = self.regions[0].base_address + self._delta
-        self._placed = self._compute_placement()
         self._local_map: dict[str, int] = {}
 
         for name, address, sym_type, section in self.symbols:
@@ -330,8 +330,9 @@ class LinkedModuleNode(NodeProtocol):
         # Only region 0 advances the importer's PC; later regions sit at
         # their declared absolute addresses and do not consume linear
         # space at the import site.
-        first_base, first_code = self._placed[0]
-        return self.resolver.get_bus().get_address(first_base + len(first_code))
+        first = self.regions[0]
+        first_end = first.base_address + self._delta + len(first.code)
+        return self.resolver.get_bus().get_address(first_end)
 
     def _resolve_symbol_address(self, address: int, section: int) -> int:
         from a816.object_file import SymbolSection
@@ -341,11 +342,16 @@ class LinkedModuleNode(NodeProtocol):
         return address + self._delta
 
     def _compute_placement(self) -> list[tuple[int, bytes]]:
+        # Re-evaluate every call: cross-module symbols may have been bound
+        # by other LinkedModuleNodes after this one's pc_after ran. Doing
+        # the eval lazily at emit time avoids spurious "Failed to
+        # evaluate" warnings during the first resolve_labels pass.
         placed: list[tuple[int, bytes]] = []
         for region in self.regions:
             base = region.base_address + self._delta
             patched = self._apply_region_relocations(region)
             placed.append((base, patched))
+        self._placed = placed
         return placed
 
     def _apply_region_relocations(self, region: Region) -> bytes:
