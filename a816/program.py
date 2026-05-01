@@ -515,14 +515,13 @@ class Program:
         # Without per-object module names available at this layer, fold every
         # linked symbol under module 0 ("<linked>").
         info.modules.append(ModuleEntry(name="<linked>", file_idx=0, base=self._get_code_start_address(linked_obj)))
+        scope_by_type = {
+            SymbolType.GLOBAL: SymbolScope.GLOBAL,
+            SymbolType.LOCAL: SymbolScope.LOCAL,
+            SymbolType.EXTERNAL: SymbolScope.EXTERNAL,
+        }
         for name, value, sym_type, section in linked_obj.symbols:
-            scope_kind = (
-                SymbolScope.GLOBAL
-                if sym_type == SymbolType.GLOBAL
-                else SymbolScope.LOCAL
-                if sym_type == SymbolType.LOCAL
-                else SymbolScope.EXTERNAL
-            )
+            scope_kind = scope_by_type[sym_type]
             kind = SymbolKind.LABEL if section == SymbolSection.CODE else SymbolKind.CONSTANT
             info.symbols.append(SymbolEntry(name=name, address=value, scope=scope_kind, module_idx=0, kind=kind))
         for offset, file_idx, line, column, flags in linked_obj.lines:
