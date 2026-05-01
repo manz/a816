@@ -3,7 +3,7 @@ import os
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 try:
     import tomllib
@@ -594,20 +594,26 @@ class WorkspaceIndex:
             return config
         return self._fallback_entrypoint()
 
+    def _file_declares_entrypoint(self, path: Path) -> bool:
+        """Look for ENTRYPOINT_PRAGMA in the first 64 lines of the file."""
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for _ in range(64):
+                    line = handle.readline()
+                    if not line:
+                        return False
+                    if self.ENTRYPOINT_PRAGMA in line:
+                        return True
+        except OSError:
+            return False
+        return False
+
     def _entry_from_pragma(self) -> Path | None:
         if not self.root_path:
             return None
         for path in sorted(self.root_path.rglob("*.s")):
-            try:
-                with path.open("r", encoding="utf-8") as handle:
-                    for _ in range(64):
-                        line = handle.readline()
-                        if not line:
-                            break
-                        if self.ENTRYPOINT_PRAGMA in line:
-                            return path.resolve()
-            except OSError:
-                continue
+            if self._file_declares_entrypoint(path):
+                return path.resolve()
         return None
 
     def _entry_from_config(self) -> Path | None:
@@ -665,6 +671,16 @@ class WorkspaceIndex:
             return path.resolve()
         return None
 
+    def _read_or_log(self, current: Path) -> str | None:
+        if not current.exists():
+            logger.debug("WorkspaceIndex: include not found %s", current)
+            return None
+        try:
+            return current.read_text(encoding="utf-8")
+        except OSError:
+            logger.debug("WorkspaceIndex: unable to read %s", current)
+            return None
+
     def _explore_from(self, entrypoint: Path) -> None:
         queue: list[Path] = [entrypoint.resolve()]
         visited: set[Path] = set()
@@ -673,19 +689,11 @@ class WorkspaceIndex:
             if current in visited:
                 continue
             visited.add(current)
-            if not current.exists():
-                logger.debug("WorkspaceIndex: include not found %s", current)
+            content = self._read_or_log(current)
+            if content is None:
                 continue
-            try:
-                content = current.read_text(encoding="utf-8")
-            except OSError:
-                logger.debug("WorkspaceIndex: unable to read %s", current)
-                continue
-            doc = A816Document(current.as_uri(), content, include_paths=self.include_paths)
-            self._store_document(doc)
-            for include in self._extract_includes(current, content):
-                if include not in visited:
-                    queue.append(include)
+            self._store_document(A816Document(current.as_uri(), content, include_paths=self.include_paths))
+            queue.extend(include for include in self._extract_includes(current, content) if include not in visited)
 
     def _extract_includes(self, file_path: Path, content: str) -> list[Path]:
         found_paths: set[Path] = set()
@@ -728,46 +736,47 @@ class WorkspaceIndex:
 
         return list(found_paths)
 
+    def _index_labels(self, doc: A816Document) -> set[str]:
+        names = set(doc.labels.keys())
+        for label in names:
+            self.labels[label] = doc.labels[label]
+            self.label_name_lookup[label.lower()] = label
+        return names
+
+    def _index_symbols(self, doc: A816Document) -> set[str]:
+        names = set(doc.symbols.keys())
+        for symbol in names:
+            self.symbols[symbol] = doc.symbols[symbol]
+        return names
+
+    def _index_macros(self, doc: A816Document) -> set[str]:
+        names = set(doc.macros.keys())
+        for macro in names:
+            self.macros[macro] = doc.macros[macro]
+            self.macro_name_lookup[macro.lower()] = macro
+            if macro in doc.macro_params:
+                self.macro_params[macro] = doc.macro_params[macro]
+        return names
+
+    def _merge_docstrings(self, doc: A816Document) -> None:
+        self.label_docstrings.update(doc.label_docstrings)
+        self.macro_docstrings.update(doc.macro_docstrings)
+        for key, value in doc.scope_docstrings.items():
+            self.scope_docstrings[key] = value
+            self.scope_name_lookup[key] = key
+
     def _store_document(self, doc: A816Document) -> None:
         if not doc.uri:
             return
         self.documents[doc.uri] = doc
-        new_label_names = set(doc.labels.keys())
-        new_symbol_names = set(doc.symbols.keys())
-        new_macro_names = set(doc.macros.keys())
+        new_labels = self._index_labels(doc)
+        new_symbols = self._index_symbols(doc)
+        new_macros = self._index_macros(doc)
+        self._merge_docstrings(doc)
 
-        for label in new_label_names:
-            position, uri = doc.labels[label]
-            self.labels[label] = (position, uri)
-            self.label_name_lookup[label.lower()] = label
-
-        for symbol in new_symbol_names:
-            position, uri = doc.symbols[symbol]
-            self.symbols[symbol] = (position, uri)
-
-        for macro in new_macro_names:
-            position, uri = doc.macros[macro]
-            self.macros[macro] = (position, uri)
-            self.macro_name_lookup[macro.lower()] = macro
-            if macro in doc.macro_params:
-                self.macro_params[macro] = doc.macro_params[macro]
-
-        if doc.label_docstrings:
-            for key, value in doc.label_docstrings.items():
-                self.label_docstrings[key] = value
-
-        if doc.macro_docstrings:
-            for key, value in doc.macro_docstrings.items():
-                self.macro_docstrings[key] = value
-
-        if doc.scope_docstrings:
-            for key, value in doc.scope_docstrings.items():
-                self.scope_docstrings[key] = value
-                self.scope_name_lookup[key] = key  # already lower-case
-
-        self.doc_labels[doc.uri] = new_label_names
-        self.doc_symbols[doc.uri] = new_symbol_names
-        self.doc_macros[doc.uri] = new_macro_names
+        self.doc_labels[doc.uri] = new_labels
+        self.doc_symbols[doc.uri] = new_symbols
+        self.doc_macros[doc.uri] = new_macros
         self.doc_label_docstrings[doc.uri] = set(doc.label_docstrings.keys())
         self.doc_macro_docstrings[doc.uri] = set(doc.macro_docstrings.keys())
         self.doc_scope_docstrings[doc.uri] = set(doc.scope_docstrings.keys())
@@ -1603,116 +1612,75 @@ class A816LanguageServer:
         logger.debug(f"Generated {len(tokens)} AST-only tokens")
         return tokens
 
+    _DIRECTIVE_TYPES: ClassVar[tuple[type, ...]] = (
+        MacroApplyAstNode,
+        CodePositionAstNode,
+        MapAstNode,
+        IfAstNode,
+        MacroAstNode,
+        AssignAstNode,
+        ExternAstNode,
+        ImportAstNode,
+        DataNode,
+    )
+
+    @staticmethod
+    def _semantic_token_type(node: AstNode) -> int | None:
+        if isinstance(node, LabelAstNode):
+            return 1  # function (label)
+        if isinstance(node, OpcodeAstNode):
+            return 0  # keyword (opcode)
+        if isinstance(node, CommentAstNode):
+            return 2  # comment
+        if isinstance(node, DocstringAstNode):
+            return 4  # string
+        if isinstance(node, IncludeAstNode) or isinstance(node, A816LanguageServer._DIRECTIVE_TYPES):
+            return 7  # macro (directive)
+        return None
+
+    @staticmethod
+    def _terminates_after_emit(node: AstNode) -> bool:
+        return isinstance(node, DocstringAstNode | IncludeAstNode)
+
+    def _visit_token_children(self, node: AstNode, tokens: list[dict[str, Any]], doc: A816Document) -> None:
+        body = getattr(node, "body", None)
+        if isinstance(body, list):
+            for child in body:
+                if isinstance(child, AstNode):
+                    self._visit_node_for_tokens(child, tokens, doc)
+        elif isinstance(body, AstNode):
+            self._visit_node_for_tokens(body, tokens, doc)
+        block = getattr(node, "block", None)
+        if isinstance(block, AstNode):
+            self._visit_node_for_tokens(block, tokens, doc)
+        else_block = getattr(node, "else_block", None)
+        if isinstance(else_block, AstNode):
+            self._visit_node_for_tokens(else_block, tokens, doc)
+
     def _visit_node_for_tokens(self, node: AstNode, tokens: list[dict[str, Any]], doc: A816Document) -> None:
-        """Recursively visit AST nodes to extract semantic tokens"""
+        """Recursively visit AST nodes to extract semantic tokens."""
         try:
             if not node.file_info or not node.file_info.position:
                 return
-
-            # Check if this node's file matches the current document URI
-            if node.file_info.position.file.filename:
-                # Normalize paths for comparison
-                node_file = node.file_info.position.file.filename
-                doc_file = doc.uri
-
-                if node_file != doc_file:
-                    return
+            if node.file_info.position.file.filename and node.file_info.position.file.filename != doc.uri:
+                return
 
             pos = node.file_info.position
             token_text = node.file_info.value
+            type_id = self._semantic_token_type(node)
+            if type_id is not None:
+                tokens.append({"line": pos.line, "char": pos.column, "length": len(token_text), "type": type_id})
 
-            # Map AST node types to semantic token types
-            if isinstance(node, LabelAstNode):
-                tokens.append(
-                    {
-                        "line": pos.line,
-                        "char": pos.column,
-                        "length": len(token_text),
-                        "type": 1,  # function (label)
-                    }
-                )
-            elif isinstance(node, OpcodeAstNode):
-                tokens.append(
-                    {
-                        "line": pos.line,
-                        "char": pos.column,
-                        "length": len(token_text),
-                        "type": 0,  # keyword (opcode)
-                    }
-                )
-                if node.operand:
-                    self._visit_node_for_tokens(node.operand, tokens, doc)
-                    return
-            elif isinstance(node, CommentAstNode):
-                tokens.append(
-                    {
-                        "line": pos.line,
-                        "char": pos.column,
-                        "length": len(token_text),
-                        "type": 2,  # comment
-                    }
-                )
-            elif isinstance(node, DocstringAstNode):
-                tokens.append(
-                    {
-                        "line": pos.line,
-                        "char": pos.column,
-                        "length": len(token_text),
-                        "type": 4,  # string
-                    }
-                )
+            if isinstance(node, OpcodeAstNode) and node.operand:
+                self._visit_node_for_tokens(node.operand, tokens, doc)
                 return
-            elif isinstance(node, IncludeAstNode):
-                tokens.append(
-                    {
-                        "line": pos.line,
-                        "char": pos.column,
-                        "length": len(token_text),
-                        "type": 7,  # macro (directive)
-                    }
-                )
-                return
-            elif isinstance(
-                node,
-                MacroApplyAstNode
-                | CodePositionAstNode
-                | MapAstNode
-                | IfAstNode
-                | MacroAstNode
-                | AssignAstNode
-                | ExternAstNode
-                | ImportAstNode
-                | DataNode,
-            ):
-                # Macro calls, assembler directives, and data declarations.
-                tokens.append(
-                    {
-                        "line": pos.line,
-                        "char": pos.column,
-                        "length": len(token_text),
-                        "type": 7,
-                    }
-                )
-            elif isinstance(node, ExpressionAstNode):
-                # Handle symbols and identifiers in expressions
+            if isinstance(node, ExpressionAstNode):
                 self._analyze_expression_tokens(node, tokens)
-                return  # Don't process children as we handle them in _analyze_expression_tokens
+                return
+            if self._terminates_after_emit(node):
+                return
 
-            # Handle compound nodes with child nodes
-            if hasattr(node, "body"):
-                if isinstance(node.body, list):
-                    for child in node.body:
-                        if isinstance(child, AstNode):
-                            self._visit_node_for_tokens(child, tokens, doc)
-                elif isinstance(node.body, AstNode):
-                    self._visit_node_for_tokens(node.body, tokens, doc)
-
-            # Handle other node types with child nodes
-            if hasattr(node, "block") and node.block:
-                self._visit_node_for_tokens(node.block, tokens, doc)
-            if hasattr(node, "else_block") and node.else_block:
-                self._visit_node_for_tokens(node.else_block, tokens, doc)
-
+            self._visit_token_children(node, tokens, doc)
         except (AttributeError, KeyError, IndexError, TypeError) as e:
             logger.debug(f"Error processing AST node {type(node).__name__}: {e}")
 
