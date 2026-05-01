@@ -505,17 +505,20 @@ class CodeLookupAstNode(AstNode):
 
 
 class StructAstNode(AstNode):
-    def __init__(self, name: str, fields: dict[str, str], file_info: Token) -> None:
+    def __init__(self, name: str, fields: list[tuple[str, str]], file_info: Token) -> None:
         super().__init__("struct", file_info)
         self.name = name
-        self.fields = fields
+        # Insertion-ordered (name, type) pairs. List instead of dict so
+        # downstream consumers can rely on the declared order without poking
+        # at dict semantics, and so duplicate names get caught at parse time.
+        self.fields: list[tuple[str, str]] = list(fields)
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.name, self.fields
+        return self.kind, self.name, list(self.fields)
 
     def to_canonical(self) -> str:
-        fields_str = ", ".join(f"{name}: {type_}" for name, type_ in self.fields.items())
-        return f".struct {self.name} {{ {fields_str} }}"
+        body = "\n".join(f"    {field_type} {field_name}" for field_name, field_type in self.fields)
+        return f".struct {self.name} {{\n{body}\n}}"
 
 
 class ForAstNode(AstNode):
