@@ -2,7 +2,6 @@ import logging
 import struct
 import unittest
 from typing import cast
-from unittest import skip
 
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.nodes import DocstringAstNode, IncludeIpsAstNode, MacroAstNode, ScopeAstNode, Term, UnaryOp
@@ -453,7 +452,6 @@ lda #1
         assert isinstance(ast_result.nodes[0], DocstringAstNode)  # for type narrowing
         self.assertEqual(ast_result.nodes[0].text, "Module description")
 
-    @skip("experimental")
     def test_parse_struct(self) -> None:
         input_program = """
         .struct a_struct {
@@ -464,12 +462,13 @@ lda #1
 
         program = Program()
         ast = program.parser.parse_as_ast(input_program)
+        assert ast.error is None, ast.error
         self.assertEqual(
             [
                 (
                     "struct",
                     "a_struct",
-                    {"id": "byte", "offset": "word", "pointer": "long"},
+                    [("id", "byte"), ("offset", "word"), ("pointer", "long")],
                 )
             ],
             ast.ast,

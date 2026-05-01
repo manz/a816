@@ -76,6 +76,7 @@ from a816.parse.ast.nodes import (
     MapAstNode,
     OpcodeAstNode,
     ScopeAstNode,
+    StructAstNode,
     SymbolAffectationAstNode,
     Term,
 )
@@ -203,6 +204,17 @@ class A816Document:
         if node.module_name and node.module_name not in self.imports:
             self.imports.append(node.module_name)
 
+    def _record_struct(self, node: StructAstNode) -> None:
+        """Index struct fields as Name.field symbols so goto-def works."""
+        token = node.file_info
+        if not token.position:
+            return
+        pos = Position(line=token.position.line, character=token.position.column)
+        file_uri = self._get_file_uri_for_token(token)
+        for field_name, _field_type in node.fields:
+            self.symbols[f"{node.name}.{field_name}"] = (pos, file_uri)
+        self.symbols[f"{node.name}.__size"] = (pos, file_uri)
+
     def _visit_include(self, node: IncludeAstNode) -> None:
         for child in node.included_nodes:
             if isinstance(child, AstNode):
@@ -240,6 +252,9 @@ class A816Document:
             self._record_macro(node)
         elif isinstance(node, ImportAstNode):
             self._record_import(node)
+        elif isinstance(node, StructAstNode):
+            self._record_struct(node)
+            return
         elif isinstance(node, IncludeAstNode):
             self._visit_include(node)
             return
@@ -1450,6 +1465,7 @@ class A816LanguageServer:
         AssignAstNode,
         ExternAstNode,
         ImportAstNode,
+        StructAstNode,
         DataNode,
     )
 

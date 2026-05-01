@@ -234,6 +234,9 @@ def parse_for(p: Parser) -> ForAstNode:
     return ForAstNode(variable.value, start, end, block, current)
 
 
+STRUCT_FIELD_TYPES = {"byte", "word", "long", "dword"}
+
+
 def parse_struct(p: Parser) -> StructAstNode:
     current = p.current()
 
@@ -241,21 +244,38 @@ def parse_struct(p: Parser) -> StructAstNode:
     expect_token(variable, TokenType.IDENTIFIER)
 
     expect_token(p.next(), TokenType.LBRACE)
-    fields = {}
+    fields: list[tuple[str, str]] = []
+    seen: set[str] = set()
     while p.current().type != TokenType.EOF:
         if p.current().type == TokenType.COMMENT:
+            p.next()
+            continue
+        if p.current().type == TokenType.COMMA:
             p.next()
             continue
         if p.current().type == TokenType.RBRACE:
             break
 
-        expect_token(p.current(), TokenType.TYPE)
-        field_type = p.next()
-        expect_token(p.current(), TokenType.IDENTIFIER)
-        field_identifier = p.current()
+        type_token = p.current()
+        expect_token(type_token, TokenType.IDENTIFIER)
+        if type_token.value not in STRUCT_FIELD_TYPES:
+            raise ParserSyntaxError(
+                f"Unknown struct field type {type_token.value!r}; expected one of {sorted(STRUCT_FIELD_TYPES)}",
+                type_token,
+                TokenType.IDENTIFIER,
+            )
+        p.next()
 
-        fields[field_identifier.value] = field_type.value
-
+        name_token = p.current()
+        expect_token(name_token, TokenType.IDENTIFIER)
+        if name_token.value in seen:
+            raise ParserSyntaxError(
+                f"Duplicate struct field {name_token.value!r}",
+                name_token,
+                TokenType.IDENTIFIER,
+            )
+        seen.add(name_token.value)
+        fields.append((name_token.value, type_token.value))
         p.next()
 
     expect_token(p.next(), TokenType.RBRACE)

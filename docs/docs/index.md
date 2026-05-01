@@ -122,6 +122,46 @@ named_scope {
     load_system_menu_text_pointer(named_scope.yaha_text)
 ```
 
+## Structs
+
+`.struct Name { ... }` declares a layout. Each field is one of `byte`,
+`word`, `long` (24-bit), or `dword` (32-bit). Field names export as
+`Name.field` constants holding the byte offset from the start of the
+struct, plus `Name.__size` for the total length.
+
+```ca65
+.struct OAM {
+    word x
+    byte y
+    byte tile
+    byte attr
+}
+```
+
+emits `OAM.x = 0`, `OAM.y = 2`, `OAM.tile = 3`, `OAM.attr = 4`,
+`OAM.__size = 5`.
+
+Use the offsets against any base address — a hardware register, a WRAM
+pointer, an array stride:
+
+```ca65
+.struct PPU {
+    byte INIDISP
+    byte OBSEL
+    word OAMADDR
+}
+
+*=0x008000
+    lda.w 0x2100 + PPU.OAMADDR  ; assembles as LDA $2102
+
+player = 0x7E0010
+    lda.b player + OAM.x
+    sta.b player + OAM.tile
+```
+
+Structs are layout-only; they don't reserve storage and don't emit
+bytes. Pair with `*=` or a memory-map directive to place an instance.
+
 ## Modules
 
 `.import "module"` brings symbols from another translation unit; `.extern`

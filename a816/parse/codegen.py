@@ -33,6 +33,7 @@ from a816.parse.ast.nodes import (
     OpcodeAstNode,
     RegisterSizeAstNode,
     ScopeAstNode,
+    StructAstNode,
     SymbolAffectationAstNode,
     TableAstNode,
     Term,
@@ -120,6 +121,32 @@ def generate_scope(
     code += _code_gen(node.body.body, resolver, macro_definitions)
     code.append(PopScopeNode(resolver))
     resolver.restore_scope(exports=False)
+    return code
+
+
+# Byte sizes per declared struct field type. dword is 4 because users who
+# write it mean 32-bit; 65c816 effective addresses fit in 24 (use `long`).
+_STRUCT_FIELD_SIZES = {"byte": 1, "word": 2, "long": 3, "dword": 4}
+
+
+def generate_struct(
+    node: StructAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Push a NamedScope, register one offset symbol per field, then export."""
+    resolver.append_named_scope(node.name)
+    resolver.use_next_scope()
+    code: list[NodeProtocol] = [ScopeNode(resolver)]
+    offset = 0
+    for field_name, field_type in node.fields:
+        resolver.current_scope.add_symbol(field_name, offset)
+        offset += _STRUCT_FIELD_SIZES[field_type]
+    resolver.current_scope.add_symbol("__size", offset)
+    code.append(PopScopeNode(resolver))
+    # exports=True promotes Name.field and Name.__size to the parent scope.
+    resolver.restore_scope(exports=True)
     return code
 
 
@@ -768,6 +795,7 @@ generators = {
     "comment": generate_comment,
     "debug": generate_debug,
     "register_size": generate_register_size,
+    "struct": generate_struct,
 }
 
 
