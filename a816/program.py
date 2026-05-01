@@ -141,10 +141,32 @@ class Program:
             program: List of resolved executable nodes.
             writer: Output writer (IPSWriter, SFCWriter, etc.).
         """
+        from a816.parse.nodes import LinkedModuleNode
+
         current_block = b""
         current_block_addr = self.resolver.pc
         for node in program:
             pre_emit_addr = self.resolver.reloc_address.logical_value
+
+            if isinstance(node, LinkedModuleNode):
+                # Multi-region modules emit separate blocks at their own
+                # absolute base addresses; flush the pending block first so
+                # writes don't get re-keyed under the module's address.
+                if len(current_block) > 0:
+                    writer.write_block(current_block, current_block_addr)
+                    current_block = b""
+                blocks = node.emit_blocks(self.resolver.reloc_address)
+                for base, block in blocks:
+                    if block:
+                        writer.write_block(block, base)
+                if blocks:
+                    first_base, first_code = blocks[0]
+                    advance = len(first_code)
+                    self.resolver.pc += advance
+                    self.resolver.reloc_address += advance
+                    current_block_addr = self.resolver.pc
+                continue
+
             node_bytes = node.emit(self.resolver.reloc_address)
 
             if node_bytes:
@@ -189,50 +211,51 @@ class Program:
         self._debug_lines.append((address, position.file.filename, position.line, position.column))
 
     def emit_with_relocations(self, program: list[NodeProtocol], object_writer: ObjectWriter) -> None:
-        """
-        Emit code while tracking symbols that need relocation for object files.
-        This is similar to emit() but also identifies and records relocations.
+        """Emit code into per-region object-file buckets.
+
+        A new region opens on every CodePositionNode. Relocation/line offsets
+        recorded by emitting nodes are region-relative byte offsets, decoupled
+        from `resolver.pc` (which CodePositionNode rewrites to a physical
+        address).
         """
         current_block = b""
-        current_offset = 0
 
-        # For object files, we don't use absolute addresses - everything is relative to start of object
         original_pc = self.resolver.pc
         original_reloc = self.resolver.reloc_address
-        self.resolver.pc = 0
-        self.resolver.reloc_address = self.resolver.get_bus().get_address(0)
+
+        # Seed the initial (implicit) region at the resolver's reloc_address.
+        # If the source begins with `*=`, that emit immediately closes this
+        # placeholder region and opens a new explicit one.
+        object_writer.start_region(self.resolver.reloc_address.logical_value, explicit=False)
 
         try:
             for node in program:
-                # Note: External symbol references are handled during parsing/codegen.
-                # The OpcodeNode and ExpressionNode classes already create relocations
-                # when they encounter external symbols (via ExternalSymbolReference).
-                # Here we simply emit the code - relocations are stored in the ObjectWriter.
-                pre_emit_offset = self.resolver.pc
                 node_bytes = node.emit(self.resolver.reloc_address)
 
                 if node_bytes:
-                    self._record_object_line(node, pre_emit_offset, object_writer)
+                    self._record_object_line(node, object_writer.relocation_offset(), object_writer)
                     current_block += node_bytes
                     self.resolver.pc += len(node_bytes)
                     self.resolver.reloc_address += len(node_bytes)
 
                 if isinstance(node, CodePositionNode):
                     if len(current_block) > 0:
-                        object_writer.write_block(current_block, current_offset)
-                        current_offset += len(current_block)
+                        object_writer.write_block(current_block, 0)
                     current_block = b""
+                    object_writer.start_region(self.resolver.reloc_address.logical_value, explicit=True)
 
                 if isinstance(node, IncludeIpsNode):
-                    for _block_addr, block in node.blocks:
-                        object_writer.write_block(block, current_offset)
-                        current_offset += len(block)
+                    if len(current_block) > 0:
+                        object_writer.write_block(current_block, 0)
+                        current_block = b""
+                    for block_addr, block in node.blocks:
+                        object_writer.start_region(block_addr, explicit=True)
+                        object_writer.write_block(block, block_addr)
 
             if len(current_block) > 0:
-                object_writer.write_block(current_block, current_offset)
+                object_writer.write_block(current_block, 0)
 
         finally:
-            # Restore original state
             self.resolver.pc = original_pc
             self.resolver.reloc_address = original_reloc
 
@@ -315,7 +338,7 @@ class Program:
             return -1
 
     def _classify_object_symbol(
-        self, name: str, value: int, base_address: int, label_names: set[str]
+        self, name: str, value: int, label_names: set[str]
     ) -> tuple[SymbolType, SymbolSection, int]:
         # Anonymous-block labels stay LOCAL (would otherwise leak as globals);
         # `_` prefix marks private; root-scope (or NamedScope dotted) is GLOBAL.
@@ -324,16 +347,16 @@ class Program:
         else:
             symbol_type = SymbolType.GLOBAL
         section = SymbolSection.CODE if name in label_names else SymbolSection.DATA
-        # CODE values are logical addresses; emit module-relative offsets.
-        symbol_value = value - base_address if section == SymbolSection.CODE and isinstance(value, int) else value
-        return symbol_type, section, symbol_value
+        # Symbols carry their absolute logical address — relocatable modules
+        # apply a delta at .import time; pinned modules use the value as-is.
+        return symbol_type, section, value
 
-    def _export_object_symbols(self, object_writer: ObjectWriter, base_address: int) -> None:
+    def _export_object_symbols(self, object_writer: ObjectWriter) -> None:
         label_names = {n for n, _ in self.resolver.get_all_labels(mangle_nested=True)}
         for name, value in self.resolver.get_all_symbols():
             if self.resolver.current_scope.is_external_symbol(name):
                 continue  # already added by ExternNode
-            sym_type, section, sym_value = self._classify_object_symbol(name, value, base_address, label_names)
+            sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 
     def assemble_with_object_emitter(
@@ -345,7 +368,6 @@ class Program:
         try:
             self.resolver.context.mode = AssemblyMode.OBJECT
             self.resolver.context.object_writer = object_writer
-            base_address = self.resolver.reloc_address.logical_value
 
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
@@ -360,7 +382,7 @@ class Program:
 
                 self.logger.info("Resolving labels")
                 self.resolve_labels(nodes)
-                self._export_object_symbols(object_writer, base_address)
+                self._export_object_symbols(object_writer)
 
                 if self.dump_symbols:
                     self.resolver.dump_symbol_map()
@@ -505,7 +527,12 @@ class Program:
             SymbolScope,
         )
 
-        if not linked_obj.symbols and not linked_obj.lines:
+        # Lines are stored region-relative; bake the final logical address.
+        all_lines: list[tuple[int, int, int, int, int]] = []
+        for region in linked_obj.regions:
+            for offset, file_idx, line, column, flags in region.lines:
+                all_lines.append((region.base_address + offset, file_idx, line, column, flags))
+        if not linked_obj.symbols and not all_lines:
             return None
 
         info = DebugInfo()
@@ -524,9 +551,9 @@ class Program:
             scope_kind = scope_by_type[sym_type]
             kind = SymbolKind.LABEL if section == SymbolSection.CODE else SymbolKind.CONSTANT
             info.symbols.append(SymbolEntry(name=name, address=value, scope=scope_kind, module_idx=0, kind=kind))
-        for offset, file_idx, line, column, flags in linked_obj.lines:
+        for address, file_idx, line, column, flags in all_lines:
             info.lines.append(
-                LineEntry(address=offset, file_idx=file_idx, line=line, column=column, module_idx=0, flags=flags)
+                LineEntry(address=address, file_idx=file_idx, line=line, column=column, module_idx=0, flags=flags)
             )
 
         from a816.debug_info import write as write_debug_info
@@ -563,10 +590,9 @@ class Program:
                 ips_emitter = IPSWriter(f, copier_header)
                 ips_emitter.begin()
 
-                if linked_obj.code:
-                    # Determine start address from CODE symbols, default to 0x8000
-                    start_address = self._get_code_start_address(linked_obj)
-                    ips_emitter.write_block(linked_obj.code, start_address)
+                for region in linked_obj.regions:
+                    if region.code:
+                        ips_emitter.write_block(region.code, region.base_address)
 
                 ips_emitter.end()
                 self.write_debug_info_for_linked(linked_obj, ips_file)
@@ -593,10 +619,9 @@ class Program:
                 sfc_emitter = SFCWriter(f)
                 sfc_emitter.begin()
 
-                if linked_obj.code:
-                    # Determine start address from CODE symbols, default to 0x8000
-                    start_address = self._get_code_start_address(linked_obj)
-                    sfc_emitter.write_block(linked_obj.code, start_address)
+                for region in linked_obj.regions:
+                    if region.code:
+                        sfc_emitter.write_block(region.code, region.base_address)
 
                 sfc_emitter.end()
                 self.write_debug_info_for_linked(linked_obj, sfc_file)

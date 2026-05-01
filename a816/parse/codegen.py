@@ -388,8 +388,7 @@ def _import_from_object(
         symbols_data = [
             (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
         ]
-        expr_relocs = list(obj_file.expression_relocations) if obj_file.expression_relocations else []
-        return [LinkedModuleNode(module_name, obj_file.code, symbols_data, resolver, expr_relocs)]
+        return [LinkedModuleNode(module_name, obj_file.regions, symbols_data, resolver, obj_file.relocatable)]
 
     return [ExternNode(name, resolver) for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
 
