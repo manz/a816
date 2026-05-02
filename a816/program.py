@@ -1,4 +1,5 @@
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ class _EmitState:
 
     current_block: bytes
     current_block_addr: int
+    current_block_logical: int = 0
 
 
 @dataclass
@@ -70,6 +72,8 @@ class Program:
         self._debug_lines: list[tuple[int, str, int, int]] = []
         self._linked_modules: list[Any] = []  # list[LinkedModuleNode]; typed loosely to avoid cycle
         self._program_nodes: list[NodeProtocol] = []
+        # (snes_logical, physical, size, src) appended when A816_EMIT_TRACE=1.
+        self._emit_trace: list[tuple[int, int, int, str]] = []
 
     def add_module_path(self, path: str | Path) -> None:
         """Add a directory to the module search path for .import directives.
@@ -191,6 +195,42 @@ class Program:
             return logical_address
         return physical
 
+    @staticmethod
+    def _emit_trace_enabled() -> bool:
+        return os.environ.get("A816_EMIT_TRACE") == "1"
+
+    def _trace_block(self, snes: int, phys: int, size: int, src: str = "<unknown>") -> None:
+        if self._emit_trace_enabled():
+            self._emit_trace.append((snes, phys, size, src))
+
+    def _flush_emit_trace(self, output_path: Path) -> None:
+        """Write any accumulated emit-trace records next to output_path."""
+        if not self._emit_trace_enabled():
+            return
+        log_path = output_path.with_suffix(output_path.suffix + ".emit.log")
+        with open(log_path, "w", encoding="utf-8") as logf:
+            for snes, phys, size, src in self._emit_trace:
+                logf.write(f"snes=${snes & 0xFFFFFF:06X}  phys=0x{phys & 0xFFFFFF:06X}  size={size}  src={src}\n")
+        self._emit_trace = []
+
+    def _trace_linked_regions(self, linked_obj: ObjectFile) -> None:
+        """Replay a linked ObjectFile's regions into the trace buffer."""
+        if not self._emit_trace_enabled():
+            return
+        files = getattr(linked_obj, "files", []) or []
+        for region in linked_obj.regions:
+            if not region.code:
+                continue
+            snes = region.base_address
+            phys = self._to_physical(snes)
+            size = len(region.code)
+            if region.lines:
+                _, file_idx, line, *_rest = region.lines[0]
+                src = f"{files[file_idx]}:{line}" if 0 <= file_idx < len(files) else "<unknown>"
+            else:
+                src = "<unknown>"
+            self._emit_trace.append((snes, phys, size, src))
+
     def emit(self, program: list[NodeProtocol], writer: Writer) -> None:
         """Emit machine code from resolved nodes to a writer.
 
@@ -202,7 +242,11 @@ class Program:
             program: List of resolved executable nodes.
             writer: Output writer (IPSWriter, SFCWriter, etc.).
         """
-        state = _EmitState(current_block=b"", current_block_addr=self.resolver.pc)
+        state = _EmitState(
+            current_block=b"",
+            current_block_addr=self.resolver.pc,
+            current_block_logical=self.resolver.reloc_address.logical_value,
+        )
         for node in program:
             self._emit_one(node, writer, state)
         self._flush_pending(writer, state)
@@ -240,6 +284,7 @@ class Program:
             self.resolver.pc += advance
             self.resolver.reloc_address += advance
         state.current_block_addr = self.resolver.pc
+        state.current_block_logical = self.resolver.reloc_address.logical_value
 
     def _emit_default(self, node: NodeProtocol, writer: Writer, state: _EmitState) -> None:
         """Emit a non-LinkedModule node and accumulate its bytes."""
@@ -257,6 +302,7 @@ class Program:
         """Flush at a `*=` boundary and re-anchor for subsequent bytes."""
         self._flush_pending(writer, state)
         state.current_block_addr = self.resolver.pc
+        state.current_block_logical = self.resolver.reloc_address.logical_value
 
     @staticmethod
     def _emit_ips_blocks(node: IncludeIpsNode, writer: Writer) -> None:
@@ -264,11 +310,15 @@ class Program:
         for block_addr, block in node.blocks:
             writer.write_block(block, block_addr)
 
-    @staticmethod
-    def _flush_pending(writer: Writer, state: _EmitState) -> None:
+    def _flush_pending(self, writer: Writer, state: _EmitState) -> None:
         """Write the accumulated current_block at its anchor and reset."""
         if state.current_block:
             writer.write_block(state.current_block, state.current_block_addr)
+            self._trace_block(
+                state.current_block_logical,
+                state.current_block_addr,
+                len(state.current_block),
+            )
             state.current_block = b""
 
     def _record_object_line(self, node: NodeProtocol, offset: int, object_writer: ObjectWriter) -> None:
@@ -424,7 +474,9 @@ class Program:
         """
         with open(sfc_file, "wb") as f:
             sfc_emitter = SFCWriter(f)
-            return self.assemble_with_emitter(asm_file, sfc_emitter, prelude=prelude)
+            exit_code = self.assemble_with_emitter(asm_file, sfc_emitter, prelude=prelude)
+        self._flush_emit_trace(sfc_file)
+        return exit_code
 
     def assemble_as_object(self, asm_file: str, output_file: Path, prelude: str | None = None) -> int:
         """
@@ -533,7 +585,8 @@ class Program:
             ips_emitter.begin()
             exit_code = self.assemble_with_emitter(asm_file, ips_emitter, prelude=prelude)
             ips_emitter.end()
-            return exit_code
+        self._flush_emit_trace(ips_file)
+        return exit_code
 
     def enable_debug_capture(self) -> None:
         """Turn on per-node line capture for `.adbg` emission."""
@@ -704,6 +757,8 @@ class Program:
                         ips_emitter.write_block(region.code, self._to_physical(region.base_address))
 
                 ips_emitter.end()
+                self._trace_linked_regions(linked_obj)
+                self._flush_emit_trace(ips_file)
                 self.write_debug_info_for_linked(linked_obj, ips_file)
                 self.logger.info("Successfully created IPS patch")
                 return 0
@@ -733,6 +788,8 @@ class Program:
                         sfc_emitter.write_block(region.code, self._to_physical(region.base_address))
 
                 sfc_emitter.end()
+                self._trace_linked_regions(linked_obj)
+                self._flush_emit_trace(sfc_file)
                 self.write_debug_info_for_linked(linked_obj, sfc_file)
                 self.logger.info("Successfully created SFC file")
                 return 0
