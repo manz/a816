@@ -1,22 +1,22 @@
-  on:
-    push:
-      tags:
-        - 'v*'
-  jobs:
-    binaries:
-      runs-on: windows-latest
-      steps:
-        - uses: actions/checkout@v4
-        - name: Setup Python 3.12
-          uses: actions/setup-python@v5
-          with:
-            python-version: '3.12'
-        - name: Install hatch
-          run: pip install -r requirements.txt
-        - name: Make release
-          run: make release
-          env:
-            HATCH_INDEX_AUTH: ${{ secrets.HATCH_INDEX_AUTH }}
-            HATCH_INDEX_USER: ${{ secrets.HATCH_INDEX_USER }}
-            VERSION: ${{ github.ref_name }}
-            GH_TOKEN: ${{ github.token }}
+on:
+  push:
+    tags:
+      - 'v*'
+jobs:
+  binaries:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install hatch
+        run: pip install -r requirements.txt
+      - name: Make release
+        run: make release
+        env:
+          HATCH_INDEX_AUTH: ${{ secrets.HATCH_INDEX_AUTH }}
+          HATCH_INDEX_USER: ${{ secrets.HATCH_INDEX_USER }}
+          VERSION: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
