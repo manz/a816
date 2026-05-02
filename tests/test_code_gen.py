@@ -21,6 +21,26 @@ class CodeGenTest(unittest.TestCase):
         self.assertEqual(node.value_node.get_value(), 0x1234)
         self.assertEqual(node.addressing_mode, AddressingMode.immediate)
 
+    def test_brk_with_signature_byte(self) -> None:
+        """`brk #imm` emits the opcode + the user-supplied signature byte."""
+        program = Program()
+        _, nodes = program.parser.parse("brk #0x42")
+        program.resolve_labels(nodes)
+        node = nodes[0]
+        assert isinstance(node, OpcodeNode)
+        emitted = node.emit(program.resolver.reloc_address)
+        self.assertEqual(emitted, b"\x00\x42")
+
+    def test_brk_without_operand_still_emits_opcode(self) -> None:
+        """Bare `brk` keeps its single-byte form for backward compatibility."""
+        program = Program()
+        _, nodes = program.parser.parse("brk")
+        program.resolve_labels(nodes)
+        node = nodes[0]
+        assert isinstance(node, OpcodeNode)
+        emitted = node.emit(program.resolver.reloc_address)
+        self.assertEqual(emitted, b"\x00")
+
     def test_ateq_reslove(self) -> None:
         program = Program()
         program.resolve_labels(

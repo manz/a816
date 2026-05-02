@@ -313,7 +313,10 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "bne": {AddressingMode.direct: RelativeJumpOpcode(0xD0)},
     "bpl": {AddressingMode.direct: RelativeJumpOpcode(0x10)},
     "bra": {AddressingMode.direct: RelativeJumpOpcode(0x80)},
-    "brk": {AddressingMode.none: OpcodeWithoutOperand(0x00)},
+    "brk": {
+        AddressingMode.none: OpcodeWithoutOperand(0x00),
+        AddressingMode.immediate: Opcode([0x00]),
+    },
     "clc": {AddressingMode.none: OpcodeWithoutOperand(0x18)},
     "cmp": {
         AddressingMode.immediate: Opcode([0xC9, 0xC9], is_a=True),
