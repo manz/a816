@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from a816.parse.nodes import (
     CodePositionNode,
     IncludeIpsNode,
     LabelNode,
+    LinkedModuleNode,
     NodeError,
     SymbolNode,
 )
@@ -19,6 +21,14 @@ from a816.symbols import Resolver
 from a816.writers import IPSWriter, ObjectWriter, SFCWriter, Writer
 
 logger = logging.getLogger("a816")
+
+
+@dataclass
+class _EmitState:
+    """Mutable state threaded through Program.emit's per-node helpers."""
+
+    current_block: bytes
+    current_block_addr: int
 
 
 class Program:
@@ -116,8 +126,6 @@ class Program:
         `resolve_labels` so the winner/loser distinction is consistent
         across the address-resolution and emission passes.
         """
-        from a816.parse.nodes import LinkedModuleNode
-
         last_idx: dict[str, int] = {}
         for idx, node in enumerate(program_nodes):
             if isinstance(node, LinkedModuleNode):
@@ -187,65 +195,74 @@ class Program:
             program: List of resolved executable nodes.
             writer: Output writer (IPSWriter, SFCWriter, etc.).
         """
-        from a816.parse.nodes import LinkedModuleNode
-
-        current_block = b""
-        current_block_addr = self.resolver.pc
+        state = _EmitState(current_block=b"", current_block_addr=self.resolver.pc)
         for node in program:
-            pre_emit_addr = self.resolver.reloc_address.logical_value
+            self._emit_one(node, writer, state)
+        self._flush_pending(writer, state)
 
-            if isinstance(node, LinkedModuleNode):
-                if node.is_loser:
-                    # Loser duplicate `.import`: pc_after did not advance,
-                    # symbols already bound elsewhere. Treat as a pure
-                    # no-op — leave current_block untouched so surrounding
-                    # inline source keeps its address layout.
-                    continue
-                # Multi-region modules emit separate blocks at their own
-                # absolute base addresses; flush the pending block first so
-                # writes don't get re-keyed under the module's address.
-                if len(current_block) > 0:
-                    writer.write_block(current_block, current_block_addr)
-                    current_block = b""
-                blocks = node.emit_blocks(self.resolver.reloc_address)
-                for base, block in blocks:
-                    if block:
-                        writer.write_block(block, self._to_physical(base))
-                # Pinned modules don't consume linear PC at the import
-                # site; only relocatable modules advance the importer's
-                # PC by their first-region size (matching pc_after).
-                if blocks and node.relocatable:
-                    first_code = blocks[0][1]
-                    advance = len(first_code)
-                    self.resolver.pc += advance
-                    self.resolver.reloc_address += advance
-                # Either way, the next inline byte will land at the
-                # current PC — refresh current_block_addr so the next
-                # flush keys those bytes against the post-import
-                # position rather than the stale pre-flush address.
-                current_block_addr = self.resolver.pc
-                continue
+    def _emit_one(self, node: NodeProtocol, writer: Writer, state: _EmitState) -> None:
+        """Dispatch a single node to the right emission path."""
+        if isinstance(node, LinkedModuleNode):
+            self._emit_linked_module(node, writer, state)
+            return
+        self._emit_default(node, writer, state)
+        if isinstance(node, CodePositionNode):
+            self._handle_code_position(writer, state)
+        if isinstance(node, IncludeIpsNode):
+            self._emit_ips_blocks(node, writer)
 
-            node_bytes = node.emit(self.resolver.reloc_address)
+    def _emit_linked_module(self, node: LinkedModuleNode, writer: Writer, state: _EmitState) -> None:
+        """Emit a `.import`'d module's regions and refresh emission state.
 
-            if node_bytes:
-                self._record_debug_line(node, pre_emit_addr)
-                current_block += node_bytes
-                self.resolver.pc += len(node_bytes)
-                self.resolver.reloc_address += len(node_bytes)
+        Loser duplicates are pure no-ops (pc_after also bailed out so
+        the resolver PC is untouched — leaving current_block alone keeps
+        surrounding inline source addressed correctly).
+        """
+        if node.is_loser:
+            return
+        self._flush_pending(writer, state)
+        blocks = node.emit_blocks(self.resolver.reloc_address)
+        for base, block in blocks:
+            if block:
+                writer.write_block(block, self._to_physical(base))
+        # Only relocatable modules consume linear PC at the import site;
+        # pinned regions land at their declared `*=` and the importer's
+        # PC stays where it was.
+        if blocks and node.relocatable:
+            advance = len(blocks[0][1])
+            self.resolver.pc += advance
+            self.resolver.reloc_address += advance
+        state.current_block_addr = self.resolver.pc
 
-            if isinstance(node, CodePositionNode):  # or isinstance(node, RelocationAddressNode):
-                if len(current_block) > 0:
-                    writer.write_block(current_block, current_block_addr)
-                current_block_addr = self.resolver.pc
-                current_block = b""
+    def _emit_default(self, node: NodeProtocol, writer: Writer, state: _EmitState) -> None:
+        """Emit a non-LinkedModule node and accumulate its bytes."""
+        del writer  # accumulation only — flush happens at boundaries
+        pre_emit_addr = self.resolver.reloc_address.logical_value
+        node_bytes = node.emit(self.resolver.reloc_address)
+        if not node_bytes:
+            return
+        self._record_debug_line(node, pre_emit_addr)
+        state.current_block += node_bytes
+        self.resolver.pc += len(node_bytes)
+        self.resolver.reloc_address += len(node_bytes)
 
-            if isinstance(node, IncludeIpsNode):
-                for block_addr, block in node.blocks:
-                    writer.write_block(block, block_addr)
+    def _handle_code_position(self, writer: Writer, state: _EmitState) -> None:
+        """Flush at a `*=` boundary and re-anchor for subsequent bytes."""
+        self._flush_pending(writer, state)
+        state.current_block_addr = self.resolver.pc
 
-        if len(current_block) > 0:
-            writer.write_block(current_block, current_block_addr)
+    @staticmethod
+    def _emit_ips_blocks(node: IncludeIpsNode, writer: Writer) -> None:
+        """Pass an `.includeips`-loaded patch's blocks straight through."""
+        for block_addr, block in node.blocks:
+            writer.write_block(block, block_addr)
+
+    @staticmethod
+    def _flush_pending(writer: Writer, state: _EmitState) -> None:
+        """Write the accumulated current_block at its anchor and reset."""
+        if state.current_block:
+            writer.write_block(state.current_block, state.current_block_addr)
+            state.current_block = b""
 
     def _record_object_line(self, node: NodeProtocol, offset: int, object_writer: ObjectWriter) -> None:
         """Record an addr->line entry on the ObjectWriter so .o files carry line info."""
