@@ -1,4 +1,5 @@
 import struct
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import IO
 
@@ -24,126 +25,140 @@ class SymbolSection(Enum):
     BSS = 0x02
 
 
+@dataclass
+class Region:
+    """A contiguous span of emitted code and its associated relocations.
+
+    A new region is opened on every `*=` directive during compilation. Offsets
+    in `relocations`, `expression_relocations`, and `lines` are byte offsets
+    into this region's `code`, not into the concatenated module.
+    """
+
+    base_address: int
+    code: bytes
+    relocations: list[tuple[int, str, RelocationType]] = field(default_factory=list)
+    expression_relocations: list[tuple[int, str, int]] = field(default_factory=list)
+    lines: list[tuple[int, int, int, int, int]] = field(default_factory=list)
+
+
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x0005  # Version 5: optional source-line + file table for .adbg propagation.
+    VERSION = 0x0006  # Version 6: region-aware code layout.
 
     def __init__(
         self,
-        code: bytes,
+        regions_or_code: list[Region] | bytes,
         symbols: list[tuple[str, int, SymbolType, SymbolSection]],
-        relocations: list[tuple[int, str, RelocationType]],
-        expression_relocations: list[tuple[int, str, int]] | None = None,  # (offset, expression_str, size_bytes)
-        aliases: list[tuple[str, str]] | None = None,  # (name, expression_str)
+        relocations: list[tuple[int, str, RelocationType]] | None = None,
+        expression_relocations: list[tuple[int, str, int]] | None = None,
+        aliases: list[tuple[str, str]] | None = None,
         files: list[str] | None = None,
-        # (offset, file_idx, line, column, flags) — offset is relative to code start.
         lines: list[tuple[int, int, int, int, int]] | None = None,
+        relocatable: bool = True,
     ) -> None:
-        self.code: bytes = code
+        # `relocatable` is True iff the source contained no `*=` directive,
+        # so the importer is free to place region 0 at the import site PC
+        # and shift CODE symbols accordingly. Once `*=` is present, every
+        # region is pinned to its compile-time base_address.
+        if isinstance(regions_or_code, bytes):
+            # Legacy single-region constructor used by tests.
+            self.regions: list[Region] = [
+                Region(
+                    base_address=0,
+                    code=regions_or_code,
+                    relocations=list(relocations) if relocations else [],
+                    expression_relocations=list(expression_relocations) if expression_relocations else [],
+                    lines=list(lines) if lines else [],
+                )
+            ]
+        else:
+            self.regions = regions_or_code
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = symbols
-        self.relocations: list[tuple[int, str, RelocationType]] = relocations
-        self.expression_relocations: list[tuple[int, str, int]] = expression_relocations or []
         self.aliases: list[tuple[str, str]] = aliases or []
         self.files: list[str] = files or []
-        self.lines: list[tuple[int, int, int, int, int]] = lines or []
+        self.relocatable: bool = relocatable
+
+    # ----- legacy single-region accessors (tests / older callers) -----
+    def _ensure_first_region(self) -> Region:
+        if not self.regions:
+            self.regions.append(Region(base_address=0, code=b""))
+        return self.regions[0]
+
+    @property
+    def code(self) -> bytes:
+        return self.regions[0].code if self.regions else b""
+
+    @code.setter
+    def code(self, value: bytes) -> None:
+        self._ensure_first_region().code = value
+
+    @property
+    def relocations(self) -> list[tuple[int, str, RelocationType]]:
+        return self.regions[0].relocations if self.regions else []
+
+    @relocations.setter
+    def relocations(self, value: list[tuple[int, str, RelocationType]]) -> None:
+        self._ensure_first_region().relocations = list(value)
+
+    @property
+    def expression_relocations(self) -> list[tuple[int, str, int]]:
+        return self.regions[0].expression_relocations if self.regions else []
+
+    @expression_relocations.setter
+    def expression_relocations(self, value: list[tuple[int, str, int]]) -> None:
+        self._ensure_first_region().expression_relocations = list(value)
+
+    @property
+    def lines(self) -> list[tuple[int, int, int, int, int]]:
+        out: list[tuple[int, int, int, int, int]] = []
+        for region in self.regions:
+            out.extend(region.lines)
+        return out
 
     def write(self, filename: str) -> None:
         with open(filename, "wb") as f:
             self._write_header(f)
-            self._write_code_data_section(f)
+            self._write_regions(f)
             self._write_symbol_table(f)
-            self._write_relocation_table(f)
-            self._write_expression_relocation_table(f)
             self._write_alias_table(f)
             self._write_file_table(f)
-            self._write_line_table(f)
 
     def _write_header(self, f: IO[bytes]) -> None:
-        code_size = len(self.code)
-        symbol_table_size = self._calculate_symbol_table_size()
-        relocation_table_size = self._calculate_relocation_table_size()
-        expression_relocation_table_size = self._calculate_expression_relocation_table_size()
-        alias_table_size = self._calculate_alias_table_size()
-        file_table_size = self._calculate_file_table_size()
-        line_table_size = self._calculate_line_table_size()
-
-        # Only the current version is supported; bump VERSION when the layout
-        # changes and update the reader in lockstep.
+        flags = 0x01 if self.relocatable else 0x00
         header = struct.pack(
-            "<IHIIIIIII",
+            "<IHB",
             self.MAGIC_NUMBER,
             self.VERSION,
-            code_size,
-            symbol_table_size,
-            relocation_table_size,
-            expression_relocation_table_size,
-            alias_table_size,
-            file_table_size,
-            line_table_size,
+            flags,
         )
         f.write(header)
 
-    def _write_code_data_section(self, f: IO[bytes]) -> None:
-        f.write(self.code)
+    def _write_regions(self, f: IO[bytes]) -> None:
+        f.write(struct.pack("<H", len(self.regions)))
+        for region in self.regions:
+            f.write(struct.pack("<II", region.base_address, len(region.code)))
+            f.write(struct.pack("<HHI", len(region.relocations), len(region.expression_relocations), len(region.lines)))
+            f.write(region.code)
+            for offset, name, reloc_type in region.relocations:
+                name_bytes = name.encode("utf-8")
+                f.write(struct.pack("<IB", offset, len(name_bytes)))
+                f.write(name_bytes)
+                f.write(struct.pack("<B", reloc_type.value))
+            for offset, expression, size_bytes in region.expression_relocations:
+                expr_bytes = expression.encode("utf-8")
+                f.write(struct.pack("<IH", offset, len(expr_bytes)))
+                f.write(expr_bytes)
+                f.write(struct.pack("<B", size_bytes))
+            for offset, file_idx, line, column, flags in region.lines:
+                f.write(struct.pack("<IIIHB", offset, file_idx, line, column & 0xFFFF, flags & 0xFF))
 
     def _write_symbol_table(self, f: IO[bytes]) -> None:
-        num_symbols = len(self.symbols)
-        f.write(struct.pack("<H", num_symbols))
+        f.write(struct.pack("<H", len(self.symbols)))
         for name, address, symbol_type, section in self.symbols:
             name_bytes = name.encode("utf-8")
             f.write(struct.pack("<B", len(name_bytes)))
             f.write(name_bytes)
-            f.write(struct.pack("<I", address))
-            f.write(struct.pack("<B", symbol_type.value))
-            f.write(struct.pack("<B", section.value))
-
-    def _write_relocation_table(self, f: IO[bytes]) -> None:
-        num_relocations = len(self.relocations)
-        f.write(struct.pack("<H", num_relocations))
-        for offset, symbol_name, relocation_type in self.relocations:
-            name_bytes = symbol_name.encode("utf-8")
-            f.write(struct.pack("<I", offset))
-            f.write(struct.pack("<B", len(name_bytes)))
-            f.write(name_bytes)
-            f.write(struct.pack("<B", relocation_type.value))
-
-    def _calculate_symbol_table_size(self) -> int:
-        size = 2  # Number of symbols (2 bytes)
-        for name, _, _, _ in self.symbols:
-            size += 1  # Name length (1 byte)
-            size += len(name)  # Name bytes
-            size += 4  # Address (4 bytes)
-            size += 1  # Symbol Type (1 byte)
-            size += 1  # Symbol Section (1 byte)
-        return size
-
-    def _calculate_relocation_table_size(self) -> int:
-        size = 2  # Number of relocations (2 bytes)
-        for _, name, _ in self.relocations:
-            size += 4  # Offset (4 bytes)
-            size += 1  # Name length (1 byte)
-            size += len(name)  # Name bytes
-            size += 1  # Relocation Type (1 byte)
-        return size
-
-    def _write_expression_relocation_table(self, f: IO[bytes]) -> None:
-        num_expr_relocations = len(self.expression_relocations)
-        f.write(struct.pack("<H", num_expr_relocations))
-        for offset, expression, size_bytes in self.expression_relocations:
-            expr_bytes = expression.encode("utf-8")
-            f.write(struct.pack("<I", offset))
-            f.write(struct.pack("<H", len(expr_bytes)))
-            f.write(expr_bytes)
-            f.write(struct.pack("<B", size_bytes))
-
-    def _calculate_expression_relocation_table_size(self) -> int:
-        size = 2  # Number of expression relocations (2 bytes)
-        for _, expression, _ in self.expression_relocations:
-            size += 4  # Offset (4 bytes)
-            size += 2  # Expression length (2 bytes)
-            size += len(expression)  # Expression bytes
-            size += 1  # Size in bytes (1 byte)
-        return size
+            f.write(struct.pack("<IBB", address, symbol_type.value, section.value))
 
     def _write_alias_table(self, f: IO[bytes]) -> None:
         f.write(struct.pack("<H", len(self.aliases)))
@@ -155,12 +170,6 @@ class ObjectFile:
             f.write(struct.pack("<H", len(expr_bytes)))
             f.write(expr_bytes)
 
-    def _calculate_alias_table_size(self) -> int:
-        size = 2
-        for name, expression in self.aliases:
-            size += 1 + len(name) + 2 + len(expression)
-        return size
-
     def _write_file_table(self, f: IO[bytes]) -> None:
         f.write(struct.pack("<H", len(self.files)))
         for path in self.files:
@@ -168,123 +177,87 @@ class ObjectFile:
             f.write(struct.pack("<H", len(encoded)))
             f.write(encoded)
 
-    def _calculate_file_table_size(self) -> int:
-        size = 2
-        for path in self.files:
-            size += 2 + len(path.encode("utf-8"))
-        return size
-
-    def _write_line_table(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<I", len(self.lines)))
-        for offset, file_idx, line, column, flags in self.lines:
-            f.write(struct.pack("<IIIHB", offset, file_idx, line, column & 0xFFFF, flags & 0xFF))
-
-    def _calculate_line_table_size(self) -> int:
-        # Each entry: u32 offset + u32 file_idx + u32 line + u16 column + u8 flags = 15 bytes.
-        return 4 + 15 * len(self.lines)
-
     @staticmethod
-    def _read_file_table(f: IO[bytes], table_size: int) -> list[str]:
-        if table_size == 0:
-            return []
-        count = struct.unpack("<H", f.read(2))[0]
-        files: list[str] = []
+    def _read_regions(f: IO[bytes]) -> list[Region]:
+        (count,) = struct.unpack("<H", f.read(2))
+        regions: list[Region] = []
         for _ in range(count):
-            length = struct.unpack("<H", f.read(2))[0]
-            files.append(f.read(length).decode("utf-8"))
-        return files
+            base_address, code_size = struct.unpack("<II", f.read(8))
+            num_relocs, num_expr_relocs, num_lines = struct.unpack("<HHI", f.read(8))
+            code = f.read(code_size)
+            relocs: list[tuple[int, str, RelocationType]] = []
+            for _ in range(num_relocs):
+                offset, name_len = struct.unpack("<IB", f.read(5))
+                name = f.read(name_len).decode("utf-8")
+                (rt_value,) = struct.unpack("<B", f.read(1))
+                relocs.append((offset, name, RelocationType(rt_value)))
+            expr_relocs: list[tuple[int, str, int]] = []
+            for _ in range(num_expr_relocs):
+                offset, expr_len = struct.unpack("<IH", f.read(6))
+                expression = f.read(expr_len).decode("utf-8")
+                (size_bytes,) = struct.unpack("<B", f.read(1))
+                expr_relocs.append((offset, expression, size_bytes))
+            lines: list[tuple[int, int, int, int, int]] = []
+            for _ in range(num_lines):
+                offset, file_idx, line, column, flags = struct.unpack("<IIIHB", f.read(15))
+                lines.append((offset, file_idx, line, column, flags))
+            regions.append(
+                Region(
+                    base_address=base_address,
+                    code=code,
+                    relocations=relocs,
+                    expression_relocations=expr_relocs,
+                    lines=lines,
+                )
+            )
+        return regions
 
     @staticmethod
-    def _read_line_table(f: IO[bytes], table_size: int) -> list[tuple[int, int, int, int, int]]:
-        if table_size == 0:
-            return []
-        count = struct.unpack("<I", f.read(4))[0]
-        lines: list[tuple[int, int, int, int, int]] = []
+    def _read_symbol_table(f: IO[bytes]) -> list[tuple[str, int, SymbolType, SymbolSection]]:
+        (count,) = struct.unpack("<H", f.read(2))
+        out: list[tuple[str, int, SymbolType, SymbolSection]] = []
         for _ in range(count):
-            offset, file_idx, line, column, flags = struct.unpack("<IIIHB", f.read(15))
-            lines.append((offset, file_idx, line, column, flags))
-        return lines
+            (name_len,) = struct.unpack("<B", f.read(1))
+            name = f.read(name_len).decode("utf-8")
+            address, sym_type, section = struct.unpack("<IBB", f.read(6))
+            out.append((name, address, SymbolType(sym_type), SymbolSection(section)))
+        return out
 
     @staticmethod
-    def _read_symbols(f: IO[bytes]) -> list[tuple[str, int, SymbolType, SymbolSection]]:
-        num_symbols = struct.unpack("<H", f.read(2))[0]
-        symbols = []
-        for _ in range(num_symbols):
-            name_length = struct.unpack("<B", f.read(1))[0]
-            name = f.read(name_length).decode("utf-8")
-            address = struct.unpack("<I", f.read(4))[0]
-            symbol_type = SymbolType(struct.unpack("<B", f.read(1))[0])
-            section = SymbolSection(struct.unpack("<B", f.read(1))[0])
-            symbols.append((name, address, symbol_type, section))
-        return symbols
+    def _read_alias_table(f: IO[bytes]) -> list[tuple[str, str]]:
+        (count,) = struct.unpack("<H", f.read(2))
+        out: list[tuple[str, str]] = []
+        for _ in range(count):
+            (name_len,) = struct.unpack("<B", f.read(1))
+            name = f.read(name_len).decode("utf-8")
+            (expr_len,) = struct.unpack("<H", f.read(2))
+            expression = f.read(expr_len).decode("utf-8")
+            out.append((name, expression))
+        return out
 
     @staticmethod
-    def _read_relocations(f: IO[bytes]) -> list[tuple[int, str, RelocationType]]:
-        num_relocations = struct.unpack("<H", f.read(2))[0]
-        relocations = []
-        for _ in range(num_relocations):
-            offset = struct.unpack("<I", f.read(4))[0]
-            name_length = struct.unpack("<B", f.read(1))[0]
-            name = f.read(name_length).decode("utf-8")
-            relocation_type = RelocationType(struct.unpack("<B", f.read(1))[0])
-            relocations.append((offset, name, relocation_type))
-        return relocations
-
-    @staticmethod
-    def _read_expression_relocations(f: IO[bytes], table_size: int) -> list[tuple[int, str, int]]:
-        if table_size == 0:
-            return []
-        num_expr_relocations = struct.unpack("<H", f.read(2))[0]
-        expression_relocations = []
-        for _ in range(num_expr_relocations):
-            offset = struct.unpack("<I", f.read(4))[0]
-            expr_length = struct.unpack("<H", f.read(2))[0]
-            expression = f.read(expr_length).decode("utf-8")
-            size_bytes = struct.unpack("<B", f.read(1))[0]
-            expression_relocations.append((offset, expression, size_bytes))
-        return expression_relocations
-
-    @staticmethod
-    def _read_aliases(f: IO[bytes], table_size: int) -> list[tuple[str, str]]:
-        if table_size == 0:
-            return []
-        num_aliases = struct.unpack("<H", f.read(2))[0]
-        aliases: list[tuple[str, str]] = []
-        for _ in range(num_aliases):
-            name_length = struct.unpack("<B", f.read(1))[0]
-            name = f.read(name_length).decode("utf-8")
-            expr_length = struct.unpack("<H", f.read(2))[0]
-            expression = f.read(expr_length).decode("utf-8")
-            aliases.append((name, expression))
-        return aliases
+    def _read_file_table(f: IO[bytes]) -> list[str]:
+        (count,) = struct.unpack("<H", f.read(2))
+        out: list[str] = []
+        for _ in range(count):
+            (path_len,) = struct.unpack("<H", f.read(2))
+            out.append(f.read(path_len).decode("utf-8"))
+        return out
 
     @staticmethod
     def from_file(filename: str) -> "ObjectFile":
         with open(filename, "rb") as f:
-            header_data = f.read(34)
-            if len(header_data) < 34:
+            header = f.read(7)
+            if len(header) < 7:
                 raise ValueError(INVALID_FILE_FORMAT)
-            (
-                magic_number,
-                version,
-                code_size,
-                _,
-                _,
-                expression_relocation_table_size,
-                alias_table_size,
-                file_table_size,
-                line_table_size,
-            ) = struct.unpack("<IHIIIIIII", header_data)
-            if magic_number != ObjectFile.MAGIC_NUMBER:
+            magic, version, flags = struct.unpack("<IHB", header)
+            if magic != ObjectFile.MAGIC_NUMBER:
                 raise ValueError("Invalid magic number")
             if version != ObjectFile.VERSION:
                 raise ValueError(f"Unsupported version: {version} (expected {ObjectFile.VERSION})")
-
-            code = f.read(code_size)
-            symbols = ObjectFile._read_symbols(f)
-            relocations = ObjectFile._read_relocations(f)
-            expression_relocations = ObjectFile._read_expression_relocations(f, expression_relocation_table_size)
-            aliases = ObjectFile._read_aliases(f, alias_table_size)
-            files = ObjectFile._read_file_table(f, file_table_size)
-            lines = ObjectFile._read_line_table(f, line_table_size)
-            return ObjectFile(code, symbols, relocations, expression_relocations, aliases, files=files, lines=lines)
+            relocatable = bool(flags & 0x01)
+            regions = ObjectFile._read_regions(f)
+            symbols = ObjectFile._read_symbol_table(f)
+            aliases = ObjectFile._read_alias_table(f)
+            files = ObjectFile._read_file_table(f)
+            return ObjectFile(regions, symbols, aliases=aliases, files=files, relocatable=relocatable)

@@ -1,7 +1,7 @@
 import struct
 from typing import BinaryIO, Protocol
 
-from a816.object_file import ObjectFile, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, Region, RelocationType, SymbolSection, SymbolType
 
 
 class Writer(Protocol):
@@ -59,6 +59,7 @@ class SFCWriter(Writer):
 
     def write_block_header(self, block: bytes, block_address: int) -> None:
         """SFC is contiguous it only needs to implement write_block."""
+        del block, block_address
 
     def write_block(self, block: bytes, block_address: int) -> None:
         self.file.seek(block_address)
@@ -69,30 +70,78 @@ class SFCWriter(Writer):
 
 
 class ObjectWriter(Writer):
+    """Collects regions, symbols, relocations into a v6 ObjectFile.
+
+    Region lifecycle:
+        start_region(base_address) opens a new region and resets the
+        per-region byte counter. Subsequent write_block() appends to the
+        current region; add_relocation/add_expression_relocation/add_line
+        record their offsets relative to the current region's start.
+
+    The first region opens lazily on first write_block() (or first add_*
+    call) using `_pending_base_address`, which the emit driver seeds via
+    `start_region(initial_base)` before emission begins.
+    """
+
     def __init__(self, output_file: str) -> None:
         self.output_file = output_file
-        self.code_blocks: list[tuple[bytes, int]] = []
+        self.regions: list[Region] = []
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
-        self.relocations: list[tuple[int, str, RelocationType]] = []
-        self.expression_relocations: list[tuple[int, str, int]] = []  # (offset, expression_str, size_bytes)
-        self.aliases: list[tuple[str, str]] = []  # (name, expression_str)
+        self.aliases: list[tuple[str, str]] = []
         self.files: list[str] = []
-        # (offset, file_idx, line, column, flags) — offset is bytes from code start.
-        self.lines: list[tuple[int, int, int, int, int]] = []
         self._file_index: dict[str, int] = {}
-        self.current_offset = 0
+        self._current_region: Region | None = None
+        self._pending_base_address: int = 0
+        self._region_bytes_emitted: int = 0
+        # Bytes emitted from the active node but not yet flushed to the
+        # region via write_block. The driver (emit_with_relocations) calls
+        # mark_emitted(len(node_bytes)) after each node so relocation
+        # offsets recorded mid-emit reflect the right intra-region position.
+        self._pending_emit_bytes: int = 0
+        self._has_explicit_position: bool = False
 
     def begin(self) -> None:
-        """Initialize object file creation"""
-        self.code_blocks = []
+        self.regions = []
         self.symbols = []
-        self.relocations = []
-        self.expression_relocations = []
         self.aliases = []
         self.files = []
-        self.lines = []
         self._file_index = {}
-        self.current_offset = 0
+        self._current_region = None
+        self._pending_base_address = 0
+        self._region_bytes_emitted = 0
+        self._pending_emit_bytes = 0
+        self._has_explicit_position = False
+
+    def mark_emitted(self, count: int) -> None:
+        """Advance the per-region emit cursor by ``count`` bytes.
+
+        Reloc emit sites query relocation_offset() before write_block is
+        called for the surrounding block, so this method lets the emit
+        driver advance the cursor in lockstep with bytes returned from
+        each NodeProtocol.emit().
+        """
+        self._pending_emit_bytes += count
+
+    def start_region(self, base_address: int, explicit: bool = False) -> None:
+        """Open a new region at base_address, closing any current region.
+
+        `explicit=True` marks this as the result of a `*=` directive — the
+        module loses single-region relocatability once any explicit region
+        is opened.
+        """
+        # Drop empty pending regions instead of leaving zero-byte placeholders.
+        if self._current_region is not None and not self._current_region.code:
+            self.regions.pop()
+        self._pending_base_address = base_address
+        self._current_region = None
+        self._region_bytes_emitted = 0
+        self._pending_emit_bytes = 0
+        if explicit:
+            self._has_explicit_position = True
+
+    def relocation_offset(self, pending_block_bytes: int = 0) -> int:
+        """Byte offset where the next emitted byte will land in the region."""
+        return self._region_bytes_emitted + self._pending_emit_bytes + pending_block_bytes
 
     def add_file(self, path: str) -> int:
         if path in self._file_index:
@@ -104,48 +153,51 @@ class ObjectWriter(Writer):
 
     def add_line(self, offset: int, file_path: str, line: int, column: int, flags: int = 0) -> None:
         file_idx = self.add_file(file_path)
-        self.lines.append((offset, file_idx, line, column, flags))
+        self._ensure_region().lines.append((offset, file_idx, line, column, flags))
 
     def write_block_header(self, block: bytes, block_address: int) -> None:
-        """Object files don't use block headers"""
-        pass
+        del block, block_address
 
     def write_block(self, block: bytes, block_address: int) -> None:
-        """Collect code blocks for object file"""
-        self.code_blocks.append((block, self.current_offset))
-        self.current_offset += len(block)
+        del block_address  # object files key code by region, not absolute address
+        region = self._ensure_region()
+        region.code = region.code + block
+        self._region_bytes_emitted = len(region.code)
+        # Bytes are now part of the region, drop the pending counter.
+        self._pending_emit_bytes = 0
 
     def add_symbol(
         self, name: str, address: int, symbol_type: SymbolType, section: SymbolSection = SymbolSection.CODE
     ) -> None:
-        """Add a symbol to the object file"""
         self.symbols.append((name, address, symbol_type, section))
 
     def add_relocation(self, offset: int, symbol_name: str, relocation_type: RelocationType) -> None:
-        """Add a relocation entry to the object file"""
-        self.relocations.append((offset, symbol_name, relocation_type))
+        self._ensure_region().relocations.append((offset, symbol_name, relocation_type))
 
     def add_expression_relocation(self, offset: int, expression: str, size_bytes: int) -> None:
-        """Add an expression relocation entry to the object file"""
-        self.expression_relocations.append((offset, expression, size_bytes))
+        self._ensure_region().expression_relocations.append((offset, expression, size_bytes))
 
     def add_alias(self, name: str, expression: str) -> None:
-        """Register a symbol whose value is a deferred expression resolved at link time."""
         self.aliases.append((name, expression))
 
     def end(self) -> None:
-        """Write the object file to disk"""
-        total_code = bytearray()
-        for block, _ in self.code_blocks:
-            total_code.extend(block)
-
+        # Strip a trailing empty region (e.g. trailing `*=` with no code).
+        if self.regions and not self.regions[-1].code:
+            self.regions.pop()
+        relocatable = not self._has_explicit_position
         obj_file = ObjectFile(
-            bytes(total_code),
+            self.regions,
             self.symbols,
-            self.relocations,
-            self.expression_relocations,
-            self.aliases,
+            aliases=self.aliases,
             files=self.files,
-            lines=self.lines,
+            relocatable=relocatable,
         )
         obj_file.write(self.output_file)
+
+    def _ensure_region(self) -> Region:
+        if self._current_region is None:
+            region = Region(base_address=self._pending_base_address, code=b"")
+            self.regions.append(region)
+            self._current_region = region
+            self._region_bytes_emitted = 0
+        return self._current_region

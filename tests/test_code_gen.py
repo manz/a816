@@ -21,6 +21,38 @@ class CodeGenTest(unittest.TestCase):
         self.assertEqual(node.value_node.get_value(), 0x1234)
         self.assertEqual(node.addressing_mode, AddressingMode.immediate)
 
+    def test_brk_with_signature_byte(self) -> None:
+        """`brk #imm` emits the opcode + the user-supplied signature byte."""
+        program = Program()
+        _, nodes = program.parser.parse("brk #0x42")
+        program.resolve_labels(nodes)
+        node = nodes[0]
+        assert isinstance(node, OpcodeNode)
+        emitted = node.emit(program.resolver.reloc_address)
+        self.assertEqual(emitted, b"\x00\x42")
+
+    def test_brk_without_operand_is_rejected(self) -> None:
+        """Bare `brk` is no longer accepted — signature byte is required."""
+        program = Program()
+        error, _ = program.parser.parse("brk")
+        self.assertIsNotNone(error)
+
+    def test_cop_with_signature_byte(self) -> None:
+        program = Program()
+        _, nodes = program.parser.parse("cop #0x7F")
+        program.resolve_labels(nodes)
+        node = nodes[0]
+        assert isinstance(node, OpcodeNode)
+        self.assertEqual(node.emit(program.resolver.reloc_address), b"\x02\x7f")
+
+    def test_wdm_with_signature_byte(self) -> None:
+        program = Program()
+        _, nodes = program.parser.parse("wdm #0xAB")
+        program.resolve_labels(nodes)
+        node = nodes[0]
+        assert isinstance(node, OpcodeNode)
+        self.assertEqual(node.emit(program.resolver.reloc_address), b"\x42\xab")
+
     def test_ateq_reslove(self) -> None:
         program = Program()
         program.resolve_labels(

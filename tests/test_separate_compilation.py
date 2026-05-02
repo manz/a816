@@ -613,3 +613,503 @@ helper:
             result = program.link_as_sfc(empty_obj, sfc_file)
             assert result == 0
             assert sfc_file.exists()
+
+    def test_multi_region_module_compiles_to_separate_regions(self) -> None:
+        """A module with two `*=` directives produces two regions in the .o."""
+        source = """*=0x008000
+first_label:
+    nop
+*=0x018000
+second_label:
+    nop
+    nop
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "multi.s"
+            obj = Path(tmpdir) / "multi.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+
+            o = ObjectFile.from_file(str(obj))
+            assert o.relocatable is False, "explicit *= must mark module as pinned"
+            bases = [r.base_address for r in o.regions]
+            assert 0x008000 in bases
+            assert 0x018000 in bases
+            by_base = {r.base_address: r for r in o.regions}
+            assert by_base[0x008000].code == b"\xea"
+            assert by_base[0x018000].code == b"\xea\xea"
+
+            by_name = {name: address for name, address, _, _ in o.symbols}
+            assert by_name["first_label"] == 0x008000
+            assert by_name["second_label"] == 0x018000
+
+    def test_multi_region_link_keeps_regions_at_declared_bases(self) -> None:
+        """Pinned multi-region modules ignore the linker base_address."""
+        source = """*=0x008000
+entry:
+    nop
+*=0x018000
+data:
+    .db 0x42
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "mod.s"
+            obj = Path(tmpdir) / "mod.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+            o = ObjectFile.from_file(str(obj))
+
+            linker = Linker([o], base_address=0x9000)
+            linked = linker.link()
+            assert {r.base_address for r in linked.regions} == {0x008000, 0x018000}
+            assert linker.symbol_map["entry"] == 0x008000
+            assert linker.symbol_map["data"] == 0x018000
+
+    def test_multi_region_cross_region_symbol_reloc(self) -> None:
+        """A reference from region A to a label in region B patches the right region."""
+        source = """*=0x008000
+entry:
+    .dw far_label & 0xFFFF
+*=0x018000
+far_label:
+    .db 0x77
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "cross.s"
+            obj = Path(tmpdir) / "cross.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+            o = ObjectFile.from_file(str(obj))
+
+            linker = Linker([o], base_address=0)
+            linked = linker.link()
+            by_base = {r.base_address: r for r in linked.regions}
+            patched = by_base[0x008000].code
+            target = linker.symbol_map["far_label"] & 0xFFFF
+            assert patched[0] | (patched[1] << 8) == target
+
+    def test_inline_bytes_after_pinned_import_land_at_post_import_pc(self) -> None:
+        """Inline code following a pinned `.import` keys against post-PC.
+
+        Regression: even though pinned modules correctly leave the
+        importer's PC alone, the emit driver was failing to refresh
+        `current_block_addr` after writing the module's regions. The
+        next current_block flush therefore wrote the post-import
+        inline bytes back to the address used for the pre-import flush
+        — clobbering whatever module / inline run had landed there.
+
+        In ff4-modules this manifested as ~12 KB of `.incbin` data
+        (attack_names, monsters, places_names, …) overwriting the
+        menu-text region right after `.import "assets"`, so menu
+        screens displayed asset bytes instead of menu strings.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "pinned.s"
+            mod.write_text("*=0x208000\npayload:\n    .db 0x77, 0x77, 0x77, 0x77\n")
+            assert Program().assemble_as_object(str(mod), tmp / "pinned.o") == 0
+
+            main = tmp / "main.s"
+            main.write_text('*=0x008000\n.db 0xAA, 0xAA, 0xAA\n.import "pinned"\n.db 0xBB, 0xBB, 0xBB, 0xBB\n')
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            placements = {phys: data for phys, data in self._parse_ips_records(ips.read_bytes())}
+            # Pre-import inline bytes at SNES 0x008000 → physical 0x000000.
+            assert placements.get(0x000000, b"")[:3] == b"\xaa\xaa\xaa"
+            # Pinned module bytes at SNES 0x208000 → physical 0x100000.
+            assert placements.get(0x100000) == b"\x77\x77\x77\x77"
+            # Post-import inline bytes must land at PC 0x000003 (right
+            # after the AA AA AA bytes), NOT at 0x000000 (the stale
+            # current_block_addr that pre-fix code re-used).
+            assert placements.get(0x000003) == b"\xbb\xbb\xbb\xbb"
+            assert b"\xbb\xbb\xbb\xbb" not in placements.get(0x000000, b"")[3:]
+
+    def test_multi_region_module_addresses_are_exact(self) -> None:
+        """End-to-end check that every region of a pinned multi-region
+        module lands at its declared `*=` address, with symbols and
+        bytes at the same address, and no inline-PC movement.
+
+        Covers the layout assumptions ff4-modules' assets module relies
+        on: three regions in distant LoROM banks ($20:8000, $22:8000,
+        $30:8000), each carrying a labeled byte sentinel. The test
+        asserts:
+
+        - the .o has three regions with the right base_address values;
+        - each region's symbol resolves to its compile-time absolute
+          logical address (no delta) after `.import`;
+        - the IPS contains each region's sentinel at the correct
+          LoROM-physical file offset and nowhere else;
+        - the importer's PC does not move across the `.import` (a
+          label placed right after the import sits next to inline code
+          that came right before it).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "tri.s"
+            mod.write_text(
+                "*=0x208000\n"
+                "region_a:\n"
+                ".db 0xA1, 0xA2, 0xA3, 0xA4\n"
+                "*=0x228000\n"
+                "region_b:\n"
+                ".db 0xB1, 0xB2, 0xB3, 0xB4\n"
+                "*=0x308000\n"
+                "region_c:\n"
+                ".db 0xC1, 0xC2, 0xC3, 0xC4\n"
+            )
+            assert Program().assemble_as_object(str(mod), tmp / "tri.o") == 0
+
+            obj = ObjectFile.from_file(str(tmp / "tri.o"))
+            assert obj.relocatable is False
+            assert len(obj.regions) == 3
+            by_base = {r.base_address: r for r in obj.regions}
+            assert by_base[0x208000].code == b"\xa1\xa2\xa3\xa4"
+            assert by_base[0x228000].code == b"\xb1\xb2\xb3\xb4"
+            assert by_base[0x308000].code == b"\xc1\xc2\xc3\xc4"
+
+            sym_addr = {name: addr for name, addr, _, _ in obj.symbols}
+            assert sym_addr["region_a"] == 0x208000
+            assert sym_addr["region_b"] == 0x228000
+            assert sym_addr["region_c"] == 0x308000
+
+            main = tmp / "main.s"
+            main.write_text('*=0x008000\nbefore_import:\n.db 0xEE\n.import "tri"\nafter_import:\n.db 0xFF\n')
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            scope = program.resolver.current_scope
+            label = scope.labels
+            symbols = scope.symbols
+
+            def _logical(value: object) -> int:
+                inner = getattr(value, "logical_value", value)
+                assert isinstance(inner, int)
+                return inner
+
+            assert _logical(symbols["region_a"]) == 0x208000
+            assert _logical(symbols["region_b"]) == 0x228000
+            assert _logical(symbols["region_c"]) == 0x308000
+
+            # Importer PC stays put across pinned .import.
+            assert _logical(label["after_import"]) - _logical(label["before_import"]) == 1
+
+            # Verify each region's bytes land at exactly the right LoROM
+            # physical offset and only there.
+            content = ips.read_bytes()
+            records = self._parse_ips_records(content)
+            placements: dict[int, bytes] = {phys: data for phys, data in records}
+
+            # LoROM physical for SNES bank N $8000-$FFFF = N * 0x8000 + (addr - $8000).
+            phys_a = 0x20 * 0x8000 + 0x0000  # 0x100000
+            phys_b = 0x22 * 0x8000 + 0x0000  # 0x110000
+            phys_c = 0x30 * 0x8000 + 0x0000  # 0x180000
+            assert placements.get(phys_a, b"") == b"\xa1\xa2\xa3\xa4", (
+                f"region_a bytes missing/misplaced at physical 0x{phys_a:06x}"
+            )
+            assert placements.get(phys_b, b"") == b"\xb1\xb2\xb3\xb4", (
+                f"region_b bytes missing/misplaced at physical 0x{phys_b:06x}"
+            )
+            assert placements.get(phys_c, b"") == b"\xc1\xc2\xc3\xc4", (
+                f"region_c bytes missing/misplaced at physical 0x{phys_c:06x}"
+            )
+
+            # Each sentinel must appear exactly once across the whole IPS.
+            assert content.count(b"\xa1\xa2\xa3\xa4") == 1
+            assert content.count(b"\xb1\xb2\xb3\xb4") == 1
+            assert content.count(b"\xc1\xc2\xc3\xc4") == 1
+
+    def test_multi_region_cross_region_symbol_reference_in_module(self) -> None:
+        """A `dw label_in_other_region` inside a pinned multi-region
+        module patches with the target's *absolute* logical address —
+        not an offset, not a region-relative value.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "xref.s"
+            mod.write_text(
+                "*=0x208000\nregion_a:\n    .dw far_target & 0xFFFF\n*=0x308000\nfar_target:\n    .db 0x99\n"
+            )
+            assert Program().assemble_as_object(str(mod), tmp / "xref.o") == 0
+
+            main = tmp / "main.s"
+            main.write_text('*=0x008000\n.import "xref"\n')
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            phys_a = 0x20 * 0x8000  # 0x100000
+            placements = {phys: data for phys, data in self._parse_ips_records(ips.read_bytes())}
+            patched = placements.get(phys_a)
+            assert patched is not None and len(patched) >= 2
+            operand = patched[0] | (patched[1] << 8)
+            assert operand == 0x308000 & 0xFFFF, (
+                f"cross-region operand patched as {operand:#x}, expected {0x308000 & 0xFFFF:#x}"
+            )
+
+    def test_pinned_module_import_does_not_advance_importer_pc(self) -> None:
+        """A `.import` of a pinned (`*=`) module must not consume PC.
+
+        Regression: LinkedModuleNode.pc_after used to return
+        `regions[0].base_address + len(regions[0].code)` for every
+        module, including pinned ones. For ff4-modules' assets module,
+        that landed the importer's PC at SNES $0B0000 (end of region
+        0 at $0AF000 + 0x1000), so any label following `.import "assets"`
+        was bound inside WRAM mirror space, and JSL operands compiled
+        against those labels jumped to RAM and BRK'd.
+
+        Pinned modules drop their code at their declared absolute
+        addresses; the importer's PC must stay where it was, so a label
+        defined right after `.import` on a pinned module sits next to
+        whatever inline code preceded the import.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "pinned.s"
+            # *=0x208000 makes this a pinned, non-relocatable module.
+            mod.write_text("*=0x208000\npayload:\n    .db 0x77, 0x77, 0x77, 0x77\n")
+            assert Program().assemble_as_object(str(mod), tmp / "pinned.o") == 0
+
+            main = tmp / "main.s"
+            main.write_text('*=0x008000\nbefore:\n.db 0xAA\n.import "pinned"\nafter:\n.db 0xBB\n')
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            scope = program.resolver.current_scope
+            before = scope.labels.get("before")
+            after = scope.labels.get("after")
+            assert before is not None and after is not None
+            before_v = getattr(before, "logical_value", before)
+            after_v = getattr(after, "logical_value", after)
+            assert isinstance(before_v, int) and isinstance(after_v, int)
+            # Only the inline 0xAA byte separates `before` and `after`.
+            assert after_v - before_v == 1, (
+                f"pinned-module .import advanced importer PC; after-before = {after_v - before_v}"
+            )
+
+            # Pinned bytes still land at the module's declared base.
+            content = ips.read_bytes()
+            assert b"\x77\x77\x77\x77" in content
+
+    def test_loser_import_does_not_shift_surrounding_layout(self) -> None:
+        """A skipped duplicate `.import` must consume zero PC — not its size.
+
+        Regression: the loser `.import` used to advance both pc_after and
+        the emit driver's PC by `len(region 0)`. When the loser sat in
+        a source-inlined patch file (e.g. ff4-modules' battle/sram.s
+        carrying `.import "dakuten"` while ff4.s also imports dakuten
+        later), the surrounding inline source ended up shifted forward
+        by the module's size, producing a phantom gap in the IPS that
+        the CPU later executed as garbage.
+
+        Layout under the fix: the `.import` site between the two inline
+        labels takes zero space; the labels straddle exactly the inline
+        bytes that follow, with the module placed once at its winning
+        site.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "mod.s"
+            mod.write_text("payload:\n    .db 0xCC, 0xCC, 0xCC, 0xCC\n")
+            assert Program().assemble_as_object(str(mod), tmp / "mod.o") == 0
+
+            inline_patch = tmp / "patch.s"
+            inline_patch.write_text('before_import:\n    .db 0xAA\n.import "mod"\nafter_import:\n    .db 0xBB\n')
+
+            main = tmp / "main.s"
+            # *=0x008000  -> inline patch (loser .import inside)
+            #             -> *=0x009000 -> winner .import "mod"
+            main.write_text('*=0x008000\n.include "patch.s"\n*=0x009000\n.import "mod"\n')
+
+            program = Program()
+            program.add_module_path(tmp)
+            program.add_include_path(tmp)
+            ips = tmp / "out.ips"
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            scope = program.resolver.current_scope
+            before = scope.labels.get("before_import")
+            after = scope.labels.get("after_import")
+            assert before is not None and after is not None
+            # Two labels with one inline byte between them — and crucially
+            # NOT separated by the (4-byte) module size. The loser must
+            # not advance the importer's PC.
+            before_v = getattr(before, "logical_value", before)
+            after_v = getattr(after, "logical_value", after)
+            assert isinstance(before_v, int) and isinstance(after_v, int)
+            assert after_v - before_v == 1, "loser .import must consume zero PC space"
+
+            # Module payload still appears once, at the winning *=0x009000 site.
+            assert ips.read_bytes().count(b"\xcc\xcc\xcc\xcc") == 1
+
+    def test_skipped_import_flushes_pending_block_before_advancing(self) -> None:
+        """Inline bytes around a skipped duplicate .import keep their addresses.
+
+        Regression: when an earlier `.import` was demoted to symbol-only
+        (because a later `.import` of the same module became the winner),
+        the emit driver advanced the PC by the module's size *without*
+        flushing the pending current_block first. The next flush keyed
+        the previously-accumulated bytes against the post-skip address
+        instead of where they were really emitted, so any inline code
+        sitting between two .imports overwrote unrelated ROM downstream.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "mod.s"
+            mod.write_text("payload:\n    .db 0xCC, 0xCC, 0xCC, 0xCC\n")
+            assert Program().assemble_as_object(str(mod), tmp / "mod.o") == 0
+
+            # *=0x008000  -> 3 inline bytes (0xAA AA AA) -> first .import
+            # (skipped) -> 2 more inline bytes (0xBB BB) -> *=0x009000 ->
+            # second .import (emits payload). The pre-skip flush bug
+            # would push the BB BB pair past the module size and into
+            # ROM that was meant to stay untouched.
+            main = tmp / "main.s"
+            main.write_text(
+                '*=0x008000\n.db 0xAA, 0xAA, 0xAA\n.import "mod"\n.db 0xBB, 0xBB\n*=0x009000\n.import "mod"\n'
+            )
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            content = ips.read_bytes()
+            # Module payload appears once, at the second .import site
+            # (SNES 0x009000 → LoROM physical 0x000800).
+            assert content.count(b"\xcc\xcc\xcc\xcc") == 1
+            # Inline AA AA AA must land at SNES 0x008000 → physical 0,
+            # and BB BB at PC 3 + len(mod region) (physical 0x000007 in
+            # LoROM since region is 4 bytes).
+            records = self._parse_ips_records(content)
+            placements = {phys: data for phys, data in records}
+            assert placements.get(0x000000, b"")[:3] == b"\xaa\xaa\xaa"
+            # BB BB must immediately follow the module-sized gap, not
+            # land somewhere far away thanks to a stale current_block_addr.
+            bb_seen = any(b"\xbb\xbb" in data for _, data in records)
+            assert bb_seen, "inline bytes after skipped .import did not land in IPS"
+
+    @staticmethod
+    def _parse_ips_records(content: bytes) -> list[tuple[int, bytes]]:
+        """Walk an IPS file and return [(physical_offset, data), ...]."""
+        out: list[tuple[int, bytes]] = []
+        i = 5  # skip "PATCH"
+        while i < len(content) - 3:
+            if content[i : i + 3] == b"EOF":
+                break
+            offset = int.from_bytes(content[i : i + 3], "big")
+            i += 3
+            size = int.from_bytes(content[i : i + 2], "big")
+            i += 2
+            if size == 0:
+                # RLE record — skip; not produced by a816's IPS writer.
+                i += 3
+                continue
+            out.append((offset, content[i : i + size]))
+            i += size
+        return out
+
+    def test_duplicate_import_emits_module_bytes_once_at_last_site(self) -> None:
+        """Two .import "foo" statements emit foo's bytes once, at the second site.
+
+        Regression: the same module being imported in an .include'd patch
+        file and again in the main source caused .import to materialize
+        the module's bytes at BOTH sites. The earlier emission landed at
+        whatever PC the prior *= happened to leave behind, clobbering
+        unrelated ROM. .import is now idempotent — only the last
+        occurrence emits, the earlier ones still publish the symbols via
+        pc_after so subsequent code can reference the module.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            mod = tmp / "mod.s"
+            mod.write_text("payload:\n    .db 0x42, 0x42, 0x42, 0x42\n")
+            assert Program().assemble_as_object(str(mod), tmp / "mod.o") == 0
+
+            main = tmp / "main.s"
+            main.write_text(
+                "*=0x008000\n"
+                '.import "mod"\n'  # first import — symbol-only
+                "*=0x009000\n"
+                '.import "mod"\n'  # second import — emits payload here
+            )
+            ips = tmp / "out.ips"
+            program = Program()
+            program.add_module_path(tmp)
+            assert program.assemble_as_patch(str(main), ips) == 0
+
+            content = ips.read_bytes()
+            assert content.count(b"\x42\x42\x42\x42") == 1, (
+                f"module bytes must appear exactly once in the IPS, got {content.count(b'\\x42\\x42\\x42\\x42')}"
+            )
+
+    def test_multiple_intra_region_expression_relocations_get_distinct_offsets(self) -> None:
+        """Three references to the same forward label must record three offsets.
+
+        Regression: ObjectWriter.relocation_offset() used to read only
+        _region_bytes_emitted, which only advances on write_block. Inside
+        a single region, every reloc emitted before the next *= boundary
+        therefore reported the same offset (the last flushed position),
+        and the linker patched only one of them — the other call sites
+        kept the compile-time placeholder and jumped to garbage.
+        """
+        source = """\
+caller1:
+    jsr.w target
+caller2:
+    jsr.w target
+caller3:
+    jsr.w target
+target:
+    rts
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "fanout.s"
+            obj = Path(tmpdir) / "fanout.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+            o = ObjectFile.from_file(str(obj))
+            offsets = sorted(off for r in o.regions for off, expr, _ in r.expression_relocations if expr == "target")
+            assert len(offsets) == 3, f"expected 3 expression relocations, got {len(offsets)}: {offsets}"
+            assert len(set(offsets)) == 3, f"expected 3 distinct offsets, got {offsets}"
+            # Each jsr.w is 3 bytes (opcode + 2-byte operand). Reloc points
+            # to the operand byte, so offsets are 1, 4, 7.
+            assert offsets == [1, 4, 7]
+
+    def test_multi_region_module_writes_multiple_ips_blocks(self) -> None:
+        """Linking a multi-region module emits one IPS block per region.
+
+        IPS records are keyed by physical (file) offset, so logical
+        SNES addresses must go through the LoROM bus mapping at the
+        write boundary — the same translation Program.emit() applies
+        via resolver.pc.
+        """
+        source = """*=0x008000
+.db 0x11, 0x22
+*=0x028000
+.db 0x33
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm = Path(tmpdir) / "two.s"
+            obj = Path(tmpdir) / "two.o"
+            asm.write_text(source)
+            assert Program().assemble_as_object(str(asm), obj) == 0
+            linked = Linker([ObjectFile.from_file(str(obj))]).link()
+
+            ips_path = Path(tmpdir) / "out.ips"
+            assert Program().link_as_patch(linked, ips_path) == 0
+            content = ips_path.read_bytes()
+            assert content.startswith(b"PATCH")
+            # Headers are 24-bit big-endian physical offsets:
+            #   *=0x008000 (LoROM) → physical 0x000000
+            #   *=0x028000 (LoROM) → physical 0x010000
+            # Length 2 then payload "\x11\x22" for region 0,
+            # length 1 then "\x33" for region 1.
+            assert b"\x00\x00\x00\x00\x02\x11\x22" in content
+            assert b"\x01\x00\x00\x00\x01\x33" in content

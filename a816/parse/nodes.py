@@ -10,6 +10,7 @@ from a816.cpu.cpu_65c816 import (
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
+from a816.object_file import Region
 from a816.parse.ast.expression import eval_expression, eval_expression_str
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.tokens import Token
@@ -257,85 +258,158 @@ class BinaryNode(NodeProtocol):
 
 
 class LinkedModuleNode(NodeProtocol):
-    """Node that emits code from a compiled module and binds its symbols.
+    """Emits a compiled module's regions and binds its symbols.
 
-    This is used by .import for position-dependent code (like ROM patches).
-    It loads the module's compiled code and adjusts symbol addresses based
-    on the current PC position.
+    Each region has a compile-time `base_address` (from `*=`) and a code
+    blob. If the module is `relocatable` (no `*=` was present), region 0
+    gets shifted by `delta = import_pc - regions[0].base_address` and
+    every CODE symbol moves with it. Otherwise regions land at their
+    declared absolute addresses, ignoring the import site.
     """
 
     def __init__(
         self,
         module_name: str,
-        code: bytes,
-        symbols: list[tuple[str, int, int, int]],  # (name, offset, type, section)
+        regions: list[Region],
+        symbols: list[tuple[str, int, int, int]],  # (name, address, type, section)
         resolver: Resolver,
-        expression_relocations: list[tuple[int, str, int]] | None = None,  # (offset, expr, size)
+        relocatable: bool = True,
     ) -> None:
         self.module_name = module_name
-        self.code = code
+        self.regions = regions
         self.symbols = symbols
         self.resolver = resolver
-        self.expression_relocations = expression_relocations or []
+        self.relocatable = relocatable
+        # Set by Program._mark_import_winners: True for every duplicate
+        # `.import` of the same module except the last occurrence in
+        # program order. Losers bind symbols (so the loser's source can
+        # still reference them) but do NOT advance the PC and do NOT
+        # emit bytes — the winner is the canonical placement.
+        self.is_loser: bool = False
+        self._delta = 0
+        # Cache placed regions for emit_blocks; refreshed on every pc_after.
+        self._placed: list[tuple[int, bytes]] = []
 
     def emit(self, current_addr: Address) -> bytes:
-        # Apply expression relocations every emit; symbols may have moved between passes.
-        if self.expression_relocations:
-            return self._apply_expression_relocations()
-        return self.code
+        # Single-region modules still flow through the legacy single-bytes
+        # path used by writers that don't know about emit_blocks.
+        del current_addr
+        placed = self._compute_placement()
+        if not placed:
+            return b""
+        if len(placed) == 1:
+            return placed[0][1]
+        # Multi-region modules must go through emit_blocks; returning the
+        # concatenation here would silently corrupt the output.
+        return b""
+
+    def emit_blocks(self, current_addr: Address) -> list[tuple[int, bytes]]:
+        del current_addr
+        return self._compute_placement()
 
     def pc_after(self, current_pc: Address) -> Address:
-        # Rebind every pass: write directly to the scope dicts to avoid
-        # add_symbol's duplicate-warning while keeping the symbol map current.
         from a816.object_file import SymbolSection, SymbolType
 
+        if not self.regions:
+            return current_pc
+
         scope = self.resolver.current_scope
-        base_address = current_pc.logical_value
-        # Track this module's load base so the producer of .sym/.adbg can
-        # report the resolved address range without re-walking the linker.
-        self.base_address = base_address
-        # Module-private map for LOCAL labels (kept off of scope to avoid
-        # cross-module name clashes — e.g. two modules both define `loop`).
+        if self.relocatable:
+            self._delta = current_pc.logical_value - self.regions[0].base_address
+        else:
+            self._delta = 0
+
+        # Shifted base of region 0 — used for the .sym/.adbg producer to
+        # report where the module actually landed.
+        self.base_address = self.regions[0].base_address + self._delta
         self._local_map: dict[str, int] = {}
-        for name, offset, sym_type, section in self.symbols:
+
+        for name, address, sym_type, section in self.symbols:
+            final = self._resolve_symbol_address(address, section)
             if sym_type == SymbolType.GLOBAL.value:
+                scope.symbols[name] = final
                 if section == SymbolSection.CODE.value:
-                    final = base_address + offset
-                    scope.symbols[name] = final
-                    # Without this the symbol never reaches get_all_labels,
-                    # so .sym output drops every module-defined label.
                     scope.labels[name] = final
-                else:
-                    scope.symbols[name] = offset
             elif sym_type == SymbolType.LOCAL.value:
-                if section == SymbolSection.CODE.value:
-                    self._local_map[name] = base_address + offset
-                else:
-                    self._local_map[name] = offset
+                self._local_map[name] = final
 
-        return current_pc + len(self.code)
+        # Loser duplicates publish symbols (winner overwrites later via
+        # last-pass) but must not consume PC space — otherwise inline
+        # source surrounding the loser .import shifts forward by the
+        # module's size and lands on top of unrelated ROM.
+        if self.is_loser:
+            return current_pc
 
-    def _reloc_context(self, offset: int) -> str:
-        return f"module '{self.module_name}' offset 0x{offset:x}/0x{len(self.code):x}"
+        # Pinned modules (any explicit `*=`) land at their declared
+        # absolute base addresses; the importer's PC stays where it was
+        # because the module does not occupy linear space at the import
+        # site. Only relocatable single-region modules advance the
+        # importer's PC by their first-region size.
+        if not self.relocatable:
+            return current_pc
 
-    def _write_reloc(self, code_array: bytearray, offset: int, value: int, size: int, expr: str) -> None:
-        ctx = self._reloc_context(offset)
+        first = self.regions[0]
+        first_end = first.base_address + self._delta + len(first.code)
+        return self.resolver.get_bus().get_address(first_end)
+
+    def _resolve_symbol_address(self, address: int, section: int) -> int:
+        from a816.object_file import SymbolSection
+
+        if section != SymbolSection.CODE.value:
+            return address
+        return address + self._delta
+
+    def _compute_placement(self) -> list[tuple[int, bytes]]:
+        # Re-evaluate every call: cross-module symbols may have been bound
+        # by other LinkedModuleNodes after this one's pc_after ran. Doing
+        # the eval lazily at emit time avoids spurious "Failed to
+        # evaluate" warnings during the first resolve_labels pass.
+        placed: list[tuple[int, bytes]] = []
+        for region in self.regions:
+            base = region.base_address + self._delta
+            patched = self._apply_region_relocations(region)
+            placed.append((base, patched))
+        self._placed = placed
+        return placed
+
+    def _apply_region_relocations(self, region: Region) -> bytes:
+        if not region.expression_relocations:
+            return region.code
+        code_array = bytearray(region.code)
+        root_scope = self.resolver.scopes[0]
+        saved = self._inject_locals(root_scope)
+        try:
+            for offset, expr, size in region.expression_relocations:
+                self._eval_one_relocation(expr, offset, size, code_array, region)
+        finally:
+            self._restore_locals(root_scope, saved)
+        return bytes(code_array)
+
+    def _reloc_context(self, offset: int, region: Region) -> str:
+        return (
+            f"module '{self.module_name}' region@0x{region.base_address:x} offset 0x{offset:x}/0x{len(region.code):x}"
+        )
+
+    def _write_reloc(
+        self, code_array: bytearray, offset: int, value: int, size: int, expr: str, region: Region
+    ) -> None:
+        ctx = self._reloc_context(offset, region)
         if size not in (1, 2, 3):
             logger.warning(f"Unsupported relocation size {size} for expression '{expr}' [{ctx}]")
             return
         if offset + size > len(code_array):
             logger.warning(
-                f"Relocation runs past module code: offset 0x{offset:x} + size {size} "
+                f"Relocation runs past region code: offset 0x{offset:x} + size {size} "
                 f"> 0x{len(code_array):x} for expression '{expr}' [{ctx}]"
             )
             return
         for i in range(size):
             code_array[offset + i] = (value >> (8 * i)) & 0xFF
 
-    def _eval_one_relocation(self, expr: str, offset: int, size: int, code_array: bytearray) -> None:
+    def _eval_one_relocation(self, expr: str, offset: int, size: int, code_array: bytearray, region: Region) -> None:
         from a816.parse.ast.expression import eval_expression_str
 
-        ctx = self._reloc_context(offset)
+        ctx = self._reloc_context(offset, region)
         try:
             value = eval_expression_str(expr, self.resolver)
         except (SymbolNotDefined, NodeError, ValueError) as e:
@@ -344,7 +418,7 @@ class LinkedModuleNode(NodeProtocol):
         if not isinstance(value, int):
             logger.warning(f"Expression '{expr}' did not evaluate to int: {value} [{ctx}]")
             return
-        self._write_reloc(code_array, offset, value, size, expr)
+        self._write_reloc(code_array, offset, value, size, expr, region)
 
     def _inject_locals(self, root_scope: Scope) -> dict[str, int | str]:
         local_map = getattr(self, "_local_map", {})
@@ -363,23 +437,12 @@ class LinkedModuleNode(NodeProtocol):
             else:
                 root_scope.symbols.pop(name, None)
 
-    def _apply_expression_relocations(self) -> bytes:
-        """Apply expression relocations to the module's code."""
-        code_array = bytearray(self.code)
-        # Inject this module's LOCAL labels into the resolver's root scope
-        # for the duration of the eval; restore afterwards. Keeps two
-        # modules' identical local names from colliding with each other.
-        root_scope = self.resolver.scopes[0]
-        saved = self._inject_locals(root_scope)
-        try:
-            for offset, expr, size in self.expression_relocations:
-                self._eval_one_relocation(expr, offset, size, code_array)
-        finally:
-            self._restore_locals(root_scope, saved)
-        return bytes(code_array)
-
     def __str__(self) -> str:
-        return f"LinkedModuleNode({self.module_name}, {len(self.code)} bytes, {len(self.symbols)} symbols)"
+        total = sum(len(r.code) for r in self.regions)
+        return (
+            f"LinkedModuleNode({self.module_name}, {len(self.regions)} regions, "
+            f"{total} bytes, {len(self.symbols)} symbols)"
+        )
 
 
 class LongNode(NodeProtocol):
@@ -393,7 +456,9 @@ class LongNode(NodeProtocol):
             resolver = self.value_node.resolver
             if resolver.context.is_object_mode and resolver.context.object_writer is not None:
                 resolver.context.object_writer.add_expression_relocation(
-                    resolver.pc, self.value_node._deferred_expression, 3
+                    resolver.context.object_writer.relocation_offset(),
+                    self.value_node._deferred_expression,
+                    3,
                 )
         return struct.pack("<HB", value & 0xFFFF, (value >> 16) & 0xFF)
 
@@ -412,7 +477,9 @@ class WordNode(NodeProtocol):
             resolver = self.value_node.resolver
             if resolver.context.is_object_mode and resolver.context.object_writer is not None:
                 resolver.context.object_writer.add_expression_relocation(
-                    resolver.pc, self.value_node._deferred_expression, 2
+                    resolver.context.object_writer.relocation_offset(),
+                    self.value_node._deferred_expression,
+                    2,
                 )
         return struct.pack("<H", value & 0xFFFF)
 
@@ -460,7 +527,9 @@ class ByteNode(NodeProtocol):
             resolver = self.value_node.resolver
             if resolver.context.is_object_mode and resolver.context.object_writer is not None:
                 resolver.context.object_writer.add_expression_relocation(
-                    resolver.pc, self.value_node._deferred_expression, 1
+                    resolver.context.object_writer.relocation_offset(),
+                    self.value_node._deferred_expression,
+                    1,
                 )
         return struct.pack("B", value & 0xFF)
 
