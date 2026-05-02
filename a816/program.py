@@ -219,7 +219,11 @@ class Program:
                     advance = len(first_code)
                     self.resolver.pc += advance
                     self.resolver.reloc_address += advance
-                    current_block_addr = self.resolver.pc
+                # Either way, the next inline byte will land at the
+                # current PC — refresh current_block_addr so the next
+                # flush keys those bytes against the post-import
+                # position rather than the stale pre-flush address.
+                current_block_addr = self.resolver.pc
                 continue
 
             node_bytes = node.emit(self.resolver.reloc_address)
