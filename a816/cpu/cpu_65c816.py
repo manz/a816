@@ -313,10 +313,13 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "bne": {AddressingMode.direct: RelativeJumpOpcode(0xD0)},
     "bpl": {AddressingMode.direct: RelativeJumpOpcode(0x10)},
     "bra": {AddressingMode.direct: RelativeJumpOpcode(0x80)},
-    "brk": {
-        AddressingMode.none: OpcodeWithoutOperand(0x00),
-        AddressingMode.immediate: Opcode([0x00]),
-    },
+    # BRK / COP / WDM are 2-byte instructions on 65816: opcode + a
+    # signature byte the handler reads off the stack (PC pushed is the
+    # instruction + 2). Force callers to supply the signature so the
+    # second byte is never silently whatever happens to follow in ROM.
+    "brk": {AddressingMode.immediate: Opcode([0x00])},
+    "cop": {AddressingMode.immediate: Opcode([0x02])},
+    "wdm": {AddressingMode.immediate: Opcode([0x42])},
     "clc": {AddressingMode.none: OpcodeWithoutOperand(0x18)},
     "cmp": {
         AddressingMode.immediate: Opcode([0xC9, 0xC9], is_a=True),

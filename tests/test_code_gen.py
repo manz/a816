@@ -31,15 +31,27 @@ class CodeGenTest(unittest.TestCase):
         emitted = node.emit(program.resolver.reloc_address)
         self.assertEqual(emitted, b"\x00\x42")
 
-    def test_brk_without_operand_still_emits_opcode(self) -> None:
-        """Bare `brk` keeps its single-byte form for backward compatibility."""
+    def test_brk_without_operand_is_rejected(self) -> None:
+        """Bare `brk` is no longer accepted — signature byte is required."""
         program = Program()
-        _, nodes = program.parser.parse("brk")
+        error, _ = program.parser.parse("brk")
+        self.assertIsNotNone(error)
+
+    def test_cop_with_signature_byte(self) -> None:
+        program = Program()
+        _, nodes = program.parser.parse("cop #0x7F")
         program.resolve_labels(nodes)
         node = nodes[0]
         assert isinstance(node, OpcodeNode)
-        emitted = node.emit(program.resolver.reloc_address)
-        self.assertEqual(emitted, b"\x00")
+        self.assertEqual(node.emit(program.resolver.reloc_address), b"\x02\x7f")
+
+    def test_wdm_with_signature_byte(self) -> None:
+        program = Program()
+        _, nodes = program.parser.parse("wdm #0xAB")
+        program.resolve_labels(nodes)
+        node = nodes[0]
+        assert isinstance(node, OpcodeNode)
+        self.assertEqual(node.emit(program.resolver.reloc_address), b"\x42\xab")
 
     def test_ateq_reslove(self) -> None:
         program = Program()
