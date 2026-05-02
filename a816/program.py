@@ -31,6 +31,13 @@ class _EmitState:
     current_block_addr: int
 
 
+@dataclass
+class _ObjectEmitState:
+    """Mutable state threaded through Program.emit_with_relocations."""
+
+    current_block: bytes
+
+
 class Program:
     """Main assembler program orchestrating parsing, symbol resolution, and code emission.
 
@@ -294,8 +301,6 @@ class Program:
         from `resolver.pc` (which CodePositionNode rewrites to a physical
         address).
         """
-        current_block = b""
-
         original_pc = self.resolver.pc
         original_reloc = self.resolver.reloc_address
 
@@ -303,38 +308,63 @@ class Program:
         # If the source begins with `*=`, that emit immediately closes this
         # placeholder region and opens a new explicit one.
         object_writer.start_region(self.resolver.reloc_address.logical_value, explicit=False)
-
+        state = _ObjectEmitState(current_block=b"")
         try:
             for node in program:
-                node_bytes = node.emit(self.resolver.reloc_address)
-
-                if node_bytes:
-                    self._record_object_line(node, object_writer.relocation_offset(), object_writer)
-                    current_block += node_bytes
-                    object_writer.mark_emitted(len(node_bytes))
-                    self.resolver.pc += len(node_bytes)
-                    self.resolver.reloc_address += len(node_bytes)
-
-                if isinstance(node, CodePositionNode):
-                    if len(current_block) > 0:
-                        object_writer.write_block(current_block, 0)
-                    current_block = b""
-                    object_writer.start_region(self.resolver.reloc_address.logical_value, explicit=True)
-
-                if isinstance(node, IncludeIpsNode):
-                    if len(current_block) > 0:
-                        object_writer.write_block(current_block, 0)
-                        current_block = b""
-                    for block_addr, block in node.blocks:
-                        object_writer.start_region(block_addr, explicit=True)
-                        object_writer.write_block(block, block_addr)
-
-            if len(current_block) > 0:
-                object_writer.write_block(current_block, 0)
-
+                self._object_emit_one(node, object_writer, state)
+            self._flush_object_block(object_writer, state)
         finally:
             self.resolver.pc = original_pc
             self.resolver.reloc_address = original_reloc
+
+    def _object_emit_one(
+        self, node: NodeProtocol, object_writer: ObjectWriter, state: "_ObjectEmitState"
+    ) -> None:
+        """Emit one node into the current object-writer region.
+
+        Splits the dispatch the way `emit()` does so each branch — the
+        common byte accumulator, the `*=` boundary, and the `.includeips`
+        passthrough — owns a single concern.
+        """
+        self._accumulate_object_bytes(node, object_writer, state)
+        if isinstance(node, CodePositionNode):
+            self._object_open_region(object_writer, state, explicit=True)
+        if isinstance(node, IncludeIpsNode):
+            self._object_emit_ips_blocks(node, object_writer, state)
+
+    def _accumulate_object_bytes(
+        self, node: NodeProtocol, object_writer: ObjectWriter, state: "_ObjectEmitState"
+    ) -> None:
+        node_bytes = node.emit(self.resolver.reloc_address)
+        if not node_bytes:
+            return
+        self._record_object_line(node, object_writer.relocation_offset(), object_writer)
+        state.current_block += node_bytes
+        object_writer.mark_emitted(len(node_bytes))
+        self.resolver.pc += len(node_bytes)
+        self.resolver.reloc_address += len(node_bytes)
+
+    def _object_open_region(
+        self, object_writer: ObjectWriter, state: "_ObjectEmitState", *, explicit: bool
+    ) -> None:
+        """Flush any pending block then open a fresh region at the new PC."""
+        self._flush_object_block(object_writer, state)
+        object_writer.start_region(self.resolver.reloc_address.logical_value, explicit=explicit)
+
+    def _object_emit_ips_blocks(
+        self, node: IncludeIpsNode, object_writer: ObjectWriter, state: "_ObjectEmitState"
+    ) -> None:
+        """Pass an `.includeips`-loaded patch through as one region per block."""
+        self._flush_object_block(object_writer, state)
+        for block_addr, block in node.blocks:
+            object_writer.start_region(block_addr, explicit=True)
+            object_writer.write_block(block, block_addr)
+
+    @staticmethod
+    def _flush_object_block(object_writer: ObjectWriter, state: "_ObjectEmitState") -> None:
+        if state.current_block:
+            object_writer.write_block(state.current_block, 0)
+            state.current_block = b""
 
     def assemble_string_with_emitter(self, input_program: str, filename: str, emitter: Writer) -> str | None:
         error, nodes = self.parser.parse(input_program, filename)
