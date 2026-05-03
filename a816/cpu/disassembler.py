@@ -622,7 +622,7 @@ class Disassembler:
 
 
 def _label_for(address: int) -> str:
-    return f"L_{(address >> 16) & 0xFF:02X}{address & 0xFFFF:04X}"
+    return f"_{(address >> 16) & 0xFF:02X}{address & 0xFFFF:04X}"
 
 
 def collect_labels(instructions: list[Instruction]) -> dict[int, str]:
@@ -679,12 +679,12 @@ def format_disassembly(
                 bytes_str = " ".join(f"{b:02X}" for b in all_bytes)
                 return f"{addr_str:14} {asm_str:24} ; {bytes_str}"
             return f"{addr_str:14} {asm_str}"
-        # label_map mode: indent the instruction; labels printed by block formatter.
+        # label_map mode: emit instruction flush-left; labels printed by block formatter.
         if show_bytes:
             all_bytes = bytes([inst.opcode]) + inst.operand_bytes
             bytes_str = " ".join(f"{b:02X}" for b in all_bytes)
-            return f"    {asm_str:32} ; ${inst.address & 0xFFFFFF:06X}: {bytes_str}"
-        return f"    {asm_str}"
+            return f"{asm_str:32} ; ${inst.address & 0xFFFFFF:06X}: {bytes_str}"
+        return asm_str
 
     addr_str = f"${bank:02X}:{addr:04X}"
     if show_bytes:

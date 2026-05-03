@@ -340,7 +340,7 @@ class TestFormatDisassembly:
             length=2,
         )
         output = format_disassembly(inst, show_bytes=True, a816_syntax=True)
-        assert "L_018000:" in output
+        assert "_018000:" in output
         assert "lda #0x42" in output
         assert "A9 42" in output
 
@@ -355,7 +355,7 @@ class TestFormatDisassembly:
             length=3,
         )
         output = format_disassembly(inst, show_bytes=False, a816_syntax=True)
-        assert "L_008000:" in output
+        assert "_008000:" in output
         assert "sta 0x2100" in output
 
     def test_format_a816_syntax_long(self) -> None:
@@ -369,7 +369,7 @@ class TestFormatDisassembly:
             length=4,
         )
         output = format_disassembly(inst, show_bytes=False, a816_syntax=True)
-        assert "L_008000:" in output
+        assert "_008000:" in output
         assert "jsl.l 0x018000" in output
 
 
@@ -447,9 +447,9 @@ class TestA816BlockFormat:
         instructions = disasm.disassemble(data, 0x008000)
         labels = collect_labels(instructions)
         assert 0x008007 in labels
-        assert labels[0x008007] == "L_008007"
+        assert labels[0x008007] == "_008007"
         assert 0x018000 in labels
-        assert labels[0x018000] == "L_018000"
+        assert labels[0x018000] == "_018000"
 
     def test_block_emits_label_lines_only_at_targets(self) -> None:
         disasm = Disassembler()
@@ -457,8 +457,8 @@ class TestA816BlockFormat:
         data = bytes.fromhex("d000ea")
         instructions = disasm.disassemble(data, 0x008000)
         lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
-        # Expected: instruction line for bne, label line for L_008002, then nop.
-        assert any(line == "L_008002:" for line in lines)
+        # Expected: instruction line for bne, label line for _008002, then nop.
+        assert any(line == "_008002:" for line in lines)
         assert sum(1 for line in lines if line.endswith(":")) == 1
 
     def test_branch_uses_label_when_target_known(self) -> None:
@@ -467,7 +467,7 @@ class TestA816BlockFormat:
         instructions = disasm.disassemble(data, 0x008000)
         lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
         bne_line = next(line for line in lines if "bne" in line)
-        assert "L_008007" in bne_line
+        assert "_008007" in bne_line
         assert "0x008007" not in bne_line
 
     def test_jmp_long_uses_label(self) -> None:
@@ -476,7 +476,7 @@ class TestA816BlockFormat:
         instructions = disasm.disassemble(data, 0x008000)
         lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
         jmp_line = next(line for line in lines if "jmp" in line)
-        assert "L_018000" in jmp_line
+        assert "_018000" in jmp_line
 
     def test_minimal_suffixes_round_trip(self) -> None:
         disasm = Disassembler()
@@ -488,6 +488,6 @@ class TestA816BlockFormat:
         assert "lda #0x42" in joined
         assert "sta 0x1234" in joined
         assert "lda 0x10" in joined
-        assert "jsl.l L_018000" in joined
+        assert "jsl.l _018000" in joined
         assert "nop" in joined
         assert ".w" not in joined  # no verbose word suffix on absolute / direct
