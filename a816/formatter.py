@@ -153,7 +153,20 @@ class A816Formatter:
                 ]
             lines.extend(node_lines)
             prev_was_label = isinstance(node, LabelAstNode)
-            if node_line is not None:
+            # For nodes that span multiple source lines (.if / .scope /
+            # .macro / .for / nested compounds), advance prev_line to the
+            # last source line the node consumed so the gap-based blank
+            # heuristic doesn't treat the block's body as a hole.
+            tail_line = self._ast_max_line(node)
+            if tail_line is not None:
+                prev_line = tail_line
+                # Block-like nodes carry a closing brace on the next
+                # source line which has no AST entry; advance over it
+                # so the gap heuristic doesn't treat the brace line as
+                # blank padding between siblings.
+                if isinstance(node, IfAstNode | ForAstNode | MacroAstNode | ScopeAstNode | CompoundAstNode):
+                    prev_line += 1
+            elif node_line is not None:
                 prev_line = node_line
         return lines
 
@@ -544,16 +557,26 @@ class A816Formatter:
             formatted.extend(node_lines)
 
     def _emit_instruction_like(
-        self, node: AstNode, node_lines: list[str], in_label_section: bool, formatted: list[str]
+        self,
+        node: AstNode,
+        node_lines: list[str],
+        in_label_section: bool,
+        formatted: list[str],
+        prev_was_label: bool = False,
     ) -> bool:
         if isinstance(node, CodePositionAstNode | CodeRelocationAstNode):
             if formatted and formatted[-1].strip():
                 formatted.append("")
             formatted.extend(line.lstrip() for line in node_lines)
             return True
-        # Top-level docstrings document the preceding label and stay
-        # flush-left so the eye groups label + docstring as a header.
-        if isinstance(node, DocstringAstNode):
+        # A docstring immediately after a label documents the symbol and
+        # stays flush-left, hugging the label with no blank line in
+        # between. After a `*=` (region opener) the docstring documents
+        # the region and follows body indentation like any other body
+        # statement — fall through to the normal indent path.
+        if isinstance(node, DocstringAstNode) and prev_was_label:
+            while formatted and not formatted[-1].strip():
+                formatted.pop()
             formatted.extend(node_lines)
             return in_label_section
         if in_label_section:
@@ -578,7 +601,13 @@ class A816Formatter:
         return sorted(positioned, key=lambda x: x[0])
 
     def _emit_non_compound(
-        self, node: AstNode, node_line: int | None, last_line: int | None, in_label: bool, formatted: list[str]
+        self,
+        node: AstNode,
+        node_line: int | None,
+        last_line: int | None,
+        in_label: bool,
+        formatted: list[str],
+        prev_was_label: bool = False,
     ) -> bool:
         node_lines = self._format_ast(node)
         if isinstance(node, LabelAstNode):
@@ -587,25 +616,29 @@ class A816Formatter:
             self._emit_comment(node_lines, node_line, last_line, in_label, formatted)
             return in_label
         if isinstance(node, self._instruction_like_nodes):
-            return self._emit_instruction_like(node, node_lines, in_label, formatted)
+            return self._emit_instruction_like(node, node_lines, in_label, formatted, prev_was_label)
         formatted.extend(node_lines)
         return False
 
     @staticmethod
     def _ast_max_line(node: AstNode) -> int | None:
-        """Walk a subtree and return the largest source line number found,
-        or None if no descendant carries position info. Used to advance the
-        blank-line cursor past a compound block so that source blanks
-        inside the block aren't re-emitted at its closing brace.
+        """Walk a subtree and return the largest source line number among
+        leaf-like descendants. Skips CompoundAstNode positions because the
+        scanner records their position at the closing brace, which would
+        otherwise overshoot the actual extent of the block's content and
+        swallow boundary blank lines that follow the brace.
+
+        Returns None if no descendant carries usable position info.
         """
         max_line: int | None = None
 
         def visit(n: AstNode) -> None:
             nonlocal max_line
-            line = A816Formatter._node_line_num(n)
-            if line is not None and (max_line is None or line > max_line):
-                max_line = line
-            for attr in ("body", "nodes", "items", "children"):
+            if not isinstance(n, CompoundAstNode):
+                line = A816Formatter._node_line_num(n)
+                if line is not None and (max_line is None or line > max_line):
+                    max_line = line
+            for attr in ("body", "block", "else_block", "nodes", "items", "children"):
                 child = getattr(n, attr, None)
                 if child is None:
                     continue
@@ -628,7 +661,9 @@ class A816Formatter:
         in_label_section = False
         last_emitted_line_num: int | None = None
 
-        for line_num, node in self._node_positions_sorted(nodes):
+        positioned = self._node_positions_sorted(nodes)
+        prev_was_label = False
+        for _idx, (line_num, node) in enumerate(positioned):
             current_idx = self._emit_preserved_blanks(original_lines, processed, current_idx, line_num, formatted)
             node_line = self._node_line_num(node)
 
@@ -636,18 +671,31 @@ class A816Formatter:
                 in_label_section = False
                 self._emit_compound(node, formatted)
                 last_emitted_line_num = None
+                prev_was_label = False
             else:
                 in_label_section = self._emit_non_compound(
-                    node, node_line, last_emitted_line_num, in_label_section, formatted
+                    node, node_line, last_emitted_line_num, in_label_section, formatted, prev_was_label
                 )
                 if node_line is not None:
                     last_emitted_line_num = node_line
+                prev_was_label = isinstance(node, LabelAstNode)
 
             processed.add(line_num)
             # Mark every line the node consumed in source so blanks
-            # inside the node aren't re-emitted at its boundary.
+            # inside the node aren't re-emitted at its boundary. Clamp
+            # the tail to the next sibling's start so we don't claim
+            # source blanks that live in the gap between siblings — AST
+            # CompoundAstNode position can land on the closing brace,
+            # which would otherwise swallow trailing blanks.
+            # Advance the cursor past any source lines the node already
+            # consumed (its descendants), so source blanks WITHIN the
+            # body — already handled by the recursive emit — don't get
+            # re-emitted at the boundary. Source blanks AFTER the last
+            # child but BEFORE the next sibling stay reachable, so the
+            # paragraph break the author put between top-level blocks
+            # survives.
             tail = self._ast_max_line(node)
-            if tail is not None:
+            if tail is not None and tail >= line_num:
                 for i in range(line_num, tail + 1):
                     processed.add(i)
                 current_idx = max(current_idx, tail + 1)
