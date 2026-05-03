@@ -20,7 +20,7 @@ class TestFormattingOptions(TestCase):
         self.assertEqual(options.indent_size, 4)
         self.assertEqual(options.opcode_indent, 4)
         self.assertEqual(options.operand_alignment, 16)
-        self.assertEqual(options.comment_alignment, 40)
+        self.assertEqual(options.comment_alignment, 0)
         self.assertTrue(options.preserve_empty_lines)
         self.assertEqual(options.max_empty_lines, 2)
         self.assertTrue(options.align_labels)
@@ -260,17 +260,31 @@ end:
         self.assertEqual(lines[2], "    ; standalone")
 
     def test_align_inline_comments_within_block(self) -> None:
-        """Inline comments in the same block should align"""
+        """When comment_alignment > 0, inline comments in the same block align."""
         input_code = """start:
     lda #0 ; comment one
     sta 0x00 ; comment two
     nop ; comment three
 """
 
-        formatted = self.formatter.format_text(input_code)
+        aligned = A816Formatter(FormattingOptions(comment_alignment=40))
+        formatted = aligned.format_text(input_code)
         lines = [line for line in formatted.splitlines() if line]
         comment_columns = [line.index(";") for line in lines if ";" in line and not line.lstrip().startswith(";")]
         self.assertEqual(len(set(comment_columns)), 1)
+
+    def test_inline_comments_default_loose(self) -> None:
+        """Default comment_alignment=0 keeps comments loose with two-space gap."""
+        input_code = """start:
+    lda #0 ; one
+    sta 0x00 ; two
+"""
+        formatted = self.formatter.format_text(input_code)
+        for line in formatted.splitlines():
+            if ";" in line and not line.lstrip().startswith(";"):
+                code_part = line.split(";", 1)[0]
+                # Default policy: exactly two spaces between code and `;`.
+                self.assertTrue(code_part.endswith("  "), repr(line))
 
     def test_formatter_appends_blank_line_at_end(self) -> None:
         """Formatted files should end with a blank line"""
@@ -675,9 +689,10 @@ _OkBk2:
         self.assertIn("    rep #0x20", normalized)
         self.assertIn("    lda.l assets_bank2_ptr, x", normalized)
         self.assertIn("    stx.w 0x0772", normalized)
-        self.assertIn("    _loopbk2:", normalized)
-        self.assertIn("    chargelettredecbk2:", normalized)
-        self.assertIn("    chargelettreincbk2:", normalized)
+        # Inner labels stay flush-left as section markers inside the routine.
+        self.assertIn("\n_loopbk2:", normalized)
+        self.assertIn("\nchargelettredecbk2:", normalized)
+        self.assertIn("\nchargelettreincbk2:", normalized)
         self.assertIn("#0x03", normalized)
         self.assertTrue(normalized.strip().endswith("}"))
 

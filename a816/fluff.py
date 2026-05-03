@@ -8,6 +8,7 @@ from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
+STDIN_LABEL = "<stdin>"
 
 RESET = "\033[0m"
 RED = "\033[31m"
@@ -47,7 +48,11 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="a816 fluff", description="Format a816 assembly sources.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     format_parser = subparsers.add_parser("format", help="Format .s/.i sources under the given path.")
-    format_parser.add_argument("path", type=Path, help="File or directory to format recursively.")
+    format_parser.add_argument(
+        "path",
+        type=Path,
+        help="File or directory to format recursively. Use `-` to read from stdin and write the formatted text to stdout.",
+    )
     format_parser.add_argument(
         "--check",
         action="store_true",
@@ -120,8 +125,43 @@ def _write_formatted(computed: list[tuple[Path, str, str]]) -> int:
     return 0
 
 
+def _run_format_stdin(args: argparse.Namespace) -> int:
+    """Read source from stdin, write formatted text to stdout.
+
+    --check / --diff still work: --check prints `Would reformat <stdin>`
+    and exits 1 if formatting changes the input; --diff emits a unified
+    diff. Otherwise the formatted text is written to stdout.
+    """
+    original = sys.stdin.read()
+    try:
+        formatted = A816Formatter().format_text(original, STDIN_LABEL)
+    except FormattingError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.diff:
+        if original == formatted:
+            return 0
+        diff_lines = difflib.unified_diff(
+            original.splitlines(keepends=True),
+            formatted.splitlines(keepends=True),
+            fromfile=STDIN_LABEL,
+            tofile=STDIN_LABEL,
+        )
+        sys.stdout.write(_colorize_diff(diff_lines))
+        return 1
+    if args.check:
+        if original == formatted:
+            return 0
+        print(f"Would reformat {STDIN_LABEL}", file=sys.stderr)
+        return 1
+    sys.stdout.write(formatted)
+    return 0
+
+
 def _run_format(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     target_path: Path = args.path
+    if str(target_path) == "-":
+        return _run_format_stdin(args)
     if not target_path.exists():
         parser.error(f"path does not exist: {target_path}")
     sources = list(_discover_sources(target_path))

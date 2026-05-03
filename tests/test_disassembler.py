@@ -5,7 +5,9 @@ from a816.cpu.disassembler import (
     AddrMode,
     Disassembler,
     Instruction,
+    collect_labels,
     format_disassembly,
+    format_disassembly_block,
 )
 
 
@@ -98,15 +100,15 @@ class TestDisassembler:
         assert inst.mnemonic == "bne"
         assert inst.mode == AddrMode.RELATIVE
         assert inst.operand_value == 0x05
-        # Target should be $8000 + 2 + 5 = $8007
-        assert inst.format_operand() == "$8007"
+        # Target should be $8000 + 2 + 5 = $008007 (bank-prefixed).
+        assert inst.format_operand() == "$008007"
 
     def test_decode_relative_branch_backward(self) -> None:
         disasm = Disassembler()
         inst = disasm.decode_instruction(bytes([0xD0, 0xFE]), 0x8000)  # bne $8000 (infinite loop)
         assert inst is not None
-        # Target should be $8000 + 2 - 2 = $8000
-        assert inst.format_operand() == "$8000"
+        # Target should be $8000 + 2 - 2 = $008000 (bank-prefixed).
+        assert inst.format_operand() == "$008000"
 
     def test_decode_indexed_indirect(self) -> None:
         disasm = Disassembler()
@@ -338,8 +340,8 @@ class TestFormatDisassembly:
             length=2,
         )
         output = format_disassembly(inst, show_bytes=True, a816_syntax=True)
-        assert "L_018000:" in output
-        assert "lda.b #0x42" in output
+        assert "_018000:" in output
+        assert "lda #0x42" in output
         assert "A9 42" in output
 
     def test_format_a816_syntax_absolute(self) -> None:
@@ -353,8 +355,8 @@ class TestFormatDisassembly:
             length=3,
         )
         output = format_disassembly(inst, show_bytes=False, a816_syntax=True)
-        assert "L_008000:" in output
-        assert "sta.w 0x2100" in output
+        assert "_008000:" in output
+        assert "sta 0x2100" in output
 
     def test_format_a816_syntax_long(self) -> None:
         inst = Instruction(
@@ -367,7 +369,7 @@ class TestFormatDisassembly:
             length=4,
         )
         output = format_disassembly(inst, show_bytes=False, a816_syntax=True)
-        assert "L_008000:" in output
+        assert "_008000:" in output
         assert "jsl.l 0x018000" in output
 
 
@@ -384,7 +386,7 @@ class TestInstructionA816Format:
             operand_value=0x42,
             length=2,
         )
-        assert inst.format_a816() == "lda.b #0x42"
+        assert inst.format_a816() == "lda #0x42"
 
     def test_format_a816_absolute(self) -> None:
         inst = Instruction(
@@ -396,7 +398,7 @@ class TestInstructionA816Format:
             operand_value=0x2100,
             length=3,
         )
-        assert inst.format_a816() == "sta.w 0x2100"
+        assert inst.format_a816() == "sta 0x2100"
 
     def test_format_a816_long(self) -> None:
         inst = Instruction(
@@ -432,4 +434,131 @@ class TestInstructionA816Format:
             operand_value=0x10,
             length=2,
         )
-        assert inst.format_a816() == "lda.b 0x10"
+        assert inst.format_a816() == "lda 0x10"
+
+
+class TestA816BlockFormat:
+    """Tests for the label-aware block formatter (idiomatic a816 syntax)."""
+
+    def test_collect_labels_picks_branch_targets(self) -> None:
+        disasm = Disassembler()
+        # bne +5 at 0x008000 -> target 0x008007; jmp.l 0x018000 at 0x008002 -> 0x018000.
+        data = bytes.fromhex("d005000000005c008001")
+        instructions = disasm.disassemble(data, 0x008000)
+        labels = collect_labels(instructions)
+        assert 0x008007 in labels
+        assert labels[0x008007] == "_008007"
+        assert 0x018000 in labels
+        assert labels[0x018000] == "_018000"
+
+    def test_block_emits_label_lines_only_at_targets(self) -> None:
+        disasm = Disassembler()
+        # bne +0 -> target = next instruction (0x008002), so label appears.
+        data = bytes.fromhex("d000ea")
+        instructions = disasm.disassemble(data, 0x008000)
+        lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
+        # Expected: instruction line for bne, label line for _008002, then nop.
+        assert any(line == "_008002:" for line in lines)
+        assert sum(1 for line in lines if line.endswith(":")) == 1
+
+    def test_branch_uses_label_when_target_known(self) -> None:
+        disasm = Disassembler()
+        data = bytes.fromhex("d005000000000000ea")  # bne +5, then padding, then nop at +7
+        instructions = disasm.disassemble(data, 0x008000)
+        lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
+        bne_line = next(line for line in lines if "bne" in line)
+        assert "_008007" in bne_line
+        assert "0x008007" not in bne_line
+
+    def test_jmp_long_uses_label(self) -> None:
+        disasm = Disassembler()
+        data = bytes.fromhex("5c008001")
+        instructions = disasm.disassemble(data, 0x008000)
+        lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
+        jmp_line = next(line for line in lines if "jmp" in line)
+        assert "_018000" in jmp_line
+
+    def test_minimal_suffixes_round_trip(self) -> None:
+        disasm = Disassembler()
+        # lda #0x42, sta 0x1234, lda 0x10, jsl 0x018000, nop
+        data = bytes.fromhex("a9428d3412a510220080 01ea".replace(" ", ""))
+        instructions = disasm.disassemble(data, 0x008000)
+        lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
+        joined = "\n".join(lines)
+        assert "lda #0x42" in joined
+        assert "sta 0x1234" in joined
+        assert "lda 0x10" in joined
+        assert "jsl.l _018000" in joined
+        assert "nop" in joined
+        assert ".w" not in joined  # no verbose word suffix on absolute / direct
+
+
+class TestFunctionDisassembly:
+    """Tests for the CFG-driven function walker."""
+
+    def test_stops_at_rts(self) -> None:
+        from a816.cpu.disassembler import disassemble_function
+
+        code = bytes.fromhex("a90060eaeaea")  # lda #$00, rts, then garbage NOPs
+
+        def provider(addr: int, length: int) -> bytes:
+            offset = addr - 0x008000
+            return code[offset : offset + length] if offset >= 0 else b""
+
+        instructions = disassemble_function(0x008000, provider)
+        assert [inst.mnemonic for inst in instructions] == ["lda", "rts"]
+
+    def test_follows_conditional_branch_and_fallthrough(self) -> None:
+        from a816.cpu.disassembler import disassemble_function
+
+        # 0x008000: bne +2 (target 0x008004)
+        # 0x008002: nop          (fallthrough)
+        # 0x008003: rts
+        # 0x008004: nop          (branch target)
+        # 0x008005: rts
+        code = bytes.fromhex("d002ea60ea60")
+
+        def provider(addr: int, length: int) -> bytes:
+            offset = addr - 0x008000
+            return code[offset : offset + length] if offset >= 0 else b""
+
+        instructions = disassemble_function(0x008000, provider)
+        addresses = [inst.address for inst in instructions]
+        assert 0x008002 in addresses  # fallthrough decoded
+        assert 0x008004 in addresses  # branch target decoded
+
+    def test_tracks_m_flag_across_branches(self) -> None:
+        from a816.cpu.disassembler import AddrMode, disassemble_function
+
+        # 0x008000: rep #$20      (M=0, 16-bit)
+        # 0x008002: lda #$1234    (3 bytes total, A9 34 12)
+        # 0x008005: rts
+        code = bytes.fromhex("c220a9341260")
+
+        def provider(addr: int, length: int) -> bytes:
+            offset = addr - 0x008000
+            return code[offset : offset + length] if offset >= 0 else b""
+
+        instructions = disassemble_function(0x008000, provider, m_flag=True)
+        lda = next(inst for inst in instructions if inst.mnemonic == "lda")
+        assert lda.length == 3
+        assert lda.mode == AddrMode.IMMEDIATE_M
+
+    def test_unconditional_branch_terminates_path(self) -> None:
+        from a816.cpu.disassembler import disassemble_function
+
+        # 0x008000: bra +2 -> target 0x008004
+        # 0x008002: nop  (skipped — bra is unconditional, no fallthrough)
+        # 0x008003: nop
+        # 0x008004: rts
+        code = bytes.fromhex("8002eaea60")
+
+        def provider(addr: int, length: int) -> bytes:
+            offset = addr - 0x008000
+            return code[offset : offset + length] if offset >= 0 else b""
+
+        instructions = disassemble_function(0x008000, provider)
+        addresses = [inst.address for inst in instructions]
+        assert 0x008002 not in addresses
+        assert 0x008003 not in addresses
+        assert 0x008004 in addresses

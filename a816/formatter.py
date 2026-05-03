@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -44,7 +45,7 @@ class FormattingOptions:
         indent_size: int = 4,
         opcode_indent: int | None = None,
         operand_alignment: int = 16,
-        comment_alignment: int = 40,
+        comment_alignment: int = 0,
         preserve_empty_lines: bool = True,
         max_empty_lines: int = 2,
         align_labels: bool = True,
@@ -104,18 +105,79 @@ class A816Formatter:
         content = path.read_text(encoding="utf-8")
         return self.format_text(content, str(path))
 
+    def _emit_blank_gap(self, lines: list[str], prev_line: int | None, node_line: int | None) -> None:
+        if prev_line is None or node_line is None or node_line - prev_line <= 1:
+            return
+        gap = min(node_line - prev_line - 1, self.options.max_empty_lines)
+        for _ in range(gap):
+            lines.append("")
+
+    @staticmethod
+    def _try_fold_inline_comment(node: AstNode, node_line: int | None, prev_line: int | None, lines: list[str]) -> bool:
+        """Fold a same-source-line comment onto the previous instruction.
+        Returns True when the fold succeeded so the caller skips the
+        normal node-emission path.
+        """
+        if not isinstance(node, CommentAstNode) or node_line is None or node_line != prev_line:
+            return False
+        if not lines or not lines[-1].strip() or lines[-1].lstrip().startswith(";"):
+            return False
+        comment = node.comment.strip()
+        if not comment.startswith(";"):
+            comment = f"; {comment}"
+        lines[-1] = f"{lines[-1].rstrip()} {comment}"
+        return True
+
+    def _emit_node_lines(
+        self,
+        node: AstNode,
+        should_indent: bool,
+        indent_after_label: bool,
+        lines: list[str],
+    ) -> None:
+        node_lines = self._format_ast(node, should_indent, indent_after_label=indent_after_label)
+        # Docstrings after a label hug it flush-left, no body indent.
+        indent_body_node = (
+            should_indent
+            and isinstance(node, self._instruction_like_nodes)
+            and not isinstance(node, DocstringAstNode)
+        )
+        if indent_body_node:
+            node_lines = [
+                self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines
+            ]
+        lines.extend(node_lines)
+
+    _BLOCK_LIKE_AST: ClassVar[tuple[type, ...]] = (IfAstNode, ForAstNode, MacroAstNode, ScopeAstNode, CompoundAstNode)
+
+    def _advance_prev_line(self, node: AstNode, node_line: int | None) -> int | None:
+        # Closing braces of block-like nodes sit on the next source
+        # line with no AST entry; bump past them so the gap heuristic
+        # doesn't read the brace line as a blank padding line.
+        tail_line = self._ast_max_line(node) or node_line
+        if tail_line is None:
+            return None
+        if isinstance(node, self._BLOCK_LIKE_AST):
+            return tail_line + 1
+        return tail_line
+
     def _format_compound(self, ast: CompoundAstNode, indent_instructions: bool, indent_after_label: bool) -> list[str]:
         lines: list[str] = []
         prev_was_label = False
+        prev_line: int | None = None
         for node in ast.body:
+            node_line = self._node_line_num(node)
+            self._emit_blank_gap(lines, prev_line, node_line)
+
+            if self._try_fold_inline_comment(node, node_line, prev_line, lines):
+                prev_was_label = False
+                prev_line = node_line
+                continue
+
             should_indent = indent_instructions or (indent_after_label and prev_was_label)
-            node_lines = self._format_ast(node, should_indent, indent_after_label=indent_after_label)
-            if should_indent and isinstance(node, self._instruction_like_nodes):
-                node_lines = [
-                    self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines
-                ]
-            lines.extend(node_lines)
+            self._emit_node_lines(node, should_indent, indent_after_label, lines)
             prev_was_label = isinstance(node, LabelAstNode)
+            prev_line = self._advance_prev_line(node, node_line)
         return lines
 
     def _format_block(self, ast: BlockAstNode, indent_after_label: bool) -> list[str]:
@@ -339,11 +401,22 @@ class A816Formatter:
         return f"{indent}{line.lstrip()}"
 
     def _indent_block_lines(self, lines: list[str], levels: int = 1) -> list[str]:
-        """Indent a sequence of lines representing a block"""
+        """Indent a sequence of lines representing a block.
+
+        Inner labels (lines ending in `:` that aren't directives) stay
+        flush-left so they read as section markers inside the routine —
+        the same convention `_loop:` / `_not_found:` follow in idiomatic
+        a816 code. Comments and instructions get the requested indent.
+        """
         indented: list[str] = []
         for line in lines:
-            if not line.strip():
+            stripped = line.strip()
+            if not stripped:
                 indented.append("")
+                continue
+            is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
+            if is_label:
+                indented.append(stripped)
             else:
                 indented.append(self._indent(line, levels))
         return indented
@@ -365,16 +438,23 @@ class A816Formatter:
 
     @staticmethod
     def _separate_labels(lines: list[str]) -> list[str]:
+        """Insert a blank line before top-level labels.
+
+        Top-level labels mark function entries / scope boundaries and
+        benefit from breathing room. Indented (inner-block) labels are
+        section markers inside a routine and the author tends to pack
+        them tightly with surrounding code; do not force blanks there.
+        """
         adjusted: list[str] = []
         for line in lines:
-            if (
-                line.strip().endswith(":")
-                and not line.startswith(":")
-                and not line.startswith(".")
-                and adjusted
-                and adjusted[-1].strip()
-            ):
+            stripped = line.strip()
+            is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
+            is_top_level = is_label and not line[: len(line) - len(line.lstrip())]
+            if is_top_level and adjusted and adjusted[-1].strip():
                 adjusted.append("")
+            elif is_top_level and len(adjusted) >= 2 and not adjusted[-1].strip() and adjusted[-2].strip():
+                # Already has exactly one blank line in front — leave it.
+                pass
             adjusted.append(line)
         return adjusted
 
@@ -396,16 +476,29 @@ class A816Formatter:
         return groups
 
     def _align_inline_comments(self, lines: list[str]) -> None:
+        """Normalize inline comments without forcing column alignment.
+
+        The default policy emits `code  ; comment` with two spaces — a
+        light convention that matches the project's casual style. Set
+        `comment_alignment > 0` to force a target column for groups of
+        same-indent comments.
+        """
         groups = self._collect_inline_comment_groups(lines)
+        force_column = self.options.comment_alignment
         for indent, entries in groups.items():
             if not entries:
                 continue
-            max_code_len = max(len(code_part) for _, code_part, _ in entries)
-            target_column = max(indent + max_code_len + 1, self.options.comment_alignment)
+            target_column: int | None = None
+            if force_column > 0:
+                max_code_len = max(len(code_part) for _, code_part, _ in entries)
+                target_column = max(indent + max_code_len + 1, force_column)
             for index, code_part, comment_part in entries:
-                padding = max(target_column - (indent + len(code_part)), 1)
                 comment_text = f"; {comment_part}" if comment_part else ";"
-                lines[index] = f"{' ' * indent}{code_part}{' ' * padding}{comment_text}"
+                if target_column is None:
+                    lines[index] = f"{' ' * indent}{code_part}  {comment_text}"
+                else:
+                    padding = max(target_column - (indent + len(code_part)), 1)
+                    lines[index] = f"{' ' * indent}{code_part}{' ' * padding}{comment_text}"
 
     def _finalize_formatting(self, lines: list[str]) -> str:
         """Strip trailing whitespace, collapse blanks, separate labels, align inline comments."""
@@ -459,21 +552,43 @@ class A816Formatter:
             and formatted
             and formatted[-1].strip()
         )
+        # A comment separated from the previous emitted line by a blank
+        # line is acting as a leading comment for whatever follows
+        # (typically the next label / function), not as the body of the
+        # current label section. Don't indent it as body code.
+        separated_by_blank = (
+            last_emitted_line_num is not None and node_line is not None and node_line - last_emitted_line_num > 1
+        )
         if on_same_line_as_prev:
             formatted[-1] = formatted[-1].rstrip() + " " + comment_text.strip()
-        elif in_label_section and comment_text.strip():
+        elif in_label_section and comment_text.strip() and not separated_by_blank:
             formatted.append(self._indent(comment_text))
         else:
             formatted.extend(node_lines)
 
     def _emit_instruction_like(
-        self, node: AstNode, node_lines: list[str], in_label_section: bool, formatted: list[str]
+        self,
+        node: AstNode,
+        node_lines: list[str],
+        in_label_section: bool,
+        formatted: list[str],
+        prev_was_label: bool = False,
     ) -> bool:
         if isinstance(node, CodePositionAstNode | CodeRelocationAstNode):
             if formatted and formatted[-1].strip():
                 formatted.append("")
             formatted.extend(line.lstrip() for line in node_lines)
             return True
+        # A docstring immediately after a label documents the symbol and
+        # stays flush-left, hugging the label with no blank line in
+        # between. After a `*=` (region opener) the docstring documents
+        # the region and follows body indentation like any other body
+        # statement — fall through to the normal indent path.
+        if isinstance(node, DocstringAstNode) and prev_was_label:
+            while formatted and not formatted[-1].strip():
+                formatted.pop()
+            formatted.extend(node_lines)
+            return in_label_section
         if in_label_section:
             node_lines = [
                 self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines
@@ -496,7 +611,13 @@ class A816Formatter:
         return sorted(positioned, key=lambda x: x[0])
 
     def _emit_non_compound(
-        self, node: AstNode, node_line: int | None, last_line: int | None, in_label: bool, formatted: list[str]
+        self,
+        node: AstNode,
+        node_line: int | None,
+        last_line: int | None,
+        in_label: bool,
+        formatted: list[str],
+        prev_was_label: bool = False,
     ) -> bool:
         node_lines = self._format_ast(node)
         if isinstance(node, LabelAstNode):
@@ -505,36 +626,115 @@ class A816Formatter:
             self._emit_comment(node_lines, node_line, last_line, in_label, formatted)
             return in_label
         if isinstance(node, self._instruction_like_nodes):
-            return self._emit_instruction_like(node, node_lines, in_label, formatted)
+            return self._emit_instruction_like(node, node_lines, in_label, formatted, prev_was_label)
         formatted.extend(node_lines)
         return False
+
+    _AST_CHILD_ATTRS: ClassVar[tuple[str, ...]] = ("body", "block", "else_block", "nodes", "items", "children")
+
+    @staticmethod
+    def _ast_children(node: AstNode) -> list[AstNode]:
+        """Collect AstNode children reachable through the conventional
+        container attributes used across the AST classes. Returns a
+        flat list; non-AstNode values and missing attrs are skipped.
+        """
+        out: list[AstNode] = []
+        for attr in A816Formatter._AST_CHILD_ATTRS:
+            child = getattr(node, attr, None)
+            if child is None:
+                continue
+            if isinstance(child, list):
+                out.extend(c for c in child if isinstance(c, AstNode))
+            elif isinstance(child, AstNode):
+                out.append(child)
+        return out
+
+    @staticmethod
+    def _ast_max_line(node: AstNode) -> int | None:
+        """Walk a subtree iteratively and return the largest source line
+        number among leaf-like descendants. Skips CompoundAstNode
+        positions because the scanner records their position at the
+        closing brace, which would otherwise overshoot the actual extent
+        of the block's content and swallow boundary blank lines.
+
+        Returns None if no descendant carries usable position info.
+        """
+        max_line: int | None = None
+        stack: list[AstNode] = [node]
+        while stack:
+            current = stack.pop()
+            if not isinstance(current, CompoundAstNode):
+                line = A816Formatter._node_line_num(current)
+                if line is not None and (max_line is None or line > max_line):
+                    max_line = line
+            stack.extend(A816Formatter._ast_children(current))
+        return max_line
+
+    @dataclass
+    class _PreservedBlankState:
+        """Mutable state threaded through `_format_with_preserved_blanks`'s
+        per-node helpers so the loop body itself stays linear.
+        """
+
+        current_idx: int = 0
+        in_label_section: bool = False
+        last_emitted_line_num: int | None = None
+        prev_was_label: bool = False
+
+    def _emit_one_top_level(
+        self,
+        node: AstNode,
+        line_num: int,
+        formatted: list[str],
+        original_lines: list[str],
+        processed: set[int],
+        state: "A816Formatter._PreservedBlankState",
+    ) -> None:
+        state.current_idx = self._emit_preserved_blanks(
+            original_lines, processed, state.current_idx, line_num, formatted
+        )
+        node_line = self._node_line_num(node)
+
+        if isinstance(node, CompoundAstNode):
+            state.in_label_section = False
+            self._emit_compound(node, formatted)
+            state.last_emitted_line_num = None
+            state.prev_was_label = False
+        else:
+            state.in_label_section = self._emit_non_compound(
+                node,
+                node_line,
+                state.last_emitted_line_num,
+                state.in_label_section,
+                formatted,
+                state.prev_was_label,
+            )
+            if node_line is not None:
+                state.last_emitted_line_num = node_line
+            state.prev_was_label = isinstance(node, LabelAstNode)
+
+        processed.add(line_num)
+        # Advance past lines the node already consumed (descendants) so
+        # source blanks WITHIN the body aren't re-emitted at the
+        # boundary. Source blanks AFTER the last child but BEFORE the
+        # next sibling stay reachable.
+        tail = self._ast_max_line(node)
+        if tail is not None and tail >= line_num:
+            for i in range(line_num, tail + 1):
+                processed.add(i)
+            state.current_idx = max(state.current_idx, tail + 1)
+        else:
+            state.current_idx = max(state.current_idx, line_num + 1)
 
     def _format_with_preserved_blanks(self, content: str, nodes: list[AstNode]) -> str:
         """Format AST nodes preserving original blank lines."""
         original_lines = content.splitlines()
         formatted: list[str] = []
         processed: set[int] = set()
-        current_idx = 0
-        in_label_section = False
-        last_emitted_line_num: int | None = None
+        state = A816Formatter._PreservedBlankState()
 
         for line_num, node in self._node_positions_sorted(nodes):
-            current_idx = self._emit_preserved_blanks(original_lines, processed, current_idx, line_num, formatted)
-            node_line = self._node_line_num(node)
+            self._emit_one_top_level(node, line_num, formatted, original_lines, processed, state)
 
-            if isinstance(node, CompoundAstNode):
-                in_label_section = False
-                self._emit_compound(node, formatted)
-                last_emitted_line_num = None
-            else:
-                in_label_section = self._emit_non_compound(
-                    node, node_line, last_emitted_line_num, in_label_section, formatted
-                )
-                if node_line is not None:
-                    last_emitted_line_num = node_line
-
-            processed.add(line_num)
-            current_idx = max(current_idx, line_num + 1)
-
-        self._emit_preserved_blanks(original_lines, processed, current_idx, len(original_lines), formatted)
+        self._emit_preserved_blanks(original_lines, processed, state.current_idx, len(original_lines), formatted)
         return self._finalize_formatting(formatted)

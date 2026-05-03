@@ -11,10 +11,11 @@ import logging
 import shutil
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from a816.cpu.cpu_65c816 import RomType
-from a816.cpu.disassembler import Disassembler, format_disassembly
+from a816.cpu.disassembler import Disassembler, disassemble_function, format_disassembly, format_disassembly_block
 from a816.cpu.mapping import Bus
 from a816.symbols import high_rom_bus, low_rom_bus
 
@@ -292,6 +293,29 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Output a816-compatible assembly syntax (use with -d)",
     )
+    parser.add_argument(
+        "--debug",
+        type=Path,
+        metavar="ADBG",
+        help="Path to a .adbg debug-info file. When supplied, branch and jump"
+        " targets resolve to symbol names instead of synthesized _BBHHHH labels.",
+    )
+    parser.add_argument(
+        "--sym",
+        metavar="NAME",
+        help="Start disassembly at the address of symbol NAME from the .adbg file (requires --debug).",
+    )
+    parser.add_argument(
+        "--func",
+        metavar="NAME",
+        help="CFG-walk a function: stop at rts/rtl/rti/jmp/bra, follow"
+        " conditional branches, track M/X across sep/rep. Requires --debug.",
+    )
+    parser.add_argument(
+        "--follow-calls",
+        action="store_true",
+        help="With --func, also recurse into jsr / jsl targets.",
+    )
 
     return parser
 
@@ -305,14 +329,62 @@ def disassemble(
     count: int | None = None,
     show_bytes: bool = True,
     a816_syntax: bool = False,
+    symbol_map: dict[int, str] | None = None,
 ) -> None:
     """Disassemble and print 65c816 code with SNES logical addresses."""
     start_logical = physical_to_logical(bus, start_offset)
     disasm = Disassembler(m_flag=m_flag, x_flag=x_flag)
     instructions = disasm.disassemble(data, start_logical, count)
 
-    for inst in instructions:
-        print(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=a816_syntax))
+    if a816_syntax:
+        for line in format_disassembly_block(
+            instructions, show_bytes=show_bytes, a816_syntax=True, symbol_map=symbol_map
+        ):
+            print(line)
+    else:
+        for inst in instructions:
+            print(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=False))
+
+
+def make_rom_data_provider(rom_bytes: bytes, bus: Bus) -> Callable[[int, int], bytes]:
+    """Return a callable `(logical_addr, length) -> bytes` backed by `rom_bytes`.
+
+    Returns an empty bytes object when the address has no physical mapping
+    or falls outside the ROM image, so the function walker stops cleanly
+    instead of decoding garbage.
+    """
+
+    def provide(logical_addr: int, length: int) -> bytes:
+        try:
+            physical = bus.get_address(logical_addr).physical
+        except KeyError:
+            return b""
+        if physical is None:
+            return b""
+        if physical >= len(rom_bytes):
+            return b""
+        end = min(physical + length, len(rom_bytes))
+        return rom_bytes[physical:end]
+
+    return provide
+
+
+def load_debug_symbols(adbg_path: Path) -> tuple[dict[int, str], dict[str, int]]:
+    """Load a .adbg file and return (address->name, name->address) maps.
+
+    Address values are SNES logical addresses (matching what the
+    disassembler computes).
+    """
+    from a816.debug_info import read as read_debug
+
+    info = read_debug(adbg_path)
+    addr_to_name: dict[int, str] = {}
+    name_to_addr: dict[str, int] = {}
+    for sym in info.symbols:
+        # Earlier entries win on collision so the first definition order is preserved.
+        addr_to_name.setdefault(sym.address, sym.name)
+        name_to_addr.setdefault(sym.name, sym.address)
+    return addr_to_name, name_to_addr
 
 
 def _apply_ips_to_temp(input_file: Path, ips_file: Path) -> tuple[Path, Path]:
@@ -358,6 +430,48 @@ def _resolve_bus(args: argparse.Namespace) -> tuple[RomType, Bus]:
     return rom_type, bus
 
 
+def _load_symbols_or_exit(debug_path: Path | None) -> tuple[dict[int, str], dict[str, int]]:
+    if debug_path is None:
+        return {}, {}
+    if not debug_path.exists():
+        logger.error(f"Debug file not found: {debug_path}")
+        sys.exit(-1)
+    return load_debug_symbols(debug_path)
+
+
+def _require_symbol(name: str | None, name_to_addr: dict[str, int], flag: str) -> int | None:
+    if name is None:
+        return None
+    if not name_to_addr:
+        logger.error(f"{flag} requires --debug pointing at a .adbg file")
+        sys.exit(-1)
+    if name not in name_to_addr:
+        logger.error(f"Symbol not found in debug info: {name}")
+        sys.exit(-1)
+    return name_to_addr[name]
+
+
+def _emit_function(args: argparse.Namespace, input_file: Path, bus: Bus, entry: int, symbol_map: dict[int, str] | None) -> None:
+    with open(input_file, "rb") as f:
+        rom_bytes = f.read()
+    provider = make_rom_data_provider(rom_bytes, bus)
+    instructions = disassemble_function(
+        entry,
+        provider,
+        m_flag=args.m_flag,
+        x_flag=args.x_flag,
+        follow_calls=args.follow_calls,
+    )
+    if args.asm:
+        for line in format_disassembly_block(
+            instructions, show_bytes=not args.no_bytes, a816_syntax=True, symbol_map=symbol_map
+        ):
+            print(line)
+    else:
+        for inst in instructions:
+            print(format_disassembly(inst, show_bytes=not args.no_bytes, a816_syntax=False))
+
+
 def xdds_main() -> None:
     args = create_parser().parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s - %(message)s")
@@ -365,6 +479,18 @@ def xdds_main() -> None:
     rom_type, bus = _resolve_bus(args)
     if args.show_mappings:
         show_mapping_info(rom_type)
+
+    addr_to_name, name_to_addr = _load_symbols_or_exit(args.debug)
+
+    sym_addr = _require_symbol(args.sym, name_to_addr, "--sym")
+    if sym_addr is not None:
+        args.start = f"${sym_addr >> 16:02X}:{sym_addr & 0xFFFF:04X}"
+        logger.info(f"Symbol {args.sym} -> {args.start}")
+
+    func_addr = _require_symbol(args.func, name_to_addr, "--func")
+    if func_addr is not None and not args.disasm:
+        logger.error("--func requires -d / --disasm")
+        sys.exit(-1)
 
     input_file = args.input_file
     tmp_path: Path | None = None
@@ -378,8 +504,11 @@ def xdds_main() -> None:
 
         physical_start = _resolve_physical_start(args, bus)
         data = _read_slice(input_file, physical_start, args.length)
+        symbol_map = addr_to_name or None
 
-        if args.disasm:
+        if func_addr is not None:
+            _emit_function(args, input_file, bus, func_addr, symbol_map)
+        elif args.disasm:
             disassemble(
                 data,
                 bus,
@@ -389,6 +518,7 @@ def xdds_main() -> None:
                 count=args.count,
                 show_bytes=not args.no_bytes,
                 a816_syntax=args.asm,
+                symbol_map=symbol_map,
             )
         else:
             hexdump(data, bus, physical_start, args.cols, not args.no_ascii)

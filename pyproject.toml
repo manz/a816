@@ -34,6 +34,7 @@ repository = "https://github.com/manz/a816"
 x816 = "a816.cli:cli_main"
 a816 = "a816.cli:cli_main"
 xdds = "a816.xdds:xdds_main"
+xobj = "a816.xobj:main"
 a816-lsp-server = "a816.lsp.server:lsp_main"
 a816-fluff = "a816.fluff:fluff_main"
 

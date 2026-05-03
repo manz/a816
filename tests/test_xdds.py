@@ -802,3 +802,65 @@ class TestXddsMain:
             assert len(lines) == 2
         finally:
             rom_path.unlink()
+
+
+class TestDebugInfoIntegration:
+    """Tests for --debug / --sym (adbg-driven symbol lookup)."""
+
+    @staticmethod
+    def _write_adbg(path: Path, syms: list[tuple[str, int]]) -> None:
+        from a816.debug_info import DebugInfo, SymbolEntry, SymbolKind, SymbolScope, write
+
+        info = DebugInfo()
+        for name, addr in syms:
+            info.symbols.append(SymbolEntry(name=name, address=addr, scope=SymbolScope.GLOBAL, kind=SymbolKind.LABEL))
+        write(info, path)
+
+    def test_load_debug_symbols_round_trip(self, tmp_path: Path) -> None:
+        from a816.xdds import load_debug_symbols
+
+        adbg = tmp_path / "test.adbg"
+        TestDebugInfoIntegration._write_adbg(adbg, [("foo", 0x008000), ("bar", 0x018400)])
+        addr_to_name, name_to_addr = load_debug_symbols(adbg)
+        assert addr_to_name[0x008000] == "foo"
+        assert name_to_addr["bar"] == 0x018400
+
+    def test_sym_resolves_to_address(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from a816.xdds import xdds_main
+
+        rom = tmp_path / "rom.sfc"
+        # 32 bytes of NOPs starting at logical $00:8000 -> physical 0x000000.
+        rom.write_bytes(b"\xea" * 32)
+        adbg = tmp_path / "rom.adbg"
+        TestDebugInfoIntegration._write_adbg(adbg, [("entry", 0x008004)])
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["xdds", "-d", "--asm", "--debug", str(adbg), "--sym", "entry", "-n", "2", str(rom)],
+        )
+        xdds_main()
+        captured = capsys.readouterr()
+        assert "entry:" in captured.out
+        assert "nop" in captured.out
+
+    def test_sym_uses_label_in_branch_targets(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from a816.xdds import xdds_main
+
+        rom = tmp_path / "rom.sfc"
+        # bne +2 at $00:8000 -> target $00:8004; nop nop nop at +2..+4
+        rom.write_bytes(bytes.fromhex("d002eaeaea"))
+        adbg = tmp_path / "rom.adbg"
+        TestDebugInfoIntegration._write_adbg(adbg, [("loop_target", 0x008004)])
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["xdds", "-d", "--asm", "--debug", str(adbg), "--start", "$00:8000", "-n", "4", str(rom)],
+        )
+        xdds_main()
+        captured = capsys.readouterr()
+        assert "bne loop_target" in captured.out
+        assert "loop_target:" in captured.out

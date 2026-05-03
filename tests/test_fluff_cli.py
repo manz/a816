@@ -91,3 +91,34 @@ def test_fluff_diff_mode(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "All files are formatted correctly." in captured.out
+
+
+def test_fluff_stdin_format(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import io
+
+    raw = "start:\nlda #0\nrts\n"
+    monkeypatch.setattr("sys.stdin", io.StringIO(raw))
+    exit_code = fluff_main(["format", "-"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    # Formatter indents instructions and keeps labels flush-left.
+    assert "start:" in captured.out
+    assert "    lda #0" in captured.out
+
+
+def test_fluff_stdin_check_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+
+    already_formatted = "start:\n    lda #0\n    rts\n"
+    monkeypatch.setattr("sys.stdin", io.StringIO(already_formatted))
+    assert fluff_main(["format", "--check", "-"]) == 0
+
+
+def test_fluff_stdin_check_dirty(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("start:\nlda #0\n"))
+    exit_code = fluff_main(["format", "--check", "-"])
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Would reformat <stdin>" in captured.err
