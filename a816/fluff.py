@@ -49,9 +49,14 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     format_parser = subparsers.add_parser("format", help="Format .s/.i sources under the given path.")
     format_parser.add_argument(
-        "path",
+        "paths",
+        nargs="+",
         type=Path,
-        help="File or directory to format recursively. Use `-` to read from stdin and write the formatted text to stdout.",
+        help=(
+            "One or more files or directories to format. Directories are walked"
+            " recursively for .s / .i sources. Use `-` (alone) to read from stdin"
+            " and write the formatted text to stdout."
+        ),
     )
     format_parser.add_argument(
         "--check",
@@ -158,24 +163,50 @@ def _run_format_stdin(args: argparse.Namespace) -> int:
     return 0
 
 
+def _collect_sources(paths: list[Path]) -> tuple[list[Path], int]:
+    """Resolve every input path to a deduplicated list of source files.
+
+    Returns (sources, error_code). error_code is 2 if any path is missing
+    (after also reporting it on stderr), 0 otherwise. Missing paths do
+    not abort the walk so the user sees one report covering every input.
+    """
+    seen: set[Path] = set()
+    sources: list[Path] = []
+    error_code = 0
+    for raw in paths:
+        if not raw.exists():
+            print(f"path not found: {raw}", file=sys.stderr)
+            error_code = 2
+            continue
+        for candidate in _discover_sources(raw):
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            sources.append(candidate)
+    return sources, error_code
+
+
 def _run_format(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    target_path: Path = args.path
-    if str(target_path) == "-":
+    paths: list[Path] = list(args.paths)
+    has_stdin = any(str(p) == "-" for p in paths)
+    if has_stdin:
+        if len(paths) != 1:
+            parser.error("`-` (stdin) cannot be combined with other paths")
         return _run_format_stdin(args)
-    if not target_path.exists():
-        parser.error(f"path does not exist: {target_path}")
-    sources = list(_discover_sources(target_path))
+
+    sources, missing_err = _collect_sources(paths)
     if not sources:
-        return 0
+        return missing_err
     computed, err = _format_sources(sources, A816Formatter())
     if err is not None:
         return err
     changed = [item for item in computed if item[1] != item[2]]
     if args.diff:
-        return _emit_diff(changed)
+        return _emit_diff(changed) or missing_err
     if args.check:
-        return _emit_check(changed)
-    return _write_formatted(computed)
+        return _emit_check(changed) or missing_err
+    return _write_formatted(computed) or missing_err
 
 
 def fluff_main(argv: Sequence[str] | None = None) -> int:
