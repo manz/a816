@@ -451,7 +451,9 @@ def _require_symbol(name: str | None, name_to_addr: dict[str, int], flag: str) -
     return name_to_addr[name]
 
 
-def _emit_function(args: argparse.Namespace, input_file: Path, bus: Bus, entry: int, symbol_map: dict[int, str] | None) -> None:
+def _emit_function(
+    args: argparse.Namespace, input_file: Path, bus: Bus, entry: int, symbol_map: dict[int, str] | None
+) -> None:
     with open(input_file, "rb") as f:
         rom_bytes = f.read()
     provider = make_rom_data_provider(rom_bytes, bus)

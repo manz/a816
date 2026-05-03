@@ -698,3 +698,28 @@ _OkBk2:
 
     def test_idents(self) -> None:
         pass
+
+    def test_map_directive_roundtrip(self) -> None:
+        """`.map` re-serializes to the original assembler syntax (no Python dict literal)."""
+        src = (
+            ".map identifier=1 bank_range=0x00, 0x6f addr_range=0x8000, 0xffff "
+            "mask=0x8000 mirror_bank_range=0x80, 0xcf\n"
+            ".map identifier=2 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff "
+            "mask=0x10000 writable=0\n"
+        )
+        formatted = self.formatter.format_text(src)
+        # Must not produce a Python dict-literal serialization.
+        assert "{'identifier'" not in formatted
+        assert "{ identifier" not in formatted
+        # Round-trip preserves the assembler syntax verbatim.
+        assert formatted == src
+
+    def test_flush_left_comment_in_block_preserved(self) -> None:
+        """A `;` comment that the author wrote flush-left inside a `{}` body
+        keeps its flush-left indent — the formatter must not pull it under
+        the body's indent column.
+        """
+        src = "foo:\n{\n    rtl\n; flush-left banner\n    rts\n}\n"
+        formatted = self.formatter.format_text(src)
+        assert "\n; flush-left banner\n" in formatted
+        assert "    ; flush-left banner" not in formatted

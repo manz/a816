@@ -215,8 +215,38 @@ class MapArgs(TypedDict, total=False):
     mirror_bank_range: tuple[int, int]
 
 
+_MAP_FIELD_WIDTH: dict[str, int] = {
+    "bank_range": 2,
+    "addr_range": 4,
+    "mask": 4,
+    "mirror_bank_range": 2,
+}
+
+
+def _map_value_repr(key: str, value: int) -> str:
+    """Format a single .map value back to assembler syntax. Keeps
+    `identifier` and `writable` as bare integers (matching how the
+    parser stores them) and uses zero-padded lowercase hex for the
+    address / mask fields so the output round-trips through the
+    parser at the same widths the source used.
+    """
+    if key in ("identifier", "writable"):
+        return str(value)
+    width = _MAP_FIELD_WIDTH.get(key, 4)
+    return f"0x{value:0{width}x}"
+
+
 class MapAstNode(AstNode):
     args: MapArgs
+
+    _FIELD_ORDER: tuple[str, ...] = (
+        "identifier",
+        "bank_range",
+        "addr_range",
+        "mask",
+        "mirror_bank_range",
+        "writable",
+    )
 
     def __init__(self, args: MapArgs, file_info: Token):
         super().__init__("map", file_info)
@@ -226,7 +256,18 @@ class MapAstNode(AstNode):
         return self.kind, self.args
 
     def to_canonical(self) -> str:
-        return f".map {self.args}"
+        parts: list[str] = [".map"]
+        items: dict[str, Any] = dict(self.args)
+        for key in self._FIELD_ORDER:
+            if key not in items:
+                continue
+            value = items[key]
+            if isinstance(value, tuple):
+                low, high = value
+                parts.append(f"{key}={_map_value_repr(key, low)}, {_map_value_repr(key, high)}")
+            else:
+                parts.append(f"{key}={_map_value_repr(key, int(value))}")
+        return " ".join(parts)
 
 
 class IfAstNode(AstNode):
