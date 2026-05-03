@@ -756,3 +756,16 @@ _OkBk2:
         # All paragraph lines should have the same leading whitespace.
         leading = [len(line) - len(line.lstrip()) for line in para]
         assert len(set(leading)) == 1, f"Paragraph lines had mixed indents: {leading}"
+
+    def test_c_style_block_comment_preserved(self) -> None:
+        """`/* ... */` comments span multiple lines and must round-trip
+        verbatim — the formatter previously prefixed only the first line
+        with `;`, breaking the closing `*/` line."""
+        src = "/* multi\nline\ncomment */\nfoo:\n    rts\n"
+        formatted = self.formatter.format_text(src)
+        # No semicolon prefix, every line preserved.
+        assert "; /*" not in formatted
+        assert "/* multi" in formatted
+        assert "comment */" in formatted
+        # Idempotence: formatting again is a no-op.
+        assert self.formatter.format_text(formatted) == formatted

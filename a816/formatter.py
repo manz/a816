@@ -211,6 +211,12 @@ class A816Formatter:
 
     def _format_comment(self, ast: CommentAstNode) -> list[str]:
         comment = ast.comment.strip()
+        # C-style block comments emit verbatim (one output line per
+        # source line) so the closing `*/` keeps its position; the prior
+        # behavior turned `/* multi\nline */` into `; /* multi\nline */`
+        # which broke the second line.
+        if comment.startswith("/*") and comment.endswith("*/"):
+            return comment.splitlines()
         if not comment.startswith(";"):
             comment = f"; {comment}"
         return [comment]

@@ -786,12 +786,26 @@ class WorkspaceIndex:
 
 @dataclass
 class _MaskState:
-    """Cross-line scanner state for `_build_code_mask`. Only the
-    triple-quoted-string flag survives a newline; single-quoted strings
-    don't span lines in a816 syntax.
+    """Cross-line scanner state for `_build_code_mask`. The
+    triple-quoted-string flag and the C-style block-comment flag both
+    survive a newline; single-quoted strings don't span lines in a816
+    syntax.
     """
 
     in_triple: str | None = None
+    in_block_comment: bool = False
+
+
+def _consume_block_comment(raw: str, i: int, mask: list[bool], state: _MaskState) -> int:
+    """Mask bytes inside a `/* ... */` block comment. Closes the block
+    on `*/`. Returns the new cursor position.
+    """
+    mask[i] = False
+    if i + 1 < len(raw) and raw[i] == "*" and raw[i + 1] == "/":
+        mask[i + 1] = False
+        state.in_block_comment = False
+        return i + 2
+    return i + 1
 
 
 def _consume_triple(raw: str, i: int, mask: list[bool], state: _MaskState) -> int:
@@ -828,6 +842,9 @@ def _mask_line(raw: str, state: _MaskState) -> list[bool]:
     i = 0
     in_string: str | None = None
     while i < len(raw):
+        if state.in_block_comment:
+            i = _consume_block_comment(raw, i, mask, state)
+            continue
         if state.in_triple is not None:
             i = _consume_triple(raw, i, mask, state)
             continue
@@ -839,6 +856,11 @@ def _mask_line(raw: str, state: _MaskState) -> list[bool]:
             for j in range(i, len(raw)):
                 mask[j] = False
             break
+        if raw[i : i + 2] == "/*":
+            state.in_block_comment = True
+            mask[i] = mask[i + 1] = False
+            i += 2
+            continue
         if raw[i : i + 3] in ('"""', "'''"):
             state.in_triple = raw[i : i + 3]
             mask[i] = mask[i + 1] = mask[i + 2] = False
