@@ -321,6 +321,9 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "cop": {AddressingMode.immediate: Opcode([0x02])},
     "wdm": {AddressingMode.immediate: Opcode([0x42])},
     "clc": {AddressingMode.none: OpcodeWithoutOperand(0x18)},
+    "cld": {AddressingMode.none: OpcodeWithoutOperand(0xD8)},
+    "cli": {AddressingMode.none: OpcodeWithoutOperand(0x58)},
+    "clv": {AddressingMode.none: OpcodeWithoutOperand(0xB8)},
     "cmp": {
         AddressingMode.immediate: Opcode([0xC9, 0xC9], is_a=True),
         AddressingMode.direct: Opcode([0xC5, 0xCD, 0xCF], is_a=True),
