@@ -52,11 +52,33 @@ class Instruction:
     operand_value: int  # Decoded operand value
     length: int  # Total instruction length
 
-    def format_operand(self, m_flag: bool = True, x_flag: bool = True, use_a816_syntax: bool = False) -> str:
+    def relative_target(self) -> int:
+        """Compute the 24-bit absolute target for a relative branch.
+
+        Preserves the current bank because RELATIVE/RELATIVE_LONG cannot
+        cross banks; the offset wraps inside the bank-local 16-bit space.
+        """
+        val = self.operand_value
+        if self.mode == AddrMode.RELATIVE:
+            offset = val if val < 0x80 else val - 0x100
+        else:
+            offset = val if val < 0x8000 else val - 0x10000
+        bank = self.address & 0xFF0000
+        target = (self.address + self.length + offset) & 0xFFFF
+        return bank | target
+
+    def format_operand(
+        self,
+        m_flag: bool = True,
+        x_flag: bool = True,
+        use_a816_syntax: bool = False,
+        label_map: dict[int, str] | None = None,
+    ) -> str:
         """Format operand for the addressing mode.
 
         m_flag/x_flag select 8- vs 16-bit width for IMMEDIATE_M / IMMEDIATE_X.
         use_a816_syntax: 0x prefix instead of $.
+        label_map: address -> label substitution for branch / jump targets.
         """
         val = self.operand_value
 
@@ -87,13 +109,31 @@ class Instruction:
             AddrMode.STACK_REL_IND_Y: (2, "({},s),y"),
         }
 
-        return self._dispatch_operand_format(val, templates, hex_val, m_flag, x_flag, use_a816_syntax)
+        return self._dispatch_operand_format(
+            val, templates, hex_val, m_flag, x_flag, use_a816_syntax, label_map
+        )
 
-    def _format_relative_target(self, val: int, hex_val: Callable[[int, int], str]) -> str:
-        cap = 256 if self.mode == AddrMode.RELATIVE else 65536
-        half = cap // 2
-        offset = val if val < half else val - cap
-        return hex_val((self.address + self.length + offset) & 0xFFFF, 4)
+    def _format_relative_target(
+        self, hex_val: Callable[[int, int], str], label_map: dict[int, str] | None
+    ) -> str:
+        target = self.relative_target()
+        if label_map is not None and target in label_map:
+            return label_map[target]
+        return hex_val(target, 6)
+
+    def _format_jump_target(
+        self, val: int, width: int, hex_val: Callable[[int, int], str], label_map: dict[int, str] | None
+    ) -> str:
+        """For absolute jumps/calls, swap in a label when the target matches."""
+        if label_map is None:
+            return hex_val(val, width)
+        if width >= 6:
+            target = val & 0xFFFFFF
+        else:
+            target = (self.address & 0xFF0000) | (val & 0xFFFF)
+        if target in label_map:
+            return label_map[target]
+        return hex_val(val, width)
 
     def _dispatch_operand_format(
         self,
@@ -103,9 +143,17 @@ class Instruction:
         m_flag: bool,
         x_flag: bool,
         use_a816_syntax: bool,
+        label_map: dict[int, str] | None = None,
     ) -> str:
         if self.mode == AddrMode.IMPLIED:
             return ""
+        # Absolute jumps / calls — use label substitution when known.
+        if self.mnemonic in ("jmp", "jsr", "jsl") and self.mode in (
+            AddrMode.ABSOLUTE,
+            AddrMode.ABSOLUTE_LONG,
+        ):
+            width = 6 if self.mode == AddrMode.ABSOLUTE_LONG else 4
+            return self._format_jump_target(val, width, hex_val, label_map)
         if self.mode in templates:
             width, fmt = templates[self.mode]
             return fmt.format(hex_val(val, width))
@@ -114,67 +162,41 @@ class Instruction:
         if self.mode == AddrMode.IMMEDIATE_X:
             return f"#{hex_val(val, 2 if x_flag else 4)}"
         if self.mode in (AddrMode.RELATIVE, AddrMode.RELATIVE_LONG):
-            return self._format_relative_target(val, hex_val)
+            return self._format_relative_target(hex_val, label_map)
         if self.mode == AddrMode.BLOCK_MOVE:
             return f"{hex_val(val & 0xFF, 2)},{hex_val((val >> 8) & 0xFF, 2)}"
         return (f"0x{val:X}") if use_a816_syntax else (f"${val:X}")
 
     def get_size_hint(self) -> str:
-        """Get the size hint suffix for a816 syntax (.b, .w, .l)."""
+        """Get the size hint suffix for a816 syntax (.b, .w, .l).
+
+        Minimal-suffix policy aimed at matching idiomatic a816 source:
+        - Bare `lda #imm` for IMMEDIATE_M/IMMEDIATE_X 8-bit, IMMEDIATE_8.
+        - `.w` only when the operand is a 16-bit immediate (forces width).
+        - Bare absolute / direct (no `.w` / `.b` clutter).
+        - `.l` retained for ABSOLUTE_LONG family (a816 needs it to pick jsl).
+        - Block-move / relative / implied: no suffix.
+        """
         mode = self.mode
 
-        # Implied instructions don't need size hints
-        if mode == AddrMode.IMPLIED:
-            return ""
-
-        # Immediate instructions use the operand size
-        if mode in (AddrMode.IMMEDIATE_8, AddrMode.IMMEDIATE_M, AddrMode.IMMEDIATE_X):
-            if len(self.operand_bytes) == 1:
-                return ".b"
-            else:
-                return ".w"
-        elif mode == AddrMode.IMMEDIATE_16:
+        # 16-bit immediate forces `.w` so a816 picks the right opcode width.
+        if mode in (AddrMode.IMMEDIATE_M, AddrMode.IMMEDIATE_X):
+            return ".w" if len(self.operand_bytes) == 2 else ""
+        if mode == AddrMode.IMMEDIATE_16:
             return ".w"
 
-        # Direct page is always byte-addressed
-        if mode in (
-            AddrMode.DIRECT,
-            AddrMode.DIRECT_X,
-            AddrMode.DIRECT_Y,
-            AddrMode.DIRECT_IND,
-            AddrMode.DIRECT_IND_X,
-            AddrMode.DIRECT_IND_Y,
-            AddrMode.DIRECT_IND_LONG,
-            AddrMode.DIRECT_IND_LONG_Y,
-            AddrMode.STACK_REL,
-            AddrMode.STACK_REL_IND_Y,
-        ):
-            return ".b"
-
-        # Absolute is word
-        if mode in (
-            AddrMode.ABSOLUTE,
-            AddrMode.ABSOLUTE_X,
-            AddrMode.ABSOLUTE_Y,
-            AddrMode.ABSOLUTE_IND,
-            AddrMode.ABSOLUTE_IND_X,
-            AddrMode.ABSOLUTE_IND_LONG,
-        ):
-            return ".w"
-
-        # Long is 24-bit
         if mode in (AddrMode.ABSOLUTE_LONG, AddrMode.ABSOLUTE_LONG_X):
             return ".l"
 
-        # Relative branches don't need size hints
-        if mode in (AddrMode.RELATIVE, AddrMode.RELATIVE_LONG, AddrMode.BLOCK_MOVE):
-            return ""
-
         return ""
 
-    def format_a816(self) -> str:
-        """Format instruction in a816-compatible syntax."""
-        operand = self.format_operand(use_a816_syntax=True)
+    def format_a816(self, label_map: dict[int, str] | None = None) -> str:
+        """Format instruction in a816-compatible syntax.
+
+        label_map: optional address -> label dict. When provided, branch
+        and jump targets that match are rendered as labels.
+        """
+        operand = self.format_operand(use_a816_syntax=True, label_map=label_map)
         size_hint = self.get_size_hint()
 
         if operand:
@@ -599,53 +621,104 @@ class Disassembler:
         return instructions
 
 
-def format_disassembly(inst: Instruction, show_bytes: bool = True, a816_syntax: bool = False) -> str:
+def _label_for(address: int) -> str:
+    return f"L_{(address >> 16) & 0xFF:02X}{address & 0xFFFF:04X}"
+
+
+def collect_labels(instructions: list[Instruction]) -> dict[int, str]:
+    """Build address -> label map for branch and jump targets.
+
+    Only addresses targeted by branches or absolute/long jumps/calls get
+    a label entry, so disassembly substitutes labels in operands and the
+    block formatter emits label lines at in-range targets. Out-of-range
+    targets still substitute in operands; the user supplies the label
+    definition elsewhere when reassembling.
     """
-    Format a single instruction for display.
+    targets: set[int] = set()
+    for inst in instructions:
+        if inst.mode in (AddrMode.RELATIVE, AddrMode.RELATIVE_LONG):
+            targets.add(inst.relative_target())
+            continue
+        if inst.mnemonic in ("jmp", "jsr", "jsl"):
+            if inst.mode == AddrMode.ABSOLUTE_LONG:
+                targets.add(inst.operand_value & 0xFFFFFF)
+            elif inst.mode == AddrMode.ABSOLUTE:
+                targets.add((inst.address & 0xFF0000) | (inst.operand_value & 0xFFFF))
+    return {target: _label_for(target) for target in targets}
+
+
+def format_disassembly(
+    inst: Instruction,
+    show_bytes: bool = True,
+    a816_syntax: bool = False,
+    label_map: dict[int, str] | None = None,
+) -> str:
+    """Format a single instruction for display.
 
     Args:
-        inst: Decoded instruction
-        show_bytes: Whether to show raw bytes
-        a816_syntax: If True, output a816-compatible assembly syntax
+        inst: Decoded instruction.
+        show_bytes: Whether to show raw bytes.
+        a816_syntax: If True, output a816-compatible assembly syntax.
+        label_map: Optional address -> label dict for branch / jump targets.
+            When provided in a816 mode, no per-line synthetic label is
+            emitted; callers should print the label on its own line where
+            applicable (see format_disassembly_block).
 
     Returns:
-        Formatted string
+        Formatted string.
     """
-    # Address
     bank = (inst.address >> 16) & 0xFF
     addr = inst.address & 0xFFFF
 
     if a816_syntax:
-        # a816-compatible format: label and instruction
-        addr_str = f"L_{bank:02X}{addr:04X}:"
-        asm_str = inst.format_a816()
-
-        if show_bytes:
-            all_bytes = bytes([inst.opcode]) + inst.operand_bytes
-            bytes_str = " ".join(f"{b:02X}" for b in all_bytes)
-            comment = f"; {bytes_str}"
-            return f"{addr_str:14} {asm_str:24} {comment}"
-        else:
+        asm_str = inst.format_a816(label_map=label_map)
+        if label_map is None:
+            addr_str = f"{_label_for(inst.address)}:"
+            if show_bytes:
+                all_bytes = bytes([inst.opcode]) + inst.operand_bytes
+                bytes_str = " ".join(f"{b:02X}" for b in all_bytes)
+                return f"{addr_str:14} {asm_str:24} ; {bytes_str}"
             return f"{addr_str:14} {asm_str}"
-    else:
-        addr_str = f"${bank:02X}:{addr:04X}"
-
+        # label_map mode: indent the instruction; labels printed by block formatter.
         if show_bytes:
-            # Raw bytes (up to 4)
             all_bytes = bytes([inst.opcode]) + inst.operand_bytes
             bytes_str = " ".join(f"{b:02X}" for b in all_bytes)
-            bytes_str = bytes_str.ljust(11)  # 4 bytes max = "XX XX XX XX"
-        else:
-            bytes_str = ""
+            return f"    {asm_str:32} ; ${inst.address & 0xFFFFFF:06X}: {bytes_str}"
+        return f"    {asm_str}"
 
-        # Mnemonic and operand
-        operand = inst.format_operand()
-        if operand:
-            asm_str = f"{inst.mnemonic:4} {operand}"
-        else:
-            asm_str = inst.mnemonic
+    addr_str = f"${bank:02X}:{addr:04X}"
+    if show_bytes:
+        all_bytes = bytes([inst.opcode]) + inst.operand_bytes
+        bytes_str = " ".join(f"{b:02X}" for b in all_bytes).ljust(11)
+    else:
+        bytes_str = ""
 
-        if show_bytes:
-            return f"{addr_str}  {bytes_str}  {asm_str}"
-        else:
-            return f"{addr_str}  {asm_str}"
+    operand = inst.format_operand()
+    asm_str = f"{inst.mnemonic:4} {operand}" if operand else inst.mnemonic
+
+    if show_bytes:
+        return f"{addr_str}  {bytes_str}  {asm_str}"
+    return f"{addr_str}  {asm_str}"
+
+
+def format_disassembly_block(
+    instructions: list[Instruction],
+    show_bytes: bool = True,
+    a816_syntax: bool = False,
+) -> list[str]:
+    """Format a contiguous run of instructions, emitting label lines only
+    at addresses referenced by branches or jumps within the block.
+
+    Returns one string per output line (mix of label lines and instruction
+    lines). When `a816_syntax` is False this is equivalent to mapping
+    `format_disassembly` over the instruction list.
+    """
+    if not a816_syntax:
+        return [format_disassembly(inst, show_bytes=show_bytes, a816_syntax=False) for inst in instructions]
+    label_map = collect_labels(instructions)
+    lines: list[str] = []
+    for inst in instructions:
+        if inst.address in label_map:
+            lines.append(f"{label_map[inst.address]}:")
+        lines.append(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=True, label_map=label_map))
+    return lines

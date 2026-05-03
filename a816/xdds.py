@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 from a816.cpu.cpu_65c816 import RomType
-from a816.cpu.disassembler import Disassembler, format_disassembly
+from a816.cpu.disassembler import Disassembler, format_disassembly, format_disassembly_block
 from a816.cpu.mapping import Bus
 from a816.symbols import high_rom_bus, low_rom_bus
 
@@ -311,8 +311,12 @@ def disassemble(
     disasm = Disassembler(m_flag=m_flag, x_flag=x_flag)
     instructions = disasm.disassemble(data, start_logical, count)
 
-    for inst in instructions:
-        print(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=a816_syntax))
+    if a816_syntax:
+        for line in format_disassembly_block(instructions, show_bytes=show_bytes, a816_syntax=True):
+            print(line)
+    else:
+        for inst in instructions:
+            print(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=False))
 
 
 def _apply_ips_to_temp(input_file: Path, ips_file: Path) -> tuple[Path, Path]:
