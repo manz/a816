@@ -488,18 +488,27 @@ def _collect_public_symbols(nodes: list[AstNode], symbols: list[str]) -> None:
 
     Public symbols don't start with underscore (_); underscored symbols are
     treated as module-private.
+
+    `.incbin "path"` registers the same auto-symbols `BinaryNode.pc_after`
+    creates at codegen time (`<sanitized_path>` and `<sanitized_path>__size`)
+    so `.import` consumers can resolve those bare names without an extra
+    `.extern` declaration.
     """
     from a816.parse.ast.visitor import walk
 
-    for node in walk(nodes):
-        name: str | None = None
-        if isinstance(node, LabelAstNode):
-            name = node.label
-        elif isinstance(node, SymbolAffectationAstNode | AssignAstNode):
-            name = node.symbol
-
-        if name is not None and not name.startswith("_") and name not in symbols:
+    def _add(name: str) -> None:
+        if name and not name.startswith("_") and name not in symbols:
             symbols.append(name)
+
+    for node in walk(nodes):
+        if isinstance(node, LabelAstNode):
+            _add(node.label)
+        elif isinstance(node, SymbolAffectationAstNode | AssignAstNode):
+            _add(node.symbol)
+        elif isinstance(node, IncludeBinaryAstNode):
+            base = node.file_path.replace("/", "_").replace(".", "_")
+            _add(base)
+            _add(f"{base}__size")
 
 
 def generate_register_size(
