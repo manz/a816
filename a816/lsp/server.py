@@ -32,8 +32,10 @@ from lsprotocol.types import (
     MarkupKind,
     MessageType,
     Position,
+    PrepareRenameParams,
     Range,
     ReferenceParams,
+    RenameParams,
     SemanticTokens,
     SemanticTokensLegend,
     SemanticTokensParams,
@@ -46,6 +48,7 @@ from lsprotocol.types import (
     TextDocumentContentChangeEvent_Type2,
     TextDocumentPositionParams,
     TextEdit,
+    WorkspaceEdit,
     WorkspaceSymbolParams,
 )
 from lsprotocol.types import (
@@ -842,6 +845,14 @@ class A816LanguageServer:
         async def find_references(ls: LanguageServer, params: ReferenceParams) -> list[Location] | None:
             return self._handle_references(params)
 
+        @self.server.feature("textDocument/prepareRename")
+        async def prepare_rename(ls: LanguageServer, params: PrepareRenameParams) -> Range | None:
+            return self._handle_prepare_rename(params)
+
+        @self.server.feature("textDocument/rename")
+        async def rename_symbol(ls: LanguageServer, params: RenameParams) -> WorkspaceEdit | None:
+            return self._handle_rename(params)
+
         @self.server.feature("textDocument/signatureHelp")
         async def signature_help(ls: LanguageServer, params: SignatureHelpParams) -> SignatureHelp | None:
             return self._handle_signature_help(params)
@@ -1217,13 +1228,75 @@ class A816LanguageServer:
         return results[:100]
 
     @staticmethod
+    def _build_code_mask(lines: list[str]) -> list[list[bool]]:
+        """Per-line per-char mask: True where the char is real source code,
+        False inside a comment or string literal. Tracks triple-quoted
+        strings across lines.
+
+        Lexer is intentionally tiny — a full a816 parse is too expensive
+        per rename / reference query and the document already holds the
+        AST for diagnostics. This mask exists so reference search skips
+        accidental matches in text payloads.
+        """
+        masks: list[list[bool]] = []
+        in_triple: str | None = None
+        for raw in lines:
+            mask = [True] * len(raw)
+            i = 0
+            in_string: str | None = None
+            while i < len(raw):
+                ch = raw[i]
+                if in_triple is not None:
+                    mask[i] = False
+                    if raw[i : i + 3] == in_triple:
+                        mask[i + 1] = False
+                        mask[i + 2] = False
+                        i += 3
+                        in_triple = None
+                        continue
+                    i += 1
+                    continue
+                if in_string is not None:
+                    mask[i] = False
+                    if ch == "\\" and i + 1 < len(raw):
+                        mask[i + 1] = False
+                        i += 2
+                        continue
+                    if ch == in_string:
+                        in_string = None
+                    i += 1
+                    continue
+                if ch == ";":
+                    for j in range(i, len(raw)):
+                        mask[j] = False
+                    break
+                if raw[i : i + 3] in ('"""', "'''"):
+                    in_triple = raw[i : i + 3]
+                    mask[i] = mask[i + 1] = mask[i + 2] = False
+                    i += 3
+                    continue
+                if ch in ('"', "'"):
+                    in_string = ch
+                    mask[i] = False
+                    i += 1
+                    continue
+                i += 1
+            masks.append(mask)
+        return masks
+
+    @staticmethod
     def _refs_in_document(
         document: A816Document, uri: str, pattern: re.Pattern[str], seen: set[tuple[str, int, int]]
     ) -> list[Location]:
         out: list[Location] = []
+        masks = A816LanguageServer._build_code_mask(document.lines)
         for i, doc_line in enumerate(document.lines):
+            mask = masks[i]
             for match in pattern.finditer(doc_line):
-                key = (uri, i, match.start())
+                start, end = match.start(), match.end()
+                if any(not mask[j] for j in range(start, end)):
+                    continue
+                key = (uri, i, start)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -1231,8 +1304,8 @@ class A816LanguageServer:
                     Location(
                         uri=uri,
                         range=Range(
-                            start=Position(line=i, character=match.start()),
-                            end=Position(line=i, character=match.end()),
+                            start=Position(line=i, character=start),
+                            end=Position(line=i, character=end),
                         ),
                     )
                 )
@@ -1290,6 +1363,86 @@ class A816LanguageServer:
                 loc for loc in references if (loc.uri, loc.range.start.line, loc.range.start.character) not in defs
             ]
         return references or None
+
+    _RENAME_SYMBOL_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    def _handle_prepare_rename(self, params: PrepareRenameParams) -> Range | None:
+        """Tell the editor which range it can rename in place.
+
+        Returns the word range under the cursor when it parses as a
+        symbol identifier; `None` otherwise (rejects rename on
+        instructions, numbers, registers).
+        """
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return None
+        line_num = params.position.line
+        if line_num >= len(doc.lines):
+            return None
+        line = doc.lines[line_num]
+        word_start, word_end = self._word_span(line, params.position.character)
+        if word_start >= word_end:
+            return None
+        word = line[word_start:word_end]
+        if not self._RENAME_SYMBOL_PATTERN.match(word):
+            return None
+        # Reject opcodes / registers / directives — those are language
+        # built-ins, not user symbols.
+        lowered = word.lower()
+        if lowered in snes_opcode_table:
+            return None
+        if lowered in {"a", "x", "y", "s", "p", "pc"}:
+            return None
+        if lowered in {"byte", "word", "long", "dword"}:
+            return None
+        return Range(
+            start=Position(line=line_num, character=word_start),
+            end=Position(line=line_num, character=word_end),
+        )
+
+    def _handle_rename(self, params: RenameParams) -> WorkspaceEdit | None:
+        """Rename every reference to the symbol under the cursor across
+        the workspace. Returns a WorkspaceEdit grouping per-file
+        TextEdits. Editor applies atomically.
+        """
+        new_name = params.new_name
+        if not self._RENAME_SYMBOL_PATTERN.match(new_name):
+            return None
+
+        doc = self.documents.get(params.text_document.uri)
+        if not doc:
+            return None
+        line_num = params.position.line
+        if line_num >= len(doc.lines):
+            return None
+        line = doc.lines[line_num]
+        word_start, word_end = self._word_span(line, params.position.character)
+        if word_start >= word_end:
+            return None
+        old_name = line[word_start:word_end]
+        if not self._RENAME_SYMBOL_PATTERN.match(old_name):
+            return None
+        if old_name == new_name:
+            return WorkspaceEdit(changes={})
+
+        pattern = re.compile(r"\b" + re.escape(old_name) + r"\b")
+        seen: set[tuple[str, int, int]] = set()
+        references = self._refs_in_document(doc, params.text_document.uri, pattern, seen)
+        workspace = self._ensure_workspace_index()
+        if workspace:
+            for uri, ws_doc in workspace.documents.items():
+                if uri == params.text_document.uri:
+                    continue
+                references.extend(self._refs_in_document(ws_doc, uri, pattern, seen))
+
+        changes: dict[str, list[TextEdit]] = {}
+        for loc in references:
+            edit = TextEdit(range=loc.range, new_text=new_name)
+            changes.setdefault(loc.uri, []).append(edit)
+
+        if not changes:
+            return None
+        return WorkspaceEdit(changes=changes)
 
     @staticmethod
     def _addressing_mode_label(mode: AddressingMode) -> str:

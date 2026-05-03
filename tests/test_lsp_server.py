@@ -524,6 +524,9 @@ main:
 class TestA816LSPIntegration(TestCase):
     """Integration tests for LSP server components"""
 
+    def setUp(self) -> None:
+        self.server = A816LanguageServer()
+
     def test_document_and_formatter_integration(self) -> None:
         """Test integration between document analysis and formatting"""
         content = """; Header
@@ -650,3 +653,75 @@ subroutine:
 
         doc = A816Document("test://docstring.s", content)
         self.assertEqual(doc.macro_docstrings.get("greet"), "Say hi")
+
+    def test_workspace_rename(self) -> None:
+        """Rename should produce a WorkspaceEdit covering all references."""
+        from lsprotocol.types import RenameParams
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            def_path = root / "defs.s"
+            ref_path = root / "ref.s"
+            def_path.write_text("lookup_label:\n    rtl\n", encoding="utf-8")
+            ref_path.write_text("    jsr lookup_label\n    rts\n", encoding="utf-8")
+
+            def_doc = A816Document(def_path.as_uri(), def_path.read_text(encoding="utf-8"))
+            ref_doc = A816Document(ref_path.as_uri(), ref_path.read_text(encoding="utf-8"))
+
+            index = WorkspaceIndex(root)
+            index.replace_document(def_doc)
+            index.replace_document(ref_doc)
+            index.built = True
+            self.server.workspace_index = index
+            self.server._ensure_workspace_index = lambda: index  # type: ignore[method-assign]
+            self.server.documents[ref_path.as_uri()] = ref_doc
+
+            handler = self.server.server.lsp._get_handler("textDocument/rename")  # type: ignore[no-untyped-call]
+            params = RenameParams(
+                text_document=TextDocumentIdentifier(uri=ref_path.as_uri()),
+                position=Position(line=0, character=10),
+                new_name="new_label",
+            )
+            edit = asyncio.run(handler(params))
+            self.assertIsNotNone(edit)
+            self.assertIn(def_path.as_uri(), edit.changes)
+            self.assertIn(ref_path.as_uri(), edit.changes)
+            for edits in edit.changes.values():
+                for text_edit in edits:
+                    self.assertEqual(text_edit.new_text, "new_label")
+
+    def test_rename_rejects_opcode(self) -> None:
+        """prepareRename should refuse renaming an opcode."""
+        from lsprotocol.types import PrepareRenameParams
+
+        content = "    lda #0\n"
+        doc = A816Document("test://op.s", content)
+        self.server.documents[doc.uri] = doc
+        handler = self.server.server.lsp._get_handler("textDocument/prepareRename")  # type: ignore[no-untyped-call]
+        params = PrepareRenameParams(
+            text_document=TextDocumentIdentifier(uri=doc.uri),
+            position=Position(line=0, character=5),  # inside "lda"
+        )
+        self.assertIsNone(asyncio.run(handler(params)))
+
+    def test_references_skip_comments_and_strings(self) -> None:
+        """\\bword\\b matches inside `;` comments or '...' strings must not count."""
+        from lsprotocol.types import ReferenceContext
+
+        content = "foo:\n    rtl\n    ; foo in a comment\n    .text 'foo inside string'\n    jsr foo\n"
+        doc = A816Document("test://refs.s", content)
+        self.server.documents[doc.uri] = doc
+        handler = self.server.server.lsp._get_handler("textDocument/references")  # type: ignore[no-untyped-call]
+        params = ReferenceParams(
+            text_document=TextDocumentIdentifier(uri=doc.uri),
+            position=Position(line=0, character=1),
+            context=ReferenceContext(include_declaration=True),
+        )
+        results = asyncio.run(handler(params))
+        ranges = [(loc.range.start.line, loc.range.start.character) for loc in results]
+        # Only the definition (line 0) and the jsr (line 4) should match.
+        self.assertIn((0, 0), ranges)
+        self.assertIn((4, 8), ranges)
+        # Comment line 2 and string line 3 must be excluded.
+        for line, _ in ranges:
+            self.assertNotIn(line, (2, 3))
