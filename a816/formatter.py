@@ -148,14 +148,16 @@ class A816Formatter:
             ]
         lines.extend(node_lines)
 
+    _BLOCK_LIKE_AST: ClassVar[tuple[type, ...]] = (IfAstNode, ForAstNode, MacroAstNode, ScopeAstNode, CompoundAstNode)
+
     def _advance_prev_line(self, node: AstNode, node_line: int | None) -> int | None:
-        tail_line = self._ast_max_line(node)
+        # Closing braces of block-like nodes sit on the next source
+        # line with no AST entry; bump past them so the gap heuristic
+        # doesn't read the brace line as a blank padding line.
+        tail_line = self._ast_max_line(node) or node_line
         if tail_line is None:
-            return node_line
-        if isinstance(node, IfAstNode | ForAstNode | MacroAstNode | ScopeAstNode | CompoundAstNode):
-            # Closing brace lives on the next source line and has no AST
-            # entry; skip over it so the gap heuristic doesn't see it as
-            # a blank line.
+            return None
+        if isinstance(node, self._BLOCK_LIKE_AST):
             return tail_line + 1
         return tail_line
 
@@ -628,36 +630,44 @@ class A816Formatter:
         formatted.extend(node_lines)
         return False
 
+    _AST_CHILD_ATTRS: ClassVar[tuple[str, ...]] = ("body", "block", "else_block", "nodes", "items", "children")
+
+    @staticmethod
+    def _ast_children(node: AstNode) -> list[AstNode]:
+        """Collect AstNode children reachable through the conventional
+        container attributes used across the AST classes. Returns a
+        flat list; non-AstNode values and missing attrs are skipped.
+        """
+        out: list[AstNode] = []
+        for attr in A816Formatter._AST_CHILD_ATTRS:
+            child = getattr(node, attr, None)
+            if child is None:
+                continue
+            if isinstance(child, list):
+                out.extend(c for c in child if isinstance(c, AstNode))
+            elif isinstance(child, AstNode):
+                out.append(child)
+        return out
+
     @staticmethod
     def _ast_max_line(node: AstNode) -> int | None:
-        """Walk a subtree and return the largest source line number among
-        leaf-like descendants. Skips CompoundAstNode positions because the
-        scanner records their position at the closing brace, which would
-        otherwise overshoot the actual extent of the block's content and
-        swallow boundary blank lines that follow the brace.
+        """Walk a subtree iteratively and return the largest source line
+        number among leaf-like descendants. Skips CompoundAstNode
+        positions because the scanner records their position at the
+        closing brace, which would otherwise overshoot the actual extent
+        of the block's content and swallow boundary blank lines.
 
         Returns None if no descendant carries usable position info.
         """
         max_line: int | None = None
-
-        def visit(n: AstNode) -> None:
-            nonlocal max_line
-            if not isinstance(n, CompoundAstNode):
-                line = A816Formatter._node_line_num(n)
+        stack: list[AstNode] = [node]
+        while stack:
+            current = stack.pop()
+            if not isinstance(current, CompoundAstNode):
+                line = A816Formatter._node_line_num(current)
                 if line is not None and (max_line is None or line > max_line):
                     max_line = line
-            for attr in ("body", "block", "else_block", "nodes", "items", "children"):
-                child = getattr(n, attr, None)
-                if child is None:
-                    continue
-                if isinstance(child, list):
-                    for c in child:
-                        if isinstance(c, AstNode):
-                            visit(c)
-                elif isinstance(child, AstNode):
-                    visit(child)
-
-        visit(node)
+            stack.extend(A816Formatter._ast_children(current))
         return max_line
 
     @dataclass
