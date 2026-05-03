@@ -173,13 +173,9 @@ def _region_to_dict(region: Region) -> dict[str, Any]:
         "base_address": region.base_address,
         "size": len(region.code),
         "code": region.code.hex(),
-        "relocations": [
-            {"offset": off, "name": name, "type": rt.name}
-            for off, name, rt in region.relocations
-        ],
+        "relocations": [{"offset": off, "name": name, "type": rt.name} for off, name, rt in region.relocations],
         "expression_relocations": [
-            {"offset": off, "expression": expr, "size_bytes": sz}
-            for off, expr, sz in region.expression_relocations
+            {"offset": off, "expression": expr, "size_bytes": sz} for off, expr, sz in region.expression_relocations
         ],
         "lines": [
             {"offset": off, "file_idx": fi, "line": ln, "column": col, "flags": fl}

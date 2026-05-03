@@ -109,13 +109,9 @@ class Instruction:
             AddrMode.STACK_REL_IND_Y: (2, "({},s),y"),
         }
 
-        return self._dispatch_operand_format(
-            val, templates, hex_val, m_flag, x_flag, use_a816_syntax, label_map
-        )
+        return self._dispatch_operand_format(val, templates, hex_val, m_flag, x_flag, use_a816_syntax, label_map)
 
-    def _format_relative_target(
-        self, hex_val: Callable[[int, int], str], label_map: dict[int, str] | None
-    ) -> str:
+    def _format_relative_target(self, hex_val: Callable[[int, int], str], label_map: dict[int, str] | None) -> str:
         target = self.relative_target()
         if label_map is not None and target in label_map:
             return label_map[target]
@@ -619,6 +615,80 @@ class Disassembler:
             address += inst.length
 
         return instructions
+
+
+_CONDITIONAL_BRANCHES = frozenset({"bcc", "bcs", "beq", "bmi", "bne", "bpl", "bvc", "bvs"})
+_UNCONDITIONAL_BRANCHES = frozenset({"bra", "brl"})
+_RETURNS = frozenset({"rts", "rtl", "rti"})
+_UNCONDITIONAL_JUMPS = frozenset({"jmp", "jml"})
+
+
+def disassemble_function(
+    entry: int,
+    data_provider: Callable[[int, int], bytes],
+    m_flag: bool = True,
+    x_flag: bool = True,
+    max_instructions: int = 4096,
+    follow_calls: bool = False,
+) -> list[Instruction]:
+    """Walk a 65c816 function CFG starting at `entry`, returning every
+    decoded instruction in sorted address order.
+
+    Tracks M / X through `sep` / `rep`, enqueues both branches at
+    conditional jumps, follows unconditional branches, stops a path at
+    `rts` / `rtl` / `rti` or an unconditional jump. `data_provider(addr,
+    length)` must return up to `length` bytes from SNES logical address
+    `addr`. `follow_calls=True` enqueues `jsr` / `jsl` targets too.
+    `max_instructions` caps runaway decodes on garbage past the body.
+    """
+    seen: set[tuple[int, bool, bool]] = set()
+    output: dict[int, Instruction] = {}
+    work: list[tuple[int, bool, bool]] = [(entry, m_flag, x_flag)]
+    decoded = 0
+
+    while work and decoded < max_instructions:
+        addr, m, x = work.pop()
+        key = (addr, m, x)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        local = Disassembler(m_flag=m, x_flag=x)
+        cur = addr
+        while decoded < max_instructions:
+            chunk = data_provider(cur, 4)
+            if not chunk:
+                break
+            inst = local.decode_instruction(chunk, cur)
+            if inst is None:
+                break
+            output.setdefault(cur, inst)
+            decoded += 1
+
+            if inst.mnemonic in _RETURNS:
+                break
+            if inst.mnemonic in _UNCONDITIONAL_JUMPS:
+                if inst.mode == AddrMode.ABSOLUTE_LONG:
+                    work.append((inst.operand_value & 0xFFFFFF, local.m_flag, local.x_flag))
+                elif inst.mode == AddrMode.ABSOLUTE:
+                    target = (inst.address & 0xFF0000) | (inst.operand_value & 0xFFFF)
+                    work.append((target, local.m_flag, local.x_flag))
+                break
+            if inst.mnemonic in _UNCONDITIONAL_BRANCHES:
+                work.append((inst.relative_target(), local.m_flag, local.x_flag))
+                break
+            if inst.mnemonic in _CONDITIONAL_BRANCHES:
+                work.append((inst.relative_target(), local.m_flag, local.x_flag))
+            if follow_calls and inst.mnemonic in ("jsr", "jsl"):
+                if inst.mode == AddrMode.ABSOLUTE_LONG:
+                    target = inst.operand_value & 0xFFFFFF
+                else:
+                    target = (inst.address & 0xFF0000) | (inst.operand_value & 0xFFFF)
+                work.append((target, local.m_flag, local.x_flag))
+
+            cur += inst.length
+
+    return [output[addr] for addr in sorted(output)]
 
 
 def _label_for(address: int) -> str:

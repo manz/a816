@@ -11,10 +11,11 @@ import logging
 import shutil
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from a816.cpu.cpu_65c816 import RomType
-from a816.cpu.disassembler import Disassembler, format_disassembly, format_disassembly_block
+from a816.cpu.disassembler import Disassembler, disassemble_function, format_disassembly, format_disassembly_block
 from a816.cpu.mapping import Bus
 from a816.symbols import high_rom_bus, low_rom_bus
 
@@ -302,8 +303,18 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sym",
         metavar="NAME",
-        help="Start disassembly at the address of symbol NAME from the .adbg"
-        " file (requires --debug).",
+        help="Start disassembly at the address of symbol NAME from the .adbg file (requires --debug).",
+    )
+    parser.add_argument(
+        "--func",
+        metavar="NAME",
+        help="CFG-walk a function: stop at rts/rtl/rti/jmp/bra, follow"
+        " conditional branches, track M/X across sep/rep. Requires --debug.",
+    )
+    parser.add_argument(
+        "--follow-calls",
+        action="store_true",
+        help="With --func, also recurse into jsr / jsl targets.",
     )
 
     return parser
@@ -333,6 +344,29 @@ def disassemble(
     else:
         for inst in instructions:
             print(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=False))
+
+
+def make_rom_data_provider(rom_bytes: bytes, bus: Bus) -> Callable[[int, int], bytes]:
+    """Return a callable `(logical_addr, length) -> bytes` backed by `rom_bytes`.
+
+    Returns an empty bytes object when the address has no physical mapping
+    or falls outside the ROM image, so the function walker stops cleanly
+    instead of decoding garbage.
+    """
+
+    def provide(logical_addr: int, length: int) -> bytes:
+        try:
+            physical = bus.get_address(logical_addr).physical
+        except KeyError:
+            return b""
+        if physical is None:
+            return b""
+        if physical >= len(rom_bytes):
+            return b""
+        end = min(physical + length, len(rom_bytes))
+        return rom_bytes[physical:end]
+
+    return provide
 
 
 def load_debug_symbols(adbg_path: Path) -> tuple[dict[int, str], dict[str, int]]:
@@ -423,6 +457,17 @@ def xdds_main() -> None:
         args.start = f"${sym_logical >> 16:02X}:{sym_logical & 0xFFFF:04X}"
         logger.info(f"Symbol {args.sym} -> {args.start}")
 
+    if args.func:
+        if not name_to_addr:
+            logger.error("--func requires --debug pointing at a .adbg file")
+            sys.exit(-1)
+        if args.func not in name_to_addr:
+            logger.error(f"Symbol not found in debug info: {args.func}")
+            sys.exit(-1)
+        if not args.disasm:
+            logger.error("--func requires -d / --disasm")
+            sys.exit(-1)
+
     input_file = args.input_file
     tmp_path: Path | None = None
     if args.ips_file:
@@ -436,7 +481,28 @@ def xdds_main() -> None:
         physical_start = _resolve_physical_start(args, bus)
         data = _read_slice(input_file, physical_start, args.length)
 
-        if args.disasm:
+        if args.disasm and args.func:
+            entry = name_to_addr[args.func]
+            with open(input_file, "rb") as f:
+                rom_bytes = f.read()
+            provider = make_rom_data_provider(rom_bytes, bus)
+            instructions = disassemble_function(
+                entry,
+                provider,
+                m_flag=args.m_flag,
+                x_flag=args.x_flag,
+                follow_calls=args.follow_calls,
+            )
+            symbol_map = addr_to_name or None
+            if args.asm:
+                for line in format_disassembly_block(
+                    instructions, show_bytes=not args.no_bytes, a816_syntax=True, symbol_map=symbol_map
+                ):
+                    print(line)
+            else:
+                for inst in instructions:
+                    print(format_disassembly(inst, show_bytes=not args.no_bytes, a816_syntax=False))
+        elif args.disasm:
             disassemble(
                 data,
                 bus,

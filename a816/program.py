@@ -367,9 +367,7 @@ class Program:
             self.resolver.pc = original_pc
             self.resolver.reloc_address = original_reloc
 
-    def _object_emit_one(
-        self, node: NodeProtocol, object_writer: ObjectWriter, state: "_ObjectEmitState"
-    ) -> None:
+    def _object_emit_one(self, node: NodeProtocol, object_writer: ObjectWriter, state: "_ObjectEmitState") -> None:
         """Emit one node into the current object-writer region.
 
         Splits the dispatch the way `emit()` does so each branch — the
@@ -394,9 +392,7 @@ class Program:
         self.resolver.pc += len(node_bytes)
         self.resolver.reloc_address += len(node_bytes)
 
-    def _object_open_region(
-        self, object_writer: ObjectWriter, state: "_ObjectEmitState", *, explicit: bool
-    ) -> None:
+    def _object_open_region(self, object_writer: ObjectWriter, state: "_ObjectEmitState", *, explicit: bool) -> None:
         """Flush any pending block then open a fresh region at the new PC."""
         self._flush_object_block(object_writer, state)
         object_writer.start_region(self.resolver.reloc_address.logical_value, explicit=explicit)

@@ -491,3 +491,74 @@ class TestA816BlockFormat:
         assert "jsl.l _018000" in joined
         assert "nop" in joined
         assert ".w" not in joined  # no verbose word suffix on absolute / direct
+
+
+class TestFunctionDisassembly:
+    """Tests for the CFG-driven function walker."""
+
+    def test_stops_at_rts(self) -> None:
+        from a816.cpu.disassembler import disassemble_function
+
+        code = bytes.fromhex("a90060eaeaea")  # lda #$00, rts, then garbage NOPs
+
+        def provider(addr: int, length: int) -> bytes:
+            offset = addr - 0x008000
+            return code[offset : offset + length] if offset >= 0 else b""
+
+        instructions = disassemble_function(0x008000, provider)
+        assert [inst.mnemonic for inst in instructions] == ["lda", "rts"]
+
+    def test_follows_conditional_branch_and_fallthrough(self) -> None:
+        from a816.cpu.disassembler import disassemble_function
+
+        # 0x008000: bne +2 (target 0x008004)
+        # 0x008002: nop          (fallthrough)
+        # 0x008003: rts
+        # 0x008004: nop          (branch target)
+        # 0x008005: rts
+        code = bytes.fromhex("d002ea60ea60")
+
+        def provider(addr: int, length: int) -> bytes:
+            offset = addr - 0x008000
+            return code[offset : offset + length] if offset >= 0 else b""
+
+        instructions = disassemble_function(0x008000, provider)
+        addresses = [inst.address for inst in instructions]
+        assert 0x008002 in addresses  # fallthrough decoded
+        assert 0x008004 in addresses  # branch target decoded
+
+    def test_tracks_m_flag_across_branches(self) -> None:
+        from a816.cpu.disassembler import AddrMode, disassemble_function
+
+        # 0x008000: rep #$20      (M=0, 16-bit)
+        # 0x008002: lda #$1234    (3 bytes total, A9 34 12)
+        # 0x008005: rts
+        code = bytes.fromhex("c220a9341260")
+
+        def provider(addr: int, length: int) -> bytes:
+            offset = addr - 0x008000
+            return code[offset : offset + length] if offset >= 0 else b""
+
+        instructions = disassemble_function(0x008000, provider, m_flag=True)
+        lda = next(inst for inst in instructions if inst.mnemonic == "lda")
+        assert lda.length == 3
+        assert lda.mode == AddrMode.IMMEDIATE_M
+
+    def test_unconditional_branch_terminates_path(self) -> None:
+        from a816.cpu.disassembler import disassemble_function
+
+        # 0x008000: bra +2 -> target 0x008004
+        # 0x008002: nop  (skipped — bra is unconditional, no fallthrough)
+        # 0x008003: nop
+        # 0x008004: rts
+        code = bytes.fromhex("8002eaea60")
+
+        def provider(addr: int, length: int) -> bytes:
+            offset = addr - 0x008000
+            return code[offset : offset + length] if offset >= 0 else b""
+
+        instructions = disassemble_function(0x008000, provider)
+        addresses = [inst.address for inst in instructions]
+        assert 0x008002 not in addresses
+        assert 0x008003 not in addresses
+        assert 0x008004 in addresses
