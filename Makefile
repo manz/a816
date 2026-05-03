@@ -52,6 +52,10 @@ publish: wheels ## Publish wheels on pypi
 release: publish binary ## Builds a windows binary and creates a release
 	$(Q) gh release create $(VERSION) --generate-notes a816.zip
 
+.PHONY: binary-release
+binary-release: binary ## Builds the windows binary and attaches it to an existing GH release (or creates one)
+	$(Q) gh release create $(VERSION) --generate-notes a816.zip || gh release upload $(VERSION) a816.zip --clobber
+
 .PHONY: help
 help: ## Display help
 	@grep -hE '^[ a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

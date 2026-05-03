@@ -2,8 +2,28 @@ on:
   push:
     tags:
       - 'v*'
+
 jobs:
+  pypi:
+    name: Publish wheel to PyPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install hatch
+        run: pip install -r requirements.txt
+      - name: Publish wheel
+        run: make publish
+        env:
+          HATCH_INDEX_AUTH: ${{ secrets.HATCH_INDEX_AUTH }}
+          HATCH_INDEX_USER: ${{ secrets.HATCH_INDEX_USER }}
+          VERSION: ${{ github.ref_name }}
+
   binaries:
+    name: Build Windows binary and create GitHub release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -13,10 +33,8 @@ jobs:
           python-version: '3.12'
       - name: Install hatch
         run: pip install -r requirements.txt
-      - name: Make release
-        run: make release
+      - name: Build binary and publish release
+        run: make binary-release
         env:
-          HATCH_INDEX_AUTH: ${{ secrets.HATCH_INDEX_AUTH }}
-          HATCH_INDEX_USER: ${{ secrets.HATCH_INDEX_USER }}
           VERSION: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
