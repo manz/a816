@@ -266,3 +266,12 @@ class EmitTest(unittest.TestCase):
         program.emit(nodes, writer)
 
         self.assertEqual(writer.data[0], b"Final Fantasy VI    ")
+
+    def test_clear_flag_implied_opcodes(self) -> None:
+        """`cld`, `cli`, `clv` are 1-byte implied instructions matching the
+        symmetric set-flag ops (`sed`, `sei`)."""
+        program = Program()
+        writer = StubWriter()
+        program.assemble_string_with_emitter("clc\ncld\ncli\nclv\n", "test_clear_flags", writer)
+        # clc=0x18, cld=0xD8, cli=0x58, clv=0xB8
+        self.assertEqual(writer.data[0], b"\x18\xd8\x58\xb8")
