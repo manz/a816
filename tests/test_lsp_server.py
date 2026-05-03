@@ -725,3 +725,34 @@ subroutine:
         # Comment line 2 and string line 3 must be excluded.
         for line, _ in ranges:
             self.assertNotIn(line, (2, 3))
+
+    def test_references_skip_block_comments(self) -> None:
+        """`/* foo */` and multi-line block comments must be excluded from
+        reference search like single-line `;` comments are.
+        """
+        from lsprotocol.types import ReferenceContext
+
+        content = (
+            "foo:\n"
+            "    rtl\n"
+            "/* foo in a single-line block comment */\n"
+            "/* multi\n"
+            "   line foo block\n"
+            "   comment */\n"
+            "    jsr foo\n"
+        )
+        doc = A816Document("test://refs.s", content)
+        self.server.documents[doc.uri] = doc
+        handler = self.server.server.lsp._get_handler("textDocument/references")  # type: ignore[no-untyped-call]
+        params = ReferenceParams(
+            text_document=TextDocumentIdentifier(uri=doc.uri),
+            position=Position(line=0, character=1),
+            context=ReferenceContext(include_declaration=True),
+        )
+        results = asyncio.run(handler(params))
+        ranges = [(loc.range.start.line, loc.range.start.character) for loc in results]
+        # Definition (line 0) and call site (line 6) only.
+        assert (0, 0) in ranges
+        assert (6, 8) in ranges
+        for line, _ in ranges:
+            assert line not in (2, 3, 4, 5), f"matched inside block comment line {line}"
