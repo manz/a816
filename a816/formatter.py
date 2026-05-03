@@ -138,9 +138,7 @@ class A816Formatter:
         node_lines = self._format_ast(node, should_indent, indent_after_label=indent_after_label)
         # Docstrings after a label hug it flush-left, no body indent.
         indent_body_node = (
-            should_indent
-            and isinstance(node, self._instruction_like_nodes)
-            and not isinstance(node, DocstringAstNode)
+            should_indent and isinstance(node, self._instruction_like_nodes) and not isinstance(node, DocstringAstNode)
         )
         if indent_body_node:
             node_lines = [
@@ -174,6 +172,21 @@ class A816Formatter:
                 prev_line = node_line
                 continue
 
+            # A nested `{ ... }` block scopes its contents (anonymous
+            # scope or function body); preserve the braces so symbol
+            # affectations inside don't leak into the parent scope and
+            # collide with siblings — fluff was previously dropping the
+            # braces, which fused two adjacent local equates into one
+            # duplicate-symbol error at link time.
+            if isinstance(node, CompoundAstNode):
+                inner_lines = self._format_ast(node, True, indent_after_label=indent_after_label)
+                lines.append("{")
+                lines.extend(self._indent_block_lines(inner_lines))
+                lines.append("}")
+                prev_was_label = False
+                prev_line = self._advance_prev_line(node, node_line)
+                continue
+
             should_indent = indent_instructions or (indent_after_label and prev_was_label)
             self._emit_node_lines(node, should_indent, indent_after_label, lines)
             prev_was_label = isinstance(node, LabelAstNode)
@@ -183,6 +196,16 @@ class A816Formatter:
     def _format_block(self, ast: BlockAstNode, indent_after_label: bool) -> list[str]:
         lines: list[str] = []
         for node in ast.body:
+            # Same brace-preserving rule as `_format_compound`: a nested
+            # compound child needs its `{` / `}` kept around the body so
+            # the inner scope is preserved (otherwise local equates leak
+            # into the parent and collide with siblings at link time).
+            if isinstance(node, CompoundAstNode):
+                inner_lines = self._format_ast(node, True, indent_after_label=indent_after_label)
+                lines.append("{")
+                lines.extend(self._indent_block_lines(inner_lines))
+                lines.append("}")
+                continue
             lines.extend(self._format_ast(node, True, indent_after_label=indent_after_label))
         return lines
 
@@ -403,10 +426,17 @@ class A816Formatter:
     def _indent_block_lines(self, lines: list[str], levels: int = 1) -> list[str]:
         """Indent a sequence of lines representing a block.
 
-        Inner labels (lines ending in `:` that aren't directives) stay
-        flush-left so they read as section markers inside the routine —
-        the same convention `_loop:` / `_not_found:` follow in idiomatic
-        a816 code. Comments and instructions get the requested indent.
+        Two structural exceptions:
+        - Inner labels (lines ending in `:` that aren't directives) stay
+          flush-left so they read as section markers inside the routine —
+          the same convention `_loop:` / `_not_found:` follow in
+          idiomatic a816 code.
+        - Stand-alone comments stay flush-left. Authors use them as
+          section banners (`;------`) or as block dumps of disassembly /
+          notes that should not visually merge with the indented body.
+          Inline comments (folded onto an instruction) are unaffected
+          because they're appended to the instruction line, not emitted
+          as their own entry here.
         """
         indented: list[str] = []
         for line in lines:
@@ -415,7 +445,7 @@ class A816Formatter:
                 indented.append("")
                 continue
             is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
-            if is_label:
+            if is_label or stripped.startswith(";"):
                 indented.append(stripped)
             else:
                 indented.append(self._indent(line, levels))
@@ -438,24 +468,26 @@ class A816Formatter:
 
     @staticmethod
     def _separate_labels(lines: list[str]) -> list[str]:
-        """Insert a blank line before top-level labels.
+        """Insert a blank line before top-level labels (function entries
+        / scope boundaries) for breathing room.
 
-        Top-level labels mark function entries / scope boundaries and
-        benefit from breathing room. Indented (inner-block) labels are
-        section markers inside a routine and the author tends to pack
-        them tightly with surrounding code; do not force blanks there.
+        Inside `{ ... }` blocks, labels render flush-left as section
+        markers (`_loop:`, `_skip:`) and the author tends to pack them
+        tightly with surrounding code, so don't force blanks there.
+        Track brace depth across the line stream to distinguish.
         """
         adjusted: list[str] = []
+        depth = 0
         for line in lines:
             stripped = line.strip()
             is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
-            is_top_level = is_label and not line[: len(line) - len(line.lstrip())]
-            if is_top_level and adjusted and adjusted[-1].strip():
+            at_top_level = depth == 0
+            if is_label and at_top_level and adjusted and adjusted[-1].strip():
                 adjusted.append("")
-            elif is_top_level and len(adjusted) >= 2 and not adjusted[-1].strip() and adjusted[-2].strip():
-                # Already has exactly one blank line in front — leave it.
-                pass
             adjusted.append(line)
+            depth += stripped.count("{") - stripped.count("}")
+            if depth < 0:
+                depth = 0
         return adjusted
 
     @staticmethod
@@ -559,8 +591,18 @@ class A816Formatter:
         separated_by_blank = (
             last_emitted_line_num is not None and node_line is not None and node_line - last_emitted_line_num > 1
         )
+        # If the previous emitted line is itself a flush-left comment,
+        # this one is a continuation of the same paragraph and should
+        # also stay flush-left — otherwise a leading-paragraph comment
+        # ends up dedented while its continuation lines stay indented,
+        # which reads as a misaligned block.
+        prev_is_flush_comment = (
+            bool(formatted) and formatted[-1].lstrip().startswith(";") and formatted[-1] == formatted[-1].lstrip()
+        )
         if on_same_line_as_prev:
             formatted[-1] = formatted[-1].rstrip() + " " + comment_text.strip()
+        elif prev_is_flush_comment:
+            formatted.extend(node_lines)
         elif in_label_section and comment_text.strip() and not separated_by_blank:
             formatted.append(self._indent(comment_text))
         else:

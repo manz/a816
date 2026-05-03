@@ -698,3 +698,61 @@ _OkBk2:
 
     def test_idents(self) -> None:
         pass
+
+    def test_map_directive_roundtrip(self) -> None:
+        """`.map` re-serializes to the original assembler syntax (no Python dict literal)."""
+        src = (
+            ".map identifier=1 bank_range=0x00, 0x6f addr_range=0x8000, 0xffff "
+            "mask=0x8000 mirror_bank_range=0x80, 0xcf\n"
+            ".map identifier=2 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff "
+            "mask=0x10000 writable=0\n"
+        )
+        formatted = self.formatter.format_text(src)
+        # Must not produce a Python dict-literal serialization.
+        assert "{'identifier'" not in formatted
+        assert "{ identifier" not in formatted
+        # Round-trip preserves the assembler syntax verbatim.
+        assert formatted == src
+
+    def test_flush_left_comment_in_block_preserved(self) -> None:
+        """A `;` comment that the author wrote flush-left inside a `{}` body
+        keeps its flush-left indent — the formatter must not pull it under
+        the body's indent column.
+        """
+        src = "foo:\n{\n    rtl\n; flush-left banner\n    rts\n}\n"
+        formatted = self.formatter.format_text(src)
+        assert "\n; flush-left banner\n" in formatted
+        assert "    ; flush-left banner" not in formatted
+
+    def test_nested_anonymous_block_preserves_braces(self) -> None:
+        """A `{ ... }` scope inside another scope must keep its braces, or
+        local equates leak into the parent scope and collide with siblings.
+        """
+        src = ".scope outer {\nfn_a:\n{\n    local_eq = 1\n    rts\n}\nfn_b:\n{\n    local_eq = 1\n    rts\n}\n}\n"
+        formatted = self.formatter.format_text(src)
+        # Both `{` and `}` for each function survive the formatter so each
+        # `local_eq` stays scoped to its own function.
+        assert formatted.count("{") >= 3  # outer scope + two function bodies
+        assert formatted.count("}") >= 3
+
+    def test_continuation_comments_share_indent_with_first(self) -> None:
+        """When a top-level comment paragraph appears between functions, the
+        first and continuation lines must share the same indent. Previously
+        the leading line dedented while the continuations stayed indented.
+        """
+        src = (
+            "foo:\n"
+            "    rts\n"
+            "\n"
+            "; first paragraph line\n"
+            "; second paragraph line\n"
+            "; third paragraph line\n"
+            "\n"
+            "bar:\n"
+            "    rts\n"
+        )
+        formatted = self.formatter.format_text(src)
+        para = [line for line in formatted.splitlines() if "paragraph" in line]
+        # All paragraph lines should have the same leading whitespace.
+        leading = [len(line) - len(line.lstrip()) for line in para]
+        assert len(set(leading)) == 1, f"Paragraph lines had mixed indents: {leading}"
