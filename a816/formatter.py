@@ -172,6 +172,21 @@ class A816Formatter:
                 prev_line = node_line
                 continue
 
+            # A nested `{ ... }` block scopes its contents (anonymous
+            # scope or function body); preserve the braces so symbol
+            # affectations inside don't leak into the parent scope and
+            # collide with siblings — fluff was previously dropping the
+            # braces, which fused two adjacent local equates into one
+            # duplicate-symbol error at link time.
+            if isinstance(node, CompoundAstNode):
+                inner_lines = self._format_ast(node, True, indent_after_label=indent_after_label)
+                lines.append("{")
+                lines.extend(self._indent_block_lines(inner_lines))
+                lines.append("}")
+                prev_was_label = False
+                prev_line = self._advance_prev_line(node, node_line)
+                continue
+
             should_indent = indent_instructions or (indent_after_label and prev_was_label)
             self._emit_node_lines(node, should_indent, indent_after_label, lines)
             prev_was_label = isinstance(node, LabelAstNode)
@@ -181,6 +196,16 @@ class A816Formatter:
     def _format_block(self, ast: BlockAstNode, indent_after_label: bool) -> list[str]:
         lines: list[str] = []
         for node in ast.body:
+            # Same brace-preserving rule as `_format_compound`: a nested
+            # compound child needs its `{` / `}` kept around the body so
+            # the inner scope is preserved (otherwise local equates leak
+            # into the parent and collide with siblings at link time).
+            if isinstance(node, CompoundAstNode):
+                inner_lines = self._format_ast(node, True, indent_after_label=indent_after_label)
+                lines.append("{")
+                lines.extend(self._indent_block_lines(inner_lines))
+                lines.append("}")
+                continue
             lines.extend(self._format_ast(node, True, indent_after_label=indent_after_label))
         return lines
 
@@ -566,8 +591,18 @@ class A816Formatter:
         separated_by_blank = (
             last_emitted_line_num is not None and node_line is not None and node_line - last_emitted_line_num > 1
         )
+        # If the previous emitted line is itself a flush-left comment,
+        # this one is a continuation of the same paragraph and should
+        # also stay flush-left — otherwise a leading-paragraph comment
+        # ends up dedented while its continuation lines stay indented,
+        # which reads as a misaligned block.
+        prev_is_flush_comment = (
+            bool(formatted) and formatted[-1].lstrip().startswith(";") and formatted[-1] == formatted[-1].lstrip()
+        )
         if on_same_line_as_prev:
             formatted[-1] = formatted[-1].rstrip() + " " + comment_text.strip()
+        elif prev_is_flush_comment:
+            formatted.extend(node_lines)
         elif in_label_section and comment_text.strip() and not separated_by_blank:
             formatted.append(self._indent(comment_text))
         else:
