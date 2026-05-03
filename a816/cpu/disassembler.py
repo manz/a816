@@ -623,6 +623,40 @@ _RETURNS = frozenset({"rts", "rtl", "rti"})
 _UNCONDITIONAL_JUMPS = frozenset({"jmp", "jml"})
 
 
+def _absolute_jump_target(inst: Instruction) -> int | None:
+    """Static target of an absolute jmp / jsr / jsl. None if not statically resolvable."""
+    if inst.mode == AddrMode.ABSOLUTE_LONG:
+        return inst.operand_value & 0xFFFFFF
+    if inst.mode == AddrMode.ABSOLUTE:
+        return (inst.address & 0xFF0000) | (inst.operand_value & 0xFFFF)
+    return None
+
+
+def _enqueue_successors(
+    inst: Instruction, m: bool, x: bool, follow_calls: bool, work: list[tuple[int, bool, bool]]
+) -> bool:
+    """Push CFG successors of `inst` onto `work`. Return True if the path
+    terminates here (return / unconditional jump / unconditional branch).
+    """
+    if inst.mnemonic in _RETURNS:
+        return True
+    if inst.mnemonic in _UNCONDITIONAL_JUMPS:
+        target = _absolute_jump_target(inst)
+        if target is not None:
+            work.append((target, m, x))
+        return True
+    if inst.mnemonic in _UNCONDITIONAL_BRANCHES:
+        work.append((inst.relative_target(), m, x))
+        return True
+    if inst.mnemonic in _CONDITIONAL_BRANCHES:
+        work.append((inst.relative_target(), m, x))
+    if follow_calls and inst.mnemonic in ("jsr", "jsl"):
+        target = _absolute_jump_target(inst)
+        if target is not None:
+            work.append((target, m, x))
+    return False
+
+
 def disassemble_function(
     entry: int,
     data_provider: Callable[[int, int], bytes],
@@ -648,47 +682,43 @@ def disassemble_function(
 
     while work and decoded < max_instructions:
         addr, m, x = work.pop()
-        key = (addr, m, x)
-        if key in seen:
+        if (addr, m, x) in seen:
             continue
-        seen.add(key)
-
-        local = Disassembler(m_flag=m, x_flag=x)
-        cur = addr
-        while decoded < max_instructions:
-            chunk = data_provider(cur, 4)
-            if not chunk:
-                break
-            inst = local.decode_instruction(chunk, cur)
-            if inst is None:
-                break
-            output.setdefault(cur, inst)
-            decoded += 1
-
-            if inst.mnemonic in _RETURNS:
-                break
-            if inst.mnemonic in _UNCONDITIONAL_JUMPS:
-                if inst.mode == AddrMode.ABSOLUTE_LONG:
-                    work.append((inst.operand_value & 0xFFFFFF, local.m_flag, local.x_flag))
-                elif inst.mode == AddrMode.ABSOLUTE:
-                    target = (inst.address & 0xFF0000) | (inst.operand_value & 0xFFFF)
-                    work.append((target, local.m_flag, local.x_flag))
-                break
-            if inst.mnemonic in _UNCONDITIONAL_BRANCHES:
-                work.append((inst.relative_target(), local.m_flag, local.x_flag))
-                break
-            if inst.mnemonic in _CONDITIONAL_BRANCHES:
-                work.append((inst.relative_target(), local.m_flag, local.x_flag))
-            if follow_calls and inst.mnemonic in ("jsr", "jsl"):
-                if inst.mode == AddrMode.ABSOLUTE_LONG:
-                    target = inst.operand_value & 0xFFFFFF
-                else:
-                    target = (inst.address & 0xFF0000) | (inst.operand_value & 0xFFFF)
-                work.append((target, local.m_flag, local.x_flag))
-
-            cur += inst.length
+        seen.add((addr, m, x))
+        decoded += _walk_path(addr, m, x, data_provider, output, work, follow_calls, max_instructions - decoded)
 
     return [output[addr] for addr in sorted(output)]
+
+
+def _walk_path(
+    addr: int,
+    m: bool,
+    x: bool,
+    data_provider: Callable[[int, int], bytes],
+    output: dict[int, Instruction],
+    work: list[tuple[int, bool, bool]],
+    follow_calls: bool,
+    budget: int,
+) -> int:
+    """Decode straight-line from `addr` until a terminator or the budget
+    runs out. Returns the number of instructions decoded.
+    """
+    local = Disassembler(m_flag=m, x_flag=x)
+    cur = addr
+    decoded = 0
+    while decoded < budget:
+        chunk = data_provider(cur, 4)
+        if not chunk:
+            break
+        inst = local.decode_instruction(chunk, cur)
+        if inst is None:
+            break
+        output.setdefault(cur, inst)
+        decoded += 1
+        if _enqueue_successors(inst, local.m_flag, local.x_flag, follow_calls, work):
+            break
+        cur += inst.length
+    return decoded
 
 
 def _label_for(address: int) -> str:

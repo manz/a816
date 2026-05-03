@@ -430,6 +430,48 @@ def _resolve_bus(args: argparse.Namespace) -> tuple[RomType, Bus]:
     return rom_type, bus
 
 
+def _load_symbols_or_exit(debug_path: Path | None) -> tuple[dict[int, str], dict[str, int]]:
+    if debug_path is None:
+        return {}, {}
+    if not debug_path.exists():
+        logger.error(f"Debug file not found: {debug_path}")
+        sys.exit(-1)
+    return load_debug_symbols(debug_path)
+
+
+def _require_symbol(name: str | None, name_to_addr: dict[str, int], flag: str) -> int | None:
+    if name is None:
+        return None
+    if not name_to_addr:
+        logger.error(f"{flag} requires --debug pointing at a .adbg file")
+        sys.exit(-1)
+    if name not in name_to_addr:
+        logger.error(f"Symbol not found in debug info: {name}")
+        sys.exit(-1)
+    return name_to_addr[name]
+
+
+def _emit_function(args: argparse.Namespace, input_file: Path, bus: Bus, entry: int, symbol_map: dict[int, str] | None) -> None:
+    with open(input_file, "rb") as f:
+        rom_bytes = f.read()
+    provider = make_rom_data_provider(rom_bytes, bus)
+    instructions = disassemble_function(
+        entry,
+        provider,
+        m_flag=args.m_flag,
+        x_flag=args.x_flag,
+        follow_calls=args.follow_calls,
+    )
+    if args.asm:
+        for line in format_disassembly_block(
+            instructions, show_bytes=not args.no_bytes, a816_syntax=True, symbol_map=symbol_map
+        ):
+            print(line)
+    else:
+        for inst in instructions:
+            print(format_disassembly(inst, show_bytes=not args.no_bytes, a816_syntax=False))
+
+
 def xdds_main() -> None:
     args = create_parser().parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s - %(message)s")
@@ -438,35 +480,17 @@ def xdds_main() -> None:
     if args.show_mappings:
         show_mapping_info(rom_type)
 
-    addr_to_name: dict[int, str] = {}
-    name_to_addr: dict[str, int] = {}
-    if args.debug:
-        if not args.debug.exists():
-            logger.error(f"Debug file not found: {args.debug}")
-            sys.exit(-1)
-        addr_to_name, name_to_addr = load_debug_symbols(args.debug)
+    addr_to_name, name_to_addr = _load_symbols_or_exit(args.debug)
 
-    if args.sym:
-        if not name_to_addr:
-            logger.error("--sym requires --debug pointing at a .adbg file")
-            sys.exit(-1)
-        if args.sym not in name_to_addr:
-            logger.error(f"Symbol not found in debug info: {args.sym}")
-            sys.exit(-1)
-        sym_logical = name_to_addr[args.sym]
-        args.start = f"${sym_logical >> 16:02X}:{sym_logical & 0xFFFF:04X}"
+    sym_addr = _require_symbol(args.sym, name_to_addr, "--sym")
+    if sym_addr is not None:
+        args.start = f"${sym_addr >> 16:02X}:{sym_addr & 0xFFFF:04X}"
         logger.info(f"Symbol {args.sym} -> {args.start}")
 
-    if args.func:
-        if not name_to_addr:
-            logger.error("--func requires --debug pointing at a .adbg file")
-            sys.exit(-1)
-        if args.func not in name_to_addr:
-            logger.error(f"Symbol not found in debug info: {args.func}")
-            sys.exit(-1)
-        if not args.disasm:
-            logger.error("--func requires -d / --disasm")
-            sys.exit(-1)
+    func_addr = _require_symbol(args.func, name_to_addr, "--func")
+    if func_addr is not None and not args.disasm:
+        logger.error("--func requires -d / --disasm")
+        sys.exit(-1)
 
     input_file = args.input_file
     tmp_path: Path | None = None
@@ -480,28 +504,10 @@ def xdds_main() -> None:
 
         physical_start = _resolve_physical_start(args, bus)
         data = _read_slice(input_file, physical_start, args.length)
+        symbol_map = addr_to_name or None
 
-        if args.disasm and args.func:
-            entry = name_to_addr[args.func]
-            with open(input_file, "rb") as f:
-                rom_bytes = f.read()
-            provider = make_rom_data_provider(rom_bytes, bus)
-            instructions = disassemble_function(
-                entry,
-                provider,
-                m_flag=args.m_flag,
-                x_flag=args.x_flag,
-                follow_calls=args.follow_calls,
-            )
-            symbol_map = addr_to_name or None
-            if args.asm:
-                for line in format_disassembly_block(
-                    instructions, show_bytes=not args.no_bytes, a816_syntax=True, symbol_map=symbol_map
-                ):
-                    print(line)
-            else:
-                for inst in instructions:
-                    print(format_disassembly(inst, show_bytes=not args.no_bytes, a816_syntax=False))
+        if func_addr is not None:
+            _emit_function(args, input_file, bus, func_addr, symbol_map)
         elif args.disasm:
             disassemble(
                 data,
@@ -512,7 +518,7 @@ def xdds_main() -> None:
                 count=args.count,
                 show_bytes=not args.no_bytes,
                 a816_syntax=args.asm,
-                symbol_map=addr_to_name or None,
+                symbol_map=symbol_map,
             )
         else:
             hexdump(data, bus, physical_start, args.cols, not args.no_ascii)

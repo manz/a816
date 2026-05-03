@@ -2,6 +2,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -783,6 +784,75 @@ class WorkspaceIndex:
             store.pop(uri, None)
 
 
+@dataclass
+class _MaskState:
+    """Cross-line scanner state for `_build_code_mask`. Only the
+    triple-quoted-string flag survives a newline; single-quoted strings
+    don't span lines in a816 syntax.
+    """
+
+    in_triple: str | None = None
+
+
+def _consume_triple(raw: str, i: int, mask: list[bool], state: _MaskState) -> int:
+    """Mask one byte of a triple-quoted string, closing it on the
+    matching delimiter. Returns the new cursor position.
+    """
+    mask[i] = False
+    if state.in_triple is not None and raw[i : i + 3] == state.in_triple:
+        mask[i + 1] = False
+        mask[i + 2] = False
+        state.in_triple = None
+        return i + 3
+    return i + 1
+
+
+def _consume_string(raw: str, i: int, mask: list[bool], in_string: str) -> tuple[int, str | None]:
+    """Mask one byte of a single-line string, handling backslash escapes
+    and the closing delimiter. Returns (new cursor, new state).
+    """
+    mask[i] = False
+    if raw[i] == "\\" and i + 1 < len(raw):
+        mask[i + 1] = False
+        return i + 2, in_string
+    if raw[i] == in_string:
+        return i + 1, None
+    return i + 1, in_string
+
+
+def _mask_line(raw: str, state: _MaskState) -> list[bool]:
+    """Build the code-mask for a single line, advancing `state` for
+    triple-quoted strings that may span multiple lines.
+    """
+    mask = [True] * len(raw)
+    i = 0
+    in_string: str | None = None
+    while i < len(raw):
+        if state.in_triple is not None:
+            i = _consume_triple(raw, i, mask, state)
+            continue
+        if in_string is not None:
+            i, in_string = _consume_string(raw, i, mask, in_string)
+            continue
+        ch = raw[i]
+        if ch == ";":
+            for j in range(i, len(raw)):
+                mask[j] = False
+            break
+        if raw[i : i + 3] in ('"""', "'''"):
+            state.in_triple = raw[i : i + 3]
+            mask[i] = mask[i + 1] = mask[i + 2] = False
+            i += 3
+            continue
+        if ch in ('"', "'"):
+            in_string = ch
+            mask[i] = False
+            i += 1
+            continue
+        i += 1
+    return mask
+
+
 class A816LanguageServer:
     """Enhanced LSP server for a816 assembly language"""
 
@@ -1239,49 +1309,9 @@ class A816LanguageServer:
         accidental matches in text payloads.
         """
         masks: list[list[bool]] = []
-        in_triple: str | None = None
+        state = _MaskState()
         for raw in lines:
-            mask = [True] * len(raw)
-            i = 0
-            in_string: str | None = None
-            while i < len(raw):
-                ch = raw[i]
-                if in_triple is not None:
-                    mask[i] = False
-                    if raw[i : i + 3] == in_triple:
-                        mask[i + 1] = False
-                        mask[i + 2] = False
-                        i += 3
-                        in_triple = None
-                        continue
-                    i += 1
-                    continue
-                if in_string is not None:
-                    mask[i] = False
-                    if ch == "\\" and i + 1 < len(raw):
-                        mask[i + 1] = False
-                        i += 2
-                        continue
-                    if ch == in_string:
-                        in_string = None
-                    i += 1
-                    continue
-                if ch == ";":
-                    for j in range(i, len(raw)):
-                        mask[j] = False
-                    break
-                if raw[i : i + 3] in ('"""', "'''"):
-                    in_triple = raw[i : i + 3]
-                    mask[i] = mask[i + 1] = mask[i + 2] = False
-                    i += 3
-                    continue
-                if ch in ('"', "'"):
-                    in_string = ch
-                    mask[i] = False
-                    i += 1
-                    continue
-                i += 1
-            masks.append(mask)
+            masks.append(_mask_line(raw, state))
         return masks
 
     @staticmethod
@@ -1364,7 +1394,7 @@ class A816LanguageServer:
             ]
         return references or None
 
-    _RENAME_SYMBOL_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _RENAME_SYMBOL_PATTERN = re.compile(r"^[A-Za-z_]\w*$")
 
     def _handle_prepare_rename(self, params: PrepareRenameParams) -> Range | None:
         """Tell the editor which range it can rename in place.

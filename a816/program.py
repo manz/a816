@@ -23,6 +23,8 @@ from a816.writers import IPSWriter, ObjectWriter, SFCWriter, Writer
 
 logger = logging.getLogger("a816")
 
+_UNKNOWN_SRC = "<unknown>"
+
 
 @dataclass
 class _EmitState:
@@ -199,7 +201,7 @@ class Program:
     def _emit_trace_enabled() -> bool:
         return os.environ.get("A816_EMIT_TRACE") == "1"
 
-    def _trace_block(self, snes: int, phys: int, size: int, src: str = "<unknown>") -> None:
+    def _trace_block(self, snes: int, phys: int, size: int, src: str = _UNKNOWN_SRC) -> None:
         if self._emit_trace_enabled():
             self._emit_trace.append((snes, phys, size, src))
 
@@ -226,9 +228,9 @@ class Program:
             size = len(region.code)
             if region.lines:
                 _, file_idx, line, *_rest = region.lines[0]
-                src = f"{files[file_idx]}:{line}" if 0 <= file_idx < len(files) else "<unknown>"
+                src = f"{files[file_idx]}:{line}" if 0 <= file_idx < len(files) else _UNKNOWN_SRC
             else:
-                src = "<unknown>"
+                src = _UNKNOWN_SRC
             self._emit_trace.append((snes, phys, size, src))
 
     def emit(self, program: list[NodeProtocol], writer: Writer) -> None:

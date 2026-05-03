@@ -8,6 +8,7 @@ from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
+STDIN_LABEL = "<stdin>"
 
 RESET = "\033[0m"
 RED = "\033[31m"
@@ -133,7 +134,7 @@ def _run_format_stdin(args: argparse.Namespace) -> int:
     """
     original = sys.stdin.read()
     try:
-        formatted = A816Formatter().format_text(original, "<stdin>")
+        formatted = A816Formatter().format_text(original, STDIN_LABEL)
     except FormattingError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -143,15 +144,15 @@ def _run_format_stdin(args: argparse.Namespace) -> int:
         diff_lines = difflib.unified_diff(
             original.splitlines(keepends=True),
             formatted.splitlines(keepends=True),
-            fromfile="<stdin>",
-            tofile="<stdin>",
+            fromfile=STDIN_LABEL,
+            tofile=STDIN_LABEL,
         )
         sys.stdout.write(_colorize_diff(diff_lines))
         return 1
     if args.check:
         if original == formatted:
             return 0
-        print("Would reformat <stdin>", file=sys.stderr)
+        print(f"Would reformat {STDIN_LABEL}", file=sys.stderr)
         return 1
     sys.stdout.write(formatted)
     return 0

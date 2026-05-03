@@ -10,6 +10,7 @@ import argparse
 import json
 import struct
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -269,53 +270,59 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+_SECTION_FLAGS: tuple[str, ...] = ("regions", "symbols", "relocs", "lines", "files", "aliases", "imports", "exports")
+
+
+def _print_optional_listing(obj: ObjectFile, attr: str, label: str, out: TextIO) -> None:
+    """Print a `getattr(obj, attr, None)` listing if present. No-op when
+    the attribute is absent — older object formats don't carry imports
+    or exports."""
+    items = getattr(obj, attr, None)
+    if items is None:
+        return
+    print(f"# {label} ({len(items)})", file=out)
+    for entry in items:
+        print(f"  {entry}", file=out)
+
+
+def _emit_text_sections(path: Path, obj: ObjectFile, args: argparse.Namespace, out: TextIO) -> None:
+    """Emit each requested section in declared order, separated by blank
+    lines. Default (no flags) shows every section; --summary alone shows
+    just the summary; --all forces every section even alongside others.
+    """
+    sections_requested = any(getattr(args, attr) for attr in _SECTION_FLAGS)
+    show_all = args.all or (not args.summary and not sections_requested)
+
+    emitted = False
+
+    def section(flag_on: bool, emitter: Callable[[], None]) -> None:
+        nonlocal emitted
+        if not flag_on:
+            return
+        if emitted:
+            out.write("\n")
+        emitter()
+        emitted = True
+
+    section(args.summary or show_all, lambda: print_summary(path, obj, out))
+    section(args.regions or show_all, lambda: print_regions(obj, out, dump_bytes=args.bytes))
+    section(args.symbols or show_all, lambda: print_symbols(obj, out))
+    section(args.relocs or show_all, lambda: print_relocs(obj, out))
+    section(args.lines or show_all, lambda: print_lines(obj, out))
+    section(args.files or show_all, lambda: print_files(obj, out))
+    section(args.aliases or show_all, lambda: print_aliases(obj, out))
+    if args.imports:
+        section(True, lambda: _print_optional_listing(obj, "imports", "imports", out))
+    if args.exports:
+        section(True, lambda: _print_optional_listing(obj, "exports", "exports", out))
+
+
 def _emit(path: Path, obj: ObjectFile, args: argparse.Namespace, out: TextIO) -> None:
     if args.json:
         json.dump(to_json_dict(path, obj), out, indent=2, sort_keys=False)
         out.write("\n")
         return
-
-    sections_requested = any(
-        getattr(args, attr)
-        for attr in ("regions", "symbols", "relocs", "lines", "files", "aliases", "imports", "exports")
-    )
-    show_all = args.all or (not args.summary and not sections_requested)
-
-    if args.summary or show_all:
-        print_summary(path, obj, out)
-    if args.regions or show_all:
-        if args.summary or show_all:
-            out.write("\n")
-        print_regions(obj, out, dump_bytes=args.bytes)
-    if args.symbols or show_all:
-        out.write("\n")
-        print_symbols(obj, out)
-    if args.relocs or show_all:
-        out.write("\n")
-        print_relocs(obj, out)
-    if args.lines or show_all:
-        out.write("\n")
-        print_lines(obj, out)
-    if args.files or show_all:
-        out.write("\n")
-        print_files(obj, out)
-    if args.aliases or show_all:
-        out.write("\n")
-        print_aliases(obj, out)
-    if args.imports:
-        imports = getattr(obj, "imports", None)
-        if imports is not None:
-            out.write("\n")
-            print(f"# imports ({len(imports)})", file=out)
-            for entry in imports:
-                print(f"  {entry}", file=out)
-    if args.exports:
-        exports = getattr(obj, "exports", None)
-        if exports is not None:
-            out.write("\n")
-            print(f"# exports ({len(exports)})", file=out)
-            for entry in exports:
-                print(f"  {entry}", file=out)
+    _emit_text_sections(path, obj, args, out)
 
 
 def main(argv: list[str] | None = None) -> int:
