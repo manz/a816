@@ -483,6 +483,74 @@ def _extract_public_symbols_from_source(source_path: Path) -> list[str]:
     return symbols
 
 
+def _record_public_symbol(symbols: list[str], prefix: str, name: str) -> None:
+    """Append `prefix.name` (or just `name`) to `symbols` unless either
+    segment is private (underscore-prefixed) or the name is empty / a
+    duplicate of something already recorded.
+    """
+    if not name:
+        return
+    if name.startswith("_") or (prefix and prefix.startswith("_")):
+        return
+    full = f"{prefix}.{name}" if prefix else name
+    if full not in symbols:
+        symbols.append(full)
+
+
+def _emit_symbols_for_node(node: AstNode, prefix: str, symbols: list[str]) -> None:
+    """Record any public names introduced by a single AST node. Doesn't
+    descend into children — `_visit_for_public_symbols` handles recursion.
+    """
+    if isinstance(node, LabelAstNode):
+        _record_public_symbol(symbols, prefix, node.label)
+        return
+    if isinstance(node, SymbolAffectationAstNode | AssignAstNode):
+        _record_public_symbol(symbols, prefix, node.symbol)
+        return
+    if isinstance(node, IncludeBinaryAstNode):
+        base = node.file_path.replace("/", "_").replace(".", "_")
+        _record_public_symbol(symbols, prefix, base)
+        _record_public_symbol(symbols, prefix, f"{base}__size")
+
+
+def _visit_for_public_symbols(nodes: list[AstNode], prefix: str, symbols: list[str]) -> None:
+    """Walk `nodes`, emitting symbols and recursing into child containers.
+
+    `.scope name { ... }` opens a dotted prefix for its members; every
+    other node carries the current prefix down into `body` / `block` /
+    `else_block` / `included_nodes`.
+    """
+    from a816.parse.ast.nodes import BlockAstNode, CompoundAstNode, ScopeAstNode
+
+    for node in nodes:
+        if isinstance(node, ScopeAstNode):
+            inner = f"{prefix}.{node.name}" if prefix else node.name
+            body = node.body
+            if isinstance(body, BlockAstNode | CompoundAstNode):
+                _visit_for_public_symbols(body.body, inner, symbols)
+            continue
+
+        _emit_symbols_for_node(node, prefix, symbols)
+        _descend_into_children(node, prefix, symbols)
+
+
+def _descend_into_children(node: AstNode, prefix: str, symbols: list[str]) -> None:
+    """Recurse into the conventional container attributes carried by
+    block-like AST nodes, keeping the prefix intact.
+    """
+    from a816.parse.ast.nodes import BlockAstNode, CompoundAstNode
+
+    for attr in ("body", "block", "else_block"):
+        child = getattr(node, attr, None)
+        if isinstance(child, BlockAstNode | CompoundAstNode):
+            _visit_for_public_symbols(child.body, prefix, symbols)
+        elif isinstance(child, list):
+            _visit_for_public_symbols(child, prefix, symbols)
+    included = getattr(node, "included_nodes", None)
+    if isinstance(included, list):
+        _visit_for_public_symbols(included, prefix, symbols)
+
+
 def _collect_public_symbols(nodes: list[AstNode], symbols: list[str]) -> None:
     """Recursively collect public symbols from AST nodes.
 
@@ -499,57 +567,7 @@ def _collect_public_symbols(nodes: list[AstNode], symbols: list[str]) -> None:
     so `.import` consumers can resolve those bare names without an extra
     `.extern` declaration.
     """
-    from a816.parse.ast.nodes import (
-        BlockAstNode,
-        CompoundAstNode,
-        ScopeAstNode,
-    )
-
-    def _add(prefix: str, name: str) -> None:
-        if not name:
-            return
-        # Underscore privacy applies to the bare symbol; a label declared
-        # as `_foo` inside `scope` stays private even though the dotted
-        # form would be `scope._foo`.
-        if name.startswith("_") or (prefix and prefix.startswith("_")):
-            return
-        full = f"{prefix}.{name}" if prefix else name
-        if full not in symbols:
-            symbols.append(full)
-
-    def _visit(nodes_: list[AstNode], prefix: str) -> None:
-        for node in nodes_:
-            if isinstance(node, ScopeAstNode):
-                inner_prefix = f"{prefix}.{node.name}" if prefix else node.name
-                # Skip emitting the scope name itself — only the members
-                # of the block surface as `prefix.name.member`.
-                body = node.body
-                if isinstance(body, BlockAstNode | CompoundAstNode):
-                    _visit(body.body, inner_prefix)
-                continue
-
-            if isinstance(node, LabelAstNode):
-                _add(prefix, node.label)
-            elif isinstance(node, SymbolAffectationAstNode | AssignAstNode):
-                _add(prefix, node.symbol)
-            elif isinstance(node, IncludeBinaryAstNode):
-                base = node.file_path.replace("/", "_").replace(".", "_")
-                _add(prefix, base)
-                _add(prefix, f"{base}__size")
-
-            # Descend into the standard container attributes (body, block,
-            # else_block, included_nodes) carrying the same prefix.
-            for attr in ("body", "block", "else_block"):
-                child = getattr(node, attr, None)
-                if isinstance(child, BlockAstNode | CompoundAstNode):
-                    _visit(child.body, prefix)
-                elif isinstance(child, list):
-                    _visit(child, prefix)
-            included = getattr(node, "included_nodes", None)
-            if isinstance(included, list):
-                _visit(included, prefix)
-
-    _visit(nodes, "")
+    _visit_for_public_symbols(nodes, "", symbols)
 
 
 def generate_register_size(
