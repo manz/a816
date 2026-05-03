@@ -489,26 +489,67 @@ def _collect_public_symbols(nodes: list[AstNode], symbols: list[str]) -> None:
     Public symbols don't start with underscore (_); underscored symbols are
     treated as module-private.
 
+    Labels and equates declared inside a `.scope name { ... }` block are
+    surfaced with their dotted form (`name.label`) — the same way the
+    object emitter exports them — so `.import` consumers can resolve the
+    qualified names without re-declaring each as `.extern`.
+
     `.incbin "path"` registers the same auto-symbols `BinaryNode.pc_after`
     creates at codegen time (`<sanitized_path>` and `<sanitized_path>__size`)
     so `.import` consumers can resolve those bare names without an extra
     `.extern` declaration.
     """
-    from a816.parse.ast.visitor import walk
+    from a816.parse.ast.nodes import (
+        BlockAstNode,
+        CompoundAstNode,
+        ScopeAstNode,
+    )
 
-    def _add(name: str) -> None:
-        if name and not name.startswith("_") and name not in symbols:
-            symbols.append(name)
+    def _add(prefix: str, name: str) -> None:
+        if not name:
+            return
+        # Underscore privacy applies to the bare symbol; a label declared
+        # as `_foo` inside `scope` stays private even though the dotted
+        # form would be `scope._foo`.
+        if name.startswith("_") or (prefix and prefix.startswith("_")):
+            return
+        full = f"{prefix}.{name}" if prefix else name
+        if full not in symbols:
+            symbols.append(full)
 
-    for node in walk(nodes):
-        if isinstance(node, LabelAstNode):
-            _add(node.label)
-        elif isinstance(node, SymbolAffectationAstNode | AssignAstNode):
-            _add(node.symbol)
-        elif isinstance(node, IncludeBinaryAstNode):
-            base = node.file_path.replace("/", "_").replace(".", "_")
-            _add(base)
-            _add(f"{base}__size")
+    def _visit(nodes_: list[AstNode], prefix: str) -> None:
+        for node in nodes_:
+            if isinstance(node, ScopeAstNode):
+                inner_prefix = f"{prefix}.{node.name}" if prefix else node.name
+                # Skip emitting the scope name itself — only the members
+                # of the block surface as `prefix.name.member`.
+                body = node.body
+                if isinstance(body, BlockAstNode | CompoundAstNode):
+                    _visit(body.body, inner_prefix)
+                continue
+
+            if isinstance(node, LabelAstNode):
+                _add(prefix, node.label)
+            elif isinstance(node, SymbolAffectationAstNode | AssignAstNode):
+                _add(prefix, node.symbol)
+            elif isinstance(node, IncludeBinaryAstNode):
+                base = node.file_path.replace("/", "_").replace(".", "_")
+                _add(prefix, base)
+                _add(prefix, f"{base}__size")
+
+            # Descend into the standard container attributes (body, block,
+            # else_block, included_nodes) carrying the same prefix.
+            for attr in ("body", "block", "else_block"):
+                child = getattr(node, attr, None)
+                if isinstance(child, BlockAstNode | CompoundAstNode):
+                    _visit(child.body, prefix)
+                elif isinstance(child, list):
+                    _visit(child, prefix)
+            included = getattr(node, "included_nodes", None)
+            if isinstance(included, list):
+                _visit(included, prefix)
+
+    _visit(nodes, "")
 
 
 def generate_register_size(

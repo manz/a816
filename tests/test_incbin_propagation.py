@@ -38,3 +38,38 @@ def test_incbin_alongside_label(tmp_path, monkeypatch):
     syms = _extract_public_symbols_from_source(src)
     assert "foo" in syms
     assert "data_bin" in syms
+
+
+def test_scope_members_emit_dotted_names(tmp_path, monkeypatch):
+    """`.scope foo { bar: ... }` exports `foo.bar` so importers don't
+    need to re-declare each scoped label as `.extern`."""
+    monkeypatch.chdir(tmp_path)
+    src = tmp_path / "mod.s"
+    src.write_text(
+        ".scope render_allocator {\n"
+        "init: rts\n"
+        "increment: rts\n"
+        "}\n"
+    )
+    syms = _extract_public_symbols_from_source(src)
+    assert "render_allocator.init" in syms
+    assert "render_allocator.increment" in syms
+    # Bare names should not leak — only the qualified form is public.
+    assert "init" not in syms
+    assert "increment" not in syms
+
+
+def test_scope_with_underscore_label_stays_private(tmp_path, monkeypatch):
+    """Underscore-prefix on the label still hides it; `foo._helper` is
+    still private even though the scope `foo` is public."""
+    monkeypatch.chdir(tmp_path)
+    src = tmp_path / "mod.s"
+    src.write_text(
+        ".scope foo {\n"
+        "public: rts\n"
+        "_helper: rts\n"
+        "}\n"
+    )
+    syms = _extract_public_symbols_from_source(src)
+    assert "foo.public" in syms
+    assert "foo._helper" not in syms
