@@ -705,6 +705,7 @@ def format_disassembly_block(
     instructions: list[Instruction],
     show_bytes: bool = True,
     a816_syntax: bool = False,
+    symbol_map: dict[int, str] | None = None,
 ) -> list[str]:
     """Format a contiguous run of instructions, emitting label lines only
     at addresses referenced by branches or jumps within the block.
@@ -712,13 +713,24 @@ def format_disassembly_block(
     Returns one string per output line (mix of label lines and instruction
     lines). When `a816_syntax` is False this is equivalent to mapping
     `format_disassembly` over the instruction list.
+
+    symbol_map: optional address -> human-readable symbol name dict that
+    takes precedence over synthesized `_BBHHHH` labels. When a target's
+    address has an entry, the symbol name is used in operands and as the
+    on-line label.
     """
     if not a816_syntax:
         return [format_disassembly(inst, show_bytes=show_bytes, a816_syntax=False) for inst in instructions]
     label_map = collect_labels(instructions)
-    lines: list[str] = []
+    if symbol_map:
+        label_map = {**label_map, **symbol_map}
+    label_emit_addresses: set[int] = set()
     for inst in instructions:
         if inst.address in label_map:
+            label_emit_addresses.add(inst.address)
+    lines: list[str] = []
+    for inst in instructions:
+        if inst.address in label_emit_addresses:
             lines.append(f"{label_map[inst.address]}:")
         lines.append(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=True, label_map=label_map))
     return lines

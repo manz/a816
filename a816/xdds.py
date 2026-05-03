@@ -292,6 +292,19 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Output a816-compatible assembly syntax (use with -d)",
     )
+    parser.add_argument(
+        "--debug",
+        type=Path,
+        metavar="ADBG",
+        help="Path to a .adbg debug-info file. When supplied, branch and jump"
+        " targets resolve to symbol names instead of synthesized _BBHHHH labels.",
+    )
+    parser.add_argument(
+        "--sym",
+        metavar="NAME",
+        help="Start disassembly at the address of symbol NAME from the .adbg"
+        " file (requires --debug).",
+    )
 
     return parser
 
@@ -305,6 +318,7 @@ def disassemble(
     count: int | None = None,
     show_bytes: bool = True,
     a816_syntax: bool = False,
+    symbol_map: dict[int, str] | None = None,
 ) -> None:
     """Disassemble and print 65c816 code with SNES logical addresses."""
     start_logical = physical_to_logical(bus, start_offset)
@@ -312,11 +326,31 @@ def disassemble(
     instructions = disasm.disassemble(data, start_logical, count)
 
     if a816_syntax:
-        for line in format_disassembly_block(instructions, show_bytes=show_bytes, a816_syntax=True):
+        for line in format_disassembly_block(
+            instructions, show_bytes=show_bytes, a816_syntax=True, symbol_map=symbol_map
+        ):
             print(line)
     else:
         for inst in instructions:
             print(format_disassembly(inst, show_bytes=show_bytes, a816_syntax=False))
+
+
+def load_debug_symbols(adbg_path: Path) -> tuple[dict[int, str], dict[str, int]]:
+    """Load a .adbg file and return (address->name, name->address) maps.
+
+    Address values are SNES logical addresses (matching what the
+    disassembler computes).
+    """
+    from a816.debug_info import read as read_debug
+
+    info = read_debug(adbg_path)
+    addr_to_name: dict[int, str] = {}
+    name_to_addr: dict[str, int] = {}
+    for sym in info.symbols:
+        # Earlier entries win on collision so the first definition order is preserved.
+        addr_to_name.setdefault(sym.address, sym.name)
+        name_to_addr.setdefault(sym.name, sym.address)
+    return addr_to_name, name_to_addr
 
 
 def _apply_ips_to_temp(input_file: Path, ips_file: Path) -> tuple[Path, Path]:
@@ -370,6 +404,25 @@ def xdds_main() -> None:
     if args.show_mappings:
         show_mapping_info(rom_type)
 
+    addr_to_name: dict[int, str] = {}
+    name_to_addr: dict[str, int] = {}
+    if args.debug:
+        if not args.debug.exists():
+            logger.error(f"Debug file not found: {args.debug}")
+            sys.exit(-1)
+        addr_to_name, name_to_addr = load_debug_symbols(args.debug)
+
+    if args.sym:
+        if not name_to_addr:
+            logger.error("--sym requires --debug pointing at a .adbg file")
+            sys.exit(-1)
+        if args.sym not in name_to_addr:
+            logger.error(f"Symbol not found in debug info: {args.sym}")
+            sys.exit(-1)
+        sym_logical = name_to_addr[args.sym]
+        args.start = f"${sym_logical >> 16:02X}:{sym_logical & 0xFFFF:04X}"
+        logger.info(f"Symbol {args.sym} -> {args.start}")
+
     input_file = args.input_file
     tmp_path: Path | None = None
     if args.ips_file:
@@ -393,6 +446,7 @@ def xdds_main() -> None:
                 count=args.count,
                 show_bytes=not args.no_bytes,
                 a816_syntax=args.asm,
+                symbol_map=addr_to_name or None,
             )
         else:
             hexdump(data, bus, physical_start, args.cols, not args.no_ascii)
