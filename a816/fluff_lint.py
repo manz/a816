@@ -76,6 +76,28 @@ def _kind_label(node: AstNode) -> str:
     return "symbol"
 
 
+def _public_target_name(node: AstNode) -> str | None:
+    """Return the public name of a documentable node, or None when private/N/A."""
+    if not isinstance(node, MacroAstNode | ScopeAstNode | LabelAstNode):
+        return None
+    raw = getattr(node, "name", None) or getattr(node, "label", "") or ""
+    name = str(raw)
+    return name if _is_public(name) else None
+
+
+def _missing_doc_diagnostic(path: Path, node: AstNode, name: str, pending_doc: bool) -> Diagnostic | None:
+    if pending_doc or bool(getattr(node, "docstring", None)):
+        return None
+    line, col = _node_position(node)
+    return Diagnostic(
+        path=path,
+        line=line,
+        column=col,
+        code="DOC002",
+        message=f"public {_kind_label(node)} '{name}' is missing a docstring",
+    )
+
+
 def _check_public_docstrings(path: Path, nodes: list[AstNode]) -> list[Diagnostic]:
     """DOC002: each public macro/scope/label needs an attached docstring.
 
@@ -89,28 +111,17 @@ def _check_public_docstrings(path: Path, nodes: list[AstNode]) -> list[Diagnosti
         if isinstance(node, CommentAstNode):
             continue
         if isinstance(node, DocstringAstNode):
-            if not module_doc_consumed:
+            if module_doc_consumed:
+                pending_doc = True
+            else:
                 module_doc_consumed = True
-                continue
-            pending_doc = True
             continue
-        # Any non-comment node implies the module-doc slot is closed.
         module_doc_consumed = True
-        if isinstance(node, MacroAstNode | ScopeAstNode | LabelAstNode):
-            name = getattr(node, "name", None) or getattr(node, "label", "") or ""
-            if _is_public(str(name)):
-                has_doc = pending_doc or bool(getattr(node, "docstring", None))
-                if not has_doc:
-                    line, col = _node_position(node)
-                    hits.append(
-                        Diagnostic(
-                            path=path,
-                            line=line,
-                            column=col,
-                            code="DOC002",
-                            message=f"public {_kind_label(node)} '{name}' is missing a docstring",
-                        )
-                    )
+        name = _public_target_name(node)
+        if name is not None:
+            hit = _missing_doc_diagnostic(path, node, name, pending_doc)
+            if hit is not None:
+                hits.append(hit)
         pending_doc = False
     return hits
 
