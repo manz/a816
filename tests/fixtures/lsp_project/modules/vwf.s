@@ -1,5 +1,7 @@
 ; Variable-width font module fixture.
 
+"""Variable-width font helpers used by the menu and dialogue engines."""
+
 """Initialise VWF state. Call once on boot."""
 .macro vwf_init() {
     sep #0x20
