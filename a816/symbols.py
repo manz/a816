@@ -20,6 +20,33 @@ def _is_exportable(name: str) -> bool:
     return not name.startswith("_") or name.startswith("__")
 
 
+def _bubble_anon_into_named(scope: "Scope", parent: "NamedScope") -> None:
+    """Surface labels/symbols from an anonymous scope into its NamedScope parent.
+
+    A macro's arg-binding scope (or a plain `{ }` block) is anonymous, so
+    its labels would be discarded on restore. When such a scope sits inside
+    a NamedScope, we copy the exportable names up so the next
+    NamedScope.restore_scope(exports=True) publishes them as `Name.label`.
+    """
+    for label_name, label_value in scope.labels.items():
+        if _is_exportable(label_name) and label_name not in parent.labels:
+            parent.labels[label_name] = label_value
+    for sym_name, sym_value in scope.symbols.items():
+        if _is_exportable(sym_name) and sym_name not in parent.symbols:
+            parent.symbols[sym_name] = sym_value
+
+
+def _publish_named_dotted(scope: "NamedScope", parent: "Scope") -> None:
+    """Promote `Name.label` and `Name.symbol` into the parent scope.
+
+    Both labels and symbols carry the dotted prefix so the object writer
+    can distinguish CODE labels (need link-time rebasing) from DATA
+    constants without re-walking scopes.
+    """
+    parent.symbols |= {f"{scope.name}.{k}": v for k, v in scope.symbols.items() if _is_exportable(k)}
+    parent.labels |= {f"{scope.name}.{k}": v for k, v in scope.labels.items() if _is_exportable(k)}
+
+
 logger = logging.getLogger("a816")
 
 
@@ -251,25 +278,10 @@ class Resolver:
         if parent is None:
             raise RuntimeError("Current scope has no parent...")
 
-        # An anonymous scope (e.g. a macro's arg-binding scope or a `{ }`
-        # block) inside a NamedScope must surface its labels and symbols to
-        # the NamedScope so the next NamedScope.restore_scope(exports=True)
-        # can publish them as `Name.label`. Underscore-prefixed names stay
-        # private (mirrors the object-mode export rule).
         if not isinstance(scope, NamedScope) and isinstance(parent, NamedScope):
-            for label_name, label_value in scope.labels.items():
-                if _is_exportable(label_name) and label_name not in parent.labels:
-                    parent.labels[label_name] = label_value
-            for sym_name, sym_value in scope.symbols.items():
-                if _is_exportable(sym_name) and sym_name not in parent.symbols:
-                    parent.symbols[sym_name] = sym_value
-
+            _bubble_anon_into_named(scope, parent)
         if exports and isinstance(scope, NamedScope):
-            parent.symbols |= {f"{scope.name}.{k}": v for k, v in scope.symbols.items() if _is_exportable(k)}
-            # Propagate label-ness too so the object writer can tell that
-            # `scope.name` refers to a CODE address (and therefore needs
-            # rebasing at link time) instead of a DATA constant.
-            parent.labels |= {f"{scope.name}.{k}": v for k, v in scope.labels.items() if _is_exportable(k)}
+            _publish_named_dotted(scope, parent)
 
         self.current_scope = parent
 
