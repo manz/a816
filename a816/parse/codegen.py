@@ -120,7 +120,10 @@ def generate_scope(
 
     code += _code_gen(node.body.body, resolver, macro_definitions)
     code.append(PopScopeNode(resolver))
-    resolver.restore_scope(exports=False)
+    # Promote `name.label` and `name.symbol` to the parent so callers can
+    # `jsr.l ns.init` after `.scope ns { init: ... }`. Underscore-prefixed
+    # names stay private (see Resolver.restore_scope filter).
+    resolver.restore_scope(exports=True)
     return code
 
 
