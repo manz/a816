@@ -5,6 +5,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from a816.exceptions import FormattingError
+from a816.fluff_lint import lint_file
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
@@ -45,8 +46,15 @@ def _colorize_diff(diff_lines: Iterable[str]) -> str:
 
 
 def _build_fluff_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="a816 fluff", description="Format a816 assembly sources.")
+    parser = argparse.ArgumentParser(prog="a816 fluff", description="Format and lint a816 assembly sources.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    check_parser = subparsers.add_parser("check", help="Run docstring-coverage lints (DOC001 / DOC002).")
+    check_parser.add_argument(
+        "paths",
+        nargs="+",
+        type=Path,
+        help="Files or directories to lint. Directories are walked for .s / .i sources.",
+    )
     format_parser = subparsers.add_parser("format", help="Format .s/.i sources under the given path.")
     format_parser.add_argument(
         "paths",
@@ -209,11 +217,28 @@ def _run_format(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
     return _write_formatted(computed) or missing_err
 
 
+def _run_check(args: argparse.Namespace) -> int:
+    sources, missing_err = _collect_sources(list(args.paths))
+    if not sources:
+        return missing_err
+    total = 0
+    for source in sources:
+        for diag in lint_file(source):
+            print(diag.format())
+            total += 1
+    if total:
+        print(f"{total} lint hit(s).", file=sys.stderr)
+        return missing_err or 1
+    return missing_err
+
+
 def fluff_main(argv: Sequence[str] | None = None) -> int:
     parser = _build_fluff_parser()
     args = parser.parse_args(argv)
     if args.command == "format":
         return _run_format(args, parser)
+    if args.command == "check":
+        return _run_check(args)
     parser.error("Unknown command")
     return 2  # parser.error never returns, but mypy needs this
 
