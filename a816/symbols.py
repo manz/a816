@@ -9,6 +9,17 @@ from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import BlockAstNode
 from script import Table
 
+
+def _is_exportable(name: str) -> bool:
+    """Names with a single leading underscore are private to their scope.
+
+    Mirrors the object-mode export rule: `_helper` stays local, `helper`
+    promotes, and dunder names like `__size` (struct size symbol) keep
+    promoting because they're system-injected, not user-private.
+    """
+    return not name.startswith("_") or name.startswith("__")
+
+
 logger = logging.getLogger("a816")
 
 
@@ -235,18 +246,32 @@ class Resolver:
         self.current_scope = self.scopes[self.last_used_scope]
 
     def restore_scope(self, exports: bool = False) -> None:
-        if exports and isinstance(self.current_scope, NamedScope):
-            scope = self.current_scope
-            if scope.parent is not None:
-                scope.parent.symbols |= {f"{scope.name}.{k}": v for k, v in scope.symbols.items()}
-                # Propagate label-ness too so the object writer can tell that
-                # `scope.name` refers to a CODE address (and therefore needs
-                # rebasing at link time) instead of a DATA constant.
-                scope.parent.labels |= {f"{scope.name}.{k}": v for k, v in scope.labels.items()}
-        if self.current_scope.parent is not None:
-            self.current_scope = self.current_scope.parent
-        else:
+        scope = self.current_scope
+        parent = scope.parent
+        if parent is None:
             raise RuntimeError("Current scope has no parent...")
+
+        # An anonymous scope (e.g. a macro's arg-binding scope or a `{ }`
+        # block) inside a NamedScope must surface its labels and symbols to
+        # the NamedScope so the next NamedScope.restore_scope(exports=True)
+        # can publish them as `Name.label`. Underscore-prefixed names stay
+        # private (mirrors the object-mode export rule).
+        if not isinstance(scope, NamedScope) and isinstance(parent, NamedScope):
+            for label_name, label_value in scope.labels.items():
+                if _is_exportable(label_name) and label_name not in parent.labels:
+                    parent.labels[label_name] = label_value
+            for sym_name, sym_value in scope.symbols.items():
+                if _is_exportable(sym_name) and sym_name not in parent.symbols:
+                    parent.symbols[sym_name] = sym_value
+
+        if exports and isinstance(scope, NamedScope):
+            parent.symbols |= {f"{scope.name}.{k}": v for k, v in scope.symbols.items() if _is_exportable(k)}
+            # Propagate label-ness too so the object writer can tell that
+            # `scope.name` refers to a CODE address (and therefore needs
+            # rebasing at link time) instead of a DATA constant.
+            parent.labels |= {f"{scope.name}.{k}": v for k, v in scope.labels.items() if _is_exportable(k)}
+
+        self.current_scope = parent
 
     def _dump_symbols(self, symbols: dict[str, Any]) -> None:
         keys = sorted(symbols.keys())
