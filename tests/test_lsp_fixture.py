@@ -283,6 +283,22 @@ def test_hover_on_cross_file_macro() -> None:
     assert "Initialise" in hover.contents.value
 
 
+def test_hover_on_import_shows_module_docstring() -> None:
+    """Cursor on `.import "vwf"` in main.s surfaces vwf.s's leading docstring."""
+    server = server_with_fixture_workspace()
+    _open(server, "src/main.s")
+    line, _ = locate_in_fixture("src/main.s", '.import "vwf"')
+    hover = server._handle_hover(
+        HoverParams(
+            text_document=TextDocumentIdentifier(uri=fixture_uri("src/main.s")),
+            position=Position(line=line, character=4),
+        )
+    )
+    assert hover is not None
+    assert isinstance(hover.contents, MarkupContent)
+    assert "Variable-width font helpers" in hover.contents.value
+
+
 def test_hover_on_label_with_docstring() -> None:
     server = server_with_fixture_workspace()
     _open(server, "modules/vwf.s")

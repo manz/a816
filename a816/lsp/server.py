@@ -111,6 +111,10 @@ class A816Document:
         self.macro_docstrings: dict[str, str] = {}
         self.scope_docstrings: dict[str, str] = {}
         self.label_docstrings: dict[str, str] = {}
+        # Leading orphan docstring at the top of the file. Used by hover on
+        # `.import "name"` and `.include "path"` to surface the target module's
+        # one-shot description without having to chase the file.
+        self.module_docstring: str | None = None
         self.imports: list[str] = []  # module names from .import directives
         self.diagnostics: list[Diagnostic] = []
         self.ast_nodes: list[AstNode] = []
@@ -129,6 +133,7 @@ class A816Document:
         self.macro_docstrings.clear()
         self.scope_docstrings.clear()
         self.label_docstrings.clear()
+        self.module_docstring = None
         self.imports.clear()
         self.diagnostics.clear()
         self.ast_nodes.clear()
@@ -360,8 +365,20 @@ class A816Document:
         return doc_buffer, target
 
     def _collect_docstrings(self) -> None:
-        """Associate docstrings with labels, macros, and scopes."""
+        """Associate docstrings with labels, macros, scopes, and the module."""
         self.label_docstrings.clear()
+        # Capture the first leading docstring as the module-level description.
+        # Anything before the first labelable target counts; the doc visitor
+        # emits remaining unattached buffers as the returned `pending_doc`.
+        for node in self.ast_nodes:
+            if isinstance(node, DocstringAstNode):
+                text = node.text.strip()
+                if text:
+                    self.module_docstring = text
+                break
+            if isinstance(node, CommentAstNode):
+                continue
+            break
         self._docstrings_collect_nodes(self.ast_nodes)
 
     def _resolve_relative_token_file(self, token_filename: str) -> str:
@@ -456,6 +473,9 @@ class WorkspaceIndex:
         self.macro_docstrings: dict[str, str] = {}
         self.label_docstrings: dict[str, str] = {}
         self.scope_docstrings: dict[str, str] = {}
+        # uri -> module-level docstring, surfaced when hovering an `.import`
+        # or `.include` token that resolves to that file.
+        self.module_docstrings: dict[str, str] = {}
         self.doc_labels: dict[str, set[str]] = {}
         self.doc_symbols: dict[str, set[str]] = {}
         self.doc_macros: dict[str, set[str]] = {}
@@ -479,6 +499,7 @@ class WorkspaceIndex:
         self.macro_docstrings.clear()
         self.label_docstrings.clear()
         self.scope_docstrings.clear()
+        self.module_docstrings.clear()
         self.doc_labels.clear()
         self.doc_symbols.clear()
         self.doc_macros.clear()
@@ -736,6 +757,10 @@ class WorkspaceIndex:
         new_symbols = self._index_symbols(doc)
         new_macros = self._index_macros(doc)
         self._merge_docstrings(doc)
+        if doc.module_docstring:
+            self.module_docstrings[doc.uri] = doc.module_docstring
+        else:
+            self.module_docstrings.pop(doc.uri, None)
 
         self.doc_labels[doc.uri] = new_labels
         self.doc_symbols[doc.uri] = new_symbols
@@ -772,6 +797,7 @@ class WorkspaceIndex:
         for key in self.doc_scope_docstrings.get(uri, set()):
             self.scope_docstrings.pop(key, None)
             self.scope_name_lookup.pop(key, None)
+        self.module_docstrings.pop(uri, None)
         for store in (
             self.doc_labels,
             self.doc_symbols,
@@ -1173,6 +1199,12 @@ class A816LanguageServer:
         if line_num >= len(doc.lines):
             return None
         line = doc.lines[line_num]
+
+        workspace = self._ensure_workspace_index()
+        directive_hover = self._hover_for_module_directive(line, params.text_document.uri, workspace)
+        if directive_hover:
+            return directive_hover
+
         word_start, word_end = self._word_span(line, params.position.character)
         if word_start >= word_end:
             return None
@@ -1183,10 +1215,37 @@ class A816LanguageServer:
         opcode_or_keyword = self._hover_for_opcode_or_keyword(base_word, word)
         if opcode_or_keyword:
             return opcode_or_keyword
-        workspace = self._ensure_workspace_index()
         return self._hover_for_label_or_scope(doc, workspace, raw_word, word) or self._hover_for_macro(
             doc, workspace, raw_word, word
         )
+
+    def _hover_for_module_directive(
+        self, line: str, current_uri: str, workspace: WorkspaceIndex | None
+    ) -> Hover | None:
+        """Return the target module's leading docstring when cursor lands on
+        an `.include "path"` or `.import "module"` line."""
+        if workspace is None:
+            return None
+        include_match = re.search(r'\.include\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
+        import_match = re.search(r'\.import\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
+        target_uri: str | None = None
+        label: str | None = None
+        if include_match:
+            resolved = self._resolve_include_path(include_match.group(1), current_uri)
+            if resolved:
+                target_uri = Path(resolved).as_uri()
+                label = include_match.group(1)
+        elif import_match:
+            resolved = self._resolve_module_path(import_match.group(1), current_uri)
+            if resolved:
+                target_uri = Path(resolved).as_uri()
+                label = import_match.group(1)
+        if not target_uri or label is None:
+            return None
+        docstring = workspace.module_docstrings.get(target_uri)
+        if not docstring:
+            return None
+        return self._markdown_hover(f"**{label}**\n\n{docstring}")
 
     @staticmethod
     def _doc_symbol_range(pos: Position, name_len: int) -> Range:
