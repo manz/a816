@@ -16,7 +16,12 @@ def _is_exportable(name: str) -> bool:
     Mirrors the object-mode export rule: `_helper` stays local, `helper`
     promotes, and dunder names like `__size` (struct size symbol) keep
     promoting because they're system-injected, not user-private.
+    The `__sc<idx>__` prefix is the codegen's internal scope-isolation
+    mangling — purely scaffolding and must stay private even though it
+    starts with double underscore.
     """
+    if name.startswith("__sc"):
+        return False
     return not name.startswith("_") or name.startswith("__")
 
 
@@ -319,14 +324,17 @@ class Resolver:
                 continue
             mangle = mangle_nested and idx > 0 and not isinstance(scope, NamedScope)
             for name, value in scope.get_labels():
-                exported = f"__sc{idx}__{name}" if mangle and not name.startswith("_") else name
+                exported = f"__sc{idx}__{name}" if mangle else name
                 labels.append((exported, value))
         return labels
 
     @staticmethod
     def _mangle(name: str, idx: int, mangle: bool) -> str:
-        # Names starting with `_` are explicitly local; keep their short form.
-        return f"__sc{idx}__{name}" if mangle and not name.startswith("_") else name
+        # Every nested anonymous scope's labels get a unique prefix so
+        # repeated macro invocations don't collide on the same name —
+        # underscore-prefixed names included (they are private to the
+        # *invocation*, which still needs distinct addresses across calls).
+        return f"__sc{idx}__{name}" if mangle else name
 
     def _scope_int_symbols(self, scope: "Scope") -> list[tuple[str, int]]:
         return [(name, value) for name, value in scope.symbols.items() if isinstance(value, int)]

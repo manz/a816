@@ -56,8 +56,8 @@ class ExpressionNode(ValueNodeProtocol):
             if owner is None:
                 continue
             touches_label = True
-            if owner is self.resolver.scopes[0] or tok.value.startswith("_"):
-                continue
+            if owner is self.resolver.scopes[0]:
+                continue  # root labels keep their plain name; only nested-scope refs need mangling
             scope_idx = self.resolver.scopes.index(owner)
             rename[tok.value] = f"__sc{scope_idx}__{tok.value}"
         return rename, touches_label

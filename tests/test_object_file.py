@@ -158,10 +158,14 @@ second_label:
     obj = ObjectFile.from_file(str(obj_file))
     by_name = {name: address for name, address, _, _ in obj.symbols}
     assert "first_label" in by_name
-    assert "_inner_label" in by_name
+    # Anonymous-block labels are mangled with __sc<idx>__ so repeated
+    # blocks (or repeated macro invocations) keep distinct addresses.
+    inner_keys = [k for k in by_name if k.endswith("_inner_label")]
+    assert len(inner_keys) == 1, f"expected one mangled _inner_label, got {inner_keys}"
+    inner = inner_keys[0]
     assert "second_label" in by_name
     # Labels are 3 bytes apart (lda #imm = 2 + rts = 1).
-    assert by_name["_inner_label"] - by_name["first_label"] == 3
+    assert by_name[inner] - by_name["first_label"] == 3
     assert by_name["second_label"] - by_name["first_label"] == 6
 
 
@@ -195,8 +199,16 @@ final:
     obj = ObjectFile.from_file(str(obj_file))
     by_name = {name: address for name, address, _, _ in obj.symbols}
     base = by_name["outer"]
-    # nop = 1 byte; consecutive labels are one byte apart.
-    assert by_name["_level1"] - base == 1
-    assert by_name["_level2"] - base == 2
-    assert by_name["_after_nested"] - base == 3
+
+    def find_one(suffix: str) -> int:
+        keys = [k for k in by_name if k.endswith(suffix)]
+        assert len(keys) == 1, f"expected one mangled {suffix}, got {keys}"
+        return by_name[keys[0]]
+
+    # nop = 1 byte; consecutive labels are one byte apart. Underscore-prefixed
+    # nested-scope labels are mangled with __sc<idx>__ to keep repeated
+    # invocations / blocks distinct.
+    assert find_one("_level1") - base == 1
+    assert find_one("_level2") - base == 2
+    assert find_one("_after_nested") - base == 3
     assert by_name["final"] - base == 4
