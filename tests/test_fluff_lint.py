@@ -234,6 +234,29 @@ def test_doc005_quiet_for_single_line_comment(tmp_path: Path) -> None:
     assert all(d.code != "DOC005" for d in diags)
 
 
+def test_doc006_quiet_when_intervening_node_separates_comment_and_docstring(tmp_path: Path) -> None:
+    """A target with a leading comment must not 'leak' onto a later target's docstring."""
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n'
+        "; banner line one\n"
+        "; banner line two\n"
+        ".macro intervening() {\n"
+        '    """doc"""\n'
+        "    rts\n"
+        "}\n"
+        ".macro foo() {\n"
+        '    """doc"""\n'
+        "    rts\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    doc006 = [d for d in diags if d.code == "DOC006"]
+    assert len(doc006) == 1
+    assert "intervening" in doc006[0].message
+
+
 def test_doc006_flags_comment_block_plus_docstring(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     src.write_text(
