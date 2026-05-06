@@ -347,10 +347,15 @@ def _placement_walk(out: dict[str, list[Diagnostic]], path: Path, nodes: list[As
                 _handle_docstring_node(out, path, state, node, inside_body)
                 continue
         state.saw_first_non_comment = True
-        target_name = _public_target_name(node) if isinstance(node, MacroAstNode | ScopeAstNode) else None
+        public_name = _public_target_name(node)
         match node:
-            case MacroAstNode() | ScopeAstNode() if target_name is not None:
-                _handle_target_node(out, path, state, node, target_name)
+            case MacroAstNode() | ScopeAstNode() if public_name is not None:
+                _handle_target_node(out, path, state, node, public_name)
+            case LabelAstNode() if public_name is not None:
+                # Labels have no inside-body slot; just consume any leading
+                # docstring / comment so DOC004 / DOC005 don't fire on them.
+                state.pending_doc = None
+                state.comment_run = []
             case _:
                 _flush_orphan_doc(out, path, state)
                 state.comment_run = []

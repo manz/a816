@@ -202,6 +202,25 @@ def test_doc004_flags_orphan_docstring(tmp_path: Path) -> None:
     assert any(d.code == "DOC004" for d in diags)
 
 
+def test_doc004_quiet_for_docstring_above_label(tmp_path: Path) -> None:
+    """Labels have no inside-body slot; a docstring directly above them
+    is the canonical attach point and must not trigger DOC004."""
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n'
+        '"""Get pointer for bank 1-1."""\n'
+        "get_bank1_1_pointer:\n"
+        "    rtl\n"
+        '"""Get pointer for bank 1-2."""\n'
+        "get_bank1_2_pointer:\n"
+        "    rtl\n",
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC004" for d in diags)
+    assert all(d.code != "DOC005" for d in diags)
+
+
 def test_doc004_quiet_when_docstring_attaches_to_target(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     src.write_text(
