@@ -603,12 +603,35 @@ class A816Formatter:
             out.append(closing)
         return out
 
+    @staticmethod
+    def _strip_blanks_after_position_directive(lines: list[str]) -> list[str]:
+        """Collapse blank lines immediately after `*=` / `@=` directives.
+
+        Position directives sit tight with the data they place — blank
+        lines between `*= 0xADDR` and the following `.incbin` / opcode
+        read as noise rather than separation. The author can still put
+        blank lines *before* the directive to break up sections.
+        """
+        out: list[str] = []
+        skip_blanks = False
+        for line in lines:
+            stripped = line.lstrip()
+            if skip_blanks and not stripped:
+                continue
+            out.append(line)
+            skip_blanks = stripped.startswith("*=") or stripped.startswith("@=")
+        return out
+
     def _finalize_formatting(self, lines: list[str]) -> str:
         """Strip trailing whitespace, collapse blanks, separate labels, align inline comments."""
         lines = [line.rstrip() for line in lines]
         lines = self._wrap_long_paren_lines(lines)
         lines = self._collapse_empty_lines(lines)
         lines = self._separate_labels(lines)
+        # Position directives sit tight with their data; strip blanks
+        # after `_separate_labels` because that pass would otherwise
+        # re-insert a blank between `*=` / `@=` and the next label.
+        lines = self._strip_blanks_after_position_directive(lines)
         self._align_inline_comments(lines)
         content = "\n".join(lines)
         if content and not content.endswith("\n"):

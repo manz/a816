@@ -915,3 +915,37 @@ class TestFormatterIdempotency(TestCase):
     def test_idempotent_sample_file(self) -> None:
         sample = Path(__file__).parent / "samples" / "sample.s"
         self._assert_idempotent(sample.read_text(encoding="utf-8"))
+
+
+class TestPositionDirectiveBlanks(TestCase):
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_no_blank_between_position_and_data(self) -> None:
+        src = (
+            '"""m"""\n'
+            "*= 0x0AF000\n"
+            "\n"
+            "\n"
+            '.incbin "fonts/8x8.bin"\n'
+            "\n"
+            "*= 0x0FA710\n"
+            "\n"
+            '.incbin "assets/characters_names.dat"\n'
+        )
+        out = self.formatter.format_text(src)
+        # No blank line between `*=` and the next directive.
+        self.assertNotIn("*=0x0AF000\n\n", out)
+        self.assertNotIn("*=0x0FA710\n\n", out)
+        self.assertIn('*=0x0AF000\n.incbin "fonts/8x8.bin"', out)
+
+    def test_reloc_directive_also_tight(self) -> None:
+        src = '"""m"""\n*= 0x008000\n@= 0x7E2000\n\nram_routine:\n    rts\n'
+        out = self.formatter.format_text(src)
+        self.assertIn("*=0x008000\n@=0x7E2000\nram_routine:", out)
+
+    def test_blank_before_position_preserved(self) -> None:
+        """Blanks before a `*=` are kept — author uses them to break sections."""
+        src = '"""m"""\nlabel_one:\n    rts\n\n*= 0x0AF000\n.incbin "x.bin"\n'
+        out = self.formatter.format_text(src)
+        self.assertIn("\n\n*=0x0AF000", out)
