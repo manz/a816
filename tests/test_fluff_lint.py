@@ -160,6 +160,38 @@ def test_n802_flags_mixed_case_constant(tmp_path: Path) -> None:
     assert "MixedThing" in n802[0].message
 
 
+def test_doc003_flags_docstring_above_macro(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n"""Macro doc."""\n.macro public_macro() {\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    doc003 = [d for d in diags if d.code == "DOC003"]
+    assert len(doc003) == 1
+    assert "public_macro" in doc003[0].message
+
+
+def test_doc003_quiet_when_docstring_inside_body(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.macro public_macro() {\n    """Macro doc."""\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC003" for d in diags)
+
+
+def test_doc003_skips_private_target(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n"""Private doc."""\n.macro _private() {\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC003" for d in diags)
+
+
 def test_noqa_blanket_silences_all_codes_on_line(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     long_data = ", ".join(["0x1234"] * 30)
@@ -197,7 +229,7 @@ def test_noqa_codes_case_insensitive_and_multi(tmp_path: Path) -> None:
 def test_check_command_clean_exits_zero(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     src.write_text(
-        '"""Module."""\n"""Documented."""\n.macro foo() {\n    rts\n}\n',
+        '"""Module."""\n.macro foo() {\n    """Documented."""\n    rts\n}\n',
         encoding="utf-8",
     )
     assert fluff_main(["check", str(src)]) == 0

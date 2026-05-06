@@ -8,6 +8,8 @@ Rules:
 - E501 — source line exceeds the maximum allowed length (120 characters).
 - N801 — label name should be snake_case.
 - N802 — constant name (`name = expr`) should be snake_case or SCREAMING_SNAKE_CASE.
+- DOC003 — a docstring that sits directly above a public macro / scope should be
+  moved inside the body so it becomes the first statement after the opening brace.
 
 A trailing `; noqa` comment silences every rule on that line. Pass codes
 to suppress selectively, ruff-style: `; noqa: E501,N801`.
@@ -139,6 +141,41 @@ def _missing_doc_diagnostic(path: Path, node: AstNode, name: str, pending_doc: b
     )
 
 
+def _check_external_docstrings(path: Path, nodes: list[AstNode]) -> list[Diagnostic]:
+    """DOC003: a docstring directly above a macro/scope should live inside the body."""
+    hits: list[Diagnostic] = []
+    pending_doc: DocstringAstNode | None = None
+    module_doc_consumed = False
+    for node in nodes:
+        if isinstance(node, CommentAstNode):
+            continue
+        if isinstance(node, DocstringAstNode):
+            if module_doc_consumed:
+                pending_doc = node
+            else:
+                module_doc_consumed = True
+            continue
+        module_doc_consumed = True
+        if pending_doc is not None and isinstance(node, MacroAstNode | ScopeAstNode):
+            target = _public_target_name(node)
+            if target is not None:
+                line, col = _node_position(pending_doc)
+                hits.append(
+                    Diagnostic(
+                        path=path,
+                        line=line,
+                        column=col,
+                        code="DOC003",
+                        message=(
+                            f"docstring above {_kind_label(node)} '{target}' should "
+                            "be moved inside the body (first statement after `{`)"
+                        ),
+                    )
+                )
+        pending_doc = None
+    return hits
+
+
 def _check_public_docstrings(path: Path, nodes: list[AstNode]) -> list[Diagnostic]:
     """DOC002: each public macro/scope/label needs an attached docstring.
 
@@ -260,6 +297,7 @@ def lint_text(text: str, path: Path) -> list[Diagnostic]:
         if module_hit is not None:
             diagnostics.append(module_hit)
         diagnostics.extend(_check_public_docstrings(path, nodes))
+        diagnostics.extend(_check_external_docstrings(path, nodes))
         diagnostics.extend(_check_label_naming(path, nodes))
         diagnostics.extend(_check_constant_naming(path, nodes))
     return [d for d in diagnostics if not _is_suppressed(d.line, d.code, noqa_map)]
