@@ -769,3 +769,31 @@ _OkBk2:
         assert "comment */" in formatted
         # Idempotence: formatting again is a no-op.
         assert self.formatter.format_text(formatted) == formatted
+
+
+class TestParenWrapping(TestCase):
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_macro_def_wraps_when_over_limit(self) -> None:
+        params = ", ".join(f"param_{i}" for i in range(20))
+        src = f'"""m"""\n.macro big_macro({params}) {{\n    rts\n}}\n'
+        out = self.formatter.format_text(src)
+        first_call_line = next(line for line in out.splitlines() if line.startswith(".macro"))
+        assert first_call_line.endswith("(")
+        assert ") {" in out
+        assert all(len(line) <= 120 for line in out.splitlines())
+
+    def test_macro_apply_wraps_when_over_limit(self) -> None:
+        args = ", ".join(f"argument_{i}" for i in range(15))
+        src = f'"""m"""\n.macro big_macro() {{\n    rts\n}}\nmain:\n    big_macro({args})\n'
+        out = self.formatter.format_text(src)
+        assert all(len(line) <= 120 for line in out.splitlines())
+        assert any(line.rstrip().endswith("big_macro(") for line in out.splitlines())
+        assert any(line.strip() == ")" for line in out.splitlines())
+
+    def test_short_call_not_wrapped(self) -> None:
+        src = '"""m"""\n.macro foo(a, b) {\n    rts\n}\nmain:\n    foo(1, 2)\n'
+        out = self.formatter.format_text(src)
+        assert "foo(1, 2)" in out
+        assert ".macro foo(a, b) {" in out

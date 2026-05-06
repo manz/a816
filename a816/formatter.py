@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,7 @@ class FormattingOptions:
         max_empty_lines: int = 2,
         align_labels: bool = True,
         space_after_comma: bool = True,
+        max_line_length: int = 120,
     ):
         self.indent_size = indent_size
         self.opcode_indent = opcode_indent if opcode_indent is not None else indent_size
@@ -59,6 +61,7 @@ class FormattingOptions:
         self.max_empty_lines = max_empty_lines
         self.align_labels = align_labels
         self.space_after_comma = space_after_comma
+        self.max_line_length = max_line_length
 
 
 class A816Formatter:
@@ -538,9 +541,50 @@ class A816Formatter:
                     padding = max(target_column - (indent + len(code_part)), 1)
                     lines[index] = f"{' ' * indent}{code_part}{' ' * padding}{comment_text}"
 
+    _PAREN_WRAP_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^(?P<indent>\s*)(?P<head>(?:\.macro\s+)?[A-Za-z_][\w.]*)\((?P<params>[^()]*)\)(?P<tail>\s*\{?\s*)$"
+    )
+
+    def _wrap_long_paren_lines(self, lines: list[str]) -> list[str]:
+        """Wrap macro defs / applies whose single-line form exceeds max_line_length.
+
+        Match shape `[indent]head(params)tail`. `head` may be prefixed with
+        `.macro `; `tail` is empty (macro apply) or ` {` (macro def). Lines
+        with embedded comments, nested parens, or no params are left alone.
+        """
+        limit = self.options.max_line_length
+        out: list[str] = []
+        for line in lines:
+            if len(line) <= limit:
+                out.append(line)
+                continue
+            match = self._PAREN_WRAP_RE.match(line)
+            if not match:
+                out.append(line)
+                continue
+            params_raw = match.group("params").strip()
+            if not params_raw:
+                out.append(line)
+                continue
+            params = [p.strip() for p in params_raw.split(",") if p.strip()]
+            if any(("(" in p or ")" in p) for p in params):
+                out.append(line)
+                continue
+            indent = match.group("indent")
+            head = match.group("head")
+            tail = match.group("tail").strip()
+            inner_indent = indent + " " * self.options.indent_size
+            out.append(f"{indent}{head}(")
+            for param in params:
+                out.append(f"{inner_indent}{param},")
+            closing = f"{indent}){' ' + tail if tail else ''}".rstrip()
+            out.append(closing)
+        return out
+
     def _finalize_formatting(self, lines: list[str]) -> str:
         """Strip trailing whitespace, collapse blanks, separate labels, align inline comments."""
         lines = [line.rstrip() for line in lines]
+        lines = self._wrap_long_paren_lines(lines)
         lines = self._collapse_empty_lines(lines)
         lines = self._separate_labels(lines)
         self._align_inline_comments(lines)
