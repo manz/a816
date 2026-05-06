@@ -410,3 +410,37 @@ def test_lint_file_picks_up_include_paths_from_a816_toml(tmp_path: Path) -> None
     diags = lint_file(main)
     # No parse-error fallout from the unresolved include.
     assert all(d.code != "DOC001" for d in diags)
+
+
+def test_lint_recurses_into_if_branches(tmp_path: Path) -> None:
+    """Labels / docstrings inside `.if { ... } else { ... }` are still linted."""
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.if FEATURE_FLAG {\nBadName:\n    rts\n} else {\nOtherBad:\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    n801 = [d for d in diags if d.code == "N801"]
+    names = {hit.message for hit in n801}
+    assert any("BadName" in m for m in names)
+    assert any("OtherBad" in m for m in names)
+
+
+def test_lint_recurses_into_for_body(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.for i := 0, 3 {\nLoopLabel:\n    nop\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert any(d.code == "N801" and "LoopLabel" in d.message for d in diags)
+
+
+def test_doc002_inside_if_branch(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.if FEATURE_FLAG {\n    .macro inner_macro() {\n        rts\n    }\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert any(d.code == "DOC002" and "inner_macro" in d.message for d in diags)

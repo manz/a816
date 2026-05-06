@@ -30,6 +30,8 @@ from a816.parse.ast.nodes import (
     CommentAstNode,
     CompoundAstNode,
     DocstringAstNode,
+    ForAstNode,
+    IfAstNode,
     LabelAstNode,
     MacroAstNode,
     ScopeAstNode,
@@ -169,7 +171,11 @@ def _public_target_name(node: AstNode) -> str | None:
 
 
 def _walk_nodes(nodes: list[AstNode]) -> list[AstNode]:
-    """Flatten nodes through scopes/blocks so nested labels/constants are visited."""
+    """Flatten nodes through scopes / blocks / control-flow so nested labels and
+    constants are visited. `.if` / `.for` bodies are part of the AST regardless
+    of whether the condition resolves at parse time, so the lint sees both
+    branches even when fluff has no symbol resolution against the prelude.
+    """
     out: list[AstNode] = []
     for node in nodes:
         out.append(node)
@@ -178,6 +184,14 @@ def _walk_nodes(nodes: list[AstNode]) -> list[AstNode]:
                 out.extend(_walk_nodes(list(node.body.body)))
             case BlockAstNode() | CompoundAstNode():
                 out.extend(_walk_nodes(list(node.body)))
+            case IfAstNode():
+                out.extend(_walk_nodes(list(node.block.body)))
+                if node.else_block is not None:
+                    out.extend(_walk_nodes(list(node.else_block.body)))
+            case ForAstNode():
+                out.extend(_walk_nodes(list(node.body.body)))
+            case MacroAstNode():
+                out.extend(_walk_nodes(list(node.block.body)))
     return out
 
 
@@ -211,6 +225,29 @@ def _label_has_below_docstring(nodes: list[AstNode], idx: int) -> bool:
     return j < len(nodes) and isinstance(nodes[j], DocstringAstNode)
 
 
+def _expand_through_control_flow(nodes: list[AstNode]) -> list[AstNode]:
+    """Inline `.if` / `.for` bodies into the surrounding sequence.
+
+    Conditionals and loops don't introduce a new docstring scope —
+    DOC002 / DOC003 should see public targets inside them at the
+    same level as their siblings outside. Both branches of an `.if`
+    are inlined; the lint sees them all because parser-time
+    evaluation isn't applied at the AST stage.
+    """
+    out: list[AstNode] = []
+    for node in nodes:
+        match node:
+            case IfAstNode():
+                out.extend(_expand_through_control_flow(list(node.block.body)))
+                if node.else_block is not None:
+                    out.extend(_expand_through_control_flow(list(node.else_block.body)))
+            case ForAstNode():
+                out.extend(_expand_through_control_flow(list(node.body.body)))
+            case _:
+                out.append(node)
+    return out
+
+
 def _check_doc002(ctx: LintContext) -> Iterable[Diagnostic]:
     """Public macro / scope / label needs a docstring.
 
@@ -219,7 +256,7 @@ def _check_doc002(ctx: LintContext) -> Iterable[Diagnostic]:
     the first statement *after* the label, like Python's function-body
     docstring.
     """
-    nodes = ctx.nodes or []
+    nodes = _expand_through_control_flow(ctx.nodes or [])
     pending_doc = False
     module_doc_consumed = False
     for idx, node in enumerate(nodes):
@@ -266,7 +303,7 @@ def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
     """
     pending_doc: DocstringAstNode | None = None
     module_doc_consumed = False
-    for node in ctx.nodes or []:
+    for node in _expand_through_control_flow(ctx.nodes or []):
         if isinstance(node, CommentAstNode):
             continue
         if isinstance(node, DocstringAstNode):
@@ -436,6 +473,12 @@ def _placement_walk(out: dict[str, list[Diagnostic]], path: Path, nodes: list[As
                 _placement_walk(out, path, list(node.body.body), inside_body=True)
             case MacroAstNode():
                 _placement_walk(out, path, list(node.block.body), inside_body=True)
+            case IfAstNode():
+                _placement_walk(out, path, list(node.block.body), inside_body=True)
+                if node.else_block is not None:
+                    _placement_walk(out, path, list(node.else_block.body), inside_body=True)
+            case ForAstNode():
+                _placement_walk(out, path, list(node.body.body), inside_body=True)
     _flush_orphan_doc(out, path, state)
 
 
