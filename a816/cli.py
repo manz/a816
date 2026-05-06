@@ -180,24 +180,53 @@ def _run_link(args: argparse.Namespace) -> int:
     sys.exit(-1)
 
 
-def cli_main() -> None:
-    """x816 CLI entry. Exit 0 success, 1 assembly/link error, -1 invalid input."""
-    args = _build_arg_parser().parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "format")
 
+
+def _dispatch_subcommand(argv: list[str]) -> int | None:
+    """Return an exit code if `argv` starts with a known subcommand, else None.
+
+    Bare assemble invocations (no subcommand) keep working — the caller
+    falls through to the legacy parser. `build` is just an explicit
+    alias for that path.
+    """
+    if not argv or argv[0] not in _SUBCOMMANDS:
+        return None
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "build":
+        args = _build_arg_parser().parse_args(rest)
+        return _run_assemble(args)
+    if cmd in {"check", "format"}:
+        from a816.fluff import fluff_main
+
+        return fluff_main([cmd, *rest])
+    return None
+
+
+def _run_assemble(args: argparse.Namespace) -> int:
     use_auto_imports = (
         not args.no_auto_imports
         and not args.compile_only
         and len(args.input_files) == 1
         and args.input_files[0].suffix in _ASM_SUFFIXES
     )
+    if use_auto_imports:
+        return _run_auto_imports(args)
+    if args.compile_only:
+        return _run_compile_only(args)
+    return _run_link(args)
 
+
+def cli_main() -> None:
+    """a816 CLI entry. Exit 0 success, 1 assembly/link error, -1 invalid input."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+    argv = sys.argv[1:]
     try:
-        if use_auto_imports:
-            sys.exit(_run_auto_imports(args))
-        if args.compile_only:
-            sys.exit(_run_compile_only(args))
-        sys.exit(_run_link(args))
+        rc = _dispatch_subcommand(argv)
+        if rc is not None:
+            sys.exit(rc)
+        args = _build_arg_parser().parse_args(argv)
+        sys.exit(_run_assemble(args))
     except LinkerError as e:
         print(e.format(), file=sys.stderr)
         sys.exit(1)

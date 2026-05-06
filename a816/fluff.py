@@ -243,5 +243,18 @@ def fluff_main(argv: Sequence[str] | None = None) -> int:
     return 2  # parser.error never returns, but mypy needs this
 
 
+def fluff_legacy_main() -> int:
+    """`a816-fluff` entrypoint: emit a deprecation notice and proxy to `fluff_main`.
+
+    Kept for compatibility with users / scripts pinned to the old binary
+    name. Prefer `a816 check` and `a816 format` going forward.
+    """
+    print(
+        "warning: `a816-fluff` is deprecated; use `a816 check` / `a816 format` instead.",
+        file=sys.stderr,
+    )
+    return fluff_main()
+
+
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(fluff_main())
