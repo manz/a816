@@ -5,6 +5,7 @@ repo_url: https://github.com/manz/a816
 nav:
   - Home: index.md
   - Modules: modules.md
+  - Fluff (lint + format): fluff.md
   - LSP: lsp.md
   - Debug info (.adbg): adbg-format.md
   - Python usage: python_usage.md

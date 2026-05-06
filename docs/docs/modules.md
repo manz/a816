@@ -51,14 +51,14 @@ font_high = (target >> 16) & 0xFF
 ## Workflow
 
 ```
-$ a816 --compile-only file1.s file2.s
-$ a816 file1.o file2.o -o output.ips
+$ a816 build --compile-only file1.s file2.s
+$ a816 build file1.o file2.o -o output.ips
 ```
 
 Mixed source + object inputs work too:
 
 ```
-$ a816 file1.s file2.o -o output.ips
+$ a816 build file1.s file2.o -o output.ips
 ```
 
 ## Auto-generated symbols

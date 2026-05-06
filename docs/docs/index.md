@@ -9,47 +9,61 @@ disassembler).
 
 ### Command line
 
+The `a816` CLI is subcommand-driven (`ruff` / `cargo` style):
+
 ```
-$ a816 --help
-usage: x816 [-h] [--verbose] [-o OUTPUT_FILE] [-f FORMAT] [-m MAPPING]
-            [--copier-header] [--dump-symbols] [-c]
-            [-D KEY=VALUE [KEY=VALUE ...]] [--no-auto-imports] [-I PATH]
-            [--obj-dir OBJ_DIR] [--include-path PATH] [--prelude PRELUDE_FILE]
-            input_files [input_files ...]
-
-positional arguments:
-  input_files           Input files (asm files or object files for linking)
-
-options:
-  -o, --output OUTPUT_FILE
-                        Output file
-  -f FORMAT             Output format (ips, sfc, obj)
-  -m MAPPING            Address mapping (low_rom, low_rom_2, high_rom)
-  --copier-header       Adds 0x200 address delta for ips writer.
-  --dump-symbols        Dumps symbol table
-  -c, --compile-only    Compile to object files without linking.
-  -D, --defines KEY=VALUE [KEY=VALUE ...]
-                        Defines symbols.
-  --no-auto-imports     Disable automatic import resolution.
-  -I, --module-path PATH
-                        Add directory to module search path.
-  --obj-dir OBJ_DIR     Directory for compiled object files (default:
-                        build/obj).
-  --include-path PATH   Add directory to include search path for .include.
-  --prelude PRELUDE_FILE
-                        Config file prepended to every module compilation.
+$ a816 build  <files> -o <output>     # assemble + link
+$ a816 check  <paths>                 # lint with fluff (DOC*, E501, N801, N802)
+$ a816 format <paths>                 # format .s / .i sources with fluff
 ```
 
-### Separate compilation
+Bare invocation (`a816 file.s -o out.ips`) still routes to `build`
+for backwards compatibility — existing scripts keep working.
+
+#### `a816 build` flags
+
+```
+-o, --output OUTPUT      Output file (default a.out)
+-f FORMAT                Output format (ips, sfc, obj)
+-m MAPPING               Address mapping (low, low_rom_2, high_rom)
+--copier-header          Add 0x200 address delta for ips writer.
+--dump-symbols           Dump the symbol table.
+-c, --compile-only       Compile to object files without linking.
+-D KEY=VALUE [KEY=VALUE ...]
+                         Define symbols (numeric values use int(., 0)).
+--no-auto-imports        Disable automatic import resolution.
+-I, --module-path PATH   Add a module search path (repeatable).
+--obj-dir DIR            Directory for compiled object files (default
+                         build/obj).
+--include-path PATH      Add directory to include search path for `.include`.
+--prelude PRELUDE_FILE   Config file prepended to every module compilation.
+```
+
+#### Separate compilation
 
 Compile each module to an object file, then link:
 
 ```
-$ a816 --compile-only file1.s file2.s   # produces file1.o, file2.o
-$ a816 file1.o file2.o -o output.ips    # link to IPS
-$ a816 file1.o file2.o -f sfc -o output.sfc
-$ a816 file1.s file2.o -o output.ips    # mix sources and objects
+$ a816 build --compile-only file1.s file2.s   # produces file1.o, file2.o
+$ a816 build file1.o file2.o -o output.ips    # link to IPS
+$ a816 build file1.o file2.o -f sfc -o output.sfc
+$ a816 build file1.s file2.o -o output.ips    # mix sources and objects
 ```
+
+#### Lint and format
+
+See [Fluff (lint + format)](fluff.md) for the full rule set, `; noqa`
+suppression syntax, and editor integration.
+
+```
+$ a816 check src/                 # report lint hits
+$ a816 format src/                # rewrite sources in place
+$ a816 format --check src/        # exit non-zero if reformatting needed
+$ a816 format --diff src/         # print unified diffs without writing
+```
+
+The legacy `a816-fluff` binary still works but prints a deprecation
+notice on stderr — prefer `a816 check` / `a816 format` going forward.
 
 ### From Python
 
