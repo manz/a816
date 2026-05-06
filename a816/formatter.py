@@ -448,7 +448,7 @@ class A816Formatter:
     def _indent_block_lines(self, lines: list[str], levels: int = 1) -> list[str]:
         """Indent a sequence of lines representing a block.
 
-        Two structural exceptions:
+        Three structural exceptions:
         - Inner labels (lines ending in `:` that aren't directives) stay
           flush-left so they read as section markers inside the routine —
           the same convention `_loop:` / `_not_found:` follow in
@@ -459,12 +459,24 @@ class A816Formatter:
           Inline comments (folded onto an instruction) are unaffected
           because they're appended to the instruction line, not emitted
           as their own entry here.
+        - Stand-alone docstrings (the `\"\"\"` markers and every line in
+          between) pass through unchanged. They sit above a label, so the
+          docstring needs to share that label's flush-left indentation
+          and any relative indent the author baked into the content has
+          to survive intact — which `_indent` would destroy by lstripping.
         """
         indented: list[str] = []
+        in_docstring = False
         for line in lines:
             stripped = line.strip()
             if not stripped:
                 indented.append("")
+                continue
+            triple_count = stripped.count('"""')
+            if in_docstring or triple_count:
+                indented.append(line.rstrip())
+                if triple_count % 2 == 1:
+                    in_docstring = not in_docstring
                 continue
             is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
             if is_label or stripped.startswith(";"):

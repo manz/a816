@@ -841,3 +841,33 @@ class TestDocstringRuffParity(TestCase):
         src = '"""\nshort.\n"""\nmain:\n    rts\n'
         out = self.formatter.format_text(src)
         assert '"""\nshort.\n"""' in out
+
+
+class TestLabelAttachedDocstring(TestCase):
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_docstring_above_label_inside_scope_stays_flush(self) -> None:
+        """A docstring sitting above a label keeps the label's flush-left
+        indent — labels stay flush even inside scopes, so the docstring
+        must follow. The first body docstring is consumed as the scope's
+        own docstring, so the test puts the label-attached docstring after
+        an instruction to keep it in the body stream."""
+        src = '.scope foo {\nfirst_label:\n    rts\n"""attached to label"""\nmy_label:\n    rts\n}\n'
+        out = self.formatter.format_text(src)
+        lines = out.splitlines()
+        doc_idx = next(i for i, line in enumerate(lines) if '"""attached to label"""' in line)
+        label_idx = next(i for i, line in enumerate(lines) if line.startswith("my_label:"))
+        # both flush-left
+        assert lines[doc_idx].startswith('"""'), lines[doc_idx]
+        assert lines[label_idx] == "my_label:"
+
+    def test_multiline_docstring_above_label_preserves_relative_indent(self) -> None:
+        src = '.scope foo {\nfirst_label:\n    rts\n"""\nsummary\n    indented detail\n"""\nmy_label:\n    rts\n}\n'
+        out = self.formatter.format_text(src)
+        assert "    indented detail" in out
+        # Triple-quote markers stay flush-left.
+        markers = [line for line in out.splitlines() if line.strip() == '"""']
+        assert markers, 'expected `"""` markers in output'
+        for m in markers:
+            assert m == '"""', f"docstring marker indented: {m!r}"
