@@ -35,6 +35,12 @@ module-paths  = ["src/modules"]
 - `entrypoint` — the file the server compiles for diagnostics.
 - `include-paths` — directories searched by `.include`.
 - `module-paths` — directories searched by `.import`.
+- `prelude` — file prepended to every module compilation (project-wide
+  feature flags, register-size hints, `.table` defaults). Mirrors the
+  `--prelude` CLI flag.
+
+Fluff (`a816 check` / `a816 format`) reads the same config — see
+[Fluff (lint + format)](fluff.md#a816toml-discovery).
 
 Without `a816.toml` the server falls back to same-directory lookup.
 

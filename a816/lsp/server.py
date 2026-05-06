@@ -421,7 +421,7 @@ class A816Document:
         parsed = urlparse(self.uri)
         path = Path(parsed.path) if parsed.scheme == "file" else Path(self.uri)
         try:
-            hits = lint_text(self.content, path)
+            hits = lint_text(self.content, path, include_paths=self.include_paths)
         except (AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
             logger.warning("fluff lint failed for %s: %s", self.uri, exc)
             return

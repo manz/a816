@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+from a816.config import discover_a816_config
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
@@ -522,9 +523,20 @@ def all_rule_codes() -> list[str]:
     return sorted(_REGISTRY)
 
 
-def lint_text(text: str, path: Path) -> list[Diagnostic]:
-    """Run every registered rule against in-memory source text."""
-    result = MZParser.parse_as_ast(text, str(path))
+def lint_text(
+    text: str,
+    path: Path,
+    *,
+    include_paths: list[Path] | None = None,
+) -> list[Diagnostic]:
+    """Run every registered rule against in-memory source text.
+
+    `include_paths` is forwarded to the parser so `.include` directives
+    resolve the same way they do under the assembler. The fluff CLI
+    fills it from the project's `a816.toml`; callers without a config
+    can pass it explicitly.
+    """
+    result = MZParser.parse_as_ast(text, str(path), include_paths=include_paths)
     parse_failed = bool(result.error)
     nodes = None if parse_failed else list(result.nodes)
     ctx = LintContext(path=path, text=text, nodes=nodes, parse_failed=parse_failed)
@@ -545,5 +557,11 @@ def lint_text(text: str, path: Path) -> list[Diagnostic]:
 
 
 def lint_file(path: Path) -> list[Diagnostic]:
-    """Run every registered rule against a single source file."""
-    return lint_text(path.read_text(encoding="utf-8"), path)
+    """Run every registered rule against a single source file.
+
+    Discovers the project's `a816.toml` by walking up from `path` and
+    forwards its `include-paths` to the parser.
+    """
+    config = discover_a816_config(path)
+    include_paths = config.include_paths if config is not None else None
+    return lint_text(path.read_text(encoding="utf-8"), path, include_paths=include_paths)

@@ -65,6 +65,22 @@ MyLabel:                                    ; noqa: N801
 
 Code lists are case-insensitive: `; noqa: e501,n801` works the same.
 
+## `a816.toml` discovery
+
+Both `a816 check` and `a816 format` walk upwards from each input file
+looking for `a816.toml`. When found, the config's `include-paths` are
+forwarded to the parser so `.include "..."` directives resolve the
+same way they do under `a816 build`.
+
+```toml
+include-paths = ["src/include"]
+```
+
+This means a project that already configures the LSP via `a816.toml`
+gets the same module / include resolution from fluff with no extra
+flags. The `entrypoint` and `module-paths` fields are read but only
+consumed by the LSP today.
+
 ## Editor integration
 
 The `a816-lsp-server` runs `lint_text` on every analyze and surfaces

@@ -359,3 +359,25 @@ def test_check_command_clean_exits_zero(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert fluff_main(["check", str(src)]) == 0
+
+
+def test_lint_file_picks_up_include_paths_from_a816_toml(tmp_path: Path) -> None:
+    """Source `.include`s a file that lives under a config-declared path.
+    Without `a816.toml` discovery the parser would fail; with it, fluff
+    parses cleanly and emits its usual lint hits."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    inc_dir = project / "src" / "include"
+    inc_dir.mkdir(parents=True)
+    (inc_dir / "constants.s").write_text('"""Shared constants."""\nMY_CONST = 0x42\n', encoding="utf-8")
+    (project / "a816.toml").write_text(
+        'entrypoint = "src/main.s"\ninclude-paths = ["src/include"]\n',
+        encoding="utf-8",
+    )
+    src_dir = project / "src"
+    src_dir.mkdir(exist_ok=True)
+    main = src_dir / "main.s"
+    main.write_text('"""Main."""\n.include "constants.s"\nmain:\n    rts\n', encoding="utf-8")
+    diags = lint_file(main)
+    # No parse-error fallout from the unresolved include.
+    assert all(d.code != "DOC001" for d in diags)
