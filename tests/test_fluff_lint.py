@@ -193,17 +193,46 @@ def test_doc003_skips_private_target(tmp_path: Path) -> None:
 
 
 def test_doc004_flags_orphan_docstring(tmp_path: Path) -> None:
+    """Docstring sitting between two instructions (not attached to a label
+    or other documentable target) is orphan."""
     src = tmp_path / "lib.s"
     src.write_text(
-        '"""Module."""\nmain:\n    """orphan note used as comment"""\n    rts\n',
+        '"""Module."""\nmain:\n    rts\n    """orphan note used as comment"""\n    nop\n',
         encoding="utf-8",
     )
     diags = lint_file(src)
     assert any(d.code == "DOC004" for d in diags)
 
 
+def test_doc003_flags_docstring_above_label(tmp_path: Path) -> None:
+    """Label docstring belongs *below* the label; above-label fires DOC003."""
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n"""Label doc."""\nget_pointer:\n    rtl\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    doc003 = [d for d in diags if d.code == "DOC003"]
+    assert len(doc003) == 1
+    assert "get_pointer" in doc003[0].message
+    assert "below" in doc003[0].message
+
+
+def test_doc002_satisfied_by_below_label_docstring(tmp_path: Path) -> None:
+    """A docstring as the first statement after the label documents it."""
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\nget_pointer:\n    """Below-label docstring."""\n    rtl\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC002" for d in diags)
+    assert all(d.code != "DOC004" for d in diags)
+
+
 def test_doc004_quiet_for_docstring_above_label(tmp_path: Path) -> None:
-    """Labels have no inside-body slot; a docstring directly above them
+    """Above-label docstrings are absorbed (DOC003 separately flags placement)
+    so they don't also trigger DOC004 / DOC005.
     is the canonical attach point and must not trigger DOC004."""
     src = tmp_path / "lib.s"
     src.write_text(

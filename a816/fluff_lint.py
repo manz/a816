@@ -203,10 +203,26 @@ def _check_doc001(ctx: LintContext) -> Iterable[Diagnostic]:
         return
 
 
+def _label_has_below_docstring(nodes: list[AstNode], idx: int) -> bool:
+    """True when the first non-comment node *after* `nodes[idx]` is a docstring."""
+    j = idx + 1
+    while j < len(nodes) and isinstance(nodes[j], CommentAstNode):
+        j += 1
+    return j < len(nodes) and isinstance(nodes[j], DocstringAstNode)
+
+
 def _check_doc002(ctx: LintContext) -> Iterable[Diagnostic]:
+    """Public macro / scope / label needs a docstring.
+
+    Macros and scopes have an inside-body slot.
+    Labels are flat jump targets — by convention the docstring sits as
+    the first statement *after* the label, like Python's function-body
+    docstring.
+    """
+    nodes = ctx.nodes or []
     pending_doc = False
     module_doc_consumed = False
-    for node in ctx.nodes or []:
+    for idx, node in enumerate(nodes):
         if isinstance(node, CommentAstNode):
             continue
         if isinstance(node, DocstringAstNode):
@@ -217,7 +233,7 @@ def _check_doc002(ctx: LintContext) -> Iterable[Diagnostic]:
             continue
         module_doc_consumed = True
         name = _public_target_name(node)
-        if name is not None and not pending_doc and not getattr(node, "docstring", None):
+        if name is not None and _doc002_target_undocumented(nodes, idx, node, pending_doc):
             line, col = _node_position(node)
             yield Diagnostic(
                 path=ctx.path,
@@ -229,7 +245,25 @@ def _check_doc002(ctx: LintContext) -> Iterable[Diagnostic]:
         pending_doc = False
 
 
+def _doc002_target_undocumented(
+    nodes: list[AstNode],
+    idx: int,
+    node: AstNode,
+    pending_doc_above: bool,
+) -> bool:
+    if isinstance(node, LabelAstNode):
+        return not _label_has_below_docstring(nodes, idx)
+    return not pending_doc_above and not getattr(node, "docstring", None)
+
+
 def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
+    """Docstring directly above a public target is misplaced.
+
+    For macros / scopes the canonical spot is the first statement
+    *inside* the body, right after the opening brace. For labels it
+    is the first statement *after* the label — labels are flat jump
+    targets with no body of their own.
+    """
     pending_doc: DocstringAstNode | None = None
     module_doc_consumed = False
     for node in ctx.nodes or []:
@@ -242,21 +276,40 @@ def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
                 module_doc_consumed = True
             continue
         module_doc_consumed = True
-        if pending_doc is not None and isinstance(node, MacroAstNode | ScopeAstNode):
+        if pending_doc is not None:
             target = _public_target_name(node)
-            if target is not None:
-                line, col = _node_position(pending_doc)
-                yield Diagnostic(
-                    path=ctx.path,
-                    line=line,
-                    column=col,
-                    code="DOC003",
-                    message=(
-                        f"docstring above {_kind_label(node)} '{target}' should "
-                        "be moved inside the body (first statement after `{`)"
-                    ),
-                )
+            if target is not None and isinstance(node, MacroAstNode | ScopeAstNode):
+                yield _doc003_for_block(ctx, pending_doc, node, target)
+            elif target is not None and isinstance(node, LabelAstNode):
+                yield _doc003_for_label(ctx, pending_doc, target)
         pending_doc = None
+
+
+def _doc003_for_block(
+    ctx: LintContext, doc: DocstringAstNode, node: MacroAstNode | ScopeAstNode, target: str
+) -> Diagnostic:
+    line, col = _node_position(doc)
+    return Diagnostic(
+        path=ctx.path,
+        line=line,
+        column=col,
+        code="DOC003",
+        message=(
+            f"docstring above {_kind_label(node)} '{target}' should "
+            "be moved inside the body (first statement after `{`)"
+        ),
+    )
+
+
+def _doc003_for_label(ctx: LintContext, doc: DocstringAstNode, target: str) -> Diagnostic:
+    line, col = _node_position(doc)
+    return Diagnostic(
+        path=ctx.path,
+        line=line,
+        column=col,
+        code="DOC003",
+        message=(f"docstring above label '{target}' should sit below it (first statement after the colon)"),
+    )
 
 
 def _is_comment_block(comments: list[CommentAstNode]) -> bool:
@@ -273,6 +326,9 @@ class _PlacementState:
     comment_run: list[CommentAstNode] = field(default_factory=list)
     pending_doc: DocstringAstNode | None = None
     saw_first_non_comment: bool = False
+    # True when the previous node was a public label, so the next
+    # docstring is the label's "below" attach point and not orphan.
+    expecting_label_doc: bool = False
 
 
 _DOC004_MSG = "orphan docstring; convert to a `;` comment or attach to a target"
@@ -302,6 +358,13 @@ def _handle_docstring_node(
         state.comment_run = []
         return
     state.saw_first_non_comment = True
+    if state.expecting_label_doc:
+        # Docstring sits right below a public label — that's the
+        # canonical attach point. Consume silently.
+        state.expecting_label_doc = False
+        state.pending_doc = None
+        state.comment_run = []
+        return
     _flush_orphan_doc(out, path, state)
     state.pending_doc = node
     state.comment_run = []
@@ -335,6 +398,7 @@ def _handle_target_node(
         )
     state.pending_doc = None
     state.comment_run = []
+    state.expecting_label_doc = False
 
 
 def _placement_walk(out: dict[str, list[Diagnostic]], path: Path, nodes: list[AstNode], inside_body: bool) -> None:
@@ -353,13 +417,20 @@ def _placement_walk(out: dict[str, list[Diagnostic]], path: Path, nodes: list[As
             case MacroAstNode() | ScopeAstNode() if public_name is not None:
                 _handle_target_node(out, path, state, node, public_name)
             case LabelAstNode() if public_name is not None:
-                # Labels have no inside-body slot; just consume any leading
-                # docstring / comment so DOC004 / DOC005 don't fire on them.
+                # Labels carry their docstring *below*. Flush any
+                # docstring-above as orphan (DOC003 covers the misplacement
+                # diagnostic separately) and arm the post-label slot so the
+                # next docstring is consumed silently.
                 state.pending_doc = None
                 state.comment_run = []
+                state.expecting_label_doc = True
+                # Skip the post-target reset further down so the flag
+                # survives until the next iteration.
+                continue
             case _:
                 _flush_orphan_doc(out, path, state)
                 state.comment_run = []
+                state.expecting_label_doc = False
         match node:
             case ScopeAstNode():
                 _placement_walk(out, path, list(node.body.body), inside_body=True)
