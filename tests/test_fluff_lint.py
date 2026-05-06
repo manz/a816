@@ -160,6 +160,40 @@ def test_n802_flags_mixed_case_constant(tmp_path: Path) -> None:
     assert "MixedThing" in n802[0].message
 
 
+def test_noqa_blanket_silences_all_codes_on_line(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    long_data = ", ".join(["0x1234"] * 30)
+    src.write_text(
+        f'"""Module."""\nBadName: ; noqa\n    .dw {long_data} ; noqa\n    rts\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code not in {"N801", "E501"} for d in diags)
+
+
+def test_noqa_with_codes_silences_only_listed(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    long_data = ", ".join(["0x1234"] * 30)
+    src.write_text(
+        f'"""Module."""\n    .dw {long_data} ; noqa: E501\nBadName: ; noqa: E501\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    codes = [d.code for d in diags]
+    assert "E501" not in codes
+    assert "N801" in codes  # not silenced
+
+
+def test_noqa_codes_case_insensitive_and_multi(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\nBadName: ; noqa: n801, e501\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "N801" for d in diags)
+
+
 def test_check_command_clean_exits_zero(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     src.write_text(

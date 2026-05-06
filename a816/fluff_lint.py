@@ -8,6 +8,9 @@ Rules:
 - E501 — source line exceeds the maximum allowed length (120 characters).
 - N801 — label name should be snake_case.
 - N802 — constant name (`name = expr`) should be snake_case or SCREAMING_SNAKE_CASE.
+
+A trailing `; noqa` comment silences every rule on that line. Pass codes
+to suppress selectively, ruff-style: `; noqa: E501,N801`.
 """
 
 from __future__ import annotations
@@ -34,6 +37,31 @@ MAX_LINE_LENGTH = 120
 
 _SNAKE_CASE_RE = re.compile(r"^_?[a-z][a-z0-9_]*$")
 _SCREAMING_SNAKE_CASE_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
+_NOQA_RE = re.compile(r";\s*noqa(?:\s*:\s*([A-Za-z0-9_, ]+))?\s*$", re.IGNORECASE)
+
+
+def _build_noqa_map(text: str) -> dict[int, set[str] | None]:
+    """Map 1-based line number → suppressed codes (None means silence all)."""
+    out: dict[int, set[str] | None] = {}
+    for idx, line in enumerate(text.splitlines(), start=1):
+        match = _NOQA_RE.search(line)
+        if not match:
+            continue
+        codes_group = match.group(1)
+        if codes_group is None:
+            out[idx] = None
+            continue
+        codes = {chunk.strip().upper() for chunk in codes_group.split(",") if chunk.strip()}
+        out[idx] = codes or None
+
+    return out
+
+
+def _is_suppressed(line: int, code: str, noqa_map: dict[int, set[str] | None]) -> bool:
+    if line not in noqa_map:
+        return False
+    entry = noqa_map[line]
+    return entry is None or code in entry
 
 
 @dataclass(frozen=True)
@@ -224,15 +252,15 @@ def _check_line_length(path: Path, text: str) -> list[Diagnostic]:
 def lint_file(path: Path) -> list[Diagnostic]:
     """Run all lint rules against a single source file."""
     text = path.read_text(encoding="utf-8")
+    noqa_map = _build_noqa_map(text)
     diagnostics: list[Diagnostic] = _check_line_length(path, text)
     result = MZParser.parse_as_ast(text, str(path))
-    if result.error:
-        return diagnostics  # leave parse errors for the format pass to surface
-    nodes = list(result.nodes)
-    module_hit = _check_module_docstring(path, nodes)
-    if module_hit is not None:
-        diagnostics.append(module_hit)
-    diagnostics.extend(_check_public_docstrings(path, nodes))
-    diagnostics.extend(_check_label_naming(path, nodes))
-    diagnostics.extend(_check_constant_naming(path, nodes))
-    return diagnostics
+    if not result.error:
+        nodes = list(result.nodes)
+        module_hit = _check_module_docstring(path, nodes)
+        if module_hit is not None:
+            diagnostics.append(module_hit)
+        diagnostics.extend(_check_public_docstrings(path, nodes))
+        diagnostics.extend(_check_label_naming(path, nodes))
+        diagnostics.extend(_check_constant_naming(path, nodes))
+    return [d for d in diagnostics if not _is_suppressed(d.line, d.code, noqa_map)]
