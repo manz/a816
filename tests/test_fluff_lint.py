@@ -288,6 +288,36 @@ def test_doc006_flags_comment_block_plus_docstring(tmp_path: Path) -> None:
     assert "foo" in doc006[0].message
 
 
+def test_doc007_flags_over_indented_docstring(tmp_path: Path) -> None:
+    """Opening `\"\"\"` at column 0 but content at column 4 → over-indented."""
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n"""\n    summary line\n"""\n.macro foo() {\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    doc007 = [d for d in diags if d.code == "DOC007"]
+    assert len(doc007) >= 1
+    assert "over-indented" in doc007[0].message
+
+
+def test_doc007_quiet_when_content_aligns(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n"""\nsummary line\n"""\n.macro foo() {\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC007" for d in diags)
+
+
+def test_doc007_quiet_for_single_line(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text('"""Module."""\n"""one liner"""\nmain:\n    rts\n', encoding="utf-8")
+    diags = lint_file(src)
+    assert all(d.code != "DOC007" for d in diags)
+
+
 def test_noqa_blanket_silences_all_codes_on_line(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     long_data = ", ".join(["0x1234"] * 30)

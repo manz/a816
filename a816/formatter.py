@@ -403,28 +403,25 @@ class A816Formatter:
         return lines
 
     def _format_docstring(self, text: str, indent_level: int = 0) -> list[str]:
-        """Emit a docstring ruff-preview-style: reindent, trim trailing whitespace, content untouched.
+        """Emit a docstring with indent left untouched.
 
-        Single-line source (no `\\n` in raw content) → inline `\"\"\"text\"\"\"`.
-        Multi-line source → block form, dedented to a common base then
-        reindented to `indent_level`. Blank wrapper lines are dropped.
+        The formatter only owns the `\"\"\"` markers (which sit at
+        `indent_level`); the content between them is the author's
+        verbatim text. Trailing whitespace per line is trimmed and
+        blank wrapper lines are dropped, but no dedent / reindent ever
+        runs — alignment with the target is enforced by `DOC007`, not
+        rewritten silently.
         """
         indent = " " * (self.options.indent_size * indent_level)
         if "\n" not in text:
-            return [f'{indent}"""{text.strip()}"""']
+            return [f'{indent}"""{text}"""']
 
-        raw_lines = [line.rstrip() for line in text.split("\n")]
-        while raw_lines and not raw_lines[0].strip():
-            raw_lines.pop(0)
-        while raw_lines and not raw_lines[-1].strip():
-            raw_lines.pop()
-        non_blank = [line for line in raw_lines if line.strip()]
-        common = min((len(line) - len(line.lstrip(" ")) for line in non_blank), default=0)
-        body = [(line[common:] if line.strip() else "") for line in raw_lines]
-        out = [f'{indent}"""']
-        out.extend(f"{indent}{line}" if line else "" for line in body)
-        out.append(f'{indent}"""')
-        return out
+        lines = [line.rstrip() for line in text.split("\n")]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        return [f'{indent}"""', *lines, f'{indent}"""']
 
     def _format_for(self, for_ast: ForAstNode) -> list[str]:
         """Format a for loop"""

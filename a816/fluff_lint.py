@@ -399,6 +399,64 @@ def _check_e501(ctx: LintContext) -> Iterable[Diagnostic]:
             )
 
 
+def _docstring_open_column(text: str, node: DocstringAstNode) -> int | None:
+    """Column of the opening `\"\"\"` in source.
+
+    The parser stores the *end* of the token in `position`, so we walk
+    back by the number of newlines inside the docstring content and
+    look up `\"\"\"` on the resulting source line. Returns `None` if
+    we can't locate it (defensive).
+    """
+    pos = getattr(node.file_info, "position", None)
+    if pos is None:
+        return None
+    open_line_no = pos.line - node.text.count("\n")
+    source_lines = text.split("\n")
+    if open_line_no < 0 or open_line_no >= len(source_lines):
+        return None
+    idx = source_lines[open_line_no].find('"""')
+    return idx if idx >= 0 else None
+
+
+def _docstring_content_indents(text: str) -> list[int]:
+    """Leading-space count of every non-blank line *after* the first line.
+
+    The first line sits right next to the opening `\"\"\"` so its
+    leading whitespace is meaningless for alignment. Pure-blank lines
+    don't constrain indent either.
+    """
+    raw = text.split("\n")
+    if not raw:
+        return []
+    body = raw[1:]
+    return [len(line) - len(line.lstrip(" ")) for line in body if line.strip()]
+
+
+def _visit_doc007(ctx: LintContext, node: DocstringAstNode) -> Iterable[Diagnostic]:
+    if "\n" not in node.text:
+        return
+    open_col = _docstring_open_column(ctx.text, node)
+    if open_col is None:
+        return
+    indents = _docstring_content_indents(node.text)
+    if not indents:
+        return
+    smallest = min(indents)
+    if smallest == open_col:
+        return
+    direction = "under-indented" if smallest < open_col else "over-indented"
+    line, col = _node_position(node)
+    yield Diagnostic(
+        path=ctx.path,
+        line=line,
+        column=col,
+        code="DOC007",
+        message=(
+            f'docstring {direction}: content starts at column {smallest + 1}, opening `"""` at column {open_col + 1}'
+        ),
+    )
+
+
 def _visit_n801(ctx: LintContext, node: LabelAstNode) -> Iterable[Diagnostic]:
     name = node.label
     if not name or _is_snake_case(name):
@@ -436,6 +494,12 @@ _REGISTRY: dict[str, Rule] = {
         Rule("DOC004", "orphan docstring used as a comment", _check_doc004),
         Rule("DOC005", "comment block where a docstring is expected", _check_doc005),
         Rule("DOC006", "redundant comment block + docstring on a single target", _check_doc006),
+        Rule(
+            "DOC007",
+            "docstring content not aligned with its opening triple quote",
+            _visit_doc007,
+            accepts=(DocstringAstNode,),
+        ),
         Rule(
             "E501",
             f"line longer than {MAX_LINE_LENGTH} characters",
