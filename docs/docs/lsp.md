@@ -55,6 +55,11 @@ Useful for monorepos with several patches; each patch's main file
 self-identifies and the server compiles whichever one owns the
 currently open document.
 
+## Editor configuration
+
+For concrete snippets covering Neovim, VS Code, Helix, Emacs, and the
+JetBrains plugin, see [Editor setup](editor-setup.md).
+
 ## Running standalone
 
 ```
