@@ -76,7 +76,11 @@ def build_patch(input, output):
     program.resolver.dump_symbol_map()
 ```
 
-## Supported Syntax
+## Syntax
+
+See the [Directives reference](directives.md) for the full set of
+assembler directives — `*=`, `@=`, `.scope`, `.macro`, `.struct`,
+`.if`, `.for`, `.text` / `.table`, `.incbin`, and friends.
 
 ### Mnemonics
 
@@ -224,4 +228,19 @@ $ xdds --help
 $ xdds rom.sfc --low-rom -s 0x008000 -l 256
 $ xdds rom.sfc --low-rom -d --m16 --x16 -n 32   # disassemble 32 instrs
 $ xdds rom.sfc --ips patch.ips -s '$01:FF40'   # apply IPS, dump from SNES addr
+```
+
+## xobj
+
+Inspector for the `.o` object-file format the assembler / linker
+exchange. Useful when debugging a link failure or auditing what a
+module exports.
+
+```
+$ xobj file.o                # high-level summary
+$ xobj --regions file.o      # region table
+$ xobj --symbols file.o      # symbol table sorted by address
+$ xobj --relocs file.o       # legacy + expression relocations
+$ xobj --lines file.o        # debug line table
+$ xobj --bytes 64 file.o     # dump the first 64 bytes of each region
 ```

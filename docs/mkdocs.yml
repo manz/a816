@@ -4,6 +4,7 @@ repo_url: https://github.com/manz/a816
 
 nav:
   - Home: index.md
+  - Directives: directives.md
   - Modules: modules.md
   - Fluff (lint + format): fluff.md
   - LSP: lsp.md
