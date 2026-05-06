@@ -816,3 +816,28 @@ class TestDocstringPreservation(TestCase):
         out = self.formatter.format_text(src)
         assert '"""Inline."""' in out
         assert '"""\nInline.\n"""' not in out
+
+
+class TestDocstringRuffParity(TestCase):
+    """ruff-preview parity: reindent + trim trailing whitespace, content untouched."""
+
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_preserves_relative_indent_inside_block(self) -> None:
+        src = '"""\nfirst line\n    indented detail\nback to flush\n"""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert "first line" in out
+        assert "    indented detail" in out
+        assert "back to flush" in out
+
+    def test_trims_trailing_whitespace_in_block(self) -> None:
+        src = '"""\nline with trailing   \n"""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert "line with trailing   " not in out
+        assert "line with trailing" in out
+
+    def test_block_form_kept_when_multiline_in_source(self) -> None:
+        src = '"""\nshort.\n"""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert '"""\nshort.\n"""' in out

@@ -1,5 +1,4 @@
 import ast
-import inspect
 from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
@@ -67,12 +66,8 @@ def parse_scope(p: Parser) -> ScopeAstNode:
     next_token = p.next()
     expect_token(next_token, TokenType.LBRACE)
     block = parse_block(p)
-    docstring_node, block = extract_docstring_node(block)
-    docstring = docstring_node.text if docstring_node else None
-    scope_node = ScopeAstNode(keyword.value, BlockAstNode(block, next_token), current, docstring=docstring)
-    if docstring_node is not None:
-        scope_node.docstring_multi_line = docstring_node.multi_line
-    return scope_node
+    docstring, block = extract_docstring(block)
+    return ScopeAstNode(keyword.value, BlockAstNode(block, next_token), current, docstring=docstring)
 
 
 def parse_macro_definition_args(p: Parser) -> list[str]:
@@ -148,19 +143,15 @@ def parse_macro(p: Parser) -> MacroAstNode:
     block_token = p.current()
     expect_token(p.next(), TokenType.LBRACE)
     block = parse_block(p)
-    docstring_node, block = extract_docstring_node(block)
-    docstring = docstring_node.text if docstring_node else None
+    docstring, block = extract_docstring(block)
 
-    macro_node = MacroAstNode(
+    return MacroAstNode(
         macro_identifier.value,
         args,
         BlockAstNode(block, block_token),
         macro_identifier,
         docstring=docstring,
     )
-    if docstring_node is not None:
-        macro_node.docstring_multi_line = docstring_node.multi_line
-    return macro_node
 
 
 def parse_map(p: Parser) -> MapAstNode:
@@ -452,13 +443,6 @@ def extract_docstring(statements: list[AstNode]) -> tuple[str | None, list[AstNo
     return None, statements
 
 
-def extract_docstring_node(statements: list[AstNode]) -> tuple[DocstringAstNode | None, list[AstNode]]:
-    """Like extract_docstring but returns the full node so multi_line is preserved."""
-    if statements and isinstance(statements[0], DocstringAstNode):
-        return statements[0], statements[1:]
-    return None, statements
-
-
 def parse_code_position_keyword(p: Parser) -> CodePositionAstNode:
     current = p.current()
     code_position = parse_expression(p)
@@ -622,9 +606,7 @@ def parse_decl(
         return CommentAstNode(current_token.value, current_token)
     elif accept_token(current_token, TokenType.DOCSTRING):
         raw_text = ast.literal_eval(current_token.value)
-        doc_text = inspect.cleandoc(raw_text)
-        multi_line = "\n" in raw_text
-        return DocstringAstNode(doc_text, current_token, multi_line=multi_line)
+        return DocstringAstNode(raw_text, current_token)
     elif accept_token(current_token, TokenType.DOUBLE_LBRACE):
         return parse_code_lookup(p)
     elif accept_tokens(current_token, [TokenType.OPCODE, TokenType.OPCODE_NAKED]):

@@ -150,13 +150,12 @@ class CommentAstNode(AstNode):
 
 
 class DocstringAstNode(AstNode):
-    def __init__(self, text: str, file_info: Token, multi_line: bool = False) -> None:
+    def __init__(self, text: str, file_info: Token) -> None:
         super().__init__("docstring", file_info)
+        # Raw inner content as it appeared between the triple quotes —
+        # ruff-preview-style: the formatter reindents but never edits the
+        # text. Consumers wanting normalized prose call `inspect.cleandoc`.
         self.text = text
-        # True when the source spelling spanned multiple lines, so the
-        # formatter keeps the block shape even when the cleaned content
-        # collapses to a single line.
-        self.multi_line = multi_line
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
@@ -178,7 +177,6 @@ class ScopeAstNode(AstNode):
         super().__init__("scope", file_info, docstring)
         self.name = name
         self.body = body
-        self.docstring_multi_line: bool = False
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.body.to_representation()
@@ -320,7 +318,6 @@ class MacroAstNode(AstNode):
         self.name = name
         self.args = args
         self.block = block
-        self.docstring_multi_line: bool = False
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, ("args", self.args), self.block.to_representation()

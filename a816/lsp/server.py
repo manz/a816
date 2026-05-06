@@ -1,3 +1,4 @@
+import inspect
 import logging
 import os
 import re
@@ -207,7 +208,7 @@ class A816Document:
         if hasattr(node, "parameters") and node.parameters:
             self.macro_params[node.name] = [param.name for param in node.parameters if hasattr(param, "name")]
         if hasattr(node, "docstring") and node.docstring:
-            self.macro_docstrings[node.name.lower()] = node.docstring
+            self.macro_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
 
     def _record_import(self, node: ImportAstNode) -> None:
         if node.module_name and node.module_name not in self.imports:
@@ -256,7 +257,7 @@ class A816Document:
                 self.externs.add(node.symbol)
         elif isinstance(node, ScopeAstNode):
             if node.docstring:
-                self.scope_docstrings[node.name.lower()] = node.docstring
+                self.scope_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
         elif isinstance(node, MacroAstNode):
             self._record_macro(node)
         elif isinstance(node, ImportAstNode):
@@ -271,7 +272,7 @@ class A816Document:
         self._visit_children(node)
 
     def _set_docstring(self, target: tuple[str, str], text: str) -> None:
-        cleaned = text.strip()
+        cleaned = inspect.cleandoc(text)
         if not cleaned:
             return
         kind, name = target
@@ -303,7 +304,7 @@ class A816Document:
         self, kind: str, name: str, doc_text: str | None, buffer: str | None
     ) -> tuple[str | None, tuple[str, str] | None]:
         key = (kind, name)
-        text = (doc_text or buffer or "").strip()
+        text = inspect.cleandoc(doc_text or buffer or "")
         if text:
             self._set_docstring(key, text)
             return None, None
@@ -344,7 +345,7 @@ class A816Document:
     def _docstrings_handle_docstring(
         self, node: DocstringAstNode, doc_buffer: str | None, target: tuple[str, str] | None
     ) -> tuple[str | None, tuple[str, str] | None]:
-        text = node.text.strip()
+        text = inspect.cleandoc(node.text)
         if not text:
             return doc_buffer, target
         if target:
@@ -372,7 +373,7 @@ class A816Document:
         # emits remaining unattached buffers as the returned `pending_doc`.
         for node in self.ast_nodes:
             if isinstance(node, DocstringAstNode):
-                text = node.text.strip()
+                text = inspect.cleandoc(node.text)
                 if text:
                     self.module_docstring = text
                 break
