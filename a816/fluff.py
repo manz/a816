@@ -48,7 +48,9 @@ def _colorize_diff(diff_lines: Iterable[str]) -> str:
 def _build_fluff_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="a816 fluff", description="Format and lint a816 assembly sources.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    check_parser = subparsers.add_parser("check", help="Run lint rules (DOC001 / DOC002 / E501).")
+    check_parser = subparsers.add_parser(
+        "check", help="Run lint rules (DOC001 / DOC002 / E501 / N801 / N802)."
+    )
     check_parser.add_argument(
         "paths",
         nargs="+",

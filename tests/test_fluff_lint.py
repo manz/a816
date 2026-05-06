@@ -106,6 +106,60 @@ def test_e501_reported_even_when_parse_fails(tmp_path: Path) -> None:
     assert any(d.code == "E501" for d in diags)
 
 
+def test_n801_flags_camelcase_label(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\nMyLabel:\n    rts\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    n801 = [d for d in diags if d.code == "N801"]
+    assert len(n801) == 1
+    assert "MyLabel" in n801[0].message
+
+
+def test_n801_accepts_snake_case_label(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\nmy_label:\n    rts\n_private_label:\n    rts\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "N801" for d in diags)
+
+
+def test_n801_flags_screaming_snake_label(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\nMY_LABEL:\n    rts\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert any(d.code == "N801" for d in diags)
+
+
+def test_n802_accepts_snake_and_screaming_constants(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\nfoo_bar = 0x10\nMAX_HP = 0xFF\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "N802" for d in diags)
+
+
+def test_n802_flags_mixed_case_constant(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\nMixedThing = 0x10\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    n802 = [d for d in diags if d.code == "N802"]
+    assert len(n802) == 1
+    assert "MixedThing" in n802[0].message
+
+
 def test_check_command_clean_exits_zero(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     src.write_text(

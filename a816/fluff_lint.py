@@ -6,24 +6,34 @@ Rules:
 - DOC002 — every public top-level macro, scope, or label should be documented.
   Names starting with a single underscore are considered private and skipped.
 - E501 — source line exceeds the maximum allowed length (120 characters).
+- N801 — label name should be snake_case.
+- N802 — constant name (`name = expr`) should be snake_case or SCREAMING_SNAKE_CASE.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from a816.parse.ast.nodes import (
+    AssignAstNode,
     AstNode,
+    BlockAstNode,
     CommentAstNode,
+    CompoundAstNode,
     DocstringAstNode,
     LabelAstNode,
     MacroAstNode,
     ScopeAstNode,
+    SymbolAffectationAstNode,
 )
 from a816.parse.mzparser import MZParser
 
 MAX_LINE_LENGTH = 120
+
+_SNAKE_CASE_RE = re.compile(r"^_?[a-z][a-z0-9_]*$")
+_SCREAMING_SNAKE_CASE_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -129,6 +139,70 @@ def _check_public_docstrings(path: Path, nodes: list[AstNode]) -> list[Diagnosti
     return hits
 
 
+def _is_snake_case(name: str) -> bool:
+    return bool(_SNAKE_CASE_RE.match(name))
+
+
+def _is_screaming_snake_case(name: str) -> bool:
+    return bool(_SCREAMING_SNAKE_CASE_RE.match(name))
+
+
+def _walk_nodes(nodes: list[AstNode]) -> list[AstNode]:
+    """Flatten nodes through scopes/blocks so nested labels/constants are visited."""
+    out: list[AstNode] = []
+    for node in nodes:
+        out.append(node)
+        if isinstance(node, ScopeAstNode):
+            out.extend(_walk_nodes(list(node.body.body)))
+        elif isinstance(node, BlockAstNode | CompoundAstNode):
+            out.extend(_walk_nodes(list(node.body)))
+    return out
+
+
+def _check_label_naming(path: Path, nodes: list[AstNode]) -> list[Diagnostic]:
+    """N801: label names must be snake_case."""
+    hits: list[Diagnostic] = []
+    for node in _walk_nodes(nodes):
+        if not isinstance(node, LabelAstNode):
+            continue
+        name = node.label
+        if not name or _is_snake_case(name):
+            continue
+        line, col = _node_position(node)
+        hits.append(
+            Diagnostic(
+                path=path,
+                line=line,
+                column=col,
+                code="N801",
+                message=f"label '{name}' should be snake_case",
+            )
+        )
+    return hits
+
+
+def _check_constant_naming(path: Path, nodes: list[AstNode]) -> list[Diagnostic]:
+    """N802: constant names must be snake_case or SCREAMING_SNAKE_CASE."""
+    hits: list[Diagnostic] = []
+    for node in _walk_nodes(nodes):
+        if not isinstance(node, AssignAstNode | SymbolAffectationAstNode):
+            continue
+        name = node.symbol
+        if not name or _is_snake_case(name) or _is_screaming_snake_case(name):
+            continue
+        line, col = _node_position(node)
+        hits.append(
+            Diagnostic(
+                path=path,
+                line=line,
+                column=col,
+                code="N802",
+                message=f"constant '{name}' should be snake_case or SCREAMING_SNAKE_CASE",
+            )
+        )
+    return hits
+
+
 def _check_line_length(path: Path, text: str) -> list[Diagnostic]:
     """E501: flag every source line longer than `MAX_LINE_LENGTH`."""
     hits: list[Diagnostic] = []
@@ -159,4 +233,6 @@ def lint_file(path: Path) -> list[Diagnostic]:
     if module_hit is not None:
         diagnostics.append(module_hit)
     diagnostics.extend(_check_public_docstrings(path, nodes))
+    diagnostics.extend(_check_label_naming(path, nodes))
+    diagnostics.extend(_check_constant_naming(path, nodes))
     return diagnostics
