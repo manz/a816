@@ -871,3 +871,47 @@ class TestLabelAttachedDocstring(TestCase):
         assert markers, 'expected `"""` markers in output'
         for m in markers:
             assert m == '"""', f"docstring marker indented: {m!r}"
+
+
+class TestFormatterIdempotency(TestCase):
+    """Formatter must reach a fixed point: `format(format(x)) == format(x)`.
+
+    Docstring edge-blank stripping and per-line trailing-whitespace
+    trimming are intentional first-pass changes — the contract is on
+    the *second* pass being a no-op.
+    """
+
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def _assert_idempotent(self, src: str) -> None:
+        once = self.formatter.format_text(src)
+        twice = self.formatter.format_text(once)
+        self.assertEqual(once, twice, "formatter not idempotent")
+
+    def test_idempotent_simple_program(self) -> None:
+        self._assert_idempotent('"""Module."""\nmain:\n    lda #0x42\n    rts\n')
+
+    def test_idempotent_inline_docstring(self) -> None:
+        self._assert_idempotent('"""Module."""\nmain:\n    rts\n')
+
+    def test_idempotent_multiline_docstring(self) -> None:
+        self._assert_idempotent('"""Module."""\n"""\nsummary\n    sub-detail\n"""\nmain:\n    rts\n')
+
+    def test_idempotent_docstring_above_label(self) -> None:
+        self._assert_idempotent('"""Module."""\n"""Get pointer."""\nget_pointer:\n    rtl\n')
+
+    def test_idempotent_docstring_with_trailing_whitespace_strips_then_stable(self) -> None:
+        src = '"""Module."""\n"""\nline trailing   \n"""\nmain:\n    rts\n'
+        once = self.formatter.format_text(src)
+        twice = self.formatter.format_text(once)
+        self.assertEqual(once, twice)
+        self.assertNotIn("trailing   \n", once)
+
+    def test_idempotent_macro_wrap(self) -> None:
+        params = ", ".join(f"param_{i}" for i in range(20))
+        self._assert_idempotent(f'"""Module."""\n.macro big_macro({params}) {{\n    rts\n}}\n')
+
+    def test_idempotent_sample_file(self) -> None:
+        sample = Path(__file__).parent / "samples" / "sample.s"
+        self._assert_idempotent(sample.read_text(encoding="utf-8"))
