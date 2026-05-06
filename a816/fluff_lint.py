@@ -1,10 +1,11 @@
-"""Docstring-coverage lint rules for `a816 fluff check`.
+"""Lint rules for `a816 fluff check`.
 
 Rules:
 - DOC001 — every source file should open with a leading docstring describing
   what the module is for.
 - DOC002 — every public top-level macro, scope, or label should be documented.
   Names starting with a single underscore are considered private and skipped.
+- E501 — source line exceeds the maximum allowed length (120 characters).
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from a816.parse.ast.nodes import (
     ScopeAstNode,
 )
 from a816.parse.mzparser import MZParser
+
+MAX_LINE_LENGTH = 120
 
 
 @dataclass(frozen=True)
@@ -126,14 +129,32 @@ def _check_public_docstrings(path: Path, nodes: list[AstNode]) -> list[Diagnosti
     return hits
 
 
+def _check_line_length(path: Path, text: str) -> list[Diagnostic]:
+    """E501: flag every source line longer than `MAX_LINE_LENGTH`."""
+    hits: list[Diagnostic] = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        length = len(line)
+        if length > MAX_LINE_LENGTH:
+            hits.append(
+                Diagnostic(
+                    path=path,
+                    line=index,
+                    column=MAX_LINE_LENGTH + 1,
+                    code="E501",
+                    message=f"line too long ({length} > {MAX_LINE_LENGTH} characters)",
+                )
+            )
+    return hits
+
+
 def lint_file(path: Path) -> list[Diagnostic]:
-    """Run all DOC* rules against a single source file."""
+    """Run all lint rules against a single source file."""
     text = path.read_text(encoding="utf-8")
+    diagnostics: list[Diagnostic] = _check_line_length(path, text)
     result = MZParser.parse_as_ast(text, str(path))
     if result.error:
-        return []  # leave parse errors for the format pass to surface
+        return diagnostics  # leave parse errors for the format pass to surface
     nodes = list(result.nodes)
-    diagnostics: list[Diagnostic] = []
     module_hit = _check_module_docstring(path, nodes)
     if module_hit is not None:
         diagnostics.append(module_hit)

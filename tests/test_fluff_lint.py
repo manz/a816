@@ -1,4 +1,4 @@
-"""Coverage for the docstring-coverage lints (DOC001, DOC002)."""
+"""Coverage for the fluff lints (DOC001, DOC002, E501)."""
 
 from __future__ import annotations
 
@@ -72,6 +72,38 @@ def test_check_command_reports_and_exits_nonzero(tmp_path: Path, capsys: pytest.
     captured = capsys.readouterr()
     assert rc == 1
     assert "DOC001" in captured.out
+
+
+def test_e501_flags_lines_over_limit(tmp_path: Path) -> None:
+    src = tmp_path / "long.s"
+    long_line = "; " + ("x" * 130)
+    src.write_text(
+        '"""Module."""\n' + long_line + "\n",
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    e501 = [d for d in diags if d.code == "E501"]
+    assert len(e501) == 1
+    assert e501[0].line == 2
+    assert "132 > 120" in e501[0].message
+
+
+def test_e501_ignores_lines_at_or_below_limit(tmp_path: Path) -> None:
+    src = tmp_path / "short.s"
+    src.write_text(
+        '"""Module."""\n; ' + ("x" * 118) + "\n",
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "E501" for d in diags)
+
+
+def test_e501_reported_even_when_parse_fails(tmp_path: Path) -> None:
+    src = tmp_path / "broken.s"
+    long_line = "; " + ("x" * 130)
+    src.write_text(long_line + "\n@@@ broken syntax @@@\n", encoding="utf-8")
+    diags = lint_file(src)
+    assert any(d.code == "E501" for d in diags)
 
 
 def test_check_command_clean_exits_zero(tmp_path: Path) -> None:
