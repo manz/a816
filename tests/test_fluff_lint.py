@@ -192,6 +192,60 @@ def test_doc003_skips_private_target(tmp_path: Path) -> None:
     assert all(d.code != "DOC003" for d in diags)
 
 
+def test_doc004_flags_orphan_docstring(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\nmain:\n    """orphan note used as comment"""\n    rts\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert any(d.code == "DOC004" for d in diags)
+
+
+def test_doc004_quiet_when_docstring_attaches_to_target(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.macro foo() {\n    """attached"""\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC004" for d in diags)
+
+
+def test_doc005_flags_comment_block_above_macro(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n; first banner line\n; second banner line\n.macro foo() {\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    doc005 = [d for d in diags if d.code == "DOC005"]
+    assert len(doc005) == 1
+    assert "foo" in doc005[0].message
+
+
+def test_doc005_quiet_for_single_line_comment(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n; tag\n.macro foo() {\n    """doc"""\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC005" for d in diags)
+
+
+def test_doc006_flags_comment_block_plus_docstring(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n; banner line one\n; banner line two\n.macro foo() {\n    """doc"""\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    doc006 = [d for d in diags if d.code == "DOC006"]
+    assert len(doc006) == 1
+    assert "foo" in doc006[0].message
+
+
 def test_noqa_blanket_silences_all_codes_on_line(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     long_data = ", ".join(["0x1234"] * 30)

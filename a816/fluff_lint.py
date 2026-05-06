@@ -67,6 +67,7 @@ class LintContext:
     parse_failed: bool
 
     _flat_nodes: list[AstNode] | None = field(default=None, init=False, repr=False)
+    _doc_placement: dict[str, list[Diagnostic]] | None = field(default=None, init=False, repr=False)
 
     @property
     def flat_nodes(self) -> list[AstNode]:
@@ -76,6 +77,12 @@ class LintContext:
         if self._flat_nodes is None:
             self._flat_nodes = _walk_nodes(self.nodes)
         return self._flat_nodes
+
+    def doc_placement_hits(self, code: str) -> list[Diagnostic]:
+        """DOC004 / DOC005 / DOC006 share one walker; results are cached per code."""
+        if self._doc_placement is None:
+            self._doc_placement = _doc_placement_scan(self)
+        return self._doc_placement.get(code, [])
 
 
 @dataclass(frozen=True)
@@ -140,13 +147,15 @@ def _node_position(node: AstNode) -> tuple[int, int]:
 
 
 def _kind_label(node: AstNode) -> str:
-    if isinstance(node, MacroAstNode):
-        return "macro"
-    if isinstance(node, ScopeAstNode):
-        return "scope"
-    if isinstance(node, LabelAstNode):
-        return "label"
-    return "symbol"
+    match node:
+        case MacroAstNode():
+            return "macro"
+        case ScopeAstNode():
+            return "scope"
+        case LabelAstNode():
+            return "label"
+        case _:
+            return "symbol"
 
 
 def _public_target_name(node: AstNode) -> str | None:
@@ -163,10 +172,11 @@ def _walk_nodes(nodes: list[AstNode]) -> list[AstNode]:
     out: list[AstNode] = []
     for node in nodes:
         out.append(node)
-        if isinstance(node, ScopeAstNode):
-            out.extend(_walk_nodes(list(node.body.body)))
-        elif isinstance(node, BlockAstNode | CompoundAstNode):
-            out.extend(_walk_nodes(list(node.body)))
+        match node:
+            case ScopeAstNode():
+                out.extend(_walk_nodes(list(node.body.body)))
+            case BlockAstNode() | CompoundAstNode():
+                out.extend(_walk_nodes(list(node.body)))
     return out
 
 
@@ -248,6 +258,129 @@ def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
         pending_doc = None
 
 
+def _is_comment_block(comments: list[CommentAstNode]) -> bool:
+    """A comment 'block' is ≥2 consecutive lines, or one block with embedded newlines."""
+    if len(comments) >= 2:
+        return True
+    return len(comments) == 1 and "\n" in (comments[0].comment or "")
+
+
+@dataclass
+class _PlacementState:
+    """Scratch state for `_doc_placement_scan`'s per-block walk."""
+
+    comment_run: list[CommentAstNode] = field(default_factory=list)
+    pending_doc: DocstringAstNode | None = None
+    saw_first_non_comment: bool = False
+
+
+_DOC004_MSG = "orphan docstring; convert to a `;` comment or attach to a target"
+
+
+def _emit_doc(out: dict[str, list[Diagnostic]], path: Path, code: str, node: AstNode, message: str) -> None:
+    line, col = _node_position(node)
+    out[code].append(Diagnostic(path=path, line=line, column=col, code=code, message=message))
+
+
+def _flush_orphan_doc(out: dict[str, list[Diagnostic]], path: Path, state: _PlacementState) -> None:
+    if state.pending_doc is not None:
+        _emit_doc(out, path, "DOC004", state.pending_doc, _DOC004_MSG)
+        state.pending_doc = None
+
+
+def _handle_docstring_node(
+    out: dict[str, list[Diagnostic]],
+    path: Path,
+    state: _PlacementState,
+    node: DocstringAstNode,
+    inside_body: bool,
+) -> None:
+    if not state.saw_first_non_comment and not inside_body:
+        # Module-leading docstring: consumed, not orphan.
+        state.saw_first_non_comment = True
+        state.comment_run = []
+        return
+    state.saw_first_non_comment = True
+    _flush_orphan_doc(out, path, state)
+    state.pending_doc = node
+    state.comment_run = []
+
+
+def _handle_target_node(
+    out: dict[str, list[Diagnostic]],
+    path: Path,
+    state: _PlacementState,
+    node: MacroAstNode | ScopeAstNode,
+    target_name: str,
+) -> None:
+    inside_doc = bool(getattr(node, "docstring", None))
+    has_above_doc = state.pending_doc is not None
+    comment_block = _is_comment_block(state.comment_run)
+    if inside_doc and comment_block:
+        _emit_doc(
+            out,
+            path,
+            "DOC006",
+            node,
+            f"{_kind_label(node)} '{target_name}' has both a leading comment block and a docstring; pick one",
+        )
+    elif not inside_doc and not has_above_doc and comment_block:
+        _emit_doc(
+            out,
+            path,
+            "DOC005",
+            state.comment_run[0],
+            f"comment block above {_kind_label(node)} '{target_name}' should be a docstring (move inside the body)",
+        )
+    state.pending_doc = None
+    state.comment_run = []
+
+
+def _placement_walk(out: dict[str, list[Diagnostic]], path: Path, nodes: list[AstNode], inside_body: bool) -> None:
+    state = _PlacementState()
+    for node in nodes:
+        match node:
+            case CommentAstNode():
+                state.comment_run.append(node)
+                continue
+            case DocstringAstNode():
+                _handle_docstring_node(out, path, state, node, inside_body)
+                continue
+        state.saw_first_non_comment = True
+        target_name = _public_target_name(node) if isinstance(node, MacroAstNode | ScopeAstNode) else None
+        match node:
+            case MacroAstNode() | ScopeAstNode() if target_name is not None:
+                _handle_target_node(out, path, state, node, target_name)
+            case _:
+                _flush_orphan_doc(out, path, state)
+                state.comment_run = []
+        match node:
+            case ScopeAstNode():
+                _placement_walk(out, path, list(node.body.body), inside_body=True)
+            case MacroAstNode():
+                _placement_walk(out, path, list(node.block.body), inside_body=True)
+    _flush_orphan_doc(out, path, state)
+
+
+def _doc_placement_scan(ctx: LintContext) -> dict[str, list[Diagnostic]]:
+    """Walk the AST once and produce DOC004 / DOC005 / DOC006 hits."""
+    out: dict[str, list[Diagnostic]] = {"DOC004": [], "DOC005": [], "DOC006": []}
+    _placement_walk(out, ctx.path, ctx.nodes or [], inside_body=False)
+    return out
+
+
+def _check_doc004(ctx: LintContext) -> Iterable[Diagnostic]:
+    return ctx.doc_placement_hits("DOC004")
+
+
+def _check_doc005(ctx: LintContext) -> Iterable[Diagnostic]:
+    return ctx.doc_placement_hits("DOC005")
+
+
+def _check_doc006(ctx: LintContext) -> Iterable[Diagnostic]:
+    return ctx.doc_placement_hits("DOC006")
+
+
 def _check_e501(ctx: LintContext) -> Iterable[Diagnostic]:
     for index, line in enumerate(ctx.text.splitlines(), start=1):
         length = len(line)
@@ -295,6 +428,9 @@ _REGISTRY: dict[str, Rule] = {
         Rule("DOC001", "module is missing a leading docstring", _check_doc001),
         Rule("DOC002", "public macro/scope/label is missing a docstring", _check_doc002),
         Rule("DOC003", "docstring above macro/scope should live inside the body", _check_doc003),
+        Rule("DOC004", "orphan docstring used as a comment", _check_doc004),
+        Rule("DOC005", "comment block where a docstring is expected", _check_doc005),
+        Rule("DOC006", "redundant comment block + docstring on a single target", _check_doc006),
         Rule(
             "E501",
             f"line longer than {MAX_LINE_LENGTH} characters",
