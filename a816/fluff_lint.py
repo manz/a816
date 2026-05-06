@@ -249,9 +249,8 @@ def _check_line_length(path: Path, text: str) -> list[Diagnostic]:
     return hits
 
 
-def lint_file(path: Path) -> list[Diagnostic]:
-    """Run all lint rules against a single source file."""
-    text = path.read_text(encoding="utf-8")
+def lint_text(text: str, path: Path) -> list[Diagnostic]:
+    """Run all lint rules against in-memory source text."""
     noqa_map = _build_noqa_map(text)
     diagnostics: list[Diagnostic] = _check_line_length(path, text)
     result = MZParser.parse_as_ast(text, str(path))
@@ -264,3 +263,8 @@ def lint_file(path: Path) -> list[Diagnostic]:
         diagnostics.extend(_check_label_naming(path, nodes))
         diagnostics.extend(_check_constant_naming(path, nodes))
     return [d for d in diagnostics if not _is_suppressed(d.line, d.code, noqa_map)]
+
+
+def lint_file(path: Path) -> list[Diagnostic]:
+    """Run all lint rules against a single source file."""
+    return lint_text(path.read_text(encoding="utf-8"), path)

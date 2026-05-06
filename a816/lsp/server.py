@@ -409,8 +409,38 @@ class A816Document:
         if self.parse_error:
             self._add_parse_error_diagnostic()
 
-        # Additional AST-based diagnostics could be added here
-        # For now, we rely on the parser for most error detection
+        self._add_fluff_diagnostics()
+
+    def _add_fluff_diagnostics(self) -> None:
+        """Surface a816 fluff lint hits as LSP warnings."""
+        from urllib.parse import urlparse
+
+        from a816.fluff_lint import lint_text
+
+        parsed = urlparse(self.uri)
+        path = Path(parsed.path) if parsed.scheme == "file" else Path(self.uri)
+        try:
+            hits = lint_text(self.content, path)
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
+            logger.warning("fluff lint failed for %s: %s", self.uri, exc)
+            return
+        for hit in hits:
+            line = max(0, hit.line - 1)
+            column = max(0, hit.column - 1)
+            line_length = len(self.lines[line]) if 0 <= line < len(self.lines) else column + 1
+            end_col = max(column + 1, line_length)
+            self.diagnostics.append(
+                Diagnostic(
+                    range=Range(
+                        start=Position(line=line, character=column),
+                        end=Position(line=line, character=end_col),
+                    ),
+                    message=hit.message,
+                    severity=DiagnosticSeverity.Warning,
+                    source="a816 fluff",
+                    code=hit.code,
+                )
+            )
 
     def _add_parse_error_diagnostic(self) -> None:
         """Convert parse error to LSP diagnostic"""

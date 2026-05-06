@@ -797,3 +797,22 @@ class TestParenWrapping(TestCase):
         out = self.formatter.format_text(src)
         assert "foo(1, 2)" in out
         assert ".macro foo(a, b) {" in out
+
+
+class TestDocstringPreservation(TestCase):
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_multi_line_block_with_short_content_keeps_block_shape(self) -> None:
+        """`\"\"\"\nShort.\n\"\"\"` must round-trip; cleandoc collapses content but
+        the block shape was the author's intent."""
+        src = '"""\nShort line.\n"""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert '"""\nShort line.\n"""' in out
+        assert '"""Short line."""' not in out
+
+    def test_inline_docstring_stays_inline(self) -> None:
+        src = '"""Inline."""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert '"""Inline."""' in out
+        assert '"""\nInline.\n"""' not in out

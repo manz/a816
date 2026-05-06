@@ -227,7 +227,7 @@ class A816Formatter:
     def _format_scope(self, ast: ScopeAstNode) -> list[str]:
         lines = [f".scope {ast.name} {{"]
         if ast.docstring:
-            lines.extend(self._format_docstring(ast.docstring, indent_level=1))
+            lines.extend(self._format_docstring(ast.docstring, indent_level=1, multi_line=ast.docstring_multi_line))
         lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
         lines.append("}")
         return lines
@@ -269,7 +269,7 @@ class A816Formatter:
         if isinstance(ast, MacroAstNode):
             return self._format_macro(ast)
         if isinstance(ast, DocstringAstNode):
-            return self._format_docstring(ast.text)
+            return self._format_docstring(ast.text, multi_line=ast.multi_line)
         if isinstance(ast, IfAstNode):
             return self._format_if(ast)
         if isinstance(ast, ForAstNode):
@@ -375,7 +375,11 @@ class A816Formatter:
 
         body_lines = []
         if macro_ast.docstring:
-            body_lines.extend(self._format_docstring(macro_ast.docstring, indent_level=1))
+            body_lines.extend(
+                self._format_docstring(
+                    macro_ast.docstring, indent_level=1, multi_line=macro_ast.docstring_multi_line
+                )
+            )
         body_lines.extend(self._indent_block_lines(self._format_ast(macro_ast.block)))
 
         return [header, *body_lines, "}"]
@@ -402,14 +406,14 @@ class A816Formatter:
         lines.append("}")
         return lines
 
-    def _format_docstring(self, text: str, indent_level: int = 0) -> list[str]:
+    def _format_docstring(self, text: str, indent_level: int = 0, *, multi_line: bool = False) -> list[str]:
         indent = " " * (self.options.indent_size * indent_level)
-        if "\n" not in text:
+        if "\n" not in text and not multi_line:
             return [f'{indent}"""{text}"""']
 
         formatted = [f'{indent}"""']
-        for line in text.splitlines():
-            formatted.append(f"{indent}{line}")
+        for line in text.splitlines() or [text]:
+            formatted.append(f"{indent}{line}" if line else "")
         formatted.append(f'{indent}"""')
         return formatted
 

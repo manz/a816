@@ -156,8 +156,10 @@ main:
 
         doc = A816Document("test://example.s", content)
 
-        # Should not generate diagnostics for known directives
-        self.assertEqual(len(doc.diagnostics), 0)
+        # Should not generate parse-error diagnostics for known directives
+        # (fluff-lint warnings are filtered out — they're a separate concern).
+        errors = [d for d in doc.diagnostics if d.source != "a816 fluff"]
+        self.assertEqual(len(errors), 0)
 
     def test_document_mixed_case_opcodes(self) -> None:
         """Test document with mixed case opcodes"""
@@ -169,8 +171,10 @@ main:
 
         doc = A816Document("test://example.s", content)
 
-        # Should not generate diagnostics for case variations
-        self.assertEqual(len(doc.diagnostics), 0)
+        # Should not generate parse-error diagnostics for case variations
+        # (fluff-lint warnings are filtered out — they're a separate concern).
+        errors = [d for d in doc.diagnostics if d.source != "a816 fluff"]
+        self.assertEqual(len(errors), 0)
 
     def test_document_label_docstring_association(self) -> None:
         """Docstrings immediately after labels should be associated with the label"""
