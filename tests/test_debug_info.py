@@ -84,6 +84,53 @@ def test_deserialize_rejects_bad_magic() -> None:
         raise AssertionError("expected ValueError on bad magic")
 
 
+def test_include_lines_attribute_to_included_file(tmp_path: Path) -> None:
+    """`.include`d code should report lines against the included file, not the parent."""
+    from a816.program import Program
+
+    inc = tmp_path / "inc.s"
+    inc.write_text("; comment line 1\n; comment line 2\nlda.b #0x10\nsta.b 0x20\n", encoding="utf-8")
+    main = tmp_path / "main.s"
+    main.write_text('*=0x008000\n.include "inc.s"\nlda.b #0x55\n', encoding="utf-8")
+
+    program = Program()
+    program.enable_debug_capture()
+    program.assemble_as_patch(str(main), tmp_path / "out.ips")
+    info = program.build_debug_info(str(main))
+
+    by_addr = {entry.address: entry for entry in info.lines}
+    files = info.files
+
+    inc_lda = by_addr[0x008000]
+    inc_sta = by_addr[0x008002]
+    main_lda = by_addr[0x008004]
+
+    assert Path(files[inc_lda.file_idx]).name == "inc.s"
+    assert inc_lda.line == 2  # 0-indexed: third source line
+    assert Path(files[inc_sta.file_idx]).name == "inc.s"
+    assert inc_sta.line == 3
+    assert Path(files[main_lda.file_idx]).name == "main.s"
+    assert main_lda.line == 2
+
+
+def test_multiline_docstring_does_not_skew_following_line_numbers(tmp_path: Path) -> None:
+    """A multi-line docstring at the top must not push the next instruction's reported line."""
+    from a816.program import Program
+
+    src = tmp_path / "main.s"
+    # `"""..."""` spans 3 source lines; opcode sits on line 4 (0-indexed: 3).
+    src.write_text('"""\nmodule docstring\n"""\n*=0x008000\nlda.b #0x42\n', encoding="utf-8")
+
+    program = Program()
+    program.enable_debug_capture()
+    program.assemble_as_patch(str(src), tmp_path / "out.ips")
+    info = program.build_debug_info(str(src))
+
+    lda = next(e for e in info.lines if e.address == 0x008000)
+    assert lda.line == 4  # editor line 5 → 0-indexed 4
+    assert lda.column == 0
+
+
 def test_string_table_dedupes() -> None:
     info = DebugInfo()
     info.modules = [

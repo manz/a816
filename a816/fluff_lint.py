@@ -708,19 +708,15 @@ class DocstringAlignment(Rule):
     def _open_column(text: str, node: DocstringAstNode) -> int | None:
         """Column of the opening `\"\"\"` in source.
 
-        The parser stores the *end* of the token in `position`, so we
-        walk back by the docstring's newline count and look up `\"\"\"`
-        on the resulting source line. Returns None defensively when the
-        position can't be located.
+        Returns None defensively when the position can't be located.
         """
         pos = getattr(node.file_info, "position", None)
         if pos is None:
             return None
-        open_line_no = pos.line - node.text.count("\n")
         source_lines = text.split("\n")
-        if open_line_no < 0 or open_line_no >= len(source_lines):
+        if pos.line < 0 or pos.line >= len(source_lines):
             return None
-        idx = source_lines[open_line_no].find('"""')
+        idx = source_lines[pos.line].find('"""')
         return idx if idx >= 0 else None
 
     @staticmethod

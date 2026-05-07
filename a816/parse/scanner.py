@@ -21,6 +21,8 @@ class Scanner:
         self.tokens: list[Token] = []
         self.line_offset = 0
         self.current_line = 0
+        self.start_line = 0
+        self.start_column = 0
 
     def scan(self, filename: str, input_: str) -> list[Token]:
         self.file = File(filename)
@@ -91,7 +93,7 @@ class Scanner:
             pass
 
     def ignore(self) -> None:
-        self.start = self.pos
+        self._sync_start()
 
     def ignore_run(self, candidates: str) -> None:
         self.accept_run(candidates)
@@ -104,11 +106,16 @@ class Scanner:
         return Token(token_type, self.current_token_text(), self.get_position())
 
     def get_position(self) -> Position:
-        return Position(self.current_line, self.start - self.line_offset, self.file)
+        return Position(self.start_line, self.start_column, self.file)
 
     def emit(self, token_type: TokenType) -> None:
         self.tokens.append(self.get_token(token_type))
+        self._sync_start()
+
+    def _sync_start(self) -> None:
         self.start = self.pos
+        self.start_line = self.current_line
+        self.start_column = self.pos - self.line_offset
 
 
 ScannerStateFunc = Callable[[Scanner], None]
