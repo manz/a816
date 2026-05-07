@@ -298,11 +298,11 @@ class Rule:
             return
         yield from self.check(ctx)
 
-    def check(self, ctx: LintContext) -> Iterable[Diagnostic]:  # noqa: ARG002
+    def check(self, _ctx: LintContext) -> Iterable[Diagnostic]:
         """Whole-file rules override this. Visitor rules use `accepts` + `visit`."""
         return iter(())
 
-    def visit(self, ctx: LintContext, node: AstNode) -> Iterable[Diagnostic]:  # noqa: ARG002
+    def visit(self, _ctx: LintContext, _node: AstNode) -> Iterable[Diagnostic]:
         """Per-node rules override this when `accepts` is non-empty."""
         return iter(())
 
