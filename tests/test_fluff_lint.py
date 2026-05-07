@@ -494,3 +494,20 @@ def test_private_target_without_docstring_is_clean(tmp_path: Path) -> None:
     )
     diags = lint_file(src)
     assert all(d.code != "DOC002" for d in diags)
+
+
+def test_doc003_does_not_attribute_above_label_when_previous_was_a_label(tmp_path: Path) -> None:
+    """A docstring sitting between two labels is the *previous* label's
+    below-attach, not the next label's misplaced above-attach. DOC003
+    must not fire on the inner label."""
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n'
+        "draw_letter:\n"
+        '    """Render the letter through the text-stream blit path."""\n'
+        "_a497:\n"
+        "    cmp #0x42\n",
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC003" for d in diags), [d.format() for d in diags]

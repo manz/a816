@@ -310,17 +310,26 @@ def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
     targets with no body of their own. Private (`_`-prefixed) targets
     follow the same placement rule even though DOC002 doesn't require
     them to have a docstring.
+
+    A docstring sitting between two labels belongs to the *previous*
+    label as its below-attach, not to the next label as a misplaced
+    above-attach.
     """
     pending_doc: DocstringAstNode | None = None
     module_doc_consumed = False
+    last_was_label = False
     for node in _expand_through_control_flow(ctx.nodes or []):
         if isinstance(node, CommentAstNode):
             continue
         if isinstance(node, DocstringAstNode):
-            if module_doc_consumed:
-                pending_doc = node
-            else:
+            if not module_doc_consumed:
                 module_doc_consumed = True
+            elif last_was_label:
+                # Below-label attach point — consume, not flag.
+                pass
+            else:
+                pending_doc = node
+            last_was_label = False
             continue
         module_doc_consumed = True
         if pending_doc is not None:
@@ -330,6 +339,7 @@ def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
             elif name is not None and isinstance(node, LabelAstNode):
                 yield _doc003_for_label(ctx, pending_doc, name)
         pending_doc = None
+        last_was_label = isinstance(node, LabelAstNode)
 
 
 def _target_name(node: AstNode) -> str | None:
