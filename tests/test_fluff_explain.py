@@ -14,34 +14,34 @@ from a816.fluff import fluff_main
 from a816.fluff_lint import Rule, lint_text
 
 
-@pytest.mark.parametrize("code", sorted(Rule.Registry))
+@pytest.mark.parametrize("code", sorted(Rule.registry))
 def test_rule_has_rationale(code: str) -> None:
-    rule = Rule.Registry[code]
+    rule = Rule.registry[code]
     assert rule.rationale.strip(), f"{code} has empty rationale"
 
 
-@pytest.mark.parametrize("code", [c for c in sorted(Rule.Registry) if c != "E501"])
+@pytest.mark.parametrize("code", [c for c in sorted(Rule.registry) if c != "E501"])
 def test_rule_has_examples(code: str) -> None:
     """Every rule (except E501, which is a width threshold) must ship a bad / good pair."""
-    rule = Rule.Registry[code]
+    rule = Rule.registry[code]
     assert rule.bad.strip(), f"{code} has empty `bad` example"
     assert rule.good.strip(), f"{code} has empty `good` example"
 
 
-@pytest.mark.parametrize("code", [c for c in sorted(Rule.Registry) if c != "E501"])
+@pytest.mark.parametrize("code", [c for c in sorted(Rule.registry) if c != "E501"])
 def test_bad_example_triggers_its_rule(code: str) -> None:
     """The `bad` snippet must produce at least one diagnostic with this rule's code."""
-    rule = Rule.Registry[code]
+    rule = Rule.registry[code]
     diags = lint_text(rule.bad, Path("inline.s"))
     assert any(d.code == code for d in diags), (
         f"{code} bad example does not trigger {code}: {[(d.code, d.message) for d in diags]}"
     )
 
 
-@pytest.mark.parametrize("code", [c for c in sorted(Rule.Registry) if c != "E501"])
+@pytest.mark.parametrize("code", [c for c in sorted(Rule.registry) if c != "E501"])
 def test_good_example_does_not_trigger_its_rule(code: str) -> None:
     """The `good` snippet must not produce any diagnostic with this rule's code."""
-    rule = Rule.Registry[code]
+    rule = Rule.registry[code]
     diags = lint_text(rule.good, Path("inline.s"))
     assert all(d.code != code for d in diags), (
         f"{code} good example still triggers {code}: {[(d.code, d.message) for d in diags]}"

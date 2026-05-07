@@ -114,7 +114,7 @@ class Rule:
     bad: str = ""
     good: str = ""
 
-    Registry: ClassVar[dict[str, Rule]] = {}
+    registry: ClassVar[dict[str, Rule]] = {}
 
 
 def _build_noqa_map(text: str) -> dict[int, set[str] | None]:
@@ -305,6 +305,33 @@ def _doc002_target_undocumented(
     return not pending_doc_above and not getattr(node, "docstring", None)
 
 
+@dataclass
+class _Doc003State:
+    pending_doc: DocstringAstNode | None = None
+    module_doc_consumed: bool = False
+    last_was_label: bool = False
+
+
+def _doc003_handle_docstring(state: _Doc003State, node: DocstringAstNode) -> None:
+    """Module-leading → consume; below-label → consume; otherwise → pending above."""
+    if not state.module_doc_consumed:
+        state.module_doc_consumed = True
+    elif not state.last_was_label:
+        state.pending_doc = node
+    state.last_was_label = False
+
+
+def _doc003_diagnostic_for(ctx: LintContext, doc: DocstringAstNode, target: AstNode) -> Diagnostic | None:
+    name = _target_name(target)
+    if name is None:
+        return None
+    if isinstance(target, MacroAstNode | ScopeAstNode):
+        return _doc003_for_block(ctx, doc, target, name)
+    if isinstance(target, LabelAstNode):
+        return _doc003_for_label(ctx, doc, name)
+    return None
+
+
 def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
     """Docstring directly above a target is misplaced.
 
@@ -319,31 +346,20 @@ def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
     label as its below-attach, not to the next label as a misplaced
     above-attach.
     """
-    pending_doc: DocstringAstNode | None = None
-    module_doc_consumed = False
-    last_was_label = False
+    state = _Doc003State()
     for node in _expand_through_control_flow(ctx.nodes or []):
         if isinstance(node, CommentAstNode):
             continue
         if isinstance(node, DocstringAstNode):
-            if not module_doc_consumed:
-                module_doc_consumed = True
-            elif last_was_label:
-                # Below-label attach point — consume, not flag.
-                pass
-            else:
-                pending_doc = node
-            last_was_label = False
+            _doc003_handle_docstring(state, node)
             continue
-        module_doc_consumed = True
-        if pending_doc is not None:
-            name = _target_name(node)
-            if name is not None and isinstance(node, MacroAstNode | ScopeAstNode):
-                yield _doc003_for_block(ctx, pending_doc, node, name)
-            elif name is not None and isinstance(node, LabelAstNode):
-                yield _doc003_for_label(ctx, pending_doc, name)
-        pending_doc = None
-        last_was_label = isinstance(node, LabelAstNode)
+        state.module_doc_consumed = True
+        if state.pending_doc is not None:
+            hit = _doc003_diagnostic_for(ctx, state.pending_doc, node)
+            if hit is not None:
+                yield hit
+        state.pending_doc = None
+        state.last_was_label = isinstance(node, LabelAstNode)
 
 
 def _target_name(node: AstNode) -> str | None:
@@ -797,7 +813,7 @@ _REGISTRY: dict[str, Rule] = {
         ),
     ]
 }
-Rule.Registry = _REGISTRY
+Rule.registry = _REGISTRY
 
 
 def all_rule_codes() -> list[str]:

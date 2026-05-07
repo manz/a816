@@ -240,7 +240,7 @@ def _run_check(args: argparse.Namespace) -> int:
 
 def _run_explain(args: argparse.Namespace) -> int:
     code = args.code.upper()
-    rule = Rule.Registry.get(code)
+    rule = Rule.registry.get(code)
     if rule is None:
         print(f"unknown rule: {args.code}", file=sys.stderr)
         return 2
