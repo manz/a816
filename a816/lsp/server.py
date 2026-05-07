@@ -1078,7 +1078,7 @@ class A816LanguageServer:
             workspace.replace_document(doc)
         self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
         try:
-            self.server.send_notification("workspace/semanticTokens/refresh")
+            self.server.semantic_tokens_refresh()
         except (AttributeError, RuntimeError, TypeError) as e:
             logger.debug(f"Could not refresh semantic tokens: {e}")
 
@@ -1652,7 +1652,9 @@ class A816LanguageServer:
         original_formatter = self.formatter
         self.formatter = A816Formatter(formatting_options)
         try:
-            formatted_content = self.formatter.format_text(doc.content)
+            formatted_content = self.formatter.format_text(
+                doc.content, file_path=doc.uri, include_paths=doc.include_paths
+            )
             if formatted_content != doc.content:
                 return [TextEdit(range=self._full_document_range(doc), new_text=formatted_content)]
             return []

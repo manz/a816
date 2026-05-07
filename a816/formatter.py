@@ -84,12 +84,17 @@ class A816Formatter:
             CodeLookupAstNode,
         )
 
-    def format_text(self, content: str, file_path: str | None = None) -> str:
+    def format_text(
+        self,
+        content: str,
+        file_path: str | None = None,
+        include_paths: list[Path] | None = None,
+    ) -> str:
         """Format assembly code from text content"""
         source = file_path or "<input>"
         try:
             # Parse the content into an AST
-            result = MZParser.parse_as_ast(content, source)
+            result = MZParser.parse_as_ast(content, source, include_paths=include_paths)
 
             if result.error:
                 raise FormattingError(f"Unable to format {source}:\n{result.error}")
