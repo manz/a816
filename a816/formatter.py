@@ -563,8 +563,12 @@ class A816Formatter:
                     padding = max(target_column - (indent + len(code_part)), 1)
                     lines[index] = f"{' ' * indent}{code_part}{' ' * padding}{comment_text}"
 
+    # Each line is rstripped before this regex sees it, so the trailing
+    # group is bounded — no nested overlapping `\s*` runs that could
+    # backtrack on adversarial input.
     _PAREN_WRAP_RE: ClassVar[re.Pattern[str]] = re.compile(
-        r"^(?P<indent>\s*)(?P<head>(?:\.macro\s+)?[A-Za-z_][\w.]*)\((?P<params>[^()]*)\)(?P<tail>\s*\{?\s*)$"
+        r"^(?P<indent>[ \t]*)(?P<head>(?:\.macro[ \t]+)?[A-Za-z_][\w.]*)"
+        r"\((?P<params>[^()]*)\)(?P<tail>[ \t]*\{?)$"
     )
 
     def _wrap_long_paren_lines(self, lines: list[str]) -> list[str]:

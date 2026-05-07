@@ -43,7 +43,9 @@ MAX_LINE_LENGTH = 120
 
 _SNAKE_CASE_RE = re.compile(r"^_?[a-z][a-z0-9_]*$")
 _SCREAMING_SNAKE_CASE_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
-_NOQA_RE = re.compile(r";\s*noqa(?:\s*:\s*([A-Za-z0-9_, ]+))?\s*$", re.IGNORECASE)
+# Deterministic match: locate `noqa` once, parse the codes text by hand
+# below. Avoids nested overlapping quantifiers that can spook ReDoS scanners.
+_NOQA_RE = re.compile(r";[ \t]*noqa\b(.*)$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -122,11 +124,13 @@ def _build_noqa_map(text: str) -> dict[int, set[str] | None]:
         match = _NOQA_RE.search(line)
         if not match:
             continue
-        codes_group = match.group(1)
-        if codes_group is None:
+        tail = match.group(1).strip()
+        if not tail:
             out[idx] = None
             continue
-        codes = {chunk.strip().upper() for chunk in codes_group.split(",") if chunk.strip()}
+        if not tail.startswith(":"):
+            continue  # `noqaXYZ` etc. — not a suppression marker
+        codes = {chunk.strip().upper() for chunk in tail[1:].split(",") if chunk.strip()}
         out[idx] = codes or None
     return out
 
