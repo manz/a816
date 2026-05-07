@@ -19,3 +19,7 @@ a.out
 *.o
 license.http
 llm.txt
+
+# Local-only dev tooling (SonarQube compose, scan scripts with tokens, etc.).
+tools/
+.scannerwork/
