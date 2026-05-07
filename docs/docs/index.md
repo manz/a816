@@ -60,7 +60,11 @@ $ a816 check src/                 # report lint hits
 $ a816 format src/                # rewrite sources in place
 $ a816 format --check src/        # exit non-zero if reformatting needed
 $ a816 format --diff src/         # print unified diffs without writing
+$ a816 explain DOC003             # rationale + good/bad example pair
 ```
+
+Private symbols (`_`-prefixed labels / macros / scopes) can carry
+docstrings without firing DOC002 — naming alone marks them internal.
 
 The legacy `a816-fluff` binary still works but prints a deprecation
 notice on stderr — prefer `a816 check` / `a816 format` going forward.

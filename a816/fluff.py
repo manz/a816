@@ -1,11 +1,12 @@
 import argparse
 import difflib
 import sys
+import textwrap
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from a816.exceptions import FormattingError
-from a816.fluff_lint import lint_file
+from a816.fluff_lint import Rule, lint_file
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
@@ -76,6 +77,11 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show unified diff per changed file and exit non-zero if any differ.",
     )
+    explain_parser = subparsers.add_parser(
+        "explain",
+        help="Print rule documentation + good/bad examples for a single rule code.",
+    )
+    explain_parser.add_argument("code", help="Rule code (e.g. DOC003).")
     return parser
 
 
@@ -232,6 +238,25 @@ def _run_check(args: argparse.Namespace) -> int:
     return missing_err
 
 
+def _run_explain(args: argparse.Namespace) -> int:
+    code = args.code.upper()
+    rule = Rule.Registry.get(code)
+    if rule is None:
+        print(f"unknown rule: {args.code}", file=sys.stderr)
+        return 2
+    print(f"{rule.code}  {rule.description}")
+    if rule.rationale:
+        print()
+        print(textwrap.fill(rule.rationale, width=88))
+    if rule.bad:
+        print("\nBad:\n")
+        print(textwrap.indent(rule.bad.rstrip(), "    "))
+    if rule.good:
+        print("\nGood:\n")
+        print(textwrap.indent(rule.good.rstrip(), "    "))
+    return 0
+
+
 def fluff_main(argv: Sequence[str] | None = None) -> int:
     parser = _build_fluff_parser()
     args = parser.parse_args(argv)
@@ -239,6 +264,8 @@ def fluff_main(argv: Sequence[str] | None = None) -> int:
         return _run_format(args, parser)
     if args.command == "check":
         return _run_check(args)
+    if args.command == "explain":
+        return _run_explain(args)
     parser.error("Unknown command")
     return 2  # parser.error never returns, but mypy needs this
 

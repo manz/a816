@@ -53,6 +53,46 @@ placement, `E***` for physical layout, `N***` for naming.
 Names with a single leading underscore (`_loop`, `_private_macro`) are
 treated as private and skipped by `DOC002` / `DOC003` / naming rules.
 
+## `a816 explain <CODE>`
+
+Print a rule's rationale plus a minimal `bad` / `good` example pair.
+
+```
+$ a816 explain DOC003
+DOC003  docstring above macro/scope should live inside the body
+
+For block-bodied targets (`.macro`, `.scope`) the canonical attach point is the
+first statement inside the body. ...
+
+Bad:
+
+    """Module."""
+    """Setup loop counter."""
+    .macro setup_counter() {
+        ldx.w #0
+    }
+
+Good:
+
+    """Module."""
+    .macro setup_counter() {
+        """Setup loop counter."""
+        ldx.w #0
+    }
+```
+
+The examples are checked: tests round-trip every rule's `bad` / `good`
+through `lint_text`, so a rule that drifts from its docs fails CI.
+
+## Private symbols
+
+Names with a single leading underscore (`_loop`, `_helper`, `_internal`)
+are LOCAL to their module. Fluff doesn't require them to carry a
+docstring (DOC002), and DOC005 / DOC006 don't apply to them — those
+are public-API hygiene rules. They *can* still carry a docstring; if
+they do, DOC003 / DOC004 / DOC007 enforce the same placement and
+formatting rules as on public targets.
+
 ## Suppressing rules — `; noqa`
 
 A trailing `; noqa` comment silences every rule on that line. Pass codes

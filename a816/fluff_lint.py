@@ -96,6 +96,11 @@ class Rule:
     AST node (post-flatten through scopes/blocks). Empty → `handler(ctx)`
     runs once for the whole file. Rules that only need text (E501, etc.)
     set `needs_ast=False` so they still run when parsing fails.
+
+    `description` is the one-line summary used in diagnostics.
+    `rationale` / `bad` / `good` feed `a816 explain <CODE>`. Examples
+    are raw strings; tests round-trip them through the linter so a
+    rule that drifts from its docs fails CI.
     """
 
     code: str
@@ -103,6 +108,9 @@ class Rule:
     handler: Callable[..., Iterable[Diagnostic]]
     accepts: tuple[type[AstNode], ...] = ()
     needs_ast: bool = True
+    rationale: str = ""
+    bad: str = ""
+    good: str = ""
 
     Registry: ClassVar[dict[str, Rule]] = {}
 
@@ -294,12 +302,14 @@ def _doc002_target_undocumented(
 
 
 def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
-    """Docstring directly above a public target is misplaced.
+    """Docstring directly above a target is misplaced.
 
     For macros / scopes the canonical spot is the first statement
     *inside* the body, right after the opening brace. For labels it
     is the first statement *after* the label — labels are flat jump
-    targets with no body of their own.
+    targets with no body of their own. Private (`_`-prefixed) targets
+    follow the same placement rule even though DOC002 doesn't require
+    them to have a docstring.
     """
     pending_doc: DocstringAstNode | None = None
     module_doc_consumed = False
@@ -314,12 +324,20 @@ def _check_doc003(ctx: LintContext) -> Iterable[Diagnostic]:
             continue
         module_doc_consumed = True
         if pending_doc is not None:
-            target = _public_target_name(node)
-            if target is not None and isinstance(node, MacroAstNode | ScopeAstNode):
-                yield _doc003_for_block(ctx, pending_doc, node, target)
-            elif target is not None and isinstance(node, LabelAstNode):
-                yield _doc003_for_label(ctx, pending_doc, target)
+            name = _target_name(node)
+            if name is not None and isinstance(node, MacroAstNode | ScopeAstNode):
+                yield _doc003_for_block(ctx, pending_doc, node, name)
+            elif name is not None and isinstance(node, LabelAstNode):
+                yield _doc003_for_label(ctx, pending_doc, name)
         pending_doc = None
+
+
+def _target_name(node: AstNode) -> str | None:
+    """Name of a documentable target (any visibility) or None."""
+    if not isinstance(node, MacroAstNode | ScopeAstNode | LabelAstNode):
+        return None
+    raw = getattr(node, "name", None) or getattr(node, "label", "") or ""
+    return str(raw) or None
 
 
 def _doc003_for_block(
@@ -453,6 +471,13 @@ def _placement_walk(out: dict[str, list[Diagnostic]], path: Path, nodes: list[As
         match node:
             case MacroAstNode() | ScopeAstNode() if public_name is not None:
                 _handle_target_node(out, path, state, node, public_name)
+            case MacroAstNode() | ScopeAstNode():
+                # Private (`_`-prefixed) macro / scope. Consume any leading
+                # docstring without flagging — DOC003 still applies to
+                # private targets, but DOC005 / DOC006 don't (they're public
+                # API hygiene).
+                state.pending_doc = None
+                state.comment_run = []
             case LabelAstNode() if public_name is not None:
                 # Labels carry their docstring *below*. Flush any
                 # docstring-above as orphan (DOC003 covers the misplacement
@@ -463,6 +488,12 @@ def _placement_walk(out: dict[str, list[Diagnostic]], path: Path, nodes: list[As
                 state.expecting_label_doc = True
                 # Skip the post-target reset further down so the flag
                 # survives until the next iteration.
+                continue
+            case LabelAstNode():
+                # Private label: same below-attach rule as public ones.
+                state.pending_doc = None
+                state.comment_run = []
+                state.expecting_label_doc = True
                 continue
             case _:
                 _flush_orphan_doc(out, path, state)
@@ -603,30 +634,152 @@ def _visit_n802(ctx: LintContext, node: AssignAstNode | SymbolAffectationAstNode
 _REGISTRY: dict[str, Rule] = {
     rule.code: rule
     for rule in [
-        Rule("DOC001", "module is missing a leading docstring", _check_doc001),
-        Rule("DOC002", "public macro/scope/label is missing a docstring", _check_doc002),
-        Rule("DOC003", "docstring above macro/scope should live inside the body", _check_doc003),
-        Rule("DOC004", "orphan docstring used as a comment", _check_doc004),
-        Rule("DOC005", "comment block where a docstring is expected", _check_doc005),
-        Rule("DOC006", "redundant comment block + docstring on a single target", _check_doc006),
+        Rule(
+            "DOC001",
+            "module is missing a leading docstring",
+            _check_doc001,
+            rationale=(
+                "Every source file should open with a docstring describing what "
+                "the module is for. Tooling (LSP hover on `.import` targets, "
+                "documentation generators) reads this leading docstring to "
+                "summarise the module without forcing a reader to chase the "
+                "first comment block."
+            ),
+            bad="main:\n    rts\n",
+            good='"""Top-level patch entry."""\nmain:\n    rts\n',
+        ),
+        Rule(
+            "DOC002",
+            "public macro/scope/label is missing a docstring",
+            _check_doc002,
+            rationale=(
+                "Public targets (anything not prefixed with `_`) cross module "
+                "boundaries. Without a docstring the LSP has nothing to surface "
+                "on hover and downstream callers have to read the body to learn "
+                "what they're calling."
+            ),
+            bad='"""Module."""\n.macro setup_counter() {\n    ldx.w #0\n}\n',
+            good=(
+                '"""Module."""\n.macro setup_counter() {\n    """Reset the loop counter to zero."""\n    ldx.w #0\n}\n'
+            ),
+        ),
+        Rule(
+            "DOC003",
+            "docstring above macro/scope should live inside the body",
+            _check_doc003,
+            rationale=(
+                "For block-bodied targets (`.macro`, `.scope`) the canonical "
+                "attach point is the first statement inside the body. A "
+                "docstring above the opening line is parsed as a free-floating "
+                "string and isn't picked up by tooling that walks the body for "
+                "documentation. Labels are flat — their docstring sits as the "
+                "first statement *below* the label, like a Python function-body "
+                "docstring."
+            ),
+            bad=('"""Module."""\n"""Setup loop counter."""\n.macro setup_counter() {\n    ldx.w #0\n}\n'),
+            good=('"""Module."""\n.macro setup_counter() {\n    """Setup loop counter."""\n    ldx.w #0\n}\n'),
+        ),
+        Rule(
+            "DOC004",
+            "orphan docstring used as a comment",
+            _check_doc004,
+            rationale=(
+                "A docstring sitting between instructions, with no documentable "
+                "target on either side, is being used as a comment. Use a `;` "
+                "comment instead — docstrings are a structural feature the "
+                "parser attaches to specific nodes, and inline orphans confuse "
+                "downstream consumers."
+            ),
+            bad=('"""Module."""\nmain:\n    rts\n    """orphan note used as comment"""\n    nop\n'),
+            good='"""Module."""\nmain:\n    rts\n    ; orphan note used as comment\n    nop\n',
+        ),
+        Rule(
+            "DOC005",
+            "comment block where a docstring is expected",
+            _check_doc005,
+            rationale=(
+                "A comment block (≥2 consecutive `;` lines or a block comment "
+                "with embedded newlines) sitting directly above a public macro "
+                "or scope that has no docstring is almost always intended to be "
+                "the docstring. Promote it so tooling can find it."
+            ),
+            bad=(
+                '"""Module."""\n; first banner line\n; second banner line\n.macro setup_counter() {\n    ldx.w #0\n}\n'
+            ),
+            good=(
+                '"""Module."""\n.macro setup_counter() {\n'
+                '    """\n    first banner line\n    second banner line\n    """\n'
+                "    ldx.w #0\n}\n"
+            ),
+        ),
+        Rule(
+            "DOC006",
+            "redundant comment block + docstring on a single target",
+            _check_doc006,
+            rationale=(
+                "A public target that carries both a leading comment block AND "
+                "a docstring is duplicating its description in two places. Pick "
+                "one — typically the inside-body docstring — so updates only "
+                "have to land in one spot."
+            ),
+            bad=(
+                '"""Module."""\n; banner line one\n; banner line two\n'
+                '.macro setup_counter() {\n    """Reset the loop counter."""\n'
+                "    ldx.w #0\n}\n"
+            ),
+            good=('"""Module."""\n.macro setup_counter() {\n    """Reset the loop counter."""\n    ldx.w #0\n}\n'),
+        ),
         Rule(
             "DOC007",
             "docstring content not aligned with its opening triple quote",
             _visit_doc007,
             accepts=(DocstringAstNode,),
+            rationale=(
+                "A multi-line docstring's content should align with the column "
+                'of its opening `"""`. Under-indented content reads as '
+                "leaking out of the docstring; over-indented content suggests "
+                "the author copy-pasted from a deeper scope. Mirrors "
+                "pydocstyle's D207 / D208 for Python."
+            ),
+            bad=('"""Module."""\nmy_label:\n    """\n        over-indented body\n    """\n    rts\n'),
+            good=('"""Module."""\nmy_label:\n    """\n    aligned body\n    """\n    rts\n'),
         ),
         Rule(
             "E501",
             f"line longer than {MAX_LINE_LENGTH} characters",
             _check_e501,
             needs_ast=False,
+            rationale=(
+                f"Lines longer than {MAX_LINE_LENGTH} characters are hard to "
+                "review in side-by-side diffs and rarely improve readability. "
+                "Wrap, reflow, or — for `.dw` / `.db` data lines that are long "
+                "for a structural reason — silence with `; noqa: E501`."
+            ),
         ),
-        Rule("N801", "label name should be snake_case", _visit_n801, accepts=(LabelAstNode,)),
+        Rule(
+            "N801",
+            "label name should be snake_case",
+            _visit_n801,
+            accepts=(LabelAstNode,),
+            rationale=(
+                "Labels are snake_case (`reset_counter`, `_loop`). Mixed case "
+                "and SCREAMING_SNAKE are reserved for constants (see N802)."
+            ),
+            bad='"""Module."""\nMyLabel:\n    rts\n',
+            good='"""Module."""\nmy_label:\n    rts\n',
+        ),
         Rule(
             "N802",
             "constant name should be snake_case or SCREAMING_SNAKE_CASE",
             _visit_n802,
             accepts=(AssignAstNode, SymbolAffectationAstNode),
+            rationale=(
+                "Constants accept either snake_case or SCREAMING_SNAKE_CASE — "
+                "use SCREAMING for tunables / feature flags, snake_case for "
+                "computed offsets and addresses. Anything else fails the lint."
+            ),
+            bad='"""Module."""\nMixedThing = 0x10\n',
+            good='"""Module."""\nfoo_bar = 0x10\nMAX_HP = 0xFF\n',
         ),
     ]
 }

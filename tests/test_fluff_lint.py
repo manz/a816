@@ -182,14 +182,18 @@ def test_doc003_quiet_when_docstring_inside_body(tmp_path: Path) -> None:
     assert all(d.code != "DOC003" for d in diags)
 
 
-def test_doc003_skips_private_target(tmp_path: Path) -> None:
+def test_doc003_fires_on_private_target(tmp_path: Path) -> None:
+    """DOC003 is about *placement*; private targets follow the same rule
+    even though DOC002 doesn't require them to have a docstring."""
     src = tmp_path / "lib.s"
     src.write_text(
         '"""Module."""\n"""Private doc."""\n.macro _private() {\n    rts\n}\n',
         encoding="utf-8",
     )
     diags = lint_file(src)
-    assert all(d.code != "DOC003" for d in diags)
+    doc003 = [d for d in diags if d.code == "DOC003"]
+    assert len(doc003) == 1
+    assert "_private" in doc003[0].message
 
 
 def test_doc004_flags_orphan_docstring(tmp_path: Path) -> None:
@@ -444,3 +448,49 @@ def test_doc002_inside_if_branch(tmp_path: Path) -> None:
     )
     diags = lint_file(src)
     assert any(d.code == "DOC002" and "inner_macro" in d.message for d in diags)
+
+
+def test_private_macro_with_docstring_inside_body_is_clean(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.macro _helper() {\n    """Internal helper."""\n    rts\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC002" for d in diags)
+    assert all(d.code != "DOC003" for d in diags)
+    assert all(d.code != "DOC004" for d in diags)
+
+
+def test_private_scope_with_docstring_inside_body_is_clean(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.scope _internal {\n    """Internal scope."""\n    label:\n}\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC002" for d in diags)
+    assert all(d.code != "DOC003" for d in diags)
+    assert all(d.code != "DOC004" for d in diags)
+
+
+def test_private_label_with_below_docstring_is_clean(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n_helper:\n    """Internal helper."""\n    rts\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC002" for d in diags)
+    assert all(d.code != "DOC003" for d in diags)
+    assert all(d.code != "DOC004" for d in diags)
+
+
+def test_private_target_without_docstring_is_clean(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n_helper:\n    rts\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC002" for d in diags)
