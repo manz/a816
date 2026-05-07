@@ -275,87 +275,166 @@ def lex_number(s: Scanner) -> None:
     s.emit(TokenType.NUMBER)
 
 
-def lex_initial(s: Scanner) -> None:
-    """Scanner initial state"""
+_MULTI_CHAR_OPERATORS: tuple[tuple[str, TokenType], ...] = (
+    ("==", TokenType.OPERATOR),
+    ("!=", TokenType.OPERATOR),
+    (">>", TokenType.OPERATOR),
+    ("<<", TokenType.OPERATOR),
+    (">=", TokenType.OPERATOR),
+    ("<=", TokenType.OPERATOR),
+    (":=", TokenType.ASSIGN),
+    ("@=", TokenType.AT_EQ),
+)
 
-    s.ignore_run(" \t\n")
-    if s.accept(";"):
-        while s.peek() not in ["\n", EOF]:
-            # eat the comment until end of  line.
-            s.next()
-        s.emit(TokenType.COMMENT)
-    elif s.accept("0123456789"):
-        lex_number(s)
-    elif s.accept("+-&"):
-        s.emit(TokenType.OPERATOR)
-    elif s.accept_prefix("=="):
-        s.emit(TokenType.OPERATOR)
-    elif s.accept_prefix("!="):
-        s.emit(TokenType.OPERATOR)
-    elif s.accept_prefix(">>"):
-        s.emit(TokenType.OPERATOR)
-    elif s.accept_prefix("<<"):
-        s.emit(TokenType.OPERATOR)
-    elif s.accept_prefix(">=") or s.accept_prefix("<=") or s.accept_prefix(">") or s.accept_prefix("<"):
-        s.emit(TokenType.OPERATOR)
-    # elif l.accept_prefix('True') or l.accept_prefix('False'):
-    #     l.emit(TokenType.BOOLEAN)
-    # elif s.accept_prefix("byte") or s.accept_prefix("word") or s.accept_prefix("long"):
-    #    s.emit(TokenType.TYPE)
-    elif s.accept(IDENTIFIER_START_CHARS):
-        s.backup()
-        # check if not an opcode
-        if accept_opcode(s):
-            lex_opcode(s)
-        else:
-            lex_identifier(s)
-    elif s.accept("."):
-        lex_keyword(s)
-    elif s.accept(","):
-        s.emit(TokenType.COMMA)
-    elif s.accept_prefix(":="):
-        s.emit(TokenType.ASSIGN)
-    elif s.accept_prefix("@="):
-        s.emit(TokenType.AT_EQ)
-    elif s.accept("*"):
-        if s.accept("="):
-            s.emit(TokenType.STAR_EQ)
-        else:
-            s.emit(TokenType.OPERATOR)
-    elif s.peek() == '"' and s.peek(1) == '"' and s.peek(2) == '"':
-        s.pos += 3
-        lex_docstring(s, '"')
-    elif s.peek() == "'" and s.peek(1) == "'" and s.peek(2) == "'":
-        s.pos += 3
-        lex_docstring(s, "'")
-    elif s.accept("'"):
-        lex_quoted_string(s)
-    elif s.accept('"'):
-        lex_double_quoted_string(s)
-    elif s.accept("("):
-        s.emit(TokenType.LPAREN)
-    elif s.accept(")"):
-        s.emit(TokenType.RPAREN)
-    elif s.accept("["):
-        s.emit(TokenType.LBRAKET)
-    elif s.accept("]"):
-        s.emit(TokenType.RBRAKET)
-    elif s.accept("{"):
-        if s.accept("{"):
-            s.emit(TokenType.DOUBLE_LBRACE)
-        else:
-            s.emit(TokenType.LBRACE)
-    elif s.accept("}"):
-        if s.accept("}"):
-            s.emit(TokenType.DOUBLE_RBRACE)
-        else:
-            s.emit(TokenType.RBRACE)
-    elif s.accept("="):
-        s.emit(TokenType.EQUAL)
-    elif s.accept_prefix("/*"):
-        while not s.accept_prefix("*/"):
-            s.next()
-        s.emit(TokenType.COMMENT)
+_SINGLE_CHAR_TOKENS: dict[str, TokenType] = {
+    ",": TokenType.COMMA,
+    "(": TokenType.LPAREN,
+    ")": TokenType.RPAREN,
+    "[": TokenType.LBRAKET,
+    "]": TokenType.RBRAKET,
+    "=": TokenType.EQUAL,
+}
+
+
+def _lex_line_comment(s: Scanner) -> bool:
+    if not s.accept(";"):
+        return False
+    while s.peek() not in ["\n", EOF]:
+        s.next()
+    s.emit(TokenType.COMMENT)
+    return True
+
+
+def _lex_number(s: Scanner) -> bool:
+    if not s.accept("0123456789"):
+        return False
+    lex_number(s)
+    return True
+
+
+def _lex_simple_operator(s: Scanner) -> bool:
+    if not s.accept("+-&"):
+        return False
+    s.emit(TokenType.OPERATOR)
+    return True
+
+
+def _lex_multi_char_operator(s: Scanner) -> bool:
+    for prefix, kind in _MULTI_CHAR_OPERATORS:
+        if s.accept_prefix(prefix):
+            s.emit(kind)
+            return True
+    return False
+
+
+def _lex_relational(s: Scanner) -> bool:
+    if not (s.accept_prefix(">") or s.accept_prefix("<")):
+        return False
+    s.emit(TokenType.OPERATOR)
+    return True
+
+
+def _lex_identifier_or_opcode(s: Scanner) -> bool:
+    if not s.accept(IDENTIFIER_START_CHARS):
+        return False
+    s.backup()
+    if accept_opcode(s):
+        lex_opcode(s)
     else:
-        if s.next() is not None:
-            raise ScannerException(f"Invalid Input {s.input[s.start :]}", s.get_position())
+        lex_identifier(s)
+    return True
+
+
+def _lex_dot_keyword(s: Scanner) -> bool:
+    if not s.accept("."):
+        return False
+    lex_keyword(s)
+    return True
+
+
+def _lex_star(s: Scanner) -> bool:
+    if not s.accept("*"):
+        return False
+    if s.accept("="):
+        s.emit(TokenType.STAR_EQ)
+    else:
+        s.emit(TokenType.OPERATOR)
+    return True
+
+
+def _lex_triple_quoted_docstring(s: Scanner) -> bool:
+    for quote in ('"', "'"):
+        if s.peek() == quote and s.peek(1) == quote and s.peek(2) == quote:
+            s.pos += 3
+            lex_docstring(s, quote)
+            return True
+    return False
+
+
+def _lex_quoted_string(s: Scanner) -> bool:
+    if s.accept("'"):
+        lex_quoted_string(s)
+        return True
+    if s.accept('"'):
+        lex_double_quoted_string(s)
+        return True
+    return False
+
+
+def _lex_brace(s: Scanner) -> bool:
+    if s.accept("{"):
+        s.emit(TokenType.DOUBLE_LBRACE if s.accept("{") else TokenType.LBRACE)
+        return True
+    if s.accept("}"):
+        s.emit(TokenType.DOUBLE_RBRACE if s.accept("}") else TokenType.RBRACE)
+        return True
+    return False
+
+
+def _lex_block_comment(s: Scanner) -> bool:
+    if not s.accept_prefix("/*"):
+        return False
+    while not s.accept_prefix("*/"):
+        s.next()
+    s.emit(TokenType.COMMENT)
+    return True
+
+
+def _lex_single_char_token(s: Scanner) -> bool:
+    ch = s.peek()
+    kind = _SINGLE_CHAR_TOKENS.get(ch) if ch is not None else None
+    if kind is None:
+        return False
+    s.next()
+    s.emit(kind)
+    return True
+
+
+# Order matters: triple-quote before single-quote, multi-char operators
+# before their single-char prefixes, line comment (`;`) before any other
+# punctuation handler. Each helper returns True when it consumed input.
+_LEX_HANDLERS = (
+    _lex_line_comment,
+    _lex_number,
+    _lex_multi_char_operator,
+    _lex_simple_operator,
+    _lex_relational,
+    _lex_identifier_or_opcode,
+    _lex_dot_keyword,
+    _lex_star,
+    _lex_triple_quoted_docstring,
+    _lex_quoted_string,
+    _lex_brace,
+    _lex_block_comment,
+    _lex_single_char_token,
+)
+
+
+def lex_initial(s: Scanner) -> None:
+    """Scanner entry state. Dispatches to a small handler for each token shape."""
+    s.ignore_run(" \t\n")
+    for handler in _LEX_HANDLERS:
+        if handler(s):
+            return
+    if s.next() is not None:
+        raise ScannerException(f"Invalid Input {s.input[s.start :]}", s.get_position())

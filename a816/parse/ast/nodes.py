@@ -152,6 +152,9 @@ class CommentAstNode(AstNode):
 class DocstringAstNode(AstNode):
     def __init__(self, text: str, file_info: Token) -> None:
         super().__init__("docstring", file_info)
+        # Raw inner content as it appeared between the triple quotes —
+        # ruff-preview-style: the formatter reindents but never edits the
+        # text. Consumers wanting normalized prose call `inspect.cleandoc`.
         self.text = text
 
     def to_representation(self) -> tuple[Any, ...]:

@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,7 @@ class FormattingOptions:
         max_empty_lines: int = 2,
         align_labels: bool = True,
         space_after_comma: bool = True,
+        max_line_length: int = 120,
     ):
         self.indent_size = indent_size
         self.opcode_indent = opcode_indent if opcode_indent is not None else indent_size
@@ -59,6 +61,7 @@ class FormattingOptions:
         self.max_empty_lines = max_empty_lines
         self.align_labels = align_labels
         self.space_after_comma = space_after_comma
+        self.max_line_length = max_line_length
 
 
 class A816Formatter:
@@ -400,15 +403,25 @@ class A816Formatter:
         return lines
 
     def _format_docstring(self, text: str, indent_level: int = 0) -> list[str]:
+        """Emit a docstring with indent left untouched.
+
+        The formatter only owns the `\"\"\"` markers (which sit at
+        `indent_level`); the content between them is the author's
+        verbatim text. Trailing whitespace per line is trimmed and
+        blank wrapper lines are dropped, but no dedent / reindent ever
+        runs — alignment with the target is enforced by `DOC007`, not
+        rewritten silently.
+        """
         indent = " " * (self.options.indent_size * indent_level)
         if "\n" not in text:
             return [f'{indent}"""{text}"""']
 
-        formatted = [f'{indent}"""']
-        for line in text.splitlines():
-            formatted.append(f"{indent}{line}")
-        formatted.append(f'{indent}"""')
-        return formatted
+        lines = [line.rstrip() for line in text.split("\n")]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        return [f'{indent}"""', *lines, f'{indent}"""']
 
     def _format_for(self, for_ast: ForAstNode) -> list[str]:
         """Format a for loop"""
@@ -432,7 +445,7 @@ class A816Formatter:
     def _indent_block_lines(self, lines: list[str], levels: int = 1) -> list[str]:
         """Indent a sequence of lines representing a block.
 
-        Two structural exceptions:
+        Three structural exceptions:
         - Inner labels (lines ending in `:` that aren't directives) stay
           flush-left so they read as section markers inside the routine —
           the same convention `_loop:` / `_not_found:` follow in
@@ -443,12 +456,24 @@ class A816Formatter:
           Inline comments (folded onto an instruction) are unaffected
           because they're appended to the instruction line, not emitted
           as their own entry here.
+        - Stand-alone docstrings (the `\"\"\"` markers and every line in
+          between) pass through unchanged. They sit above a label, so the
+          docstring needs to share that label's flush-left indentation
+          and any relative indent the author baked into the content has
+          to survive intact — which `_indent` would destroy by lstripping.
         """
         indented: list[str] = []
+        in_docstring = False
         for line in lines:
             stripped = line.strip()
             if not stripped:
                 indented.append("")
+                continue
+            triple_count = stripped.count('"""')
+            if in_docstring or triple_count:
+                indented.append(line.rstrip())
+                if triple_count % 2 == 1:
+                    in_docstring = not in_docstring
                 continue
             is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
             if is_label or stripped.startswith(";"):
@@ -538,11 +563,79 @@ class A816Formatter:
                     padding = max(target_column - (indent + len(code_part)), 1)
                     lines[index] = f"{' ' * indent}{code_part}{' ' * padding}{comment_text}"
 
+    # Each line is rstripped before this regex sees it, so the trailing
+    # group is bounded — no nested overlapping `\s*` runs that could
+    # backtrack on adversarial input.
+    _PAREN_WRAP_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^(?P<indent>[ \t]*)(?P<head>(?:\.macro[ \t]+)?[A-Za-z_][\w.]*)"
+        r"\((?P<params>[^()]*)\)(?P<tail>[ \t]*\{?)$"
+    )
+
+    def _wrap_long_paren_lines(self, lines: list[str]) -> list[str]:
+        """Wrap macro defs / applies whose single-line form exceeds max_line_length.
+
+        Match shape `[indent]head(params)tail`. `head` may be prefixed with
+        `.macro `; `tail` is empty (macro apply) or ` {` (macro def). Lines
+        with embedded comments, nested parens, or no params are left alone.
+        """
+        limit = self.options.max_line_length
+        out: list[str] = []
+        for line in lines:
+            if len(line) <= limit:
+                out.append(line)
+                continue
+            match = self._PAREN_WRAP_RE.match(line)
+            if not match:
+                out.append(line)
+                continue
+            params_raw = match.group("params").strip()
+            if not params_raw:
+                out.append(line)
+                continue
+            params = [p.strip() for p in params_raw.split(",") if p.strip()]
+            if any(("(" in p or ")" in p) for p in params):
+                out.append(line)
+                continue
+            indent = match.group("indent")
+            head = match.group("head")
+            tail = match.group("tail").strip()
+            inner_indent = indent + " " * self.options.indent_size
+            out.append(f"{indent}{head}(")
+            for param in params:
+                out.append(f"{inner_indent}{param},")
+            closing = f"{indent}){' ' + tail if tail else ''}".rstrip()
+            out.append(closing)
+        return out
+
+    @staticmethod
+    def _strip_blanks_after_position_directive(lines: list[str]) -> list[str]:
+        """Collapse blank lines immediately after `*=` / `@=` directives.
+
+        Position directives sit tight with the data they place — blank
+        lines between `*= 0xADDR` and the following `.incbin` / opcode
+        read as noise rather than separation. The author can still put
+        blank lines *before* the directive to break up sections.
+        """
+        out: list[str] = []
+        skip_blanks = False
+        for line in lines:
+            stripped = line.lstrip()
+            if skip_blanks and not stripped:
+                continue
+            out.append(line)
+            skip_blanks = stripped.startswith("*=") or stripped.startswith("@=")
+        return out
+
     def _finalize_formatting(self, lines: list[str]) -> str:
         """Strip trailing whitespace, collapse blanks, separate labels, align inline comments."""
         lines = [line.rstrip() for line in lines]
+        lines = self._wrap_long_paren_lines(lines)
         lines = self._collapse_empty_lines(lines)
         lines = self._separate_labels(lines)
+        # Position directives sit tight with their data; strip blanks
+        # after `_separate_labels` because that pass would otherwise
+        # re-insert a blank between `*=` / `@=` and the next label.
+        lines = self._strip_blanks_after_position_directive(lines)
         self._align_inline_comments(lines)
         content = "\n".join(lines)
         if content and not content.endswith("\n"):

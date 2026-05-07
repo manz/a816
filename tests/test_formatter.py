@@ -769,3 +769,183 @@ _OkBk2:
         assert "comment */" in formatted
         # Idempotence: formatting again is a no-op.
         assert self.formatter.format_text(formatted) == formatted
+
+
+class TestParenWrapping(TestCase):
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_macro_def_wraps_when_over_limit(self) -> None:
+        params = ", ".join(f"param_{i}" for i in range(20))
+        src = f'"""m"""\n.macro big_macro({params}) {{\n    rts\n}}\n'
+        out = self.formatter.format_text(src)
+        first_call_line = next(line for line in out.splitlines() if line.startswith(".macro"))
+        assert first_call_line.endswith("(")
+        assert ") {" in out
+        assert all(len(line) <= 120 for line in out.splitlines())
+
+    def test_macro_apply_wraps_when_over_limit(self) -> None:
+        args = ", ".join(f"argument_{i}" for i in range(15))
+        src = f'"""m"""\n.macro big_macro() {{\n    rts\n}}\nmain:\n    big_macro({args})\n'
+        out = self.formatter.format_text(src)
+        assert all(len(line) <= 120 for line in out.splitlines())
+        assert any(line.rstrip().endswith("big_macro(") for line in out.splitlines())
+        assert any(line.strip() == ")" for line in out.splitlines())
+
+    def test_short_call_not_wrapped(self) -> None:
+        src = '"""m"""\n.macro foo(a, b) {\n    rts\n}\nmain:\n    foo(1, 2)\n'
+        out = self.formatter.format_text(src)
+        assert "foo(1, 2)" in out
+        assert ".macro foo(a, b) {" in out
+
+
+class TestDocstringPreservation(TestCase):
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_multi_line_block_with_short_content_keeps_block_shape(self) -> None:
+        """`\"\"\"\nShort.\n\"\"\"` must round-trip; cleandoc collapses content but
+        the block shape was the author's intent."""
+        src = '"""\nShort line.\n"""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert '"""\nShort line.\n"""' in out
+        assert '"""Short line."""' not in out
+
+    def test_inline_docstring_stays_inline(self) -> None:
+        src = '"""Inline."""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert '"""Inline."""' in out
+        assert '"""\nInline.\n"""' not in out
+
+
+class TestDocstringRuffParity(TestCase):
+    """ruff-preview parity: reindent + trim trailing whitespace, content untouched."""
+
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_preserves_relative_indent_inside_block(self) -> None:
+        src = '"""\nfirst line\n    indented detail\nback to flush\n"""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert "first line" in out
+        assert "    indented detail" in out
+        assert "back to flush" in out
+
+    def test_trims_trailing_whitespace_in_block(self) -> None:
+        src = '"""\nline with trailing   \n"""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert "line with trailing   " not in out
+        assert "line with trailing" in out
+
+    def test_block_form_kept_when_multiline_in_source(self) -> None:
+        src = '"""\nshort.\n"""\nmain:\n    rts\n'
+        out = self.formatter.format_text(src)
+        assert '"""\nshort.\n"""' in out
+
+
+class TestLabelAttachedDocstring(TestCase):
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_docstring_above_label_inside_scope_stays_flush(self) -> None:
+        """A docstring sitting above a label keeps the label's flush-left
+        indent — labels stay flush even inside scopes, so the docstring
+        must follow. The first body docstring is consumed as the scope's
+        own docstring, so the test puts the label-attached docstring after
+        an instruction to keep it in the body stream."""
+        src = '.scope foo {\nfirst_label:\n    rts\n"""attached to label"""\nmy_label:\n    rts\n}\n'
+        out = self.formatter.format_text(src)
+        lines = out.splitlines()
+        doc_idx = next(i for i, line in enumerate(lines) if '"""attached to label"""' in line)
+        label_idx = next(i for i, line in enumerate(lines) if line.startswith("my_label:"))
+        # both flush-left
+        assert lines[doc_idx].startswith('"""'), lines[doc_idx]
+        assert lines[label_idx] == "my_label:"
+
+    def test_multiline_docstring_above_label_preserves_relative_indent(self) -> None:
+        src = '.scope foo {\nfirst_label:\n    rts\n"""\nsummary\n    indented detail\n"""\nmy_label:\n    rts\n}\n'
+        out = self.formatter.format_text(src)
+        assert "    indented detail" in out
+        # Triple-quote markers stay flush-left.
+        markers = [line for line in out.splitlines() if line.strip() == '"""']
+        assert markers, 'expected `"""` markers in output'
+        for m in markers:
+            assert m == '"""', f"docstring marker indented: {m!r}"
+
+
+class TestFormatterIdempotency(TestCase):
+    """Formatter must reach a fixed point: `format(format(x)) == format(x)`.
+
+    Docstring edge-blank stripping and per-line trailing-whitespace
+    trimming are intentional first-pass changes — the contract is on
+    the *second* pass being a no-op.
+    """
+
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def _assert_idempotent(self, src: str) -> None:
+        once = self.formatter.format_text(src)
+        twice = self.formatter.format_text(once)
+        self.assertEqual(once, twice, "formatter not idempotent")
+
+    def test_idempotent_simple_program(self) -> None:
+        self._assert_idempotent('"""Module."""\nmain:\n    lda #0x42\n    rts\n')
+
+    def test_idempotent_inline_docstring(self) -> None:
+        self._assert_idempotent('"""Module."""\nmain:\n    rts\n')
+
+    def test_idempotent_multiline_docstring(self) -> None:
+        self._assert_idempotent('"""Module."""\n"""\nsummary\n    sub-detail\n"""\nmain:\n    rts\n')
+
+    def test_idempotent_docstring_above_label(self) -> None:
+        self._assert_idempotent('"""Module."""\n"""Get pointer."""\nget_pointer:\n    rtl\n')
+
+    def test_idempotent_docstring_with_trailing_whitespace_strips_then_stable(self) -> None:
+        src = '"""Module."""\n"""\nline trailing   \n"""\nmain:\n    rts\n'
+        once = self.formatter.format_text(src)
+        twice = self.formatter.format_text(once)
+        self.assertEqual(once, twice)
+        self.assertNotIn("trailing   \n", once)
+
+    def test_idempotent_macro_wrap(self) -> None:
+        params = ", ".join(f"param_{i}" for i in range(20))
+        self._assert_idempotent(f'"""Module."""\n.macro big_macro({params}) {{\n    rts\n}}\n')
+
+    def test_idempotent_sample_file(self) -> None:
+        sample = Path(__file__).parent / "samples" / "sample.s"
+        self._assert_idempotent(sample.read_text(encoding="utf-8"))
+
+
+class TestPositionDirectiveBlanks(TestCase):
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_no_blank_between_position_and_data(self) -> None:
+        src = (
+            '"""m"""\n'
+            "*= 0x0AF000\n"
+            "\n"
+            "\n"
+            '.incbin "fonts/8x8.bin"\n'
+            "\n"
+            "*= 0x0FA710\n"
+            "\n"
+            '.incbin "assets/characters_names.dat"\n'
+        )
+        out = self.formatter.format_text(src)
+        # No blank line between `*=` and the next directive.
+        self.assertNotIn("*=0x0AF000\n\n", out)
+        self.assertNotIn("*=0x0FA710\n\n", out)
+        self.assertIn('*=0x0AF000\n.incbin "fonts/8x8.bin"', out)
+
+    def test_reloc_directive_also_tight(self) -> None:
+        src = '"""m"""\n*= 0x008000\n@= 0x7E2000\n\nram_routine:\n    rts\n'
+        out = self.formatter.format_text(src)
+        self.assertIn("*=0x008000\n@=0x7E2000\nram_routine:", out)
+
+    def test_blank_before_position_preserved(self) -> None:
+        """Blanks before a `*=` are kept — author uses them to break sections."""
+        src = '"""m"""\nlabel_one:\n    rts\n\n*= 0x0AF000\n.incbin "x.bin"\n'
+        out = self.formatter.format_text(src)
+        self.assertIn("\n\n*=0x0AF000", out)

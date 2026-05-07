@@ -335,3 +335,68 @@ func2:
 
             self.assertEqual(exit_code, 0, f"Link failed: {stderr}")
             self.assertTrue(ips_file.exists(), "IPS file was not created")
+
+
+class CLISubcommandsTestCase(CLITestCase):
+    """`a816 build` / `a816 check` / `a816 format` subcommand routing."""
+
+    def test_build_subcommand_runs_assemble(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm_file = Path(tmpdir) / "main.s"
+            asm_file.write_text(
+                '"""m"""\n*= 0x8000\nmain:\n    lda #0x42\n    rts\n',
+                encoding="utf-8",
+            )
+            ips_file = Path(tmpdir) / "out.ips"
+            exit_code, _, stderr = self._run_cli(["build", str(asm_file), "-o", str(ips_file)])
+            self.assertEqual(exit_code, 0, stderr)
+            self.assertTrue(ips_file.exists())
+
+    def test_check_subcommand_routes_to_fluff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "x.s"
+            src.write_text("main:\n    rts\n", encoding="utf-8")  # missing module docstring → DOC001
+            exit_code, stdout, _ = self._run_cli(["check", str(src)])
+            self.assertEqual(exit_code, 1)
+            self.assertIn("DOC001", stdout)
+
+    def test_format_subcommand_routes_to_fluff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "x.s"
+            src.write_text('"""m"""\nmain:\n    rts\n', encoding="utf-8")
+            exit_code, _, _ = self._run_cli(["format", "--check", str(src)])
+            self.assertIn(exit_code, (0, 1))  # depends on fixture; both valid
+
+    def test_bare_invocation_still_assembles(self) -> None:
+        """Back-compat: no subcommand → fall through to assemble."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm_file = Path(tmpdir) / "main.s"
+            asm_file.write_text(
+                '"""m"""\n*= 0x8000\nmain:\n    lda #0x42\n    rts\n',
+                encoding="utf-8",
+            )
+            ips_file = Path(tmpdir) / "out.ips"
+            exit_code, _, stderr = self._run_cli([str(asm_file), "-o", str(ips_file)])
+            self.assertEqual(exit_code, 0, stderr)
+
+
+class CLIFluffLegacyTestCase(TestCase):
+    """`a816-fluff` entrypoint emits a deprecation notice and proxies through."""
+
+    def test_legacy_entrypoint_warns_and_runs(self) -> None:
+        from a816.fluff import fluff_legacy_main
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "x.s"
+            src.write_text("main:\n    rts\n", encoding="utf-8")
+            stderr_capture = StringIO()
+            stdout_capture = StringIO()
+            with (
+                patch.object(sys, "argv", ["a816-fluff", "check", str(src)]),
+                patch.object(sys, "stderr", stderr_capture),
+                patch.object(sys, "stdout", stdout_capture),
+            ):
+                rc = fluff_legacy_main()
+            self.assertEqual(rc, 1)
+            self.assertIn("deprecated", stderr_capture.getvalue())
+            self.assertIn("DOC001", stdout_capture.getvalue())

@@ -1,5 +1,5 @@
 import ast
-import inspect
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
@@ -326,95 +326,94 @@ def parse_debug(p: Parser) -> DebugAstNode:
     return DebugAstNode(message_token.value[1:-1], message_token)
 
 
+def _resolve_include_path(p: Parser, keyword: Token, include_path: str) -> str:
+    """Locate an include file: parent-relative first, then `--include-path`s."""
+    if keyword.position and keyword.position.file:
+        parent_filename = keyword.position.file.filename
+        if parent_filename.startswith("file://"):
+            from urllib.parse import unquote, urlparse
+
+            parent_filename = unquote(urlparse(parent_filename).path)
+        parent_dir = Path(parent_filename).parent
+        if parent_dir.exists():
+            candidate = parent_dir / include_path
+            if candidate.exists():
+                return str(candidate)
+
+    for search_dir in p.include_paths or []:
+        candidate = search_dir / include_path
+        if candidate.exists():
+            return str(candidate)
+
+    return include_path  # let the eventual open() raise the canonical error
+
+
+def parse_include(p: Parser, keyword: Token) -> IncludeAstNode:
+    include_path = parse_directive_with_quoted_string(p)
+    resolved_path = _resolve_include_path(p, keyword, include_path)
+    with open(resolved_path, encoding="utf-8") as fd:
+        source = fd.read()
+    scanner = Scanner(cast(ScannerStateFunc, lex_initial))
+    tokens = scanner.scan(resolved_path, source)
+    parser = Parser(tokens, cast(StateFunc, parse_initial), include_paths=p.include_paths)
+    sub_ast = parser.parse()
+    return IncludeAstNode(include_path, sub_ast, keyword)
+
+
+def _data_node(kind: str) -> Callable[[Parser, Token], DataNode]:
+    def _handle(p: Parser, keyword: Token) -> DataNode:
+        return DataNode(kind, parse_expression_list_inner(p), keyword)
+
+    return _handle
+
+
+def _quoted_directive(node_cls: type) -> Callable[[Parser, Token], AstNode]:
+    def _handle(p: Parser, keyword: Token) -> AstNode:
+        return cast(AstNode, node_cls(parse_directive_with_quoted_string(p), keyword))
+
+    return _handle
+
+
+def _register_size(register: str, size: int) -> Callable[[Parser, Token], RegisterSizeAstNode]:
+    def _handle(_p: Parser, keyword: Token) -> RegisterSizeAstNode:
+        return RegisterSizeAstNode(register, size, keyword)
+
+    return _handle
+
+
+_KEYWORD_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
+    "scope": lambda p, _kw: parse_scope(p),
+    "ascii": _quoted_directive(AsciiAstNode),
+    "text": _quoted_directive(TextAstNode),
+    "dw": _data_node("dw"),
+    "dl": _data_node("dl"),
+    "db": _data_node("db"),
+    "pointer": _data_node("pointer"),
+    "include": parse_include,
+    "include_ips": lambda p, _kw: parse_include_ips(p),
+    "incbin": lambda p, _kw: IncludeBinaryAstNode(parse_directive_with_quoted_string(p), p.current()),
+    "table": lambda p, _kw: TableAstNode(parse_directive_with_quoted_string(p), p.current()),
+    "macro": lambda p, _kw: parse_macro(p),
+    "map": lambda p, _kw: parse_map(p),
+    "if": lambda p, _kw: parse_if(p),
+    "for": lambda p, _kw: parse_for(p),
+    "struct": lambda p, _kw: parse_struct(p),
+    "extern": lambda p, _kw: parse_extern(p),
+    "import": lambda p, _kw: parse_import(p),
+    "debug": lambda p, _kw: parse_debug(p),
+    "a8": _register_size("a", 8),
+    "a16": _register_size("a", 16),
+    "i8": _register_size("i", 8),
+    "i16": _register_size("i", 16),
+}
+
+
 def parse_keyword(p: Parser) -> KeywordAstNode:
     keyword = p.next()
-
-    if keyword.value == "scope":
-        return parse_scope(p)
-    elif keyword.value == "ascii":
-        return AsciiAstNode(parse_directive_with_quoted_string(p), keyword)
-    elif keyword.value == "text":
-        return TextAstNode(parse_directive_with_quoted_string(p), keyword)
-    elif keyword.value == "dw":
-        expressions = parse_expression_list_inner(p)
-        return DataNode("dw", expressions, keyword)
-    elif keyword.value == "dl":
-        expressions = parse_expression_list_inner(p)
-        return DataNode("dl", expressions, keyword)
-    elif keyword.value == "db":
-        expressions = parse_expression_list_inner(p)
-        return DataNode("db", expressions, keyword)
-    elif keyword.value == "pointer":
-        expressions = parse_expression_list_inner(p)
-        return DataNode("pointer", expressions, keyword)
-    elif keyword.value == "include":
-        include_path = parse_directive_with_quoted_string(p)
-
-        # Resolve include path relative to the parent file's directory
-        resolved_path = include_path
-        if keyword.position and keyword.position.file:
-            parent_filename = keyword.position.file.filename
-            # Handle file:// URIs from LSP
-            if parent_filename.startswith("file://"):
-                from urllib.parse import unquote, urlparse
-
-                parent_filename = unquote(urlparse(parent_filename).path)
-            parent_file = Path(parent_filename)
-            if parent_file.parent.exists():
-                candidate = parent_file.parent / include_path
-                if candidate.exists():
-                    resolved_path = str(candidate)
-
-        # Fall back to searching include paths if relative resolution failed
-        if resolved_path == include_path and p.include_paths:
-            for search_dir in p.include_paths:
-                candidate = search_dir / include_path
-                if candidate.exists():
-                    resolved_path = str(candidate)
-                    break
-
-        with open(resolved_path, encoding="utf-8") as fd:
-            source = fd.read()
-
-            scanner = Scanner(cast(ScannerStateFunc, lex_initial))
-            tokens = scanner.scan(resolved_path, source)
-
-            parser = Parser(tokens, cast(StateFunc, parse_initial), include_paths=p.include_paths)
-            sub_ast = parser.parse()
-
-        return IncludeAstNode(include_path, sub_ast, keyword)
-    elif keyword.value == "include_ips":
-        return parse_include_ips(p)
-    elif keyword.value == "incbin":
-        return IncludeBinaryAstNode(parse_directive_with_quoted_string(p), p.current())
-    elif keyword.value == "table":
-        return TableAstNode(parse_directive_with_quoted_string(p), p.current())
-    elif keyword.value == "macro":
-        return parse_macro(p)
-    elif keyword.value == "map":
-        return parse_map(p)
-    elif keyword.value == "if":
-        return parse_if(p)
-    elif keyword.value == "for":
-        return parse_for(p)
-    elif keyword.value == "struct":
-        return parse_struct(p)
-    elif keyword.value == "extern":
-        return parse_extern(p)
-    elif keyword.value == "import":
-        return parse_import(p)
-    elif keyword.value == "debug":
-        return parse_debug(p)
-    elif keyword.value == "a8":
-        return RegisterSizeAstNode("a", 8, keyword)
-    elif keyword.value == "a16":
-        return RegisterSizeAstNode("a", 16, keyword)
-    elif keyword.value == "i8":
-        return RegisterSizeAstNode("i", 8, keyword)
-    elif keyword.value == "i16":
-        return RegisterSizeAstNode("i", 16, keyword)
-    else:
+    handler = _KEYWORD_HANDLERS.get(keyword.value)
+    if handler is None:
         raise ParserSyntaxError(f"Unexpected token {keyword}", keyword)
+    return cast(KeywordAstNode, handler(p, keyword))
 
 
 def parse_label(p: Parser) -> LabelAstNode:
@@ -607,8 +606,7 @@ def parse_decl(
         return CommentAstNode(current_token.value, current_token)
     elif accept_token(current_token, TokenType.DOCSTRING):
         raw_text = ast.literal_eval(current_token.value)
-        doc_text = inspect.cleandoc(raw_text)
-        return DocstringAstNode(doc_text, current_token)
+        return DocstringAstNode(raw_text, current_token)
     elif accept_token(current_token, TokenType.DOUBLE_LBRACE):
         return parse_code_lookup(p)
     elif accept_tokens(current_token, [TokenType.OPCODE, TokenType.OPCODE_NAKED]):

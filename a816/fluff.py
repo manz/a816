@@ -1,11 +1,12 @@
 import argparse
 import difflib
 import sys
+import textwrap
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from a816.exceptions import FormattingError
-from a816.fluff_lint import lint_file
+from a816.fluff_lint import Rule, lint_file
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
@@ -48,7 +49,7 @@ def _colorize_diff(diff_lines: Iterable[str]) -> str:
 def _build_fluff_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="a816 fluff", description="Format and lint a816 assembly sources.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    check_parser = subparsers.add_parser("check", help="Run docstring-coverage lints (DOC001 / DOC002).")
+    check_parser = subparsers.add_parser("check", help="Run a816 fluff lint rules.")
     check_parser.add_argument(
         "paths",
         nargs="+",
@@ -76,6 +77,11 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show unified diff per changed file and exit non-zero if any differ.",
     )
+    explain_parser = subparsers.add_parser(
+        "explain",
+        help="Print rule documentation + good/bad examples for a single rule code.",
+    )
+    explain_parser.add_argument("code", help="Rule code (e.g. DOC003).")
     return parser
 
 
@@ -232,6 +238,25 @@ def _run_check(args: argparse.Namespace) -> int:
     return missing_err
 
 
+def _run_explain(args: argparse.Namespace) -> int:
+    code = args.code.upper()
+    rule = Rule.registry.get(code)
+    if rule is None:
+        print(f"unknown rule: {args.code}", file=sys.stderr)
+        return 2
+    print(f"{rule.code}  {rule.description}")
+    if rule.rationale:
+        print()
+        print(textwrap.fill(rule.rationale, width=88))
+    if rule.bad:
+        print("\nBad:\n")
+        print(textwrap.indent(rule.bad.rstrip(), "    "))
+    if rule.good:
+        print("\nGood:\n")
+        print(textwrap.indent(rule.good.rstrip(), "    "))
+    return 0
+
+
 def fluff_main(argv: Sequence[str] | None = None) -> int:
     parser = _build_fluff_parser()
     args = parser.parse_args(argv)
@@ -239,8 +264,23 @@ def fluff_main(argv: Sequence[str] | None = None) -> int:
         return _run_format(args, parser)
     if args.command == "check":
         return _run_check(args)
+    if args.command == "explain":
+        return _run_explain(args)
     parser.error("Unknown command")
     return 2  # parser.error never returns, but mypy needs this
+
+
+def fluff_legacy_main() -> int:
+    """`a816-fluff` entrypoint: emit a deprecation notice and proxy to `fluff_main`.
+
+    Kept for compatibility with users / scripts pinned to the old binary
+    name. Prefer `a816 check` and `a816 format` going forward.
+    """
+    print(
+        "warning: `a816-fluff` is deprecated; use `a816 check` / `a816 format` instead.",
+        file=sys.stderr,
+    )
+    return fluff_main()
 
 
 if __name__ == "__main__":  # pragma: no cover

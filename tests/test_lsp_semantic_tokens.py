@@ -49,8 +49,9 @@ TRIGGER_ENDING_CUTSCENE := 0
     found_symbols = set(doc.symbols.keys())
     assert expected_symbols.issubset(found_symbols), f"Missing symbols: {expected_symbols - found_symbols}"
 
-    # Verify no diagnostics (no parse errors)
-    assert len(doc.diagnostics) == 0, f"Should have no diagnostics, got: {doc.diagnostics}"
+    # Verify no parse-error diagnostics (fluff-lint warnings are filtered).
+    parse_errors = [d for d in doc.diagnostics if d.source != "a816 fluff"]
+    assert len(parse_errors) == 0, f"Should have no parse diagnostics, got: {parse_errors}"
 
 
 def test_semantic_tokens_generation() -> None:

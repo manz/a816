@@ -112,7 +112,7 @@ the empty string.
   resolution pass.
 - `SYMBOLS` is filled from the resolver's labels and symbols at the
   end of assembly, after module GLOBAL symbols have been merged in.
-- The CLI link path (`a816 file1.o file2.o -o out.ips`) propagates
+- The CLI link path (`a816 build file1.o file2.o -o out.ips`) propagates
   line tables from each `.o` through the linker. Object files carry a
   `LINES` section themselves (object-file format v5+), so debug info
   survives the compile/link split. Direct-mode builds
