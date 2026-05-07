@@ -445,46 +445,42 @@ class LinkedModuleNode(NodeProtocol):
         )
 
 
-class LongNode(NodeProtocol):
+class _SizedValueNode(NodeProtocol):
+    """Emit `SIZE` little-endian bytes from a value node.
+
+    Concrete subclasses set `SIZE` (1, 2, or 3). Deferred expressions
+    on the value node register an expression relocation of the same
+    width so the linker can fill it in once cross-module names resolve.
+    """
+
+    SIZE: int = 0
+
     def __init__(self, value_node: ValueNodeProtocol) -> None:
         self.value_node = value_node
 
     def emit(self, current_address: Address) -> bytes:
         value = self.value_node.get_value()
-        # Check for deferred expression (external symbols)
         if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
             resolver = self.value_node.resolver
             if resolver.context.is_object_mode and resolver.context.object_writer is not None:
                 resolver.context.object_writer.add_expression_relocation(
                     resolver.context.object_writer.relocation_offset(),
                     self.value_node._deferred_expression,
-                    3,
+                    self.SIZE,
                 )
-        return struct.pack("<HB", value & 0xFFFF, (value >> 16) & 0xFF)
+        mask = (1 << (8 * self.SIZE)) - 1
+        return (value & mask).to_bytes(self.SIZE, "little")
 
     def pc_after(self, current_pc: Address) -> Address:
-        return current_pc + 3
+        return current_pc + self.SIZE
 
 
-class WordNode(NodeProtocol):
-    def __init__(self, value_node: ValueNodeProtocol) -> None:
-        self.value_node = value_node
+class LongNode(_SizedValueNode):
+    SIZE = 3
 
-    def emit(self, current_address: Address) -> bytes:
-        value = self.value_node.get_value()
-        # Check for deferred expression (external symbols)
-        if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
-            resolver = self.value_node.resolver
-            if resolver.context.is_object_mode and resolver.context.object_writer is not None:
-                resolver.context.object_writer.add_expression_relocation(
-                    resolver.context.object_writer.relocation_offset(),
-                    self.value_node._deferred_expression,
-                    2,
-                )
-        return struct.pack("<H", value & 0xFFFF)
 
-    def pc_after(self, current_pc: Address) -> Address:
-        return current_pc + 2
+class WordNode(_SizedValueNode):
+    SIZE = 2
 
 
 class DebugNode(NodeProtocol):
@@ -516,25 +512,8 @@ class DebugNode(NodeProtocol):
         return current_pc
 
 
-class ByteNode(NodeProtocol):
-    def __init__(self, value_node: ValueNodeProtocol) -> None:
-        self.value_node = value_node
-
-    def emit(self, current_address: Address) -> bytes:
-        value = self.value_node.get_value()
-        # Check for deferred expression (external symbols)
-        if isinstance(self.value_node, ExpressionNode) and hasattr(self.value_node, "_deferred_expression"):
-            resolver = self.value_node.resolver
-            if resolver.context.is_object_mode and resolver.context.object_writer is not None:
-                resolver.context.object_writer.add_expression_relocation(
-                    resolver.context.object_writer.relocation_offset(),
-                    self.value_node._deferred_expression,
-                    1,
-                )
-        return struct.pack("B", value & 0xFF)
-
-    def pc_after(self, current_pc: Address) -> Address:
-        return current_pc + 1
+class ByteNode(_SizedValueNode):
+    SIZE = 1
 
 
 class UnknownOpcodeError(Exception):
