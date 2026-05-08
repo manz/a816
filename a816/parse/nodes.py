@@ -363,19 +363,22 @@ class LinkedModuleNode(NodeProtocol):
     def pc_after(self, current_pc: Address) -> Address:
         from a816.object_file import SymbolSection, SymbolType
 
-        if not self.regions:
-            return current_pc
-
         scope = self.resolver.current_scope
-        if self.relocatable:
-            self._delta = current_pc.logical_value - self.regions[0].base_address
-        else:
-            self._delta = 0
-
-        # Shifted base of region 0 — used for the .sym/.adbg producer to
-        # report where the module actually landed.
-        self.base_address = self.regions[0].base_address + self._delta
         self._local_map: dict[str, int] = {}
+        if self.regions:
+            if self.relocatable:
+                self._delta = current_pc.logical_value - self.regions[0].base_address
+            else:
+                self._delta = 0
+            # Shifted base of region 0 — used for the .sym/.adbg producer to
+            # report where the module actually landed.
+            self.base_address = self.regions[0].base_address + self._delta
+        else:
+            # Symbol-only module (e.g. a stubs file with only `.label`
+            # declarations and no emitted code). No regions means no delta
+            # and no PC advance, but symbols still need binding.
+            self._delta = 0
+            self.base_address = current_pc.logical_value
 
         for name, address, sym_type, section in self.symbols:
             final = self._resolve_symbol_address(address, section)
@@ -383,6 +386,11 @@ class LinkedModuleNode(NodeProtocol):
                 scope.symbols[name] = final
                 if section == SymbolSection.CODE.value:
                     scope.labels[name] = final
+                elif section == SymbolSection.ABS_LABEL.value:
+                    # `.label`-declared in the imported module — surface it
+                    # as an absolute label in the importer's scope so it
+                    # lands in the merged `.adbg` as SymbolKind.LABEL.
+                    scope.absolute_labels[name] = final
             elif sym_type == SymbolType.LOCAL.value:
                 self._local_map[name] = final
 
@@ -391,6 +399,10 @@ class LinkedModuleNode(NodeProtocol):
         # source surrounding the loser .import shifts forward by the
         # module's size and lands on top of unrelated ROM.
         if self.is_loser:
+            return current_pc
+
+        # Symbol-only modules (no regions) don't advance PC.
+        if not self.regions:
             return current_pc
 
         # Pinned modules (any explicit `*=`) land at their declared

@@ -520,9 +520,7 @@ class Program:
         for name, value in self.resolver.get_all_symbols():
             if self.resolver.current_scope.is_external_symbol(name):
                 continue  # already added by ExternNode
-            sym_type, section, sym_value = self._classify_object_symbol(
-                name, value, label_names, absolute_label_names
-            )
+            sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 
     def assemble_with_object_emitter(
@@ -721,11 +719,7 @@ class Program:
         }
         for name, value, sym_type, section in linked_obj.symbols:
             scope_kind = scope_by_type[sym_type]
-            kind = (
-                SymbolKind.LABEL
-                if section in (SymbolSection.CODE, SymbolSection.ABS_LABEL)
-                else SymbolKind.CONSTANT
-            )
+            kind = SymbolKind.LABEL if section in (SymbolSection.CODE, SymbolSection.ABS_LABEL) else SymbolKind.CONSTANT
             info.symbols.append(SymbolEntry(name=name, address=value, scope=scope_kind, module_idx=0, kind=kind))
         for address, file_idx, line, column, flags in all_lines:
             info.lines.append(

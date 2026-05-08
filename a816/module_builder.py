@@ -237,8 +237,12 @@ class ModuleBuilder:
         from a816.object_file import SymbolSection as ObjSymbolSection
         from a816.object_file import SymbolType as ObjSymbolType
 
+        # ABS_LABEL is a `.label`-declared address — propagate it like a
+        # DATA constant so dependent modules see the binding without needing
+        # an explicit `.extern`.
+        constant_sections = (ObjSymbolSection.DATA, ObjSymbolSection.ABS_LABEL)
         for name, value, sym_type, section in obj.symbols:
-            if sym_type == ObjSymbolType.GLOBAL and section == ObjSymbolSection.DATA:
+            if sym_type == ObjSymbolType.GLOBAL and section in constant_sections:
                 accumulated[name] = value
 
     def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
@@ -356,6 +360,9 @@ def build_with_imports(
             return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
 
         symbol_map = dict(program.resolver.get_all_labels())
+        # `.label`-declared names are absolute addresses that should appear in
+        # the exported symbol map alongside real labels.
+        symbol_map.update(program.resolver.get_all_absolute_labels())
         return BuildResult(exit_code=exit_code, symbol_map=symbol_map, program=program)
 
     except Exception as e:
@@ -497,6 +504,9 @@ def build_with_imports_direct(
             return result
         exit_code, program = result
         symbol_map = dict(program.resolver.get_all_labels())
+        # `.label`-declared names are absolute addresses that should appear in
+        # the exported symbol map alongside real labels.
+        symbol_map.update(program.resolver.get_all_absolute_labels())
 
         debug_path: Path | None = None
         if emit_debug_info and exit_code == 0:
