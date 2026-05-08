@@ -235,6 +235,7 @@ KEYWORDS = {
     "extern",
     "import",
     "debug",
+    "label",
     "a8",
     "a16",
     "i8",

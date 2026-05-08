@@ -484,6 +484,35 @@ lda #1
         ast = program.parser.parse_as_ast("a := 3")
         self.assertEqual([("assign", "a", "3")], ast.ast)
 
+    def test_label_decl_directive_parses(self) -> None:
+        program = Program()
+        ast = program.parser.parse_as_ast(".label mult8_far = 0x02855C")
+        self.assertEqual([("label_decl", "mult8_far", "0x02855C")], ast.ast)
+
+    def test_label_decl_registers_label(self) -> None:
+        """`.label NAME = ADDR` registers NAME via add_label so it lands in
+        scope.labels (and thus the .adbg LABEL records)."""
+        program = Program()
+        _, nodes = program.parser.parse(".label mult8_far = 0x02855C")
+        program.resolve_labels(nodes)
+
+        labels = dict(program.resolver.current_scope.get_labels())
+        self.assertEqual(labels["mult8_far"], 0x02855C)
+        # Symbol table also resolves the name (so call sites work).
+        self.assertEqual(program.resolver.current_scope.value_for("mult8_far"), 0x02855C)
+
+    def test_label_decl_does_not_advance_pc(self) -> None:
+        program = Program()
+        _, nodes = program.parser.parse("""
+        *=0x008000
+        .label mult8_far = 0x02855C
+        lda #0x42
+        """)
+        program.resolve_labels(nodes)
+        # PC should still be at 0x8000 + 2 (lda #imm), not pushed to mult8_far.
+        labels = dict(program.resolver.current_scope.get_labels())
+        self.assertEqual(labels["mult8_far"], 0x02855C)
+
     def test_a8_directive_sets_8bit_accumulator(self) -> None:
         """Test that .a8 followed by lda #immediate emits 2 bytes (8-bit immediate)"""
         input_program = """

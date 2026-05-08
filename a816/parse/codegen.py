@@ -27,6 +27,7 @@ from a816.parse.ast.nodes import (
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
     LabelAstNode,
+    LabelDeclAstNode,
     MacroApplyAstNode,
     MacroAstNode,
     MapAstNode,
@@ -48,6 +49,7 @@ from a816.parse.nodes import (
     ExpressionNode,
     ExternNode,
     IncludeIpsNode,
+    LabelDeclNode,
     LabelNode,
     LinkedModuleNode,
     LongNode,
@@ -507,6 +509,9 @@ def _emit_symbols_for_node(node: AstNode, prefix: str, symbols: list[str]) -> No
     if isinstance(node, LabelAstNode):
         _record_public_symbol(symbols, prefix, node.label)
         return
+    if isinstance(node, LabelDeclAstNode):
+        _record_public_symbol(symbols, prefix, node.symbol)
+        return
     if isinstance(node, SymbolAffectationAstNode | AssignAstNode):
         _record_public_symbol(symbols, prefix, node.symbol)
         return
@@ -616,6 +621,15 @@ def generate_label(
     file_info: Token,
 ) -> GenNodes:
     return [LabelNode(node.label, resolver)]
+
+
+def generate_label_decl(
+    node: LabelDeclAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    return [LabelDeclNode(node.symbol, node.value, resolver, file_info)]
 
 
 def generate_text(
@@ -857,6 +871,7 @@ generators = {
     "import": generate_import,
     "assign": generate_assign,
     "label": generate_label,
+    "label_decl": generate_label_decl,
     "opcode": generate_opcode,
     "incbin": generate_incbin,
     "docstring": generate_docstring,

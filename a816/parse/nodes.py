@@ -125,6 +125,56 @@ class LabelNode(NodeProtocol):
         return f"LabelNode({self.symbol_name})"
 
 
+class LabelDeclNode(NodeProtocol):
+    """`.label NAME = ADDR` — register NAME as a label at constant address ADDR.
+
+    Position counter is untouched. The label is added via `add_label`, so it
+    appears in `.adbg` LABEL records and resolves through `lookup_label`.
+    The RHS must evaluate to an int at this resolution pass; external
+    references are not supported (use `.extern` for that).
+    """
+
+    def __init__(
+        self,
+        symbol_name: str,
+        expression: ExpressionAstNode,
+        resolver: Resolver,
+        file_info: Token,
+    ) -> None:
+        self.symbol_name = symbol_name
+        self.expression = expression
+        self.resolver = resolver
+        self.file_info = file_info
+
+    def emit(self, current_addr: Address) -> bytes:
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        try:
+            value = eval_expression(self.expression, self.resolver)
+        except (ExternalExpressionReference, ExternalSymbolReference) as e:
+            raise NodeError(
+                f".label {self.symbol_name}: address must be a constant expression "
+                f"(got external reference '{getattr(e, 'symbol_name', getattr(e, 'expression_str', '?'))}')",
+                self.file_info,
+            ) from e
+        if not isinstance(value, int):
+            raise NodeError(
+                f".label {self.symbol_name}: address must evaluate to an int, got {type(value).__name__}",
+                self.file_info,
+            )
+        # Bypass Bus.get_address: the address is a constant the user supplied,
+        # so we don't need to resolve it through the active mapping (which may
+        # not cover the target bank, e.g. WRAM aliases). Record it directly.
+        scope = self.resolver.current_scope
+        scope.labels[self.symbol_name] = value
+        scope.add_symbol(self.symbol_name, value)
+        return current_pc
+
+    def __str__(self) -> str:
+        return f"LabelDeclNode({self.symbol_name}, {self.expression})"
+
+
 class SymbolNode(NodeProtocol):
     def __init__(
         self,

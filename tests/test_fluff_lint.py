@@ -496,6 +496,40 @@ def test_private_target_without_docstring_is_clean(tmp_path: Path) -> None:
     assert all(d.code != "DOC002" for d in diags)
 
 
+def test_doc002_flags_undocumented_label_decl(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.label mult8_far = 0x02855C\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    codes = [d.code for d in diags]
+    assert "DOC002" in codes
+    assert any("mult8_far" in d.message for d in diags if d.code == "DOC002")
+
+
+def test_doc002_satisfied_by_above_label_decl_docstring(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n"""Bank-2 hardware Mult8 entry."""\n.label mult8_far = 0x02855C\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC002" for d in diags), [d.format() for d in diags]
+    assert all(d.code != "DOC003" for d in diags), [d.format() for d in diags]
+    assert all(d.code != "DOC004" for d in diags), [d.format() for d in diags]
+
+
+def test_doc002_skips_private_label_decl(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text(
+        '"""Module."""\n.label _scratch = 0x1BAE\n',
+        encoding="utf-8",
+    )
+    diags = lint_file(src)
+    assert all(d.code != "DOC002" for d in diags)
+
+
 def test_doc003_does_not_attribute_above_label_when_previous_was_a_label(tmp_path: Path) -> None:
     """A docstring sitting between two labels is the *previous* label's
     below-attach, not the next label's misplaced above-attach. DOC003

@@ -29,6 +29,7 @@ from a816.parse.ast.nodes import (
     IncludeIpsAstNode,
     KeywordAstNode,
     LabelAstNode,
+    LabelDeclAstNode,
     MacroApplyAstNode,
     MacroAstNode,
     MapArgs,
@@ -300,6 +301,16 @@ def parse_include_ips(p: Parser) -> IncludeIpsAstNode:
     return IncludeIpsAstNode(string, expression, current)
 
 
+def parse_label_decl(p: Parser, keyword: Token) -> LabelDeclAstNode:
+    """Parse `.label NAME = EXPR` directive."""
+    symbol_token = p.next()
+    expect_token(symbol_token, TokenType.IDENTIFIER)
+    operator = p.next()
+    expect_token(operator, TokenType.EQUAL)
+    expression = parse_expression(p)
+    return LabelDeclAstNode(symbol_token.value, expression, keyword)
+
+
 def parse_extern(p: Parser) -> ExternAstNode:
     """Parse extern symbol_name"""
     symbol_token = p.current()
@@ -401,6 +412,7 @@ _KEYWORD_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     "extern": lambda p, _kw: parse_extern(p),
     "import": lambda p, _kw: parse_import(p),
     "debug": lambda p, _kw: parse_debug(p),
+    "label": parse_label_decl,
     "a8": _register_size("a", 8),
     "a16": _register_size("a", 16),
     "i8": _register_size("i", 8),

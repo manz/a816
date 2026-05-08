@@ -40,8 +40,8 @@ placement, `E***` for physical layout, `N***` for naming.
 | Code | What it flags |
 |------|---------------|
 | `DOC001` | Module is missing a leading docstring. |
-| `DOC002` | Public macro / scope / label is missing a docstring. |
-| `DOC003` | Docstring sits directly above a public target. For macros / scopes, move it inside the body (first statement after `{`); for labels, move it below the label (first statement after the colon). |
+| `DOC002` | Public macro / scope / label / `.label` directive is missing a docstring. |
+| `DOC003` | Docstring sits directly above a public target. For macros / scopes, move it inside the body (first statement after `{`); for code labels (`name:`), move it below the label (first statement after the colon). `.label` directives are body-less, so the docstring **above** is the canonical attach point and DOC003 does not fire. |
 | `DOC004` | Orphan docstring used as a comment. Convert to `;` or attach to a target. |
 | `DOC005` | A leading comment block (≥2 `;` lines, or a block comment with embedded newlines) sits where a docstring belongs. |
 | `DOC006` | Public target carries both a leading comment block and a docstring; pick one. |

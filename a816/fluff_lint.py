@@ -32,6 +32,7 @@ from a816.parse.ast.nodes import (
     ForAstNode,
     IfAstNode,
     LabelAstNode,
+    LabelDeclAstNode,
     MacroAstNode,
     ScopeAstNode,
     SymbolAffectationAstNode,
@@ -164,27 +165,30 @@ def _kind_label(node: AstNode) -> str:
             return "macro"
         case ScopeAstNode():
             return "scope"
-        case LabelAstNode():
+        case LabelAstNode() | LabelDeclAstNode():
             return "label"
         case _:
             return "symbol"
 
 
+def _target_raw_name(node: AstNode) -> str:
+    raw = getattr(node, "name", None) or getattr(node, "label", None) or getattr(node, "symbol", None) or ""
+    return str(raw)
+
+
 def _public_target_name(node: AstNode) -> str | None:
     """Public name of a documentable node, or None when private / not a target."""
-    if not isinstance(node, MacroAstNode | ScopeAstNode | LabelAstNode):
+    if not isinstance(node, MacroAstNode | ScopeAstNode | LabelAstNode | LabelDeclAstNode):
         return None
-    raw = getattr(node, "name", None) or getattr(node, "label", "") or ""
-    name = str(raw)
+    name = _target_raw_name(node)
     return name if _is_public(name) else None
 
 
 def _target_name(node: AstNode) -> str | None:
     """Name of a documentable target (any visibility) or None."""
-    if not isinstance(node, MacroAstNode | ScopeAstNode | LabelAstNode):
+    if not isinstance(node, MacroAstNode | ScopeAstNode | LabelAstNode | LabelDeclAstNode):
         return None
-    raw = getattr(node, "name", None) or getattr(node, "label", "") or ""
-    return str(raw) or None
+    return _target_raw_name(node) or None
 
 
 def _flatten(nodes: list[AstNode]) -> list[AstNode]:
@@ -385,6 +389,9 @@ class MissingTargetDocstring(Rule):
     def _target_undocumented(nodes: list[AstNode], idx: int, node: AstNode, pending_doc_above: bool) -> bool:
         if isinstance(node, LabelAstNode):
             return not _label_has_below_docstring(nodes, idx)
+        if isinstance(node, LabelDeclAstNode):
+            # `.label` has no body; the docstring sits on the line above.
+            return not pending_doc_above
         return not pending_doc_above and not getattr(node, "docstring", None)
 
 
@@ -424,7 +431,7 @@ class MisplacedDocstring(Rule):
                 self._track_docstring(state, node)
                 continue
             state.module_doc_consumed = True
-            if state.pending_doc is not None:
+            if state.pending_doc is not None and not isinstance(node, LabelDeclAstNode):
                 hit = self._diagnostic_for(ctx, state.pending_doc, node)
                 if hit is not None:
                     yield hit
@@ -570,6 +577,14 @@ class _PlacementWalker:
                 state.pending_doc = None
                 state.comment_run = []
                 state.expecting_label_doc = True
+                return True
+            case LabelDeclAstNode():
+                # `.label` has no body — docstring sits above. Consume it
+                # silently regardless of public/private; DOC002 enforces
+                # presence on public ones.
+                state.pending_doc = None
+                state.comment_run = []
+                state.expecting_label_doc = False
                 return True
             case _:
                 self._flush_orphan(state)
