@@ -163,12 +163,15 @@ class LabelDeclNode(NodeProtocol):
                 f".label {self.symbol_name}: address must evaluate to an int, got {type(value).__name__}",
                 self.file_info,
             )
-        # Bypass Bus.get_address: the address is a constant the user supplied,
-        # so we don't need to resolve it through the active mapping (which may
-        # not cover the target bank, e.g. WRAM aliases). Record it directly.
+        # The value is an absolute address the user supplied — not the
+        # current PC. Record it under `absolute_labels` (separate from
+        # `labels`) so the linker doesn't add the module's relocation delta
+        # to it, and write it directly into `symbols` so resolution at
+        # call sites returns the int. Skipping `add_symbol` avoids the
+        # "Symbol already defined" warning on the second resolve pass.
         scope = self.resolver.current_scope
-        scope.labels[self.symbol_name] = value
-        scope.add_symbol(self.symbol_name, value)
+        scope.absolute_labels[self.symbol_name] = value
+        scope.symbols[self.symbol_name] = value
         return current_pc
 
     def __str__(self) -> str:

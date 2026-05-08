@@ -23,6 +23,11 @@ class SymbolSection(Enum):
     CODE = 0x00
     DATA = 0x01
     BSS = 0x02
+    # `.label NAME = ADDR` declarations: the user picked the address, so the
+    # linker must NOT shift it by the module's relocation delta. Treated like
+    # DATA at the byte level, but flagged so `.adbg` emits LABEL kind and
+    # the linker leaves the address absolute.
+    ABS_LABEL = 0x03
 
 
 @dataclass
@@ -43,7 +48,7 @@ class Region:
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x0006  # Version 6: region-aware code layout.
+    VERSION = 0x0007  # Version 7: SymbolSection.ABS_LABEL for `.label` directives.
 
     def __init__(
         self,

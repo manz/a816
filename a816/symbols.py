@@ -86,6 +86,12 @@ class Scope:
         self.resolver: Resolver = resolver
         self.table: Table | None = None
         self.labels: dict[str, int] = {}
+        # Names declared via `.label NAME = ADDR` — kept separate from
+        # `labels` because the value is an absolute address the user picked
+        # (not the current PC). The linker must NOT add the relocation
+        # delta to these; treat them as DATA at object-file level but as
+        # LABEL kind in `.adbg`.
+        self.absolute_labels: dict[str, int] = {}
 
     def add_label(self, label: str, value: Address) -> None:
         self.labels[label] = value.logical_value
@@ -324,6 +330,18 @@ class Resolver:
                 continue
             mangle = mangle_nested and idx > 0 and not isinstance(scope, NamedScope)
             for name, value in scope.get_labels():
+                exported = f"__sc{idx}__{name}" if mangle else name
+                labels.append((exported, value))
+        return labels
+
+    def get_all_absolute_labels(self, mangle_nested: bool = False) -> list[tuple[str, int]]:
+        """Return `.label`-declared names across all non-internal scopes."""
+        labels: list[tuple[str, int]] = []
+        for idx, scope in enumerate(self.scopes):
+            if isinstance(scope, InternalScope):
+                continue
+            mangle = mangle_nested and idx > 0 and not isinstance(scope, NamedScope)
+            for name, value in scope.absolute_labels.items():
                 exported = f"__sc{idx}__{name}" if mangle else name
                 labels.append((exported, value))
         return labels
