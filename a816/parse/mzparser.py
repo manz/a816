@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from time import gmtime, strftime
@@ -12,6 +13,8 @@ from a816.parse.scanner import Scanner
 from a816.parse.scanner_states import lex_initial
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
+
+logger = logging.getLogger("a816.parser")
 
 
 @dataclass
@@ -35,7 +38,7 @@ class MZParser:
 
     def parse(self, program: str, filename: str = "") -> tuple[str | None, list[NodeProtocol]]:
         include_paths = self.resolver.context.include_paths
-        ast = self.parse_as_ast(program, filename, include_paths=include_paths)
+        ast = self.parse_as_ast(program, filename, include_paths=include_paths, verbose_errors=True)
         self.resolver.current_scope.add_symbol("BUILD_DATE", strftime("%Y-%m-%d %H:%M:%S", gmtime()))
         return ast.error, code_gen(ast.nodes, self.resolver)
 
@@ -44,6 +47,7 @@ class MZParser:
         program: str,
         filename: str = "memory.s",
         include_paths: list[Path] | None = None,
+        verbose_errors: bool = False,
     ) -> ParserResult:
         scanner = Scanner(lex_initial)
         ast: list[AstNode] = []
@@ -68,6 +72,9 @@ class MZParser:
                 length=1,
             )
         except ParserSyntaxError as e:
+            if verbose_errors:
+                logger.exception(e)
+                e.token.display()
             if e.token.position is not None:
                 pos = e.token.position
                 try:

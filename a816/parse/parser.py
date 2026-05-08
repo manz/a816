@@ -20,9 +20,8 @@ class Parser:
         try:
             return self.initial_state(self)
         except ParserSyntaxError as e:
-            logger.exception(e)
-            e.token.display()
-            raise e
+            logger.debug("Parser syntax error: %s", e)
+            raise
 
     def current(self) -> Token:
         try:

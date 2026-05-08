@@ -390,6 +390,37 @@ rts
             # Clean up
             Path(temp_path).unlink()
 
+    def test_format_text_resolves_include_relative_to_file_path(self) -> None:
+        """Regression: format_text with file_path must resolve .include relative to that file."""
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "libmz.i").write_text("; lib\n", encoding="utf-8")
+            main = tmp_path / "main.s"
+            main_content = '.include "libmz.i"\n'
+            main.write_text(main_content, encoding="utf-8")
+
+            formatted = self.formatter.format_text(main_content, file_path=main.as_uri())
+            self.assertIn(".include", formatted)
+
+    def test_format_text_resolves_include_via_include_paths(self) -> None:
+        """Regression: format_text honors include_paths when source dir lacks the file."""
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as inc_dir, TemporaryDirectory() as src_dir:
+            (Path(inc_dir) / "libmz.i").write_text("; lib\n", encoding="utf-8")
+            main = Path(src_dir) / "main.s"
+            main_content = '.include "libmz.i"\n'
+            main.write_text(main_content, encoding="utf-8")
+
+            formatted = self.formatter.format_text(
+                main_content,
+                file_path=main.as_uri(),
+                include_paths=[Path(inc_dir)],
+            )
+            self.assertIn(".include", formatted)
+
     def test_format_with_special_directives(self) -> None:
         """Test formatting assembly directives"""
         with NamedTemporaryFile(mode="w", suffix=".s", delete=False) as include_file:

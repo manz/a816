@@ -134,6 +134,34 @@ class ScannerTest(TestCase):
         tokens = self._scan('"""docstring"""')
         self.assertEqual(tokens[0][0], TokenType.DOCSTRING)
 
+    def test_multiline_docstring_position_points_at_start(self) -> None:
+        """Multi-line docstring's Position should report the line/column where it begins."""
+        scanner = Scanner(lex_initial)
+        tokens = scanner.scan("test.s", '"""\nfoo bar\n"""\nlda.b #1\n')
+        docstring = next(t for t in tokens if t.type == TokenType.DOCSTRING)
+        assert docstring.position is not None
+        self.assertEqual(docstring.position.line, 0, "docstring should start on line 0")
+        self.assertEqual(docstring.position.column, 0, "docstring should start at column 0")
+
+    def test_multiline_block_comment_position_points_at_start(self) -> None:
+        """Multi-line block comment's Position should report the line/column where it begins."""
+        scanner = Scanner(lex_initial)
+        tokens = scanner.scan("test.s", "/* line0\nline1\nline2 */\nlda.b #1\n")
+        comment = next(t for t in tokens if t.type == TokenType.COMMENT)
+        assert comment.position is not None
+        self.assertEqual(comment.position.line, 0)
+        self.assertEqual(comment.position.column, 0)
+
+    def test_token_after_multiline_docstring_has_correct_line(self) -> None:
+        """Tokens after a multi-line docstring should still get correct line numbers."""
+        scanner = Scanner(lex_initial)
+        # Docstring spans lines 0-2, opcode is on line 3.
+        tokens = scanner.scan("test.s", '"""\nfoo\n"""\nlda.b #1\n')
+        opcode = next(t for t in tokens if t.type == TokenType.OPCODE)
+        assert opcode.position is not None
+        self.assertEqual(opcode.position.line, 3)
+        self.assertEqual(opcode.position.column, 0)
+
     def test_scoped_identifier(self) -> None:
         """Test scoped identifier (scope.member) parsing."""
         tokens = self._scan("scope.member")

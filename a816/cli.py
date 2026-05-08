@@ -41,7 +41,7 @@ _ASM_SUFFIXES = (".s", ".asm")
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="x816", description="x816 usage", epilog="")
+    parser = argparse.ArgumentParser(prog="a816", description="a816 usage", epilog="")
     parser.add_argument("--verbose", action="store_true", help="Displays all log levels.")
     parser.add_argument("-o", "--output", type=Path, dest="output_file", default="a.out", help="Output file")
     parser.add_argument("input_files", nargs="+", type=Path, help="Input files (asm files or object files for linking)")
