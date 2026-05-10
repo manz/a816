@@ -361,17 +361,18 @@ class LinkedModuleNode(NodeProtocol):
         return self._compute_placement()
 
     def pc_after(self, current_pc: Address) -> Address:
-        from a816.object_file import SymbolSection, SymbolType
-
-        scope = self.resolver.current_scope
         self._local_map: dict[str, int] = {}
+        self._compute_delta_and_base(current_pc)
+        self._bind_module_symbols()
+        return self._advance_pc(current_pc)
+
+    def _compute_delta_and_base(self, current_pc: Address) -> None:
         if self.regions:
-            if self.relocatable:
-                self._delta = current_pc.logical_value - self.regions[0].base_address
-            else:
-                self._delta = 0
-            # Shifted base of region 0 — used for the .sym/.adbg producer to
-            # report where the module actually landed.
+            self._delta = (
+                current_pc.logical_value - self.regions[0].base_address if self.relocatable else 0
+            )
+            # Shifted base of region 0 — used for the .sym/.adbg producer
+            # to report where the module actually landed.
             self.base_address = self.regions[0].base_address + self._delta
         else:
             # Symbol-only module (e.g. a stubs file with only `.label`
@@ -380,39 +381,43 @@ class LinkedModuleNode(NodeProtocol):
             self._delta = 0
             self.base_address = current_pc.logical_value
 
+    def _bind_module_symbols(self) -> None:
+        from a816.object_file import SymbolType
+
+        scope = self.resolver.current_scope
         for name, address, sym_type, section in self.symbols:
             final = self._resolve_symbol_address(address, section)
             if sym_type == SymbolType.GLOBAL.value:
-                scope.symbols[name] = final
-                if section == SymbolSection.CODE.value:
-                    scope.labels[name] = final
-                elif section == SymbolSection.ABS_LABEL.value:
-                    # `.label`-declared in the imported module — surface it
-                    # as an absolute label in the importer's scope so it
-                    # lands in the merged `.adbg` as SymbolKind.LABEL.
-                    scope.absolute_labels[name] = final
+                self._bind_global(scope, name, final, section)
             elif sym_type == SymbolType.LOCAL.value:
                 self._local_map[name] = final
 
+    @staticmethod
+    def _bind_global(scope: Scope, name: str, final: int, section: int) -> None:
+        from a816.object_file import SymbolSection
+
+        scope.symbols[name] = final
+        if section == SymbolSection.CODE.value:
+            scope.labels[name] = final
+        elif section == SymbolSection.ABS_LABEL.value:
+            # `.label`-declared in the imported module — surface it as an
+            # absolute label in the importer's scope so it lands in the
+            # merged `.adbg` as SymbolKind.LABEL.
+            scope.absolute_labels[name] = final
+
+    def _advance_pc(self, current_pc: Address) -> Address:
         # Loser duplicates publish symbols (winner overwrites later via
         # last-pass) but must not consume PC space — otherwise inline
         # source surrounding the loser .import shifts forward by the
         # module's size and lands on top of unrelated ROM.
-        if self.is_loser:
-            return current_pc
-
-        # Symbol-only modules (no regions) don't advance PC.
-        if not self.regions:
-            return current_pc
-
+        # Symbol-only modules (no regions) don't advance PC either.
         # Pinned modules (any explicit `*=`) land at their declared
         # absolute base addresses; the importer's PC stays where it was
         # because the module does not occupy linear space at the import
         # site. Only relocatable single-region modules advance the
         # importer's PC by their first-region size.
-        if not self.relocatable:
+        if self.is_loser or not self.regions or not self.relocatable:
             return current_pc
-
         first = self.regions[0]
         first_end = first.base_address + self._delta + len(first.code)
         return self.resolver.get_bus().get_address(first_end)
