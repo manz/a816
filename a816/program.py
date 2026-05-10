@@ -496,7 +496,7 @@ class Program:
             return -1
 
     def _classify_object_symbol(
-        self, name: str, value: int, label_names: set[str]
+        self, name: str, value: int, label_names: set[str], absolute_label_names: set[str]
     ) -> tuple[SymbolType, SymbolSection, int]:
         # Anonymous-block labels stay LOCAL (would otherwise leak as globals);
         # `_` prefix marks private; root-scope (or NamedScope dotted) is GLOBAL.
@@ -504,17 +504,23 @@ class Program:
             symbol_type = SymbolType.LOCAL
         else:
             symbol_type = SymbolType.GLOBAL
-        section = SymbolSection.CODE if name in label_names else SymbolSection.DATA
+        if name in absolute_label_names:
+            section = SymbolSection.ABS_LABEL
+        elif name in label_names:
+            section = SymbolSection.CODE
+        else:
+            section = SymbolSection.DATA
         # Symbols carry their absolute logical address — relocatable modules
         # apply a delta at .import time; pinned modules use the value as-is.
         return symbol_type, section, value
 
     def _export_object_symbols(self, object_writer: ObjectWriter) -> None:
         label_names = {n for n, _ in self.resolver.get_all_labels(mangle_nested=True)}
+        absolute_label_names = {n for n, _ in self.resolver.get_all_absolute_labels(mangle_nested=True)}
         for name, value in self.resolver.get_all_symbols():
             if self.resolver.current_scope.is_external_symbol(name):
                 continue  # already added by ExternNode
-            sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names)
+            sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 
     def assemble_with_object_emitter(
@@ -613,7 +619,9 @@ class Program:
 
         # Symbols: every label gets a SymbolEntry. Module ownership resolves
         # by walking known module bases; falls back to NO_MODULE for the main TU.
-        for name, value in self.resolver.get_all_labels():
+        # `.label` declarations land in `absolute_labels`; emit them with the
+        # same LABEL kind so `lookup_label(addr)` resolves.
+        for name, value in (*self.resolver.get_all_labels(), *self.resolver.get_all_absolute_labels()):
             module_idx = self._guess_module(value, info)
             info.symbols.append(
                 SymbolEntry(
@@ -674,6 +682,8 @@ class Program:
                 continue
             if section == SymbolSection.CODE:
                 scope.labels[name] = value
+            elif section == SymbolSection.ABS_LABEL:
+                scope.absolute_labels[name] = value
             scope.symbols[name] = value
 
     def write_debug_info_for_linked(self, linked_obj: ObjectFile, output_path: Path) -> Path | None:
@@ -707,9 +717,10 @@ class Program:
             SymbolType.LOCAL: SymbolScope.LOCAL,
             SymbolType.EXTERNAL: SymbolScope.EXTERNAL,
         }
+        label_sections = (SymbolSection.CODE, SymbolSection.ABS_LABEL)
         for name, value, sym_type, section in linked_obj.symbols:
             scope_kind = scope_by_type[sym_type]
-            kind = SymbolKind.LABEL if section == SymbolSection.CODE else SymbolKind.CONSTANT
+            kind = SymbolKind.LABEL if section in label_sections else SymbolKind.CONSTANT
             info.symbols.append(SymbolEntry(name=name, address=value, scope=scope_kind, module_idx=0, kind=kind))
         for address, file_idx, line, column, flags in all_lines:
             info.lines.append(

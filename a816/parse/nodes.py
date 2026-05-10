@@ -125,6 +125,62 @@ class LabelNode(NodeProtocol):
         return f"LabelNode({self.symbol_name})"
 
 
+class LabelDeclNode(NodeProtocol):
+    """`.label NAME = ADDR` — register NAME as a label at constant address ADDR.
+
+    Position counter is untouched. The address binds via
+    `scope.absolute_labels` (separate from `scope.labels` so the linker
+    doesn't shift it by the module relocation delta) and lands in `.adbg`
+    as `SymbolKind.LABEL`, so `lookup_label(addr)` resolves the name.
+    The RHS must evaluate to an int at this resolution pass; external
+    references are not supported (use `.extern` for that).
+    """
+
+    def __init__(
+        self,
+        symbol_name: str,
+        expression: ExpressionAstNode,
+        resolver: Resolver,
+        file_info: Token,
+    ) -> None:
+        self.symbol_name = symbol_name
+        self.expression = expression
+        self.resolver = resolver
+        self.file_info = file_info
+
+    def emit(self, current_addr: Address) -> bytes:
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        try:
+            value = eval_expression(self.expression, self.resolver)
+        except (ExternalExpressionReference, ExternalSymbolReference) as e:
+            ref = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+            raise NodeError(
+                f".label {self.symbol_name}: address must be a constant expression "
+                f"(got external reference '{ref}')",
+                self.file_info,
+            ) from e
+        if not isinstance(value, int):
+            raise NodeError(
+                f".label {self.symbol_name}: address must evaluate to an int, got {type(value).__name__}",
+                self.file_info,
+            )
+        # The value is an absolute address the user supplied — not the
+        # current PC. Record it under `absolute_labels` (separate from
+        # `labels`) so the linker doesn't add the module's relocation delta
+        # to it, and write it directly into `symbols` so resolution at
+        # call sites returns the int. Skipping `add_symbol` avoids the
+        # "Symbol already defined" warning on the second resolve pass.
+        scope = self.resolver.current_scope
+        scope.absolute_labels[self.symbol_name] = value
+        scope.symbols[self.symbol_name] = value
+        return current_pc
+
+    def __str__(self) -> str:
+        return f"LabelDeclNode({self.symbol_name}, {self.expression})"
+
+
 class SymbolNode(NodeProtocol):
     def __init__(
         self,
@@ -308,46 +364,63 @@ class LinkedModuleNode(NodeProtocol):
         return self._compute_placement()
 
     def pc_after(self, current_pc: Address) -> Address:
-        from a816.object_file import SymbolSection, SymbolType
+        self._local_map: dict[str, int] = {}
+        self._compute_delta_and_base(current_pc)
+        self._bind_module_symbols()
+        return self._advance_pc(current_pc)
 
-        if not self.regions:
-            return current_pc
+    def _compute_delta_and_base(self, current_pc: Address) -> None:
+        if self.regions:
+            self._delta = (
+                current_pc.logical_value - self.regions[0].base_address if self.relocatable else 0
+            )
+            # Shifted base of region 0 — used for the .sym/.adbg producer
+            # to report where the module actually landed.
+            self.base_address = self.regions[0].base_address + self._delta
+        else:
+            # Symbol-only module (e.g. a stubs file with only `.label`
+            # declarations and no emitted code). No regions means no delta
+            # and no PC advance, but symbols still need binding.
+            self._delta = 0
+            self.base_address = current_pc.logical_value
+
+    def _bind_module_symbols(self) -> None:
+        from a816.object_file import SymbolType
 
         scope = self.resolver.current_scope
-        if self.relocatable:
-            self._delta = current_pc.logical_value - self.regions[0].base_address
-        else:
-            self._delta = 0
-
-        # Shifted base of region 0 — used for the .sym/.adbg producer to
-        # report where the module actually landed.
-        self.base_address = self.regions[0].base_address + self._delta
-        self._local_map: dict[str, int] = {}
-
         for name, address, sym_type, section in self.symbols:
             final = self._resolve_symbol_address(address, section)
             if sym_type == SymbolType.GLOBAL.value:
-                scope.symbols[name] = final
-                if section == SymbolSection.CODE.value:
-                    scope.labels[name] = final
+                self._bind_global(scope, name, final, section)
             elif sym_type == SymbolType.LOCAL.value:
                 self._local_map[name] = final
 
+    @staticmethod
+    def _bind_global(scope: Scope, name: str, final: int, section: int) -> None:
+        from a816.object_file import SymbolSection
+
+        scope.symbols[name] = final
+        if section == SymbolSection.CODE.value:
+            scope.labels[name] = final
+        elif section == SymbolSection.ABS_LABEL.value:
+            # `.label`-declared in the imported module — surface it as an
+            # absolute label in the importer's scope so it lands in the
+            # merged `.adbg` as SymbolKind.LABEL.
+            scope.absolute_labels[name] = final
+
+    def _advance_pc(self, current_pc: Address) -> Address:
         # Loser duplicates publish symbols (winner overwrites later via
         # last-pass) but must not consume PC space — otherwise inline
         # source surrounding the loser .import shifts forward by the
         # module's size and lands on top of unrelated ROM.
-        if self.is_loser:
-            return current_pc
-
+        # Symbol-only modules (no regions) don't advance PC either.
         # Pinned modules (any explicit `*=`) land at their declared
         # absolute base addresses; the importer's PC stays where it was
         # because the module does not occupy linear space at the import
         # site. Only relocatable single-region modules advance the
         # importer's PC by their first-region size.
-        if not self.relocatable:
+        if self.is_loser or not self.regions or not self.relocatable:
             return current_pc
-
         first = self.regions[0]
         first_end = first.base_address + self._delta + len(first.code)
         return self.resolver.get_bus().get_address(first_end)

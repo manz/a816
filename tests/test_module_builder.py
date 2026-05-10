@@ -331,6 +331,45 @@ main:
             assert result.exit_code == 0
             assert output.exists()
 
+    def test_label_decl_in_module_propagates_to_main_adbg(self) -> None:
+        """A `.label` declared in an imported module must surface as
+        SymbolKind.LABEL in the merged `.adbg`, with the user-supplied
+        absolute address (no module-placement delta applied)."""
+        from a816.debug_info import SymbolKind
+        from a816.debug_info import read as read_debug_info
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lib = Path(tmpdir) / "stubs.s"
+            lib.write_text(
+                '"""Original-ROM stubs."""\n"""Bank-2 hardware Mult8 entry."""\n.label mult8_far = 0x02855C\n',
+                encoding="utf-8",
+            )
+            main = Path(tmpdir) / "main.s"
+            main.write_text(
+                '"""Main."""\n.import "stubs"\n*=0x8000\nmain:\n    lda.l mult8_far\n    rts\n',
+                encoding="utf-8",
+            )
+
+            output = Path(tmpdir) / "out.ips"
+            result = build_with_imports(
+                main_source=main,
+                output_file=output,
+                output_format="ips",
+                module_paths=[Path(tmpdir)],
+                output_dir=Path(tmpdir) / "obj",
+            )
+
+            assert result.exit_code == 0, result.diagnostics
+            assert result.symbol_map.get("mult8_far") == 0x02855C
+            assert result.debug_info_path is not None and result.debug_info_path.exists()
+
+            info = read_debug_info(result.debug_info_path)
+            by_name = {sym.name: sym for sym in info.symbols}
+            assert "mult8_far" in by_name, [s.name for s in info.symbols]
+            sym = by_name["mult8_far"]
+            assert sym.address == 0x02855C
+            assert sym.kind == SymbolKind.LABEL
+
     def test_build_result_has_symbol_map(self) -> None:
         """Test that BuildResult contains symbol_map after successful build."""
         with tempfile.TemporaryDirectory() as tmpdir:

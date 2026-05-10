@@ -464,6 +464,26 @@ class SymbolAffectationAstNode(AstNode):
         return f"{self.symbol} = {value_str}"
 
 
+class LabelDeclAstNode(AstNode):
+    """AST node for `.label NAME = ADDR` directive.
+
+    Names a constant address as a label without moving the position counter.
+    Behaves like a code label for tooling: emitted as a LABEL record in
+    `.adbg`, resolvable via lookup_label, documentable by fluff.
+    """
+
+    def __init__(self, symbol: str, value: ExpressionAstNode, file_info: Token):
+        super().__init__("label_decl", file_info)
+        self.symbol = symbol
+        self.value = value
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.symbol, self.value.to_representation()[0]
+
+    def to_canonical(self) -> str:
+        return f".label {self.symbol} = {self.value.to_canonical()}"
+
+
 class ExternAstNode(AstNode):
     def __init__(self, symbol: str, file_info: Token):
         super().__init__("extern", file_info)
@@ -615,6 +635,7 @@ KeywordAstNode = (
     | ImportAstNode
     | DebugAstNode
     | RegisterSizeAstNode
+    | LabelDeclAstNode
 )
 FileInfoAstNode = tuple[Literal["file_info"], Token]
 

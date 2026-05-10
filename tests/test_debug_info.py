@@ -131,6 +131,29 @@ def test_multiline_docstring_does_not_skew_following_line_numbers(tmp_path: Path
     assert lda.column == 0
 
 
+def test_label_decl_emits_adbg_label_record(tmp_path: Path) -> None:
+    """`.label NAME = ADDR` must land in `.adbg` as a SymbolKind.LABEL so
+    `lookup_label(addr)` can resolve the name in crash traces / disassembly."""
+    from a816.program import Program
+
+    src = tmp_path / "main.s"
+    src.write_text(
+        "*=0x008000\n.label mult8_far = 0x02855C\nlda.b #0x42\n",
+        encoding="utf-8",
+    )
+
+    program = Program()
+    program.enable_debug_capture()
+    program.assemble_as_patch(str(src), tmp_path / "out.ips")
+    info = program.build_debug_info(str(src))
+
+    by_name = {sym.name: sym for sym in info.symbols}
+    assert "mult8_far" in by_name, [sym.name for sym in info.symbols]
+    sym = by_name["mult8_far"]
+    assert sym.address == 0x02855C
+    assert sym.kind == SymbolKind.LABEL
+
+
 def test_string_table_dedupes() -> None:
     info = DebugInfo()
     info.modules = [

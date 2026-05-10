@@ -61,6 +61,35 @@ font_ptr = target + 0x40   ; target may be `.extern`
 Same shape as `=` but the resolver treats the binding as mutable
 during a build (rebinds allowed). Prefer `=` unless you need this.
 
+### `.label NAME = ADDR`
+
+Names a constant address as a **label** without moving the position
+counter and without emitting any bytes. Use it for original-ROM stubs,
+WRAM scratch slots, hardware register aliases — anything you want
+crash traces, the disassembler, and the LSP to symbolicate by name.
+
+```ca65
+"""Bank-2 hardware Mult8 entry. Input $26 * $28 → $2A. RTL."""
+.label mult8_far = 0x02855C
+
+"""WRAM byte at $7E:1BAE — field-menu HDMA channel-5 enable shadow."""
+.label field_menu_hdma_enable = 0x1BAE
+```
+
+Differences vs `name = expr`:
+
+| Property | `.label` | `=` (constant) |
+|----------|----------|----------------|
+| Position counter | untouched | untouched |
+| Emits bytes | no | no |
+| `.adbg` LABEL record | **yes** | no |
+| `lookup_label(addr)` resolves | **yes** | no |
+| Cross-module via `.extern` | yes | yes |
+| Documentable (fluff) | yes (docstring above) | no |
+
+The RHS must evaluate to an int at the current resolution pass —
+external references are not allowed (use `.extern` for that).
+
 ### `.extern name`
 
 Declares a symbol defined in another module. Required for cross-module

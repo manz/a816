@@ -484,6 +484,37 @@ lda #1
         ast = program.parser.parse_as_ast("a := 3")
         self.assertEqual([("assign", "a", "3")], ast.ast)
 
+    def test_label_decl_directive_parses(self) -> None:
+        program = Program()
+        ast = program.parser.parse_as_ast(".label mult8_far = 0x02855C")
+        self.assertEqual([("label_decl", "mult8_far", "0x02855C")], ast.ast)
+
+    def test_label_decl_registers_label(self) -> None:
+        """`.label NAME = ADDR` lands in scope.absolute_labels (separate from
+        scope.labels so the linker doesn't shift it by the module delta)."""
+        program = Program()
+        _, nodes = program.parser.parse(".label mult8_far = 0x02855C")
+        program.resolve_labels(nodes)
+
+        scope = program.resolver.current_scope
+        self.assertEqual(scope.absolute_labels["mult8_far"], 0x02855C)
+        # Symbol table also resolves the name (so call sites work).
+        self.assertEqual(scope.value_for("mult8_far"), 0x02855C)
+        # Real `name:` labels stay separate.
+        self.assertNotIn("mult8_far", scope.labels)
+
+    def test_label_decl_value_independent_of_pc(self) -> None:
+        """`.label thing = 0x8000` after `*=0x018134` keeps value 0x8000,
+        not the surrounding PC."""
+        program = Program()
+        _, nodes = program.parser.parse("""
+        *=0x018134
+        .label thing = 0x8000
+        lda #0x42
+        """)
+        program.resolve_labels(nodes)
+        self.assertEqual(program.resolver.current_scope.absolute_labels["thing"], 0x8000)
+
     def test_a8_directive_sets_8bit_accumulator(self) -> None:
         """Test that .a8 followed by lda #immediate emits 2 bytes (8-bit immediate)"""
         input_program = """

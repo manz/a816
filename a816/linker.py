@@ -108,7 +108,9 @@ class Linker:
         if symbol_type == SymbolType.EXTERNAL:
             self._external_symbols_needed.add(name)
             return
-        # CODE symbols ride the module's delta; DATA/BSS are absolute.
+        # CODE symbols ride the module's delta; DATA/BSS/ABS_LABEL are absolute.
+        # ABS_LABEL is a `.label`-declared address binding — the user picked
+        # the value, so it must NOT shift with the module placement.
         final_address = address + delta if section == SymbolSection.CODE else address
         if symbol_type == SymbolType.GLOBAL:
             if name in self.symbol_map:
