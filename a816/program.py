@@ -717,9 +717,10 @@ class Program:
             SymbolType.LOCAL: SymbolScope.LOCAL,
             SymbolType.EXTERNAL: SymbolScope.EXTERNAL,
         }
+        label_sections = (SymbolSection.CODE, SymbolSection.ABS_LABEL)
         for name, value, sym_type, section in linked_obj.symbols:
             scope_kind = scope_by_type[sym_type]
-            kind = SymbolKind.LABEL if section in (SymbolSection.CODE, SymbolSection.ABS_LABEL) else SymbolKind.CONSTANT
+            kind = SymbolKind.LABEL if section in label_sections else SymbolKind.CONSTANT
             info.symbols.append(SymbolEntry(name=name, address=value, scope=scope_kind, module_idx=0, kind=kind))
         for address, file_idx, line, column, flags in all_lines:
             info.lines.append(

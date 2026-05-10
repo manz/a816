@@ -128,8 +128,10 @@ class LabelNode(NodeProtocol):
 class LabelDeclNode(NodeProtocol):
     """`.label NAME = ADDR` — register NAME as a label at constant address ADDR.
 
-    Position counter is untouched. The label is added via `add_label`, so it
-    appears in `.adbg` LABEL records and resolves through `lookup_label`.
+    Position counter is untouched. The address binds via
+    `scope.absolute_labels` (separate from `scope.labels` so the linker
+    doesn't shift it by the module relocation delta) and lands in `.adbg`
+    as `SymbolKind.LABEL`, so `lookup_label(addr)` resolves the name.
     The RHS must evaluate to an int at this resolution pass; external
     references are not supported (use `.extern` for that).
     """
@@ -153,9 +155,10 @@ class LabelDeclNode(NodeProtocol):
         try:
             value = eval_expression(self.expression, self.resolver)
         except (ExternalExpressionReference, ExternalSymbolReference) as e:
+            ref = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
             raise NodeError(
                 f".label {self.symbol_name}: address must be a constant expression "
-                f"(got external reference '{getattr(e, 'symbol_name', getattr(e, 'expression_str', '?'))}')",
+                f"(got external reference '{ref}')",
                 self.file_info,
             ) from e
         if not isinstance(value, int):
