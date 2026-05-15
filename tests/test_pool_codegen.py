@@ -201,6 +201,38 @@ class TestRelocateCodegen:
         assert relocs[0].old_end == 0x02C17F
 
 
+class TestAllocPass1ForwardRefs:
+    """Regression: ff4-modules dogfood surfaced AllocNode crashing on
+    forward refs because `SymbolNode.pc_after` evaluates RHS eagerly.
+    `Program.resolve_labels` skips SymbolNode in pass-1 for the same
+    reason; AllocNode now mirrors that.
+    """
+
+    def test_alloc_body_with_forward_label_ref(self) -> None:
+        """Mirrors ff4-modules pattern: body references a label declared
+        later in another scope. Pre-fix this raised SymbolNotDefined
+        during AllocNode's pass-1 size measurement."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            jsr.l later.target
+            rts
+        }
+
+        .scope later {
+        target:
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        flat = b"".join(writer.data)
+        # jsr.l (0x22) + 3-byte operand + rts (0x60).
+        assert 0x22 in flat
+        assert 0x60 in flat
+
+
 class TestRelocateEndToEnd:
     def test_relocate_reclaims_old_range_into_pool(self) -> None:
         program = Program()
