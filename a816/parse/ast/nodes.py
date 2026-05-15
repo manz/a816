@@ -543,6 +543,116 @@ class RegisterSizeAstNode(AstNode):
         return f".{self.register}{self.size}"
 
 
+class PoolAstNode(AstNode):
+    """AST node for `.pool NAME { ... }` directive.
+
+    Declares a freespace pool with one or more byte ranges, a fill byte, and
+    an allocation strategy. Consumed by the resolver to seed the pool
+    registry used by `.alloc` / `.relocate` / `.reclaim`.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        ranges: list[tuple[int, int]],
+        fill: int,
+        strategy: str,
+        file_info: Token,
+    ) -> None:
+        super().__init__("pool", file_info)
+        self.pool_name = name
+        self.ranges = ranges
+        self.fill = fill
+        self.strategy = strategy
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.pool_name, tuple(self.ranges), self.fill, self.strategy
+
+    def to_canonical(self) -> str:
+        lines = [f".pool {self.pool_name} {{"]
+        for start, end in self.ranges:
+            lines.append(f"    range 0x{start:06x} 0x{end:06x}")
+        lines.append(f"    fill 0x{self.fill:02x}")
+        lines.append(f"    strategy {self.strategy}")
+        lines.append("}")
+        return "\n".join(lines)
+
+
+class AllocAstNode(AstNode):
+    """AST node for `.alloc NAME in POOL { body }` directive.
+
+    Reserves space for `body` in the named pool. Final address is assigned
+    by the pool allocator after first-pass sizing.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        pool_name: str,
+        body: "BlockAstNode",
+        file_info: Token,
+    ) -> None:
+        super().__init__("alloc", file_info)
+        self.name = name
+        self.pool_name = pool_name
+        self.body = body
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.name, self.pool_name, self.body.to_representation()[0]
+
+    def to_canonical(self) -> str:
+        return f".alloc {self.name} in {self.pool_name} {{ ... }}"
+
+
+class RelocateAstNode(AstNode):
+    """AST node for `.relocate SYMBOL into POOL { body }` directive.
+
+    Moves the labelled region `SYMBOL` into the named pool. Old range is
+    reclaimed back into the pool (filled with the pool's fill byte) and
+    `body` is placed at the allocator-chosen address; `SYMBOL` resolves to
+    the new location.
+    """
+
+    def __init__(
+        self,
+        symbol: str,
+        pool_name: str,
+        body: "BlockAstNode",
+        file_info: Token,
+    ) -> None:
+        super().__init__("relocate", file_info)
+        self.symbol = symbol
+        self.pool_name = pool_name
+        self.body = body
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.symbol, self.pool_name, self.body.to_representation()[0]
+
+    def to_canonical(self) -> str:
+        return f".relocate {self.symbol} into {self.pool_name} {{ ... }}"
+
+
+class ReclaimAstNode(AstNode):
+    """AST node for `.reclaim POOL START END` directive.
+
+    Adds the inclusive byte range `[START, END]` to the named pool and
+    fills it with the pool's fill byte. Ranges crossing bank boundaries or
+    overlapping existing pool ranges raise at resolution time.
+    """
+
+    def __init__(self, pool_name: str, start: int, end: int, file_info: Token) -> None:
+        super().__init__("reclaim", file_info)
+        self.pool_name = pool_name
+        self.start = start
+        self.end = end
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.pool_name, self.start, self.end
+
+    def to_canonical(self) -> str:
+        return f".reclaim {self.pool_name} 0x{self.start:06x} 0x{self.end:06x}"
+
+
 class AssignAstNode(AstNode):
     def __init__(self, symbol: str, value: ExpressionAstNode, file_info: Token):
         super().__init__("assign", file_info)
