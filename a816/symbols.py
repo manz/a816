@@ -262,11 +262,14 @@ class Resolver:
         pass that binds labels. Pool.allocate is idempotent — safe to call
         multiple times.
 
-        In object mode each TU runs its own allocator over its own pool
-        view. Cross-TU pool decls also serialize to the `.o` so the linker
-        can union same-named pools (validation + tooling) — full
-        link-time allocation of alloc requests is a future slice.
+        Skipped in object mode: the linker collects pool decls + alloc
+        requests across all input modules, unions same-named pools, and
+        runs the allocator over the merged view. Local pre-allocation
+        would assign each module its own copy of the pool, defeating
+        cross-TU sharing.
         """
+        if self.context.is_object_mode:
+            return
         for pool in self.pools.values():
             pool.allocate()
 

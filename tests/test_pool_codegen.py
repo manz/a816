@@ -343,6 +343,56 @@ class TestCrossTuPoolMerging:
         assert (0x028000, 0x0280FF) in merged.ranges
         assert (0x02A000, 0x02A0FF) in merged.ranges
 
+    def test_link_time_allocator_places_allocs_across_modules(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """Two modules share `.pool slack`, each with its own range.
+
+        The linker unions the ranges and runs the allocator across all
+        deferred alloc requests so the two modules' allocs land at
+        non-overlapping addresses within the combined pool.
+        """
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        # Each module contributes a 1-byte chunk so each alloc is forced
+        # into a different chunk (each chunk holds exactly one rts).
+        mod_a = tmp_path / "a.s"
+        mod_a.write_text(
+            """
+            .pool slack {
+                range 0x028000 0x028000
+                strategy order
+            }
+            .alloc fn_a in slack {
+                rts
+            }
+            """
+        )
+        mod_b = tmp_path / "b.s"
+        mod_b.write_text(
+            """
+            .pool slack {
+                range 0x02a000 0x02a000
+                strategy order
+            }
+            .alloc fn_b in slack {
+                rts
+            }
+            """
+        )
+        obj_a = tmp_path / "a.o"
+        obj_b = tmp_path / "b.o"
+        assert Program().assemble_as_object(str(mod_a), obj_a) == 0
+        assert Program().assemble_as_object(str(mod_b), obj_b) == 0
+        linker = Linker([ObjectFile.from_file(str(obj_a)), ObjectFile.from_file(str(obj_b))])
+        linker.link()
+        # Both allocs land in the merged pool; addresses are distinct and
+        # come from different chunks (request 1 fills chunk a, request 2
+        # falls into chunk b under strategy=order).
+        addr_a = linker.symbol_map["fn_a"]
+        addr_b = linker.symbol_map["fn_b"]
+        assert addr_a == 0x028000
+        assert addr_b == 0x02A000
+
     def test_linker_pool_fill_mismatch_errors(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         from a816.linker import Linker
         from a816.object_file import ObjectFile
