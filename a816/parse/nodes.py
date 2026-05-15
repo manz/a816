@@ -157,8 +157,7 @@ class LabelDeclNode(NodeProtocol):
         except (ExternalExpressionReference, ExternalSymbolReference) as e:
             ref = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
             raise NodeError(
-                f".label {self.symbol_name}: address must be a constant expression "
-                f"(got external reference '{ref}')",
+                f".label {self.symbol_name}: address must be a constant expression (got external reference '{ref}')",
                 self.file_info,
             ) from e
         if not isinstance(value, int):
@@ -371,9 +370,7 @@ class LinkedModuleNode(NodeProtocol):
 
     def _compute_delta_and_base(self, current_pc: Address) -> None:
         if self.regions:
-            self._delta = (
-                current_pc.logical_value - self.regions[0].base_address if self.relocatable else 0
-            )
+            self._delta = current_pc.logical_value - self.regions[0].base_address if self.relocatable else 0
             # Shifted base of region 0 — used for the .sym/.adbg producer
             # to report where the module actually landed.
             self.base_address = self.regions[0].base_address + self._delta

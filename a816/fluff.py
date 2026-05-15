@@ -35,7 +35,7 @@ def _colorize_diff(diff_lines: Iterable[str]) -> str:
     for line in diff_lines:
         if line.startswith("@@"):
             colored.append(f"{CYAN}{line}{RESET}")
-        elif line.startswith("+++") or line.startswith("---"):
+        elif line.startswith(("+++", "---")):
             colored.append(f"{CYAN}{line}{RESET}")
         elif line.startswith("+"):
             colored.append(f"{GREEN}{line}{RESET}")

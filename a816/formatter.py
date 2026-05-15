@@ -630,7 +630,7 @@ class A816Formatter:
             if skip_blanks and not stripped:
                 continue
             out.append(line)
-            skip_blanks = stripped.startswith("*=") or stripped.startswith("@=")
+            skip_blanks = stripped.startswith(("*=", "@="))
         return out
 
     def _finalize_formatting(self, lines: list[str]) -> str:
@@ -868,8 +868,7 @@ class A816Formatter:
         # next sibling stay reachable.
         tail = self._ast_max_line(node)
         if tail is not None and tail >= line_num:
-            for i in range(line_num, tail + 1):
-                processed.add(i)
+            processed.update(range(line_num, tail + 1))
             state.current_idx = max(state.current_idx, tail + 1)
         else:
             state.current_idx = max(state.current_idx, line_num + 1)

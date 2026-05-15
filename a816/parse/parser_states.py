@@ -5,6 +5,7 @@ from typing import Literal, TypeGuard, cast
 
 from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
 from a816.parse.ast.nodes import (
+    AllocAstNode,
     AsciiAstNode,
     AssignAstNode,
     AstNode,
@@ -36,7 +37,10 @@ from a816.parse.ast.nodes import (
     MapAstNode,
     OpcodeAstNode,
     Parenthesis,
+    PoolAstNode,
+    ReclaimAstNode,
     RegisterSizeAstNode,
+    RelocateAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
@@ -392,6 +396,134 @@ def _register_size(register: str, size: int) -> Callable[[Parser, Token], Regist
     return _handle
 
 
+_POOL_STRATEGIES = {"pack", "order"}
+
+
+def _parse_pool_number(p: Parser) -> int:
+    token = p.next()
+    expect_token(token, TokenType.NUMBER)
+    return cast(int, ast.literal_eval(token.value))
+
+
+def _parse_pool_fill(p: Parser, key_token: Token) -> int:
+    fill = _parse_pool_number(p)
+    if not 0 <= fill <= 0xFF:
+        raise ParserSyntaxError(f"pool fill 0x{fill:x} out of byte range", key_token)
+    return fill
+
+
+def _parse_pool_strategy(p: Parser) -> str:
+    strat_token = p.next()
+    expect_token(strat_token, TokenType.IDENTIFIER)
+    if strat_token.value not in _POOL_STRATEGIES:
+        raise ParserSyntaxError(
+            f"unknown pool strategy {strat_token.value!r}; expected one of {sorted(_POOL_STRATEGIES)}",
+            strat_token,
+        )
+    return strat_token.value
+
+
+def _parse_pool_attr(
+    p: Parser,
+    key_token: Token,
+    ranges: list[tuple[int, int]],
+    state: dict[str, str | int],
+) -> None:
+    key = key_token.value
+    if key == "range":
+        lo = _parse_pool_number(p)
+        hi = _parse_pool_number(p)
+        ranges.append((lo, hi))
+    elif key == "fill":
+        state["fill"] = _parse_pool_fill(p, key_token)
+    elif key == "strategy":
+        state["strategy"] = _parse_pool_strategy(p)
+    else:
+        raise ParserSyntaxError(
+            f"unknown pool attribute {key!r}; expected range, fill, strategy",
+            key_token,
+        )
+
+
+def parse_pool(p: Parser) -> PoolAstNode:
+    """Parse `.pool NAME { range LO HI | fill VAL | strategy ID ... }`."""
+    keyword = p.current()
+    name_token = p.next()
+    expect_token(name_token, TokenType.IDENTIFIER)
+    expect_token(p.next(), TokenType.LBRACE)
+
+    ranges: list[tuple[int, int]] = []
+    state: dict[str, str | int] = {"fill": 0x00, "strategy": "pack"}
+
+    while p.current().type != TokenType.EOF:
+        current = p.current()
+        if current.type == TokenType.RBRACE:
+            break
+        if current.type == TokenType.COMMENT:
+            p.next()
+            continue
+        expect_token(current, TokenType.IDENTIFIER)
+        key_token = p.next()
+        _parse_pool_attr(p, key_token, ranges, state)
+
+    expect_token(p.next(), TokenType.RBRACE)
+    if not ranges:
+        raise ParserSyntaxError(f"pool {name_token.value!r} declares no ranges", keyword)
+    return PoolAstNode(
+        name_token.value,
+        ranges,
+        cast(int, state["fill"]),
+        cast(str, state["strategy"]),
+        keyword,
+    )
+
+
+def _expect_contextual_keyword(p: Parser, expected: str) -> Token:
+    token = p.next()
+    expect_token(token, TokenType.IDENTIFIER)
+    if token.value != expected:
+        raise ParserSyntaxError(f"expected {expected!r}, got {token.value!r}", token)
+    return token
+
+
+def parse_alloc(p: Parser) -> AllocAstNode:
+    """Parse `.alloc NAME in POOL { body }`."""
+    keyword = p.current()
+    name_token = p.next()
+    expect_token(name_token, TokenType.IDENTIFIER)
+    _expect_contextual_keyword(p, "in")
+    pool_token = p.next()
+    expect_token(pool_token, TokenType.IDENTIFIER)
+    lbrace = p.next()
+    expect_token(lbrace, TokenType.LBRACE)
+    body = BlockAstNode(parse_block(p), lbrace)
+    return AllocAstNode(name_token.value, pool_token.value, body, keyword)
+
+
+def parse_relocate(p: Parser) -> RelocateAstNode:
+    """Parse `.relocate SYMBOL into POOL { body }`."""
+    keyword = p.current()
+    symbol_token = p.next()
+    expect_token(symbol_token, TokenType.IDENTIFIER)
+    _expect_contextual_keyword(p, "into")
+    pool_token = p.next()
+    expect_token(pool_token, TokenType.IDENTIFIER)
+    lbrace = p.next()
+    expect_token(lbrace, TokenType.LBRACE)
+    body = BlockAstNode(parse_block(p), lbrace)
+    return RelocateAstNode(symbol_token.value, pool_token.value, body, keyword)
+
+
+def parse_reclaim(p: Parser) -> ReclaimAstNode:
+    """Parse `.reclaim POOL START END`."""
+    keyword = p.current()
+    pool_token = p.next()
+    expect_token(pool_token, TokenType.IDENTIFIER)
+    start = _parse_pool_number(p)
+    end = _parse_pool_number(p)
+    return ReclaimAstNode(pool_token.value, start, end, keyword)
+
+
 _KEYWORD_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     "scope": lambda p, _kw: parse_scope(p),
     "ascii": _quoted_directive(AsciiAstNode),
@@ -413,6 +545,10 @@ _KEYWORD_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     "import": lambda p, _kw: parse_import(p),
     "debug": lambda p, _kw: parse_debug(p),
     "label": parse_label_decl,
+    "pool": lambda p, _kw: parse_pool(p),
+    "alloc": lambda p, _kw: parse_alloc(p),
+    "relocate": lambda p, _kw: parse_relocate(p),
+    "reclaim": lambda p, _kw: parse_reclaim(p),
     "a8": _register_size("a", 8),
     "a16": _register_size("a", 16),
     "i8": _register_size("i", 8),
