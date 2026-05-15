@@ -139,14 +139,28 @@ class Program:
         no-ops in both `pc_after` and `emit`. Marking happens before
         `resolve_labels` so the winner/loser distinction is consistent
         across the address-resolution and emission passes.
+
+        Walks into `AllocNode.body` so a `.import` nested inside a
+        `.alloc` block participates in the same dedup as top-level
+        imports — otherwise the same module emits twice (once at the
+        surrounding org pointer, once at the allocator-chosen address).
         """
-        last_idx: dict[str, int] = {}
-        for idx, node in enumerate(program_nodes):
+        winners: dict[str, LinkedModuleNode] = {}
+        all_nodes: list[LinkedModuleNode] = []
+        Program._collect_linked_modules(program_nodes, all_nodes)
+        # Last-occurrence wins, matching the historical top-level rule.
+        for node in all_nodes:
+            winners[node.module_name] = node
+        for node in all_nodes:
+            node.is_loser = winners[node.module_name] is not node
+
+    @staticmethod
+    def _collect_linked_modules(nodes: list[NodeProtocol], out: list[LinkedModuleNode]) -> None:
+        for node in nodes:
             if isinstance(node, LinkedModuleNode):
-                last_idx[node.module_name] = idx
-        for idx, node in enumerate(program_nodes):
-            if isinstance(node, LinkedModuleNode):
-                node.is_loser = last_idx[node.module_name] != idx
+                out.append(node)
+            elif isinstance(node, AllocNode):
+                Program._collect_linked_modules(node.body, out)
 
     def resolve_labels(self, program_nodes: list[NodeProtocol]) -> None:
         """Resolve all labels and symbols through multi-pass processing.
