@@ -501,17 +501,26 @@ def parse_alloc(p: Parser) -> AllocAstNode:
 
 
 def parse_relocate(p: Parser) -> RelocateAstNode:
-    """Parse `.relocate SYMBOL into POOL { body }`."""
+    """Parse `.relocate SYMBOL OLD_START OLD_END into POOL { body }`."""
     keyword = p.current()
     symbol_token = p.next()
     expect_token(symbol_token, TokenType.IDENTIFIER)
+    old_start = _parse_pool_number(p)
+    old_end = _parse_pool_number(p)
     _expect_contextual_keyword(p, "into")
     pool_token = p.next()
     expect_token(pool_token, TokenType.IDENTIFIER)
     lbrace = p.next()
     expect_token(lbrace, TokenType.LBRACE)
     body = BlockAstNode(parse_block(p), lbrace)
-    return RelocateAstNode(symbol_token.value, pool_token.value, body, keyword)
+    return RelocateAstNode(
+        symbol_token.value,
+        old_start,
+        old_end,
+        pool_token.value,
+        body,
+        keyword,
+    )
 
 
 def parse_reclaim(p: Parser) -> ReclaimAstNode:

@@ -168,24 +168,77 @@ class TestAllocEndToEnd:
         assert "fn" in labels
 
 
-class TestRelocatePlaceholder:
+class TestRelocateCodegen:
     def test_relocate_into_unknown_pool_errors(self) -> None:
         with pytest.raises(Exception, match="unknown pool"):
             _gen(
                 """
-                .relocate fn into ghost {
+                .relocate fn 0x02c000 0x02c17f into ghost {
                     rts
                 }
                 """,
             )
 
-    def test_relocate_not_yet_wired(self) -> None:
-        with pytest.raises(Exception, match="not yet wired up"):
-            _gen(
-                """
-                .pool p { range 0x028000 0x0280ff }
-                .relocate fn into p {
-                    rts
-                }
-                """,
-            )
+    def test_relocate_emits_relocate_node(self) -> None:
+        from a816.parse.nodes import RelocateNode
+
+        resolver = Resolver()
+        result = MZParser.parse_as_ast(
+            """
+            .pool p { range 0x028000 0x0280ff }
+            .relocate fn 0x02c000 0x02c17f into p {
+                rts
+            }
+            """,
+            filename="t.s",
+        )
+        assert result.parse_error is None
+        nodes = code_gen(result.nodes, resolver)
+        relocs = [n for n in nodes if isinstance(n, RelocateNode)]
+        assert len(relocs) == 1
+        assert relocs[0].name == "fn"
+        assert relocs[0].old_start == 0x02C000
+        assert relocs[0].old_end == 0x02C17F
+
+
+class TestRelocateEndToEnd:
+    def test_relocate_reclaims_old_range_into_pool(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .relocate fn 0x02c000 0x02c17f into p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        pool = program.resolver.pools["p"]
+        # Pool now contains the original 0x100-byte range plus the
+        # reclaimed 0x180-byte range, minus the 1 byte the body used.
+        assert pool.capacity == 0x100 + 0x180
+        assert pool.used == 1
+
+    def test_relocate_binds_symbol_to_new_addr(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .relocate fn 0x02c000 0x02c17f into p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        labels = program.resolver.current_scope.labels
+        assert "fn" in labels
+
+    def test_relocate_reclaim_overlapping_pool_range_errors(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x02c100 0x02c200 }
+        .relocate fn 0x02c150 0x02c1ff into p {
+            rts
+        }
+        """
+        with pytest.raises(Exception, match="overlap"):
+            program.assemble_string_with_emitter(src, "test.s", writer)

@@ -127,7 +127,7 @@ class TestRelocateDirective:
     def test_basic(self) -> None:
         node = _first_of(
             """
-            .relocate fn_old into bank02_slack {
+            .relocate fn_old 0x02c000 0x02c17f into bank02_slack {
                 pha
                 rts
             }
@@ -135,6 +135,8 @@ class TestRelocateDirective:
             RelocateAstNode,
         )
         assert node.symbol == "fn_old"
+        assert node.old_start == 0x02C000
+        assert node.old_end == 0x02C17F
         assert node.pool_name == "bank02_slack"
         assert isinstance(node.body, BlockAstNode)
         opcodes = [n for n in node.body.body if isinstance(n, OpcodeAstNode)]
@@ -142,11 +144,25 @@ class TestRelocateDirective:
 
     def test_missing_into_keyword_is_error(self) -> None:
         result = MZParser.parse_as_ast(
-            ".relocate fn bank02 { rts }",
+            ".relocate fn 0x02c000 0x02c17f bank02 { rts }",
             filename="t.s",
         )
         assert result.parse_error is not None
         assert "'into'" in result.parse_error.message
+
+    def test_to_canonical_includes_body(self) -> None:
+        node = _first_of(
+            """
+            .relocate fn 0x02c000 0x02c17f into p {
+                rts
+            }
+            """,
+            RelocateAstNode,
+        )
+        canon = node.to_canonical()
+        assert "rts" in canon
+        assert "0x02c000" in canon
+        assert "0x02c17f" in canon
 
 
 class TestReclaimDirective:
@@ -180,11 +196,11 @@ class TestIntegration:
                 rts
             }
 
-            .relocate fn_old into bank02_slack {
+            .relocate fn_old 0x02c000 0x02c17f into bank02_slack {
                 rts
             }
 
-            .reclaim bank02_slack 0x02c000 0x02c17f
+            .reclaim bank02_slack 0x02d000 0x02d17f
             """,
         )
         kinds = [type(n).__name__ for n in nodes if not type(n).__name__.startswith(("Comment", "Docstring"))]
@@ -192,6 +208,42 @@ class TestIntegration:
         assert "AllocAstNode" in kinds
         assert "RelocateAstNode" in kinds
         assert "ReclaimAstNode" in kinds
+
+
+class TestFluffFormat:
+    def test_pool_alloc_relocate_reclaim_round_trip(self) -> None:
+        from a816.formatter import A816Formatter
+
+        src = """.pool p {
+    range 0x028000 0x0280ff
+    fill 0xea
+    strategy pack
+}
+.alloc fn in p {
+    rts
+}
+.relocate moved 0x02c000 0x02c17f into p {
+    pha
+    rts
+}
+.reclaim p 0x02d000 0x02d0ff
+"""
+        out = A816Formatter().format_text(src)
+        # Stable across two passes — fluff format converges.
+        assert A816Formatter().format_text(out) == out
+        # Body opcodes appear inside the brace pair.
+        for keyword in (".pool p", ".alloc fn in p", ".relocate moved", ".reclaim p"):
+            assert keyword in out
+        for opcode in ("rts", "pha"):
+            assert opcode in out
+
+
+class TestLspKeywordCompletions:
+    def test_pool_keywords_advertised(self) -> None:
+        from a816.parse.scanner_states import KEYWORDS
+
+        for kw in ("pool", "alloc", "relocate", "reclaim"):
+            assert kw in KEYWORDS, f"{kw!r} not in scanner KEYWORDS — LSP completion will not surface it"
 
 
 if __name__ == "__main__":

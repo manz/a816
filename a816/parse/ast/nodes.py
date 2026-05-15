@@ -543,6 +543,19 @@ class RegisterSizeAstNode(AstNode):
         return f".{self.register}{self.size}"
 
 
+def _indent_block_body(block: "BlockAstNode", indent: str = "    ") -> str:
+    """Render a block's children with consistent indentation, no surrounding braces.
+
+    Used by `.alloc` and `.relocate` canonicalisation so fluff format can pass
+    the source through a round-trip without losing the body's structure.
+    """
+    lines: list[str] = []
+    for node in block.body:
+        for line in node.to_canonical().splitlines() or [""]:
+            lines.append(f"{indent}{line}" if line else line)
+    return "\n".join(lines)
+
+
 class PoolAstNode(AstNode):
     """AST node for `.pool NAME { ... }` directive.
 
@@ -601,35 +614,44 @@ class AllocAstNode(AstNode):
         return self.kind, self.name, self.pool_name, self.body.to_representation()[0]
 
     def to_canonical(self) -> str:
-        return f".alloc {self.name} in {self.pool_name} {{ ... }}"
+        body = _indent_block_body(self.body)
+        return f".alloc {self.name} in {self.pool_name} {{\n{body}\n}}"
 
 
 class RelocateAstNode(AstNode):
-    """AST node for `.relocate SYMBOL into POOL { body }` directive.
+    """AST node for `.relocate SYMBOL OLD_START OLD_END into POOL { body }`.
 
-    Moves the labelled region `SYMBOL` into the named pool. Old range is
-    reclaimed back into the pool (filled with the pool's fill byte) and
-    `body` is placed at the allocator-chosen address; `SYMBOL` resolves to
-    the new location.
+    Moves the labelled region `SYMBOL` from `[OLD_START, OLD_END]` into the
+    named pool. The old range is reclaimed back into the pool (fill byte
+    applied during emission) and `body` is placed at the allocator-chosen
+    address; `SYMBOL` resolves to the new location.
     """
 
     def __init__(
         self,
         symbol: str,
+        old_start: int,
+        old_end: int,
         pool_name: str,
         body: "BlockAstNode",
         file_info: Token,
     ) -> None:
         super().__init__("relocate", file_info)
         self.symbol = symbol
+        self.old_start = old_start
+        self.old_end = old_end
         self.pool_name = pool_name
         self.body = body
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.symbol, self.pool_name, self.body.to_representation()[0]
+        return self.kind, self.symbol, self.old_start, self.old_end, self.pool_name, self.body.to_representation()[0]
 
     def to_canonical(self) -> str:
-        return f".relocate {self.symbol} into {self.pool_name} {{ ... }}"
+        body = _indent_block_body(self.body)
+        return (
+            f".relocate {self.symbol} 0x{self.old_start:06x} 0x{self.old_end:06x} "
+            f"into {self.pool_name} {{\n{body}\n}}"
+        )
 
 
 class ReclaimAstNode(AstNode):

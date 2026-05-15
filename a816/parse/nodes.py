@@ -782,6 +782,48 @@ class AllocNode(NodeProtocol):
         return f"AllocNode({self.name} in {self.pool_name})"
 
 
+class RelocateNode(AllocNode):
+    """`AllocNode` that also reclaims the symbol's original (addr, end) range.
+
+    Pass 1 reclaims `[old_start, old_end]` back into the pool *before*
+    requesting a slot for the body, so the reclaimed bytes may be reused
+    by the same `.relocate` if the pool's free space is otherwise full.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        old_start: int,
+        old_end: int,
+        pool_name: str,
+        body: list[NodeProtocol],
+        resolver: "Resolver",
+        file_info: Token,
+    ) -> None:
+        super().__init__(name, pool_name, body, resolver, file_info)
+        self.old_start = old_start
+        self.old_end = old_end
+        self._reclaimed = False
+
+    def _request_slot(self) -> None:
+        if not self._reclaimed:
+            from a816.pool import PoolRange
+
+            pool = self.resolver.pools[self.pool_name]
+            try:
+                pool.reclaim(PoolRange(start=self.old_start, end=self.old_end))
+            except Exception as exc:
+                raise NodeError(
+                    f".relocate {self.name!r} reclaim 0x{self.old_start:06x}..0x{self.old_end:06x}: {exc}",
+                    self.file_info,
+                ) from exc
+            self._reclaimed = True
+        super()._request_slot()
+
+    def __str__(self) -> str:
+        return f"RelocateNode({self.name} from 0x{self.old_start:06x}..0x{self.old_end:06x} -> {self.pool_name})"
+
+
 class CodePositionNode(NodeProtocol):
     def __init__(self, value_node: ValueNodeProtocol, resolver: Resolver):
         self.value_node = value_node
