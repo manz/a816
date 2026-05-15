@@ -298,6 +298,46 @@ class TestFluffFormat:
             assert opcode in out
 
 
+class TestFluffFormatNestedIf:
+    """Regression: ff4 reported the formatter mangled `.if {}` inside `.alloc {}`:
+    flattened braces to `.endif`, glued closing brace to preceding instruction,
+    stripped immediate `#` prefix from operands."""
+
+    def test_alloc_with_nested_if_round_trips(self) -> None:
+        from a816.formatter import A816Formatter
+
+        src = """
+.pool demo_pool {
+    range 0x208000 0x20FFFF
+    strategy order
+}
+
+.alloc demo in demo_pool {
+.if FLAG_A {
+    lda #0x00
+    rtl
+}
+
+label_after:
+    lda 0x43
+    rtl
+
+.if FLAG_B {
+    .import "some_module"
+}
+}
+"""
+        out = A816Formatter().format_text(src)
+        # No .endif (a816 uses braces, not keyword endif).
+        assert ".endif" not in out
+        # No glued braces (rtl.endif / "....endif).
+        assert "rtl}" not in out
+        # Immediate `#` prefix preserved.
+        assert "lda #0x00" in out
+        # Stable across two passes.
+        assert A816Formatter().format_text(out) == out
+
+
 class TestLspKeywordCompletions:
     def test_pool_keywords_advertised(self) -> None:
         from a816.parse.scanner_states import KEYWORDS

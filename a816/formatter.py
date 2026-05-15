@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.exceptions import FormattingError
 from a816.parse.ast.nodes import (
+    AllocAstNode,
     AsciiAstNode,
     AstNode,
     BlockAstNode,
@@ -28,6 +29,9 @@ from a816.parse.ast.nodes import (
     MacroApplyAstNode,
     MacroAstNode,
     OpcodeAstNode,
+    PoolAstNode,
+    ReclaimAstNode,
+    RelocateAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
@@ -273,6 +277,14 @@ class A816Formatter:
             return self._format_comment(ast)
         if isinstance(ast, ScopeAstNode):
             return self._format_scope(ast)
+        if isinstance(ast, AllocAstNode):
+            return self._format_alloc(ast)
+        if isinstance(ast, RelocateAstNode):
+            return self._format_relocate(ast)
+        if isinstance(ast, PoolAstNode):
+            return self._format_pool(ast)
+        if isinstance(ast, ReclaimAstNode):
+            return [self._format_reclaim(ast)]
         if isinstance(ast, MacroAstNode):
             return self._format_macro(ast)
         if isinstance(ast, DocstringAstNode):
@@ -397,6 +409,35 @@ class A816Formatter:
             return f"{apply_ast.name}({arg_str})"
         else:
             return f"{apply_ast.name}()"
+
+    def _format_alloc(self, ast: AllocAstNode) -> list[str]:
+        """Format `.alloc NAME in POOL { body }`."""
+        lines = [f".alloc {ast.name} in {ast.pool_name} {{"]
+        lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
+        lines.append("}")
+        return lines
+
+    def _format_relocate(self, ast: RelocateAstNode) -> list[str]:
+        """Format `.relocate SYMBOL OLD_START OLD_END into POOL { body }`."""
+        old_start = ast.old_start.to_canonical()
+        old_end = ast.old_end.to_canonical()
+        lines = [f".relocate {ast.symbol} {old_start} {old_end} into {ast.pool_name} {{"]
+        lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
+        lines.append("}")
+        return lines
+
+    def _format_pool(self, ast: PoolAstNode) -> list[str]:
+        """Format `.pool NAME { range / fill / strategy ... }`."""
+        lines = [f".pool {ast.pool_name} {{"]
+        for lo, hi in ast.ranges:
+            lines.append(f"    range {lo.to_canonical()} {hi.to_canonical()}")
+        lines.append(f"    fill {ast.fill.to_canonical()}")
+        lines.append(f"    strategy {ast.strategy}")
+        lines.append("}")
+        return lines
+
+    def _format_reclaim(self, ast: ReclaimAstNode) -> str:
+        return f".reclaim {ast.pool_name} {ast.start.to_canonical()} {ast.end.to_canonical()}"
 
     def _format_if(self, if_ast: IfAstNode) -> list[str]:
         """Format an if statement with explicit braces"""
