@@ -405,6 +405,46 @@ def _parse_pool_number(p: Parser) -> int:
     return cast(int, ast.literal_eval(token.value))
 
 
+def _parse_pool_fill(p: Parser, key_token: Token) -> int:
+    fill = _parse_pool_number(p)
+    if not 0 <= fill <= 0xFF:
+        raise ParserSyntaxError(f"pool fill 0x{fill:x} out of byte range", key_token)
+    return fill
+
+
+def _parse_pool_strategy(p: Parser) -> str:
+    strat_token = p.next()
+    expect_token(strat_token, TokenType.IDENTIFIER)
+    if strat_token.value not in _POOL_STRATEGIES:
+        raise ParserSyntaxError(
+            f"unknown pool strategy {strat_token.value!r}; expected one of {sorted(_POOL_STRATEGIES)}",
+            strat_token,
+        )
+    return strat_token.value
+
+
+def _parse_pool_attr(
+    p: Parser,
+    key_token: Token,
+    ranges: list[tuple[int, int]],
+    state: dict[str, str | int],
+) -> None:
+    key = key_token.value
+    if key == "range":
+        lo = _parse_pool_number(p)
+        hi = _parse_pool_number(p)
+        ranges.append((lo, hi))
+    elif key == "fill":
+        state["fill"] = _parse_pool_fill(p, key_token)
+    elif key == "strategy":
+        state["strategy"] = _parse_pool_strategy(p)
+    else:
+        raise ParserSyntaxError(
+            f"unknown pool attribute {key!r}; expected range, fill, strategy",
+            key_token,
+        )
+
+
 def parse_pool(p: Parser) -> PoolAstNode:
     """Parse `.pool NAME { range LO HI | fill VAL | strategy ID ... }`."""
     keyword = p.current()
@@ -413,8 +453,7 @@ def parse_pool(p: Parser) -> PoolAstNode:
     expect_token(p.next(), TokenType.LBRACE)
 
     ranges: list[tuple[int, int]] = []
-    fill = 0x00
-    strategy = "pack"
+    state: dict[str, str | int] = {"fill": 0x00, "strategy": "pack"}
 
     while p.current().type != TokenType.EOF:
         current = p.current()
@@ -424,35 +463,19 @@ def parse_pool(p: Parser) -> PoolAstNode:
             p.next()
             continue
         expect_token(current, TokenType.IDENTIFIER)
-        key = p.next().value
-
-        if key == "range":
-            lo = _parse_pool_number(p)
-            hi = _parse_pool_number(p)
-            ranges.append((lo, hi))
-        elif key == "fill":
-            fill = _parse_pool_number(p)
-            if not 0 <= fill <= 0xFF:
-                raise ParserSyntaxError(f"pool fill 0x{fill:x} out of byte range", current)
-        elif key == "strategy":
-            strat_token = p.next()
-            expect_token(strat_token, TokenType.IDENTIFIER)
-            if strat_token.value not in _POOL_STRATEGIES:
-                raise ParserSyntaxError(
-                    f"unknown pool strategy {strat_token.value!r}; expected one of {sorted(_POOL_STRATEGIES)}",
-                    strat_token,
-                )
-            strategy = strat_token.value
-        else:
-            raise ParserSyntaxError(
-                f"unknown pool attribute {key!r}; expected range, fill, strategy",
-                current,
-            )
+        key_token = p.next()
+        _parse_pool_attr(p, key_token, ranges, state)
 
     expect_token(p.next(), TokenType.RBRACE)
     if not ranges:
         raise ParserSyntaxError(f"pool {name_token.value!r} declares no ranges", keyword)
-    return PoolAstNode(name_token.value, ranges, fill, strategy, keyword)
+    return PoolAstNode(
+        name_token.value,
+        ranges,
+        cast(int, state["fill"]),
+        cast(str, state["strategy"]),
+        keyword,
+    )
 
 
 def _expect_contextual_keyword(p: Parser, expected: str) -> Token:
