@@ -656,26 +656,22 @@ class TestAllocImportLoserSkip:
     placement at the same target address."""
 
     def test_alloc_body_with_duplicate_imports_does_not_double_emit(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
-        # Build two modules that both import the same shared dep.
-        (tmp_path / "shared.s").write_text("shared_fn:\n    rts\n")
-        (tmp_path / "a.s").write_text('.import "shared"\na_fn:\n    rts\n')
-        (tmp_path / "b.s").write_text('.import "shared"\nb_fn:\n    rts\n')
-        Program().assemble_as_object(str(tmp_path / "shared.s"), tmp_path / "shared.o")
-        Program().assemble_as_object(str(tmp_path / "a.s"), tmp_path / "a.o")
-        Program().assemble_as_object(str(tmp_path / "b.s"), tmp_path / "b.o")
+        # Same module imported twice inside one .alloc body — last-wins
+        # makes the first a loser; emit_blocks must skip it so bytes don't
+        # double-emit and overlap the winner at the same offset.
+        dialog_s = tmp_path / "dialog.s"
+        dialog_s.write_text("dialog_fn:\n    rts\n    rts\n    rts\n")
+        Program().assemble_as_object(str(dialog_s), tmp_path / "dialog.o")
 
         main = tmp_path / "main.s"
         main.write_text(
             ".pool slack { range 0x208000 0x20ffff strategy order }\n"
-            '.alloc all in slack {\n    .import "a"\n    .import "b"\n}\n'
+            '.alloc body in slack {\n    .import "dialog"\n    .import "dialog"\n}\n'
         )
         program = Program()
         program.add_module_path(str(tmp_path))
         program.assemble_as_patch(str(main), tmp_path / "out.ips")
 
-        # Parse IPS — the alloc body's region should hold a.o bytes + b.o
-        # bytes (each containing one rts) + shared.o bytes ONCE (not twice
-        # despite being imported transitively by both a and b).
         d = (tmp_path / "out.ips").read_bytes()
         pos = 5
         total = 0
@@ -690,9 +686,9 @@ class TestAllocImportLoserSkip:
                 continue
             total += sz
             pos += sz
-        # Each module body = 1 byte (rts = 0x60). With dedup: 1 + 1 + 1 = 3 bytes.
-        # Without dedup (the bug): would be 5 bytes (shared imported twice + a + b).
-        assert total <= 3, f"expected <=3 bytes (a + b + shared once); got {total} — duplicate import emission"
+        # dialog body is 3 bytes (rts × 3). Pre-fix: 6 bytes (two copies
+        # overlapping at same offset). Post-fix: 3 bytes (loser skipped).
+        assert total == 3, f"expected 3 bytes (dialog body once); got {total} — loser emission"
 
 
 class TestAllocImportDedupe:
