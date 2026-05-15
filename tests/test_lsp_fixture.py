@@ -361,3 +361,21 @@ async def test_did_change_updates_document_content() -> None:
     )
     await server._handle_did_change(params)
     assert "; replaced" in server.documents[uri].content
+
+
+async def test_did_change_whole_document_replacement() -> None:
+    """LSP clients may send TextDocumentContentChangeWholeDocument (no range,
+    just full text). Exercises the whole-doc branch of _apply_content_changes."""
+    from lsprotocol.types import TextDocumentContentChangeWholeDocument
+
+    server = server_with_fixture_workspace()
+    await _open(server, "src/main.s")
+    uri = fixture_uri("src/main.s")
+    change = TextDocumentContentChangeWholeDocument(text="; whole-doc swap\nstart:\n    rtl\n")
+    params = DidChangeTextDocumentParams(
+        text_document=VersionedTextDocumentIdentifier(uri=uri, version=3),
+        content_changes=[change],
+    )
+    await server._handle_did_change(params)
+    assert "; whole-doc swap" in server.documents[uri].content
+    assert "start" in server.documents[uri].labels
