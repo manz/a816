@@ -232,6 +232,31 @@ Replays the records of an existing IPS patch into the current build.
 See the dedicated [Modules](modules.md) page for `.import` / `.extern`
 semantics, the build workflow, and prelude usage.
 
+## Freespace pools
+
+See the dedicated [Freespace pools](freespace-pools.md) page for the
+full reference. Quick form:
+
+### `.pool NAME { ... }`
+
+Declares a named freespace pool with one or more ranges, optional
+fill byte, and allocation strategy (`pack` | `order`).
+
+### `.alloc NAME in POOL { body }`
+
+Reserves space for `body` in the named pool; the allocator picks the
+address and binds `NAME` there.
+
+### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
+
+Moves `SYMBOL` from `[OLD_START, OLD_END]` into the pool — old range
+is reclaimed before the new body is placed.
+
+### `.reclaim POOL START END`
+
+Adds `[START, END]` to the named pool. Escape hatch for slack with
+no original label.
+
 ## Comments and docstrings
 
 ```ca65

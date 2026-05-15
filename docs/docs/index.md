@@ -204,11 +204,23 @@ main:
 
 Declare reusable chunks of free ROM, relocate functions into them,
 and let the assembler place everything deterministically. The
-allocator core ships today as a Python API (`a816.pool`); the
-matching directives (`.pool`, `.relocate`, `.alloc`, `.reclaim`) are
-in flight. See [Freespace pools](freespace-pools.md) for the design,
-current API, and migration path from the manual `*=` + end-label
-pattern.
+`.pool` / `.alloc` / `.relocate` / `.reclaim` directives replace the
+manual `*= ADDR` + end-label + overflow guard pattern with a
+declarative pool the assembler manages. In object compilation the
+linker unions same-named pools across translation units and runs the
+allocator over the merged view, so multiple modules can share a pool
+name. See [Freespace pools](freespace-pools.md) for syntax,
+cross-TU usage, error model, and migration from the manual pattern.
+
+```ca65
+.pool bank01_slack {
+    range 0x01ff35 0x01ffff
+}
+
+.alloc helper in bank01_slack {
+    rts
+}
+```
 
 ## Project configuration (`a816.toml`)
 
