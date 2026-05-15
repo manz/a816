@@ -450,7 +450,7 @@ class Program:
                         logger.error(error)
                         exit(128)
                 except NodeError as e:
-                    logger.error(str(e))
+                    logger.exception(str(e))
                     exit(128)
 
         except RuntimeError as e:
@@ -554,7 +554,7 @@ class Program:
 
                 self.emit_with_relocations(nodes, object_writer)
             except NodeError as e:
-                logger.error(str(e))
+                logger.exception(str(e))
                 return -1
         except RuntimeError as e:
             self.logger.error(e)

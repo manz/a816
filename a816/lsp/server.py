@@ -1659,7 +1659,7 @@ class A816LanguageServer:
                 return [TextEdit(range=self._full_document_range(doc), new_text=formatted_content)]
             return []
         except FormattingError as exc:
-            logger.error("Formatter failed for %s: %s", doc.uri, exc)
+            logger.exception("Formatter failed for %s: %s", doc.uri, exc)
             self.server.show_message(str(exc), MessageType.Error)
             return []
         finally:
