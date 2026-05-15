@@ -90,9 +90,7 @@ class Linker:
             for req in obj_file.pool_allocs:
                 pool = merged.get(req.pool_name)
                 if pool is None:
-                    raise ValueError(
-                        f"pool alloc {req.symbol_name!r} references undeclared pool {req.pool_name!r}"
-                    )
+                    raise ValueError(f"pool alloc {req.symbol_name!r} references undeclared pool {req.pool_name!r}")
                 alloc_obj = pool.request(req.symbol_name, req.size)
                 self._region_pool_alloc[(obj_idx, req.region_idx)] = alloc_obj
         for pool in merged.values():
@@ -159,8 +157,7 @@ class Linker:
         existing = merged[decl.name]
         if existing.fill != decl.fill:
             raise ValueError(
-                f"pool {decl.name!r} declared with conflicting fill bytes: "
-                f"0x{existing.fill:02x} vs 0x{decl.fill:02x}"
+                f"pool {decl.name!r} declared with conflicting fill bytes: 0x{existing.fill:02x} vs 0x{decl.fill:02x}"
             )
         if existing.strategy.value != decl.strategy:
             raise ValueError(
@@ -186,9 +183,7 @@ class Linker:
         local_to_linked_file = self._merge_file_table(obj_file)
         obj_idx = self.object_files.index(obj_file)
         pool_allocs_by_region: dict[int, object] = {
-            r_idx: alloc
-            for (oi, r_idx), alloc in getattr(self, "_region_pool_alloc", {}).items()
-            if oi == obj_idx
+            r_idx: alloc for (oi, r_idx), alloc in getattr(self, "_region_pool_alloc", {}).items() if oi == obj_idx
         }
 
         for local_region_idx, region in enumerate(obj_file.regions):

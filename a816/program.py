@@ -403,9 +403,7 @@ class Program:
         if isinstance(node, IncludeIpsNode):
             self._object_emit_ips_blocks(node, object_writer, state)
 
-    def _object_emit_alloc(
-        self, node: "AllocNode", object_writer: ObjectWriter, state: "_ObjectEmitState"
-    ) -> None:
+    def _object_emit_alloc(self, node: "AllocNode", object_writer: ObjectWriter, state: "_ObjectEmitState") -> None:
         """Emit `.alloc` body into a deferred region for link-time placement.
 
         The body region opens at the sandbox PC (pool's first range start)
@@ -420,9 +418,9 @@ class Program:
         alloc = node._alloc
         if alloc is None:
             return
-        sandbox_logical = self.resolver.get_bus().get_address(
-            self.resolver.pools[node.pool_name].ranges[0].start
-        ).logical_value
+        sandbox_logical = (
+            self.resolver.get_bus().get_address(self.resolver.pools[node.pool_name].ranges[0].start).logical_value
+        )
         self._flush_object_block(object_writer, state)
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address

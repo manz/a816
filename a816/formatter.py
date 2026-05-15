@@ -208,19 +208,29 @@ class A816Formatter:
         return lines
 
     def _format_block(self, ast: BlockAstNode, indent_after_label: bool) -> list[str]:
+        # Mirror `_format_compound`'s blank-line preservation and inline-comment
+        # folding so `.alloc { ... }` bodies (which are BlockAstNode) keep the
+        # author's vertical whitespace and trailing `; comment` association.
         lines: list[str] = []
+        prev_line: int | None = None
         for node in ast.body:
-            # Same brace-preserving rule as `_format_compound`: a nested
-            # compound child needs its `{` / `}` kept around the body so
-            # the inner scope is preserved (otherwise local equates leak
-            # into the parent and collide with siblings at link time).
+            node_line = self._node_line_num(node)
+            self._emit_blank_gap(lines, prev_line, node_line)
+
+            if self._try_fold_inline_comment(node, node_line, prev_line, lines):
+                prev_line = node_line
+                continue
+
             if isinstance(node, CompoundAstNode):
                 inner_lines = self._format_ast(node, True, indent_after_label=indent_after_label)
                 lines.append("{")
                 lines.extend(self._indent_block_lines(inner_lines))
                 lines.append("}")
+                prev_line = self._advance_prev_line(node, node_line)
                 continue
+
             lines.extend(self._format_ast(node, True, indent_after_label=indent_after_label))
+            prev_line = self._advance_prev_line(node, node_line)
         return lines
 
     def _format_comment(self, ast: CommentAstNode) -> list[str]:
@@ -427,11 +437,19 @@ class A816Formatter:
         return lines
 
     def _format_pool(self, ast: PoolAstNode) -> list[str]:
-        """Format `.pool NAME { range / fill / strategy ... }`."""
+        """Format `.pool NAME { range / fill / strategy ... }`.
+
+        Omits `fill` when it evaluates to the default 0 — the formatter
+        can't tell whether `fill 0` was source-explicit or parser-injected,
+        so we err toward not materialising defaults. Users who genuinely
+        want `fill 0` in the source will see it round-tripped to nothing,
+        but the semantics are identical."""
         lines = [f".pool {ast.pool_name} {{"]
         for lo, hi in ast.ranges:
             lines.append(f"    range {lo.to_canonical()} {hi.to_canonical()}")
-        lines.append(f"    fill {ast.fill.to_canonical()}")
+        fill_canonical = ast.fill.to_canonical()
+        if fill_canonical.strip() != "0":
+            lines.append(f"    fill {fill_canonical}")
         lines.append(f"    strategy {ast.strategy}")
         lines.append("}")
         return lines
