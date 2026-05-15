@@ -717,10 +717,23 @@ class AllocNode(NodeProtocol):
         anchor = pool.ranges[0].start if pool.ranges else 0
         return self.resolver.get_bus().get_address(anchor)
 
+    @staticmethod
+    def _skip_in_pass1(node: NodeProtocol) -> bool:
+        """Mirror `Program.resolve_labels` pass-1 skip set.
+
+        Nodes whose `pc_after` eagerly evaluates expressions (e.g.
+        `SymbolNode`) must wait for pass-2 or forward references raise.
+        AllocNode walks its body across the same passes, so applies the
+        same skip rule when measuring + when binding labels.
+        """
+        return isinstance(node, SymbolNode)
+
     def _measure_body(self) -> int:
         start = self._sandbox_pc()
         pc = start
         for node in self.body:
+            if self._skip_in_pass1(node):
+                continue
             pc = node.pc_after(pc)
         return pc.logical_value - start.logical_value
 

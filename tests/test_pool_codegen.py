@@ -201,6 +201,147 @@ class TestRelocateCodegen:
         assert relocs[0].old_end == 0x02C17F
 
 
+class TestAllocPass1ForwardRefs:
+    """Regression: ff4-modules dogfood surfaced AllocNode crashing on
+    forward refs because `SymbolNode.pc_after` evaluates RHS eagerly.
+    `Program.resolve_labels` skips SymbolNode in pass-1 for the same
+    reason; AllocNode now mirrors that.
+    """
+
+    def test_alloc_body_with_forward_label_ref(self) -> None:
+        """Mirrors ff4-modules pattern: body references a label declared
+        later in another scope. Pre-fix this raised SymbolNotDefined
+        during AllocNode's pass-1 size measurement."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            jsr.l later.target
+            rts
+        }
+
+        *=0x008000
+        .scope later {
+        target:
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+
+        labels = program.resolver.current_scope.labels
+        assert "fn" in labels, "alloc label must bind"
+        # fn binds at logical 0x028000 (only chunk start). Translate to
+        # physical via the bus so we can find the matching writer record.
+        fn_logical = labels["fn"]
+        fn_phys = program.resolver.get_bus().get_address(fn_logical).physical
+        # Body bytes: 22 00 80 00 (jsr.l later.target) + 60 (rts) = 5 bytes.
+        alloc_block = next(
+            (b for a, b in zip(writer.data_addresses, writer.data, strict=False) if a == fn_phys),
+            None,
+        )
+        assert alloc_block == b"\x22\x00\x80\x00\x60", (
+            f"alloc body bytes wrong at phys=0x{fn_phys:06x}: {alloc_block!r}"
+        )
+
+
+class TestAllocNodeInternals:
+    """Cover NodeProtocol surface bits (emit, __str__, empty paths)."""
+
+    @staticmethod
+    def _make_alloc(src: str):  # type: ignore[no-untyped-def]
+        from a816.parse.nodes import AllocNode
+
+        resolver = Resolver()
+        result = MZParser.parse_as_ast(src, filename="t.s")
+        assert result.parse_error is None
+        nodes = code_gen(result.nodes, resolver)
+        allocs = [n for n in nodes if isinstance(n, AllocNode)]
+        assert allocs
+        return allocs[0]
+
+    _SRC = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            rts
+        }
+        """
+
+    def test_alloc_str_repr(self) -> None:
+        node = self._make_alloc(self._SRC)
+        assert "fn" in str(node)
+        assert "p" in str(node)
+
+    def test_alloc_emit_returns_empty_bytes(self) -> None:
+        node = self._make_alloc(self._SRC)
+        dummy = Resolver().get_bus().get_address(0)
+        # emit() is documented to be a no-op; bytes flow through emit_blocks.
+        assert node.emit(dummy) == b""
+
+    def test_emit_blocks_empty_before_allocation(self) -> None:
+        node = self._make_alloc(self._SRC)
+        dummy = Resolver().get_bus().get_address(0)
+        # Before pc_after runs and allocator places the slot, emit_blocks
+        # returns [].
+        assert node.emit_blocks(dummy) == []
+
+    def test_pc_after_unknown_pool_raises(self) -> None:
+        """Defense in depth: codegen validates the pool exists before
+        constructing AllocNode, but the runtime guard also raises if a
+        node is built directly without going through generate_alloc."""
+        from a816.parse.nodes import AllocNode, NodeError
+        from a816.parse.tokens import Token, TokenType
+
+        resolver = Resolver()
+        fake_tok = Token(TokenType.IDENTIFIER, "ghost")
+        node = AllocNode("fn", "ghost", [], resolver, fake_tok)
+        dummy = resolver.get_bus().get_address(0)
+        with pytest.raises(NodeError, match="unknown pool"):
+            node.pc_after(dummy)
+
+    def test_alloc_skips_symbol_node_in_pass1(self) -> None:
+        """`continue` branch in _measure_body when body has a SymbolNode."""
+        program = Program()
+        writer = StubWriter()
+        # `local_const = 0x42` produces a SymbolNode that pass-1 must skip
+        # to keep measurement deterministic (regardless of RHS resolvability).
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            local_const = 0x42
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        labels = program.resolver.current_scope.labels
+        assert "fn" in labels
+
+
+class TestRelocateNodeInternals:
+    def test_relocate_str_repr(self) -> None:
+        from a816.parse.nodes import RelocateNode
+
+        resolver = Resolver()
+        result = MZParser.parse_as_ast(
+            """
+            .pool p { range 0x028000 0x0280ff }
+            .relocate fn 0x02c000 0x02c17f into p {
+                rts
+            }
+            """,
+            filename="t.s",
+        )
+        assert result.parse_error is None
+        nodes = code_gen(result.nodes, resolver)
+        relocs = [n for n in nodes if isinstance(n, RelocateNode)]
+        assert relocs
+        s = str(relocs[0])
+        assert "fn" in s
+        assert "0x02c000" in s
+        assert "0x02c17f" in s
+        assert "p" in s
+
+
 class TestRelocateEndToEnd:
     def test_relocate_reclaims_old_range_into_pool(self) -> None:
         program = Program()
