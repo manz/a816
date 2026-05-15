@@ -14,6 +14,7 @@ from a816.object_file import Region
 from a816.parse.ast.expression import eval_expression, eval_expression_str
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.tokens import Token
+from a816.pool import Allocation
 from a816.protocols import NodeProtocol, OpcodeProtocol, ValueNodeProtocol
 from a816.symbols import Resolver, Scope
 from script import Table
@@ -708,7 +709,7 @@ class AllocNode(NodeProtocol):
         self.body = body
         self.resolver = resolver
         self.file_info = file_info
-        self._alloc: object | None = None
+        self._alloc: Allocation | None = None
         self._size: int = 0
 
     def _sandbox_pc(self) -> Address:
@@ -723,23 +724,31 @@ class AllocNode(NodeProtocol):
             pc = node.pc_after(pc)
         return pc.logical_value - start.logical_value
 
-    def pc_after(self, current_pc: Address) -> Address:
+    def _request_slot(self) -> None:
+        pool = self.resolver.pools[self.pool_name]
+        self._size = max(1, self._measure_body())
+        self._alloc = pool.request(self.name, self._size)
+
+    def _bind_body_labels(self) -> None:
+        alloc = self._alloc
+        assert alloc is not None
+        target = self.resolver.get_bus().get_address(alloc.addr)
+        self.resolver.current_scope.add_label(self.name, target)
+        pc = target
+        for node in self.body:
+            pc = node.pc_after(pc)
+
+    def pc_after(self, current_pc: Address) -> Address:  # NOSONAR S3516
+        # Returning current_pc unchanged is by design: an .alloc block emits
+        # at the allocator-chosen address (via emit_blocks), not inline,
+        # so the surrounding PC must not advance past this node.
         pool = self.resolver.pools.get(self.pool_name)
         if pool is None:
             raise NodeError(f".alloc into unknown pool {self.pool_name!r}", self.file_info)
-
         if self._alloc is None:
-            self._size = max(1, self._measure_body())
-            self._alloc = pool.request(self.name, self._size)
-            return current_pc
-
-        alloc = self._alloc
-        if getattr(alloc, "placed", False):
-            target = self.resolver.get_bus().get_address(alloc.addr)  # type: ignore[attr-defined]
-            self.resolver.current_scope.add_label(self.name, target)
-            pc = target
-            for node in self.body:
-                pc = node.pc_after(pc)
+            self._request_slot()
+        elif self._alloc.placed:
+            self._bind_body_labels()
         return current_pc
 
     def emit(self, current_addr: Address) -> bytes:
@@ -749,12 +758,12 @@ class AllocNode(NodeProtocol):
     def emit_blocks(self, current_addr: Address) -> list[tuple[int, bytes]]:
         del current_addr
         alloc = self._alloc
-        if alloc is None or not getattr(alloc, "placed", False):
+        if alloc is None or not alloc.placed:
             return []
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
         try:
-            self.resolver.set_position(alloc.addr)  # type: ignore[attr-defined]
+            self.resolver.set_position(alloc.addr)
             out = b""
             cur = self.resolver.reloc_address
             for node in self.body:
@@ -764,7 +773,7 @@ class AllocNode(NodeProtocol):
                     cur = cur + len(emitted)
                     self.resolver.pc += len(emitted)
                     self.resolver.reloc_address = cur
-            return [(alloc.addr, out)]  # type: ignore[attr-defined]
+            return [(alloc.addr, out)]
         finally:
             self.resolver.pc = saved_pc
             self.resolver.reloc_address = saved_reloc
