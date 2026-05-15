@@ -221,16 +221,28 @@ class TestAllocPass1ForwardRefs:
             rts
         }
 
+        *=0x008000
         .scope later {
         target:
             rts
         }
         """
         program.assemble_string_with_emitter(src, "test.s", writer)
-        flat = b"".join(writer.data)
-        # jsr.l (0x22) + 3-byte operand + rts (0x60).
-        assert 0x22 in flat
-        assert 0x60 in flat
+
+        labels = program.resolver.current_scope.labels
+        assert "fn" in labels, "alloc label must bind"
+        # fn binds at logical 0x028000 (only chunk start). Translate to
+        # physical via the bus so we can find the matching writer record.
+        fn_logical = labels["fn"]
+        fn_phys = program.resolver.get_bus().get_address(fn_logical).physical
+        # Body bytes: 22 00 80 00 (jsr.l later.target) + 60 (rts) = 5 bytes.
+        alloc_block = next(
+            (b for a, b in zip(writer.data_addresses, writer.data, strict=False) if a == fn_phys),
+            None,
+        )
+        assert alloc_block == b"\x22\x00\x80\x00\x60", (
+            f"alloc body bytes wrong at phys=0x{fn_phys:06x}: {alloc_block!r}"
+        )
 
 
 class TestRelocateEndToEnd:
