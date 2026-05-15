@@ -646,6 +646,61 @@ class TestObjectMode:
         assert cons_region.code[:5] == b"\x22\x00\x80\x02\x60"
 
 
+class TestAllocImportDedupe:
+    """ff4 Q#13: `.import` of the same .o module via both `.include`'d patch
+    file AND inside `.alloc` body double-emitted because
+    `_mark_import_winners` walked only top-level program nodes, missing
+    LinkedModuleNode children inside AllocNode.body."""
+
+    def test_o_import_inside_alloc_dedupes_against_outer_include(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Build dialog.s -> dialog.o so import resolves through LinkedModuleNode
+        dialog_s = tmp_path / "dialog.s"
+        dialog_s.write_text("get_bank1:\n    rep #0x20\n    lda.l 0x218000\n    sta 0x20\n    rts\n")
+        Program().assemble_as_object(str(dialog_s), tmp_path / "dialog.o")
+
+        included = tmp_path / "patches.i"
+        included.write_text('*=0x018798\n    jsr.w 0x9876\n.import "dialog"\n')
+
+        main = tmp_path / "main.s"
+        main.write_text(
+            ".pool slack { range 0x208000 0x20ffff strategy order }\n"
+            '.include "patches.i"\n'
+            '.alloc bank20_main in slack {\n    .import "dialog"\n}\n'
+        )
+        program = Program()
+        program.add_module_path(str(tmp_path))
+        program.add_include_path(str(tmp_path))
+        program.assemble_as_patch(str(main), tmp_path / "out.ips")
+
+        # Parse IPS records: expect only the patch (3B) + alloc body (single
+        # copy of dialog) — no duplicate at the patch's surrounding org.
+        d = (tmp_path / "out.ips").read_bytes()
+        pos = 5
+        records: list[tuple[int, bytes]] = []
+        while True:
+            if d[pos : pos + 3] == b"EOF":
+                break
+            addr = int.from_bytes(d[pos : pos + 3], "big")
+            pos += 3
+            sz = int.from_bytes(d[pos : pos + 2], "big")
+            pos += 2
+            if sz == 0:
+                run = int.from_bytes(d[pos : pos + 2], "big")
+                pos += 2
+                byte = d[pos : pos + 1]
+                pos += 1
+                records.append((addr, byte * run))
+            else:
+                records.append((addr, d[pos : pos + sz]))
+                pos += sz
+        # Patch at $01:8798 stays 3B (the jsr.w), dialog body lands ONLY in
+        # the alloc region. Pre-fix: patch record swelled by 18B (dialog bytes).
+        patch_record = next(b for a, b in records if a == 0x008798)
+        assert len(patch_record) == 3, (
+            f"patch record should be 3 bytes (jsr.w only); got {len(patch_record)} — duplicate import emission"
+        )
+
+
 class TestPoolExhaustion:
     """Pool overflow errors are surfaced loudly in both modes."""
 
