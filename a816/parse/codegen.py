@@ -337,6 +337,27 @@ def _try_eager_register_alias(node: SymbolAffectationAstNode, resolver: Resolver
             object_writer.add_alias(node.symbol, expr_str)
 
 
+def _try_eager_constant_bind(node: SymbolAffectationAstNode, resolver: Resolver) -> bool:
+    """Bind `NAME = constant_expr` eagerly so downstream codegen can read it.
+
+    Pool literals (`.pool`, `.reclaim`, `.relocate` addresses) eval at
+    codegen time, which runs before `SymbolNode.pc_after` binds RHS values.
+    For pure-constant RHS (no label / forward-symbol refs), we can resolve
+    immediately and bind the LHS into the current scope so a following
+    `.pool p { range NAME 0x028fff }` resolves cleanly.
+
+    Returns True iff the binding was successful.
+    """
+    try:
+        value = eval_expression(node.value, resolver)
+    except Exception:  # SymbolNotDefined / external refs / non-int — fall through
+        return False
+    if not isinstance(value, int):
+        return False
+    resolver.current_scope.add_symbol(node.symbol, value)
+    return True
+
+
 def generate_symbol(
     node: SymbolAffectationAstNode,
     resolver: Resolver,
@@ -352,6 +373,9 @@ def generate_symbol(
         and _expression_references_extern(node.value, resolver)
     ):
         _try_eager_register_alias(node, resolver)
+    # Eagerly bind constant RHS so codegen-time consumers (pool literals) see it.
+    elif isinstance(node.value, ExpressionAstNode):
+        _try_eager_constant_bind(node, resolver)
 
     return [SymbolNode(node.symbol, node.value, resolver)]
 
@@ -917,6 +941,17 @@ def generate_pool(
         raise NodeError(f"pool {node.pool_name!r}: {exc}", file_info) from exc
     resolver.pools[node.pool_name] = pool
     _publish_pool_stats(node.pool_name, pool, resolver)
+    if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+        from a816.object_file import PoolDecl
+
+        resolver.context.object_writer.pool_decls.append(
+            PoolDecl(
+                name=pool.name,
+                ranges=[(r.start, r.end) for r in pool.ranges],
+                fill=pool.fill,
+                strategy=pool.strategy.value,
+            )
+        )
     return []
 
 
@@ -929,9 +964,13 @@ def _publish_pool_stats(name: str, pool: Pool, resolver: Resolver) -> None:
     only for capacity-style values that don't change after declaration.
     """
     scope = resolver.current_scope
-    scope.add_symbol(f"{name}.capacity", pool.capacity)
-    scope.add_symbol(f"{name}.fragments", pool.fragments)
-    scope.add_symbol(f"{name}.largest_chunk", pool.largest_chunk)
+    for stat, value in (
+        (f"{name}.capacity", pool.capacity),
+        (f"{name}.fragments", pool.fragments),
+        (f"{name}.largest_chunk", pool.largest_chunk),
+    ):
+        scope.add_symbol(stat, value)
+        resolver.pool_stat_symbol_names.add(stat)
 
 
 def generate_reclaim(

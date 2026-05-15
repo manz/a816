@@ -51,6 +51,7 @@ class Linker:
         if base_address is not None:
             self.base_address = base_address
         self._resolve_symbols()
+        self._merge_pool_decls()
         self._resolve_aliases()
         self._check_unresolved()
         self._apply_relocations()
@@ -61,7 +62,54 @@ class Linker:
             aliases=[],
             files=self.linked_files,
             relocatable=False,
+            pool_decls=self._merged_pool_decls,
         )
+
+    def _merge_pool_decls(self) -> None:
+        """Union same-named `.pool` declarations across input modules.
+
+        Two modules declaring the same pool name must agree on `fill` and
+        `strategy` and contribute non-overlapping ranges. The merged pool
+        carries the union of ranges; the linker exposes it on the output
+        ObjectFile.pool_decls for tooling (e.g. xobj) and as the source
+        of truth for future link-time allocation passes.
+        """
+        from a816.object_file import PoolDecl
+        from a816.pool import Pool, PoolRange, Strategy
+
+        merged: dict[str, Pool] = {}
+        for obj_file in self.object_files:
+            for decl in obj_file.pool_decls:
+                if decl.name in merged:
+                    existing = merged[decl.name]
+                    if existing.fill != decl.fill:
+                        raise ValueError(
+                            f"pool {decl.name!r} declared with conflicting fill bytes: "
+                            f"0x{existing.fill:02x} vs 0x{decl.fill:02x}"
+                        )
+                    if existing.strategy.value != decl.strategy:
+                        raise ValueError(
+                            f"pool {decl.name!r} declared with conflicting strategies: "
+                            f"{existing.strategy.value!r} vs {decl.strategy!r}"
+                        )
+                    for start, end in decl.ranges:
+                        existing.reclaim(PoolRange(start=start, end=end))
+                else:
+                    merged[decl.name] = Pool(
+                        name=decl.name,
+                        ranges=[PoolRange(start=s, end=e) for s, e in decl.ranges],
+                        fill=decl.fill,
+                        strategy=Strategy(decl.strategy),
+                    )
+        self._merged_pool_decls = [
+            PoolDecl(
+                name=p.name,
+                ranges=[(r.start, r.end) for r in p.ranges],
+                fill=p.fill,
+                strategy=p.strategy.value,
+            )
+            for p in merged.values()
+        ]
 
     def _delta_for(self, obj_file: ObjectFile, running_offset: int) -> int:
         """How much to shift this module's logical addresses by.

@@ -569,6 +569,8 @@ class Program:
         for name, value in self.resolver.get_all_symbols():
             if self.resolver.current_scope.is_external_symbol(name):
                 continue  # already added by ExternNode
+            if name in self.resolver.pool_stat_symbol_names:
+                continue  # pool stat snapshots are per-module, not linker-visible
             sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 

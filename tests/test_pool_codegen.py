@@ -245,6 +245,132 @@ class TestAllocPass1ForwardRefs:
         )
 
 
+class TestLspDocumentSymbols:
+    """`.pool` and `.alloc` / `.relocate` names surface in the LSP
+    document outline so editors can show them in the navigation panel."""
+
+    def test_pool_and_alloc_indexed(self) -> None:
+        from a816.lsp.server import A816Document
+
+        doc = A816Document(
+            uri="file:///t.s",
+            content=(
+                ".pool bank01_slack { range 0x01ff35 0x01ffff }\n"
+                ".alloc helper in bank01_slack {\n"
+                "    rts\n"
+                "}\n"
+                ".relocate fn 0x02c000 0x02c17f into bank01_slack {\n"
+                "    rts\n"
+                "}\n"
+            ),
+        )
+        assert "bank01_slack" in doc.pools
+        assert "helper" in doc.allocs
+        assert "fn" in doc.allocs
+
+
+class TestCrossTuPoolMerging:
+    """Linker unions same-named `.pool` decls across modules.
+
+    Two modules contributing complementary ranges to the same pool name
+    merge into one larger pool on the output. fill / strategy must agree.
+    Full deferred allocation (alloc placement decided at link time across
+    all modules) is a follow-up; this slice serializes decls and validates
+    conflicts so the foundation is in place.
+    """
+
+    def test_pool_decls_serialize_to_object_file(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.object_file import ObjectFile
+
+        asm = tmp_path / "mod.s"
+        asm.write_text(
+            """
+            .pool slack {
+                range 0x028000 0x0280ff
+                fill 0xea
+                strategy order
+            }
+            .alloc fn in slack {
+                rts
+            }
+            """
+        )
+        obj = tmp_path / "mod.o"
+        assert Program().assemble_as_object(str(asm), obj) == 0
+        loaded = ObjectFile.from_file(str(obj))
+        assert len(loaded.pool_decls) == 1
+        decl = loaded.pool_decls[0]
+        assert decl.name == "slack"
+        assert decl.ranges == [(0x028000, 0x0280FF)]
+        assert decl.fill == 0xEA
+        assert decl.strategy == "order"
+
+    def test_linker_unions_pool_ranges(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        mod_a = tmp_path / "a.s"
+        mod_a.write_text(
+            """
+            .pool slack {
+                range 0x028000 0x0280ff
+            }
+            .alloc fn_a in slack {
+                rts
+            }
+            """
+        )
+        mod_b = tmp_path / "b.s"
+        mod_b.write_text(
+            """
+            .pool slack {
+                range 0x02a000 0x02a0ff
+            }
+            .alloc fn_b in slack {
+                rts
+            }
+            """
+        )
+        obj_a = tmp_path / "a.o"
+        obj_b = tmp_path / "b.o"
+        assert Program().assemble_as_object(str(mod_a), obj_a) == 0
+        assert Program().assemble_as_object(str(mod_b), obj_b) == 0
+        linker = Linker([ObjectFile.from_file(str(obj_a)), ObjectFile.from_file(str(obj_b))])
+        linked = linker.link()
+        # Linker exposes merged pool decl on output.
+        merged = next(p for p in linked.pool_decls if p.name == "slack")
+        # Both modules' ranges combine.
+        assert (0x028000, 0x0280FF) in merged.ranges
+        assert (0x02A000, 0x02A0FF) in merged.ranges
+
+    def test_linker_pool_fill_mismatch_errors(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        for name, fill in (("a", "0xea"), ("b", "0xff")):
+            asm = tmp_path / f"{name}.s"
+            asm.write_text(
+                f"""
+                .pool slack {{
+                    range 0x02{name}000 0x02{name}0ff
+                    fill {fill}
+                }}
+                .alloc fn_{name} in slack {{
+                    rts
+                }}
+                """
+            )
+            obj = tmp_path / f"{name}.o"
+            assert Program().assemble_as_object(str(asm), obj) == 0
+
+        objs = [
+            ObjectFile.from_file(str(tmp_path / "a.o")),
+            ObjectFile.from_file(str(tmp_path / "b.o")),
+        ]
+        with pytest.raises(ValueError, match="conflicting fill"):
+            Linker(objs).link()
+
+
 class TestObjectMode:
     """`.pool` + `.alloc` work when compiling to .o.
 
@@ -378,6 +504,28 @@ class TestPoolExpressions:
     yet at code-generation time (they live in SymbolNode.pc_after which
     runs in pass-2 of resolve_labels). Arithmetic on literals works.
     """
+
+    def test_pool_range_uses_constant_symbol_forward_ref(self) -> None:
+        """Constant declared before .pool is bound eagerly so the pool
+        literal can read it at codegen time."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        BANK02_BASE = 0x028000
+        BANK02_TOP  = 0x028fff
+        .pool p {
+            range BANK02_BASE BANK02_TOP
+            fill 0xea
+        }
+        .alloc fn in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        pool = program.resolver.pools["p"]
+        assert pool.ranges[0].start == 0x028000
+        assert pool.ranges[0].end == 0x028FFF
+        assert pool.fill == 0xEA
 
     def test_pool_fill_arithmetic_expression(self) -> None:
         program = Program()
