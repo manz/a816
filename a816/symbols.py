@@ -250,6 +250,17 @@ class Resolver:
         self.pools: dict[str, Pool] = {}
         self.set_position(pc)
 
+    def allocate_pools(self) -> None:
+        """Run the allocator on every declared pool.
+
+        Called between resolver passes by Program.resolve_labels so that
+        `.alloc` and `.relocate` blocks see their final addresses on the
+        pass that binds labels. Pool.allocate is idempotent — safe to call
+        multiple times.
+        """
+        for pool in self.pools.values():
+            pool.allocate()
+
     def get_bus(self) -> Bus:
         if self.bus.has_mappings():
             bus = self.bus

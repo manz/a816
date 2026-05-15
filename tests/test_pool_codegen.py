@@ -5,7 +5,9 @@ import pytest
 from a816.parse.codegen import code_gen
 from a816.parse.mzparser import MZParser
 from a816.pool import Strategy
+from a816.program import Program
 from a816.symbols import Resolver
+from tests import StubWriter
 
 
 def _gen(src: str) -> Resolver:
@@ -100,7 +102,7 @@ class TestReclaimCodegen:
         assert len(resolver.pools["p"].ranges) == 1
 
 
-class TestAllocPlaceholder:
+class TestAllocCodegen:
     def test_alloc_into_unknown_pool_errors(self) -> None:
         with pytest.raises(Exception, match="unknown pool"):
             _gen(
@@ -111,16 +113,59 @@ class TestAllocPlaceholder:
                 """,
             )
 
-    def test_alloc_not_yet_wired(self) -> None:
-        with pytest.raises(Exception, match="not yet wired up"):
-            _gen(
-                """
-                .pool p { range 0x028000 0x0280ff }
-                .alloc fn in p {
-                    rts
-                }
-                """,
-            )
+    def test_alloc_emits_alloc_node(self) -> None:
+        from a816.parse.nodes import AllocNode
+
+        resolver = Resolver()
+        result = MZParser.parse_as_ast(
+            """
+            .pool p { range 0x028000 0x0280ff }
+            .alloc fn in p {
+                rts
+            }
+            """,
+            filename="t.s",
+        )
+        assert result.parse_error is None
+        nodes = code_gen(result.nodes, resolver)
+        alloc_nodes = [n for n in nodes if isinstance(n, AllocNode)]
+        assert len(alloc_nodes) == 1
+        assert alloc_nodes[0].name == "fn"
+        assert alloc_nodes[0].pool_name == "p"
+
+
+class TestAllocEndToEnd:
+    def test_body_lands_at_allocated_addr(self) -> None:
+        writer = StubWriter()
+        program = Program()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        # rts opcode = 0x60. Body should land at allocator-chosen 0x028000.
+        assert b"\x60" in writer.data
+        idx = writer.data.index(b"\x60")
+        # The address recorded is physical; first range starts at logical
+        # 0x028000 which maps to physical 0x010000 under low_rom.
+        assert writer.data_addresses[idx] in (0x028000, 0x010000)
+
+    def test_alloc_binds_symbol(self) -> None:
+        program = Program()
+        resolver = program.resolver
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            rts
+        }
+        """
+        writer = StubWriter()
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        # Symbol `fn` should resolve to the allocator-picked address.
+        labels = resolver.current_scope.labels
+        assert "fn" in labels
 
 
 class TestRelocatePlaceholder:

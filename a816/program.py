@@ -9,6 +9,7 @@ from a816.cpu.cpu_65c816 import RomType
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.parse.mzparser import MZParser
 from a816.parse.nodes import (
+    AllocNode,
     BinaryNode,
     CodePositionNode,
     IncludeIpsNode,
@@ -166,6 +167,10 @@ class Program:
                 continue
             previous_pc = node.pc_after(previous_pc)
 
+        # Run the freespace allocator between passes so .alloc / .relocate
+        # blocks see their final addresses when binding labels in pass 2.
+        self.resolver.allocate_pools()
+
         self.resolver_reset()
 
         previous_pc = self.resolver.reloc_address
@@ -258,6 +263,9 @@ class Program:
         if isinstance(node, LinkedModuleNode):
             self._emit_linked_module(node, writer, state)
             return
+        if isinstance(node, AllocNode):
+            self._emit_alloc(node, writer, state)
+            return
         self._emit_default(node, writer, state)
         if isinstance(node, CodePositionNode):
             self._handle_code_position(writer, state)
@@ -285,6 +293,16 @@ class Program:
             advance = len(blocks[0][1])
             self.resolver.pc += advance
             self.resolver.reloc_address += advance
+        state.current_block_addr = self.resolver.pc
+        state.current_block_logical = self.resolver.reloc_address.logical_value
+
+    def _emit_alloc(self, node: AllocNode, writer: Writer, state: _EmitState) -> None:
+        """Write an `.alloc` block at its allocator-chosen address."""
+        self._flush_pending(writer, state)
+        blocks = node.emit_blocks(self.resolver.reloc_address)
+        for base, block in blocks:
+            if block:
+                writer.write_block(block, self._to_physical(base))
         state.current_block_addr = self.resolver.pc
         state.current_block_logical = self.resolver.reloc_address.logical_value
 
