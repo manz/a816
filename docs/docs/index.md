@@ -200,6 +200,16 @@ main:
     rts
 ```
 
+## Freespace pools
+
+Declare reusable chunks of free ROM, relocate functions into them,
+and let the assembler place everything deterministically. The
+allocator core ships today as a Python API (`a816.pool`); the
+matching directives (`.pool`, `.relocate`, `.alloc`, `.reclaim`) are
+in flight. See [Freespace pools](freespace-pools.md) for the design,
+current API, and migration path from the manual `*=` + end-label
+pattern.
+
 ## Project configuration (`a816.toml`)
 
 Drop an `a816.toml` at the project root to declare the entrypoint and
