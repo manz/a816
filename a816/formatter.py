@@ -163,15 +163,43 @@ class A816Formatter:
     _BLOCK_LIKE_AST: ClassVar[tuple[type, ...]] = (IfAstNode, ForAstNode, MacroAstNode, ScopeAstNode, CompoundAstNode)
 
     def _advance_prev_line(self, node: AstNode, node_line: int | None) -> int | None:
-        # Closing braces of block-like nodes sit on the next source
-        # line with no AST entry; bump past them so the gap heuristic
-        # doesn't read the brace line as a blank padding line.
+        # Closing braces of block-like nodes sit on source lines with no
+        # AST entry; bump past them so the gap heuristic doesn't read the
+        # brace lines as blank padding. For nested block-likes (e.g.
+        # `.if OUTER { .if INNER { ... } }`) every nested block contributes
+        # its own closing brace line — scan the source for the consecutive
+        # `}` lines that immediately follow the tail leaf.
         tail_line = self._ast_max_line(node) or node_line
         if tail_line is None:
             return None
         if isinstance(node, self._BLOCK_LIKE_AST):
-            return tail_line + 1
+            return self._skip_trailing_close_braces(node, tail_line)
         return tail_line
+
+    def _skip_trailing_close_braces(self, node: AstNode, tail_line: int) -> int:
+        """Return the source line number of the outermost closing `}`
+        that belongs to `node`. Walks forward from `tail_line` and stops
+        when a non-`}`-only line is encountered.
+
+        Uses the source file recorded on the node's `file_info.position`
+        when available; falls back to `tail_line + 1` (legacy single-brace
+        behaviour) when the source isn't reachable.
+        """
+        position = getattr(node.file_info, "position", None)
+        source_file = getattr(position, "file", None) if position else None
+        source_lines = getattr(source_file, "lines", None) if source_file else None
+        if not source_lines:
+            return tail_line + 1
+        i = tail_line + 1
+        last = tail_line
+        while i < len(source_lines):
+            stripped = source_lines[i].strip()
+            if stripped == "}":
+                last = i
+                i += 1
+                continue
+            break
+        return last
 
     def _format_compound(self, ast: CompoundAstNode, indent_instructions: bool, indent_after_label: bool) -> list[str]:
         lines: list[str] = []

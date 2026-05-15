@@ -384,6 +384,50 @@ bar:
         assert A816Formatter().format_text(out) == out
 
 
+class TestFluffFormatNestedCloseBraces:
+    """Regression: ff4 Q#12 — format not idempotent on nested `} }`.
+
+    Source has 1 blank line between `}` `}` close-braces and the next
+    sibling; legacy `_advance_prev_line` only skipped a single brace
+    so subsequent passes injected an extra blank each run."""
+
+    def test_nested_close_braces_idempotent(self) -> None:
+        from a816.formatter import A816Formatter
+
+        src = """.pool demo {
+    range 0x208000 0x20FFFF
+    strategy order
+}
+
+.alloc body in demo {
+    .if OUTER {
+        .if INNER {
+            .import "foo"
+        }
+    }
+
+    .import "bar"
+}
+"""
+        f = A816Formatter()
+        p1 = f.format_text(src)
+        p2 = f.format_text(p1)
+        p3 = f.format_text(p2)
+        assert p1 == p2, "format must converge in one pass"
+        assert p2 == p3
+        # Exactly one blank line between the close-braces and `.import "bar"`.
+        lines = p1.splitlines()
+        bar_idx = next(i for i, line in enumerate(lines) if '"bar"' in line)
+        # Walk back over blank lines.
+        blank_count = 0
+        for i in range(bar_idx - 1, -1, -1):
+            if lines[i].strip() == "":
+                blank_count += 1
+            else:
+                break
+        assert blank_count == 1, f'expected 1 blank line before `.import "bar"`, got {blank_count}'
+
+
 class TestLspKeywordCompletions:
     def test_pool_keywords_advertised(self) -> None:
         from a816.parse.scanner_states import KEYWORDS
