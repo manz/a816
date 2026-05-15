@@ -46,9 +46,39 @@ class Region:
     lines: list[tuple[int, int, int, int, int]] = field(default_factory=list)
 
 
+@dataclass
+class PoolDecl:
+    """A `.pool` declaration serialized into a module.
+
+    Linker collects every `PoolDecl` across input modules, unions same-named
+    pools (ranges combined, fill/strategy must match), then runs the
+    allocator on the merged pool for cross-TU placement.
+    """
+
+    name: str
+    ranges: list[tuple[int, int]]
+    fill: int
+    strategy: str
+
+
+@dataclass
+class PoolAlloc:
+    """A `.alloc` / `.relocate` request deferred to link time.
+
+    `region_idx` is the body region in the same ObjectFile — the linker
+    sets that region's `base_address` to the allocator-chosen address.
+    `symbol_name` is the alloc's exported label, also patched.
+    """
+
+    pool_name: str
+    symbol_name: str
+    region_idx: int
+    size: int
+
+
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x0007  # Version 7: SymbolSection.ABS_LABEL for `.label` directives.
+    VERSION = 0x0008  # Version 8: pool decls + alloc requests for cross-TU pool merging.
 
     def __init__(
         self,
@@ -60,6 +90,8 @@ class ObjectFile:
         files: list[str] | None = None,
         lines: list[tuple[int, int, int, int, int]] | None = None,
         relocatable: bool = True,
+        pool_decls: list[PoolDecl] | None = None,
+        pool_allocs: list[PoolAlloc] | None = None,
     ) -> None:
         # `relocatable` is True iff the source contained no `*=` directive,
         # so the importer is free to place region 0 at the import site PC
@@ -82,6 +114,8 @@ class ObjectFile:
         self.aliases: list[tuple[str, str]] = aliases or []
         self.files: list[str] = files or []
         self.relocatable: bool = relocatable
+        self.pool_decls: list[PoolDecl] = pool_decls or []
+        self.pool_allocs: list[PoolAlloc] = pool_allocs or []
 
     # ----- legacy single-region accessors (tests / older callers) -----
     def _ensure_first_region(self) -> Region:
@@ -127,6 +161,32 @@ class ObjectFile:
             self._write_symbol_table(f)
             self._write_alias_table(f)
             self._write_file_table(f)
+            self._write_pool_decls(f)
+            self._write_pool_allocs(f)
+
+    def _write_pool_decls(self, f: IO[bytes]) -> None:
+        f.write(struct.pack("<H", len(self.pool_decls)))
+        for decl in self.pool_decls:
+            name_bytes = decl.name.encode("utf-8")
+            strategy_bytes = decl.strategy.encode("utf-8")
+            f.write(struct.pack("<B", len(name_bytes)))
+            f.write(name_bytes)
+            f.write(struct.pack("<B", len(strategy_bytes)))
+            f.write(strategy_bytes)
+            f.write(struct.pack("<BH", decl.fill, len(decl.ranges)))
+            for start, end in decl.ranges:
+                f.write(struct.pack("<II", start, end))
+
+    def _write_pool_allocs(self, f: IO[bytes]) -> None:
+        f.write(struct.pack("<H", len(self.pool_allocs)))
+        for alloc in self.pool_allocs:
+            pool_bytes = alloc.pool_name.encode("utf-8")
+            sym_bytes = alloc.symbol_name.encode("utf-8")
+            f.write(struct.pack("<B", len(pool_bytes)))
+            f.write(pool_bytes)
+            f.write(struct.pack("<B", len(sym_bytes)))
+            f.write(sym_bytes)
+            f.write(struct.pack("<II", alloc.region_idx, alloc.size))
 
     def _write_header(self, f: IO[bytes]) -> None:
         flags = 0x01 if self.relocatable else 0x00
@@ -250,6 +310,36 @@ class ObjectFile:
         return out
 
     @staticmethod
+    def _read_pool_decls(f: IO[bytes]) -> list[PoolDecl]:
+        (count,) = struct.unpack("<H", f.read(2))
+        out: list[PoolDecl] = []
+        for _ in range(count):
+            (name_len,) = struct.unpack("<B", f.read(1))
+            name = f.read(name_len).decode("utf-8")
+            (strategy_len,) = struct.unpack("<B", f.read(1))
+            strategy = f.read(strategy_len).decode("utf-8")
+            fill, range_count = struct.unpack("<BH", f.read(3))
+            ranges: list[tuple[int, int]] = []
+            for _ in range(range_count):
+                start, end = struct.unpack("<II", f.read(8))
+                ranges.append((start, end))
+            out.append(PoolDecl(name=name, ranges=ranges, fill=fill, strategy=strategy))
+        return out
+
+    @staticmethod
+    def _read_pool_allocs(f: IO[bytes]) -> list[PoolAlloc]:
+        (count,) = struct.unpack("<H", f.read(2))
+        out: list[PoolAlloc] = []
+        for _ in range(count):
+            (pool_len,) = struct.unpack("<B", f.read(1))
+            pool_name = f.read(pool_len).decode("utf-8")
+            (sym_len,) = struct.unpack("<B", f.read(1))
+            sym_name = f.read(sym_len).decode("utf-8")
+            region_idx, size = struct.unpack("<II", f.read(8))
+            out.append(PoolAlloc(pool_name=pool_name, symbol_name=sym_name, region_idx=region_idx, size=size))
+        return out
+
+    @staticmethod
     def from_file(filename: str) -> "ObjectFile":
         with open(filename, "rb") as f:
             header = f.read(7)
@@ -265,4 +355,14 @@ class ObjectFile:
             symbols = ObjectFile._read_symbol_table(f)
             aliases = ObjectFile._read_alias_table(f)
             files = ObjectFile._read_file_table(f)
-            return ObjectFile(regions, symbols, aliases=aliases, files=files, relocatable=relocatable)
+            pool_decls = ObjectFile._read_pool_decls(f)
+            pool_allocs = ObjectFile._read_pool_allocs(f)
+            return ObjectFile(
+                regions,
+                symbols,
+                aliases=aliases,
+                files=files,
+                relocatable=relocatable,
+                pool_decls=pool_decls,
+                pool_allocs=pool_allocs,
+            )

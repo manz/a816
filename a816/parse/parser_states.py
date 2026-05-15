@@ -1,5 +1,6 @@
 import ast
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
@@ -399,17 +400,10 @@ def _register_size(register: str, size: int) -> Callable[[Parser, Token], Regist
 _POOL_STRATEGIES = {"pack", "order"}
 
 
-def _parse_pool_number(p: Parser) -> int:
-    token = p.next()
-    expect_token(token, TokenType.NUMBER)
-    return cast(int, ast.literal_eval(token.value))
-
-
-def _parse_pool_fill(p: Parser, key_token: Token) -> int:
-    fill = _parse_pool_number(p)
-    if not 0 <= fill <= 0xFF:
-        raise ParserSyntaxError(f"pool fill 0x{fill:x} out of byte range", key_token)
-    return fill
+def _zero_expression(file_info: Token) -> ExpressionAstNode:
+    """Synthesise the literal expression `0` for default pool fill byte."""
+    zero_tok = Token(TokenType.NUMBER, "0", file_info.position)
+    return ExpressionAstNode([Term(zero_tok)])
 
 
 def _parse_pool_strategy(p: Parser) -> str:
@@ -423,21 +417,23 @@ def _parse_pool_strategy(p: Parser) -> str:
     return strat_token.value
 
 
-def _parse_pool_attr(
-    p: Parser,
-    key_token: Token,
-    ranges: list[tuple[int, int]],
-    state: dict[str, str | int],
-) -> None:
+@dataclass
+class _PoolAttrs:
+    ranges: list[tuple[ExpressionAstNode, ExpressionAstNode]]
+    fill: ExpressionAstNode
+    strategy: str
+
+
+def _parse_pool_attr(p: Parser, key_token: Token, attrs: _PoolAttrs) -> None:
     key = key_token.value
     if key == "range":
-        lo = _parse_pool_number(p)
-        hi = _parse_pool_number(p)
-        ranges.append((lo, hi))
+        lo = parse_expression(p)
+        hi = parse_expression(p)
+        attrs.ranges.append((lo, hi))
     elif key == "fill":
-        state["fill"] = _parse_pool_fill(p, key_token)
+        attrs.fill = parse_expression(p)
     elif key == "strategy":
-        state["strategy"] = _parse_pool_strategy(p)
+        attrs.strategy = _parse_pool_strategy(p)
     else:
         raise ParserSyntaxError(
             f"unknown pool attribute {key!r}; expected range, fill, strategy",
@@ -452,8 +448,7 @@ def parse_pool(p: Parser) -> PoolAstNode:
     expect_token(name_token, TokenType.IDENTIFIER)
     expect_token(p.next(), TokenType.LBRACE)
 
-    ranges: list[tuple[int, int]] = []
-    state: dict[str, str | int] = {"fill": 0x00, "strategy": "pack"}
+    attrs = _PoolAttrs(ranges=[], fill=_zero_expression(keyword), strategy="pack")
 
     while p.current().type != TokenType.EOF:
         current = p.current()
@@ -464,16 +459,16 @@ def parse_pool(p: Parser) -> PoolAstNode:
             continue
         expect_token(current, TokenType.IDENTIFIER)
         key_token = p.next()
-        _parse_pool_attr(p, key_token, ranges, state)
+        _parse_pool_attr(p, key_token, attrs)
 
     expect_token(p.next(), TokenType.RBRACE)
-    if not ranges:
+    if not attrs.ranges:
         raise ParserSyntaxError(f"pool {name_token.value!r} declares no ranges", keyword)
     return PoolAstNode(
         name_token.value,
-        ranges,
-        cast(int, state["fill"]),
-        cast(str, state["strategy"]),
+        attrs.ranges,
+        attrs.fill,
+        attrs.strategy,
         keyword,
     )
 
@@ -505,8 +500,8 @@ def parse_relocate(p: Parser) -> RelocateAstNode:
     keyword = p.current()
     symbol_token = p.next()
     expect_token(symbol_token, TokenType.IDENTIFIER)
-    old_start = _parse_pool_number(p)
-    old_end = _parse_pool_number(p)
+    old_start = parse_expression(p)
+    old_end = parse_expression(p)
     _expect_contextual_keyword(p, "into")
     pool_token = p.next()
     expect_token(pool_token, TokenType.IDENTIFIER)
@@ -528,8 +523,8 @@ def parse_reclaim(p: Parser) -> ReclaimAstNode:
     keyword = p.current()
     pool_token = p.next()
     expect_token(pool_token, TokenType.IDENTIFIER)
-    start = _parse_pool_number(p)
-    end = _parse_pool_number(p)
+    start = parse_expression(p)
+    end = parse_expression(p)
     return ReclaimAstNode(pool_token.value, start, end, keyword)
 
 

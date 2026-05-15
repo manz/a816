@@ -62,6 +62,7 @@ from a816.cpu.cpu_65c816 import AddressingMode, snes_opcode_table
 from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter, FormattingOptions
 from a816.parse.ast.nodes import (
+    AllocAstNode,
     AssignAstNode,
     AstNode,
     BlockAstNode,
@@ -80,6 +81,9 @@ from a816.parse.ast.nodes import (
     MacroAstNode,
     MapAstNode,
     OpcodeAstNode,
+    PoolAstNode,
+    ReclaimAstNode,
+    RelocateAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
@@ -107,6 +111,8 @@ class A816Document:
         self.symbols: dict[str, tuple[Position, str]] = {}  # symbol -> (position, file_uri)
         self.labels: dict[str, tuple[Position, str]] = {}  # label -> (position, file_uri)
         self.macros: dict[str, tuple[Position, str]] = {}  # macro -> (position, file_uri)
+        self.pools: dict[str, tuple[Position, str]] = {}  # pool name -> (position, file_uri)
+        self.allocs: dict[str, tuple[Position, str]] = {}  # alloc / relocate name -> (position, file_uri)
         self.externs: set[str] = set()  # extern symbol names (declarations, not definitions)
         self.macro_params: dict[str, list[str]] = {}  # macro_name -> parameter_names
         self.macro_docstrings: dict[str, str] = {}
@@ -129,6 +135,8 @@ class A816Document:
         self.symbols.clear()
         self.labels.clear()
         self.macros.clear()
+        self.pools.clear()
+        self.allocs.clear()
         self.externs.clear()
         self.macro_params.clear()
         self.macro_docstrings.clear()
@@ -244,6 +252,14 @@ class A816Document:
         if isinstance(else_block, AstNode):
             self._visit_node_for_symbols(else_block)
 
+    def _record_pool_directive(self, node: AstNode) -> None:
+        if isinstance(node, PoolAstNode):
+            self._record_token_position(node.file_info, self.pools, node.pool_name)
+        elif isinstance(node, AllocAstNode):
+            self._record_token_position(node.file_info, self.allocs, node.name)
+        elif isinstance(node, RelocateAstNode):
+            self._record_token_position(node.file_info, self.allocs, node.symbol)
+
     def _visit_node_for_symbols(self, node: AstNode) -> None:
         """Recursively visit AST nodes to extract symbols and labels."""
         if isinstance(node, DocstringAstNode):
@@ -260,6 +276,8 @@ class A816Document:
                 self.scope_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
         elif isinstance(node, MacroAstNode):
             self._record_macro(node)
+        elif isinstance(node, PoolAstNode | AllocAstNode | RelocateAstNode | ReclaimAstNode):
+            self._record_pool_directive(node)
         elif isinstance(node, ImportAstNode):
             self._record_import(node)
         elif isinstance(node, StructAstNode):
@@ -1329,6 +1347,32 @@ class A816LanguageServer:
             if file_uri == uri
         ]
 
+    def _doc_symbols_for_pools(self, doc: A816Document, uri: str) -> list[DocumentSymbol]:
+        return [
+            DocumentSymbol(
+                name=name,
+                kind=SymbolKind.Namespace,
+                range=self._doc_symbol_range(pos, len(name)),
+                selection_range=self._doc_symbol_range(pos, len(name)),
+                detail=".pool",
+            )
+            for name, (pos, file_uri) in doc.pools.items()
+            if file_uri == uri
+        ]
+
+    def _doc_symbols_for_allocs(self, doc: A816Document, uri: str) -> list[DocumentSymbol]:
+        return [
+            DocumentSymbol(
+                name=name,
+                kind=SymbolKind.Function,
+                range=self._doc_symbol_range(pos, len(name)),
+                selection_range=self._doc_symbol_range(pos, len(name)),
+                detail=".alloc / .relocate",
+            )
+            for name, (pos, file_uri) in doc.allocs.items()
+            if file_uri == uri
+        ]
+
     def _handle_document_symbols(self, params: DocumentSymbolParams) -> list[DocumentSymbol]:
         doc = self.documents.get(params.text_document.uri)
         if not doc:
@@ -1338,6 +1382,8 @@ class A816LanguageServer:
             *self._doc_symbols_for_labels(doc, uri),
             *self._doc_symbols_for_macros(doc, uri),
             *self._doc_symbols_for_symbols(doc, uri),
+            *self._doc_symbols_for_pools(doc, uri),
+            *self._doc_symbols_for_allocs(doc, uri),
         ]
 
     @staticmethod

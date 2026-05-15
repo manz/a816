@@ -556,19 +556,23 @@ def _indent_block_body(block: "BlockAstNode", indent: str = "    ") -> str:
     return "\n".join(lines)
 
 
+PoolRangeExpr = tuple["ExpressionAstNode", "ExpressionAstNode"]
+
+
 class PoolAstNode(AstNode):
     """AST node for `.pool NAME { ... }` directive.
 
     Declares a freespace pool with one or more byte ranges, a fill byte, and
-    an allocation strategy. Consumed by the resolver to seed the pool
-    registry used by `.alloc` / `.relocate` / `.reclaim`.
+    an allocation strategy. Range bounds and fill byte are stored as
+    expressions and evaluated at codegen time so users can write
+    `range BANK_BASE 0x028fff` instead of magic literals.
     """
 
     def __init__(
         self,
         name: str,
-        ranges: list[tuple[int, int]],
-        fill: int,
+        ranges: list[PoolRangeExpr],
+        fill: "ExpressionAstNode",
         strategy: str,
         file_info: Token,
     ) -> None:
@@ -579,13 +583,13 @@ class PoolAstNode(AstNode):
         self.strategy = strategy
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.pool_name, tuple(self.ranges), self.fill, self.strategy
+        return self.kind, self.pool_name, len(self.ranges), self.strategy
 
     def to_canonical(self) -> str:
         lines = [f".pool {self.pool_name} {{"]
         for start, end in self.ranges:
-            lines.append(f"    range 0x{start:06x} 0x{end:06x}")
-        lines.append(f"    fill 0x{self.fill:02x}")
+            lines.append(f"    range {start.to_canonical()} {end.to_canonical()}")
+        lines.append(f"    fill {self.fill.to_canonical()}")
         lines.append(f"    strategy {self.strategy}")
         lines.append("}")
         return "\n".join(lines)
@@ -630,8 +634,8 @@ class RelocateAstNode(AstNode):
     def __init__(
         self,
         symbol: str,
-        old_start: int,
-        old_end: int,
+        old_start: "ExpressionAstNode",
+        old_end: "ExpressionAstNode",
         pool_name: str,
         body: "BlockAstNode",
         file_info: Token,
@@ -644,12 +648,17 @@ class RelocateAstNode(AstNode):
         self.body = body
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.symbol, self.old_start, self.old_end, self.pool_name, self.body.to_representation()[0]
+        return (
+            self.kind,
+            self.symbol,
+            self.pool_name,
+            self.body.to_representation()[0],
+        )
 
     def to_canonical(self) -> str:
         body = _indent_block_body(self.body)
         return (
-            f".relocate {self.symbol} 0x{self.old_start:06x} 0x{self.old_end:06x} "
+            f".relocate {self.symbol} {self.old_start.to_canonical()} {self.old_end.to_canonical()} "
             f"into {self.pool_name} {{\n{body}\n}}"
         )
 
@@ -662,17 +671,23 @@ class ReclaimAstNode(AstNode):
     overlapping existing pool ranges raise at resolution time.
     """
 
-    def __init__(self, pool_name: str, start: int, end: int, file_info: Token) -> None:
+    def __init__(
+        self,
+        pool_name: str,
+        start: "ExpressionAstNode",
+        end: "ExpressionAstNode",
+        file_info: Token,
+    ) -> None:
         super().__init__("reclaim", file_info)
         self.pool_name = pool_name
         self.start = start
         self.end = end
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.pool_name, self.start, self.end
+        return self.kind, self.pool_name
 
     def to_canonical(self) -> str:
-        return f".reclaim {self.pool_name} 0x{self.start:06x} 0x{self.end:06x}"
+        return f".reclaim {self.pool_name} {self.start.to_canonical()} {self.end.to_canonical()}"
 
 
 class AssignAstNode(AstNode):

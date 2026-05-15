@@ -248,6 +248,10 @@ class Resolver:
         self.reloc_address: Address
         self.context = AssemblyContext()
         self.pools: dict[str, Pool] = {}
+        # Names registered by `_publish_pool_stats` — kept out of object-mode
+        # symbol export so two `.o` files declaring the same pool don't
+        # collide on `<pool>.capacity` etc. at link time.
+        self.pool_stat_symbol_names: set[str] = set()
         self.set_position(pc)
 
     def allocate_pools(self) -> None:
@@ -257,7 +261,15 @@ class Resolver:
         `.alloc` and `.relocate` blocks see their final addresses on the
         pass that binds labels. Pool.allocate is idempotent — safe to call
         multiple times.
+
+        Skipped in object mode: the linker collects pool decls + alloc
+        requests across all input modules, unions same-named pools, and
+        runs the allocator over the merged view. Local pre-allocation
+        would assign each module its own copy of the pool, defeating
+        cross-TU sharing.
         """
+        if self.context.is_object_mode:
+            return
         for pool in self.pools.values():
             pool.allocate()
 

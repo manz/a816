@@ -245,6 +245,505 @@ class TestAllocPass1ForwardRefs:
         )
 
 
+class TestLspDocumentSymbols:
+    """`.pool` and `.alloc` / `.relocate` names surface in the LSP
+    document outline so editors can show them in the navigation panel."""
+
+    def test_pool_and_alloc_indexed(self) -> None:
+        from a816.lsp.server import A816Document
+
+        doc = A816Document(
+            uri="file:///t.s",
+            content=(
+                ".pool bank01_slack { range 0x01ff35 0x01ffff }\n"
+                ".alloc helper in bank01_slack {\n"
+                "    rts\n"
+                "}\n"
+                ".relocate fn 0x02c000 0x02c17f into bank01_slack {\n"
+                "    rts\n"
+                "}\n"
+            ),
+        )
+        assert "bank01_slack" in doc.pools
+        assert "helper" in doc.allocs
+        assert "fn" in doc.allocs
+
+
+class TestCrossTuPoolMerging:
+    """Linker unions same-named `.pool` decls across modules.
+
+    Two modules contributing complementary ranges to the same pool name
+    merge into one larger pool on the output. fill / strategy must agree.
+    Full deferred allocation (alloc placement decided at link time across
+    all modules) is a follow-up; this slice serializes decls and validates
+    conflicts so the foundation is in place.
+    """
+
+    def test_pool_decls_serialize_to_object_file(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.object_file import ObjectFile
+
+        asm = tmp_path / "mod.s"
+        asm.write_text(
+            """
+            .pool slack {
+                range 0x028000 0x0280ff
+                fill 0xea
+                strategy order
+            }
+            .alloc fn in slack {
+                rts
+            }
+            """
+        )
+        obj = tmp_path / "mod.o"
+        assert Program().assemble_as_object(str(asm), obj) == 0
+        loaded = ObjectFile.from_file(str(obj))
+        assert len(loaded.pool_decls) == 1
+        decl = loaded.pool_decls[0]
+        assert decl.name == "slack"
+        assert decl.ranges == [(0x028000, 0x0280FF)]
+        assert decl.fill == 0xEA
+        assert decl.strategy == "order"
+
+    def test_linker_unions_pool_ranges(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        mod_a = tmp_path / "a.s"
+        mod_a.write_text(
+            """
+            .pool slack {
+                range 0x028000 0x0280ff
+            }
+            .alloc fn_a in slack {
+                rts
+            }
+            """
+        )
+        mod_b = tmp_path / "b.s"
+        mod_b.write_text(
+            """
+            .pool slack {
+                range 0x02a000 0x02a0ff
+            }
+            .alloc fn_b in slack {
+                rts
+            }
+            """
+        )
+        obj_a = tmp_path / "a.o"
+        obj_b = tmp_path / "b.o"
+        assert Program().assemble_as_object(str(mod_a), obj_a) == 0
+        assert Program().assemble_as_object(str(mod_b), obj_b) == 0
+        linker = Linker([ObjectFile.from_file(str(obj_a)), ObjectFile.from_file(str(obj_b))])
+        linked = linker.link()
+        # Linker exposes merged pool decl on output.
+        merged = next(p for p in linked.pool_decls if p.name == "slack")
+        # Both modules' ranges combine.
+        assert (0x028000, 0x0280FF) in merged.ranges
+        assert (0x02A000, 0x02A0FF) in merged.ranges
+
+    def test_link_time_allocator_places_allocs_across_modules(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """Two modules share `.pool slack`, each with its own range.
+
+        The linker unions the ranges and runs the allocator across all
+        deferred alloc requests so the two modules' allocs land at
+        non-overlapping addresses within the combined pool.
+        """
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        # Each module contributes a 1-byte chunk so each alloc is forced
+        # into a different chunk (each chunk holds exactly one rts).
+        mod_a = tmp_path / "a.s"
+        mod_a.write_text(
+            """
+            .pool slack {
+                range 0x028000 0x028000
+                strategy order
+            }
+            .alloc fn_a in slack {
+                rts
+            }
+            """
+        )
+        mod_b = tmp_path / "b.s"
+        mod_b.write_text(
+            """
+            .pool slack {
+                range 0x02a000 0x02a000
+                strategy order
+            }
+            .alloc fn_b in slack {
+                rts
+            }
+            """
+        )
+        obj_a = tmp_path / "a.o"
+        obj_b = tmp_path / "b.o"
+        assert Program().assemble_as_object(str(mod_a), obj_a) == 0
+        assert Program().assemble_as_object(str(mod_b), obj_b) == 0
+        linker = Linker([ObjectFile.from_file(str(obj_a)), ObjectFile.from_file(str(obj_b))])
+        linker.link()
+        # Both allocs land in the merged pool; addresses are distinct and
+        # come from different chunks (request 1 fills chunk a, request 2
+        # falls into chunk b under strategy=order).
+        addr_a = linker.symbol_map["fn_a"]
+        addr_b = linker.symbol_map["fn_b"]
+        assert addr_a == 0x028000
+        assert addr_b == 0x02A000
+
+    def test_link_time_pool_overflow_errors(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """Linker errors loud when cross-TU allocs exceed merged pool capacity."""
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        # Pool has two 1-byte chunks (no single chunk fits a 2-byte alloc).
+        # First module declares the pool + a 2-byte alloc → won't fit.
+        mod_a = tmp_path / "a.s"
+        mod_a.write_text(
+            """
+            .pool tiny {
+                range 0x028000 0x028000
+            }
+            .alloc fn_a in tiny {
+                rts
+                rts
+            }
+            """
+        )
+        mod_b = tmp_path / "b.s"
+        mod_b.write_text(
+            """
+            .pool tiny {
+                range 0x02a000 0x02a000
+            }
+            .alloc fn_b in tiny {
+                rts
+            }
+            """
+        )
+        for name, src in (("a", mod_a), ("b", mod_b)):
+            obj = tmp_path / f"{name}.o"
+            assert Program().assemble_as_object(str(src), obj) == 0
+        objs = [
+            ObjectFile.from_file(str(tmp_path / "a.o")),
+            ObjectFile.from_file(str(tmp_path / "b.o")),
+        ]
+        with pytest.raises(Exception, match="does not fit"):
+            Linker(objs).link()
+
+    def test_linker_pool_fill_mismatch_errors(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        for name, fill in (("a", "0xea"), ("b", "0xff")):
+            asm = tmp_path / f"{name}.s"
+            asm.write_text(
+                f"""
+                .pool slack {{
+                    range 0x02{name}000 0x02{name}0ff
+                    fill {fill}
+                }}
+                .alloc fn_{name} in slack {{
+                    rts
+                }}
+                """
+            )
+            obj = tmp_path / f"{name}.o"
+            assert Program().assemble_as_object(str(asm), obj) == 0
+
+        objs = [
+            ObjectFile.from_file(str(tmp_path / "a.o")),
+            ObjectFile.from_file(str(tmp_path / "b.o")),
+        ]
+        with pytest.raises(ValueError, match="conflicting fill"):
+            Linker(objs).link()
+
+
+class TestObjectMode:
+    """`.pool` + `.alloc` work when compiling to .o.
+
+    The module becomes pinned (allocator picks final addresses, so no
+    further relocation makes sense). Each .alloc emits its body as a
+    pinned region at the allocator-chosen address; alloc's label binds
+    there and ships in the symbol table for cross-module callers.
+    """
+
+    def test_alloc_object_mode_writes_region_at_allocated_addr(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.object_file import ObjectFile
+
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            rts
+        }
+        """
+        asm_file = tmp_path / "mod.s"
+        asm_file.write_text(src)
+        obj_file = tmp_path / "mod.o"
+        program = Program()
+        rc = program.assemble_as_object(str(asm_file), obj_file)
+        assert rc == 0
+        obj = ObjectFile.from_file(str(obj_file))
+        # One pinned region landing at the allocator-picked addr (0x028000).
+        alloc_regions = [r for r in obj.regions if r.base_address == 0x028000]
+        assert len(alloc_regions) == 1
+        assert alloc_regions[0].code == b"\x60"  # rts
+        sym_names = [name for name, _, _, _ in obj.symbols]
+        assert "fn" in sym_names
+
+    def test_alloc_object_mode_link_resolves_caller(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        # Provider: defines fn via .alloc.
+        provider_src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            rts
+        }
+        """
+        # Consumer: external ref to fn.
+        consumer_src = """
+        .extern fn
+        *=0x008000
+        main:
+            jsr.l fn
+            rts
+        """
+        prov_asm = tmp_path / "prov.s"
+        prov_asm.write_text(provider_src)
+        cons_asm = tmp_path / "cons.s"
+        cons_asm.write_text(consumer_src)
+        prov_o = tmp_path / "prov.o"
+        cons_o = tmp_path / "cons.o"
+        assert Program().assemble_as_object(str(prov_asm), prov_o) == 0
+        assert Program().assemble_as_object(str(cons_asm), cons_o) == 0
+        linker = Linker([ObjectFile.from_file(str(prov_o)), ObjectFile.from_file(str(cons_o))])
+        linked = linker.link()
+        # Linker resolves fn to 0x028000 (provider's pinned alloc addr).
+        assert linker.symbol_map["fn"] == 0x028000
+        # Consumer's jsr.l fn (0x22) operand patched to the alloc addr.
+        cons_region = next(r for r in linked.regions if r.base_address == 0x008000)
+        # main: jsr.l fn (4 bytes: 0x22 LO MID HI) + rts (0x60) = 5 bytes
+        assert cons_region.code[:5] == b"\x22\x00\x80\x02\x60"
+
+
+class TestPoolExhaustion:
+    """Pool overflow errors are surfaced loudly in both modes."""
+
+    def test_direct_mode_overflow_raises_with_alloc_name(self) -> None:
+        """One .alloc bigger than the only chunk → loud failure at codegen."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool tiny { range 0x028000 0x028000 }
+        .alloc oversized in tiny {
+            rts
+            rts
+            rts
+        }
+        """
+        with pytest.raises(Exception, match="oversized"):
+            program.assemble_string_with_emitter(src, "test.s", writer)
+
+    def test_direct_mode_two_allocs_overflow_raises(self) -> None:
+        """First .alloc fills pool, second has nowhere to go."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool tiny { range 0x028000 0x028001 strategy order }
+        .alloc filler in tiny {
+            rts
+            rts
+        }
+        .alloc spill in tiny {
+            rts
+        }
+        """
+        with pytest.raises(Exception, match="spill|does not fit"):
+            program.assemble_string_with_emitter(src, "test.s", writer)
+
+
+class TestPoolStatsSymbols:
+    """`.pool` decl binds `<name>.capacity`, `.fragments`, `.largest_chunk`
+    as scope symbols so users can write compile-time guards like:
+        .if mypool.capacity < 0x200 { .debug 'pool too small' }
+    """
+
+    def test_capacity_bound(self) -> None:
+        resolver = _gen(
+            """
+            .pool p {
+                range 0x028000 0x0280ff
+                range 0x02a000 0x02a0ff
+            }
+            """,
+        )
+        assert resolver.current_scope.value_for("p.capacity") == 0x200
+
+    def test_fragments_bound(self) -> None:
+        resolver = _gen(
+            """
+            .pool p {
+                range 0x028000 0x0280ff
+                range 0x02a000 0x02a0ff
+            }
+            """,
+        )
+        assert resolver.current_scope.value_for("p.fragments") == 2
+
+    def test_largest_chunk_bound(self) -> None:
+        resolver = _gen(
+            """
+            .pool p {
+                range 0x028000 0x0280ff
+                range 0x02a000 0x02a1ff
+            }
+            """,
+        )
+        assert resolver.current_scope.value_for("p.largest_chunk") == 0x200
+
+    def test_capacity_usable_in_if_guard(self) -> None:
+        # Compile-time .if reading <pool>.capacity must not crash.
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p {
+            range 0x028000 0x0280ff
+        }
+        .if p.capacity < 0x10000 {
+            .debug 'pool small (expected)'
+        }
+        .alloc fn in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+
+
+class TestPoolExpressions:
+    """`.pool` / `.reclaim` / `.relocate` accept constant expressions
+    for range bounds, fill byte, and addresses — not just numeric literals.
+    Limitation: forward refs to user-declared constants aren't resolved
+    yet at code-generation time (they live in SymbolNode.pc_after which
+    runs in pass-2 of resolve_labels). Arithmetic on literals works.
+    """
+
+    def test_pool_range_uses_constant_symbol_forward_ref(self) -> None:
+        """Constant declared before .pool is bound eagerly so the pool
+        literal can read it at codegen time."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        BANK02_BASE = 0x028000
+        BANK02_TOP  = 0x028fff
+        .pool p {
+            range BANK02_BASE BANK02_TOP
+            fill 0xea
+        }
+        .alloc fn in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        pool = program.resolver.pools["p"]
+        assert pool.ranges[0].start == 0x028000
+        assert pool.ranges[0].end == 0x028FFF
+        assert pool.fill == 0xEA
+
+    def test_pool_fill_arithmetic_expression(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p {
+            range 0x028000 0x028000 + 0xff
+            fill 0xea + 1
+        }
+        .alloc fn in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        pool = program.resolver.pools["p"]
+        assert pool.ranges[0].start == 0x028000
+        assert pool.ranges[0].end == 0x0280FF
+        assert pool.fill == 0xEB
+
+    def test_pool_unknown_symbol_in_literal_raises(self) -> None:
+        from a816.parse.codegen import code_gen
+        from a816.symbols import Resolver
+
+        resolver = Resolver()
+        result = MZParser.parse_as_ast(
+            """
+            .pool p {
+                range undefined_symbol 0x0280ff
+            }
+            """,
+            filename="t.s",
+        )
+        assert result.parse_error is None
+        with pytest.raises(Exception, match="undefined symbol"):
+            code_gen(result.nodes, resolver)
+
+    def test_reclaim_uses_arithmetic_expression(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .reclaim p 0x02c000 0x02c000 + 0x17f
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        pool = program.resolver.pools["p"]
+        assert pool.capacity == 0x100 + 0x180
+
+    def test_relocate_uses_arithmetic_expression(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .relocate fn 0x02c000 0x02c000 + 0x17f into p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        # Original range reclaimed alongside the body's allocation.
+        pool = program.resolver.pools["p"]
+        assert pool.capacity == 0x100 + 0x180
+
+
+class TestMultiAlloc:
+    def test_two_allocs_order_strategy_contiguous(self) -> None:
+        """Multi-alloc dogfood: two .allocs in order strategy lay out
+        contiguously, byte-identical to a single .alloc of combined size."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p {
+            range 0x028000 0x0280ff
+            strategy order
+        }
+        .alloc a in p {
+            nop
+            nop
+            rts
+        }
+        .alloc b in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        labels = program.resolver.current_scope.labels
+        a_logical = labels["a"]
+        b_logical = labels["b"]
+        # a is 3 bytes (nop, nop, rts), b should follow at a+3.
+        assert b_logical - a_logical == 3, f"order strategy not contiguous: a=0x{a_logical:06x} b=0x{b_logical:06x}"
+        # a placed at chunk start = 0x028000.
+        assert a_logical == 0x028000
+
+
 class TestAllocNodeInternals:
     """Cover NodeProtocol surface bits (emit, __str__, empty paths)."""
 

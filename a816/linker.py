@@ -9,7 +9,8 @@ from a816.exceptions import (
     RelocationError,
     UnresolvedSymbolError,
 )
-from a816.object_file import ObjectFile, Region, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, PoolDecl, Region, RelocationType, SymbolSection, SymbolType
+from a816.pool import Pool
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
@@ -50,6 +51,9 @@ class Linker:
     def link(self, base_address: int | None = None) -> ObjectFile:
         if base_address is not None:
             self.base_address = base_address
+        # Pool allocation must happen before symbol ingestion so the
+        # region.base_address values we ingest reflect allocator choices.
+        self._allocate_pools_across_modules()
         self._resolve_symbols()
         self._resolve_aliases()
         self._check_unresolved()
@@ -61,7 +65,110 @@ class Linker:
             aliases=[],
             files=self.linked_files,
             relocatable=False,
+            pool_decls=self._merged_pool_decls,
         )
+
+    def _allocate_pools_across_modules(self) -> None:
+        """Union pool decls, run allocator over merged view, patch regions.
+
+        Each .o carries `pool_decls` (declarations) + `pool_allocs`
+        (deferred placement requests). The linker unions same-named
+        pools (fill/strategy must agree), requests every alloc in
+        declaration-then-request order, runs `Pool.allocate()`, and
+        rewrites each requesting region's `base_address` to the
+        allocator-chosen address. Body labels inside the region keep
+        their offsets; the existing CODE-symbol delta path carries them
+        to their final positions when `_resolve_symbols` ingests.
+        """
+        self._merge_pool_decls()
+        merged: dict[str, Pool] = {p.name: self._pool_from_decl(p) for p in self._merged_pool_decls}
+        # (obj_idx, region_idx) -> Allocation, to look up alloc.addr later.
+        self._region_pool_alloc: dict[tuple[int, int], object] = {}
+        # Allocation request order: stable across rebuilds = (obj input order,
+        # then declaration order within each .o).
+        for obj_idx, obj_file in enumerate(self.object_files):
+            for req in obj_file.pool_allocs:
+                pool = merged.get(req.pool_name)
+                if pool is None:
+                    raise ValueError(
+                        f"pool alloc {req.symbol_name!r} references undeclared pool {req.pool_name!r}"
+                    )
+                alloc_obj = pool.request(req.symbol_name, req.size)
+                self._region_pool_alloc[(obj_idx, req.region_idx)] = alloc_obj
+        for pool in merged.values():
+            pool.allocate()
+        self._merged_pools_after_alloc = merged
+
+    def _pool_delta_for_symbol(self, obj_file: ObjectFile, obj_idx: int, address: int) -> int | None:
+        """Return the pool region delta if `address` falls inside a pool region.
+
+        Pool regions are placed by the link-time allocator independent of
+        module delta; symbols inside them must shift by the region's
+        own delta, not by the module's relocation.
+        """
+        for local_idx, region in enumerate(obj_file.regions):
+            if (obj_idx, local_idx) not in self._pool_region_deltas:
+                continue
+            if region.base_address <= address < region.base_address + len(region.code):
+                return self._pool_region_deltas[(obj_idx, local_idx)]
+        return None
+
+    @staticmethod
+    def _pool_from_decl(decl: "PoolDecl") -> "Pool":
+        from a816.pool import Pool, PoolRange, Strategy
+
+        return Pool(
+            name=decl.name,
+            ranges=[PoolRange(start=s, end=e) for s, e in decl.ranges],
+            fill=decl.fill,
+            strategy=Strategy(decl.strategy),
+        )
+
+    def _merge_pool_decls(self) -> None:
+        """Union same-named `.pool` declarations across input modules.
+
+        Two modules declaring the same pool name must agree on `fill` and
+        `strategy` and contribute non-overlapping ranges. The merged pool
+        carries the union of ranges; the linker exposes it on the output
+        ObjectFile.pool_decls for tooling (e.g. xobj) and as the source
+        of truth for the link-time allocator.
+        """
+        from a816.object_file import PoolDecl
+
+        merged: dict[str, Pool] = {}
+        for obj_file in self.object_files:
+            for decl in obj_file.pool_decls:
+                self._merge_one_pool_decl(merged, decl)
+        self._merged_pool_decls = [
+            PoolDecl(
+                name=p.name,
+                ranges=[(r.start, r.end) for r in p.ranges],
+                fill=p.fill,
+                strategy=p.strategy.value,
+            )
+            for p in merged.values()
+        ]
+
+    @staticmethod
+    def _merge_one_pool_decl(merged: "dict[str, Pool]", decl: PoolDecl) -> None:
+        from a816.pool import PoolRange
+
+        if decl.name not in merged:
+            merged[decl.name] = Linker._pool_from_decl(decl)
+            return
+        existing = merged[decl.name]
+        if existing.fill != decl.fill:
+            raise ValueError(
+                f"pool {decl.name!r} declared with conflicting fill bytes: "
+                f"0x{existing.fill:02x} vs 0x{decl.fill:02x}"
+            )
+        if existing.strategy.value != decl.strategy:
+            raise ValueError(
+                f"pool {decl.name!r} declared with conflicting strategies: "
+                f"{existing.strategy.value!r} vs {decl.strategy!r}"
+            )
+        for start, end in decl.ranges:
+            existing.reclaim(PoolRange(start=start, end=end))
 
     def _delta_for(self, obj_file: ObjectFile, running_offset: int) -> int:
         """How much to shift this module's logical addresses by.
@@ -77,9 +184,24 @@ class Linker:
     def _ingest_object(self, obj_file: ObjectFile, running_offset: int) -> None:
         delta = self._delta_for(obj_file, running_offset)
         local_to_linked_file = self._merge_file_table(obj_file)
+        obj_idx = self.object_files.index(obj_file)
+        pool_allocs_by_region: dict[int, object] = {
+            r_idx: alloc
+            for (oi, r_idx), alloc in getattr(self, "_region_pool_alloc", {}).items()
+            if oi == obj_idx
+        }
 
-        for region in obj_file.regions:
-            final_base = region.base_address + delta
+        for local_region_idx, region in enumerate(obj_file.regions):
+            if local_region_idx in pool_allocs_by_region:
+                # Pool-allocated region: linker chose this region's
+                # base_address; ignore the .o's placeholder.
+                alloc = pool_allocs_by_region[local_region_idx]
+                final_base = alloc.addr  # type: ignore[attr-defined]
+                # Per-region symbol delta = (linker base) - (compile base).
+                region_delta = final_base - region.base_address
+                self._pool_region_deltas[(obj_idx, local_region_idx)] = region_delta
+            else:
+                final_base = region.base_address + delta
             region_idx = len(self.linked_regions)
             new_region = Region(
                 base_address=final_base,
@@ -99,11 +221,17 @@ class Linker:
                 self._linked_expression_relocations.append((final_base + offset, region_idx, expression, size_bytes))
 
         for sym in obj_file.symbols:
-            self._ingest_symbol(sym, delta)
+            self._ingest_symbol(sym, delta, obj_file, obj_idx)
 
         self.linked_aliases.extend(obj_file.aliases)
 
-    def _ingest_symbol(self, sym: tuple[str, int, SymbolType, SymbolSection], delta: int) -> None:
+    def _ingest_symbol(
+        self,
+        sym: tuple[str, int, SymbolType, SymbolSection],
+        delta: int,
+        obj_file: ObjectFile,
+        obj_idx: int,
+    ) -> None:
         name, address, symbol_type, section = sym
         if symbol_type == SymbolType.EXTERNAL:
             self._external_symbols_needed.add(name)
@@ -111,7 +239,13 @@ class Linker:
         # CODE symbols ride the module's delta; DATA/BSS/ABS_LABEL are absolute.
         # ABS_LABEL is a `.label`-declared address binding — the user picked
         # the value, so it must NOT shift with the module placement.
-        final_address = address + delta if section == SymbolSection.CODE else address
+        # Pool-allocated regions get their own per-region delta (link-time
+        # allocator chose the address, not module relocation).
+        if section == SymbolSection.CODE:
+            pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, address)
+            final_address = address + (pool_delta if pool_delta is not None else delta)
+        else:
+            final_address = address
         if symbol_type == SymbolType.GLOBAL:
             if name in self.symbol_map:
                 raise DuplicateSymbolError(name)
@@ -137,6 +271,7 @@ class Linker:
 
     def _resolve_symbols(self) -> None:
         self._external_symbols_needed: set[str] = set()
+        self._pool_region_deltas: dict[tuple[int, int], int] = {}
         running_offset = 0
         for obj_file in self.object_files:
             self._ingest_object(obj_file, running_offset)

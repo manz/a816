@@ -741,15 +741,25 @@ class AllocNode(NodeProtocol):
         pool = self.resolver.pools[self.pool_name]
         self._size = max(1, self._measure_body())
         self._alloc = pool.request(self.name, self._size)
+        # Object mode defers allocator to link time. Bind the alloc's
+        # symbol + body labels at the sandbox PC (pool.ranges[0].start)
+        # so they record sensible offsets; the linker rebases the body
+        # region at link time and the existing CODE-symbol delta path
+        # carries every label to its final address.
+        if self.resolver.context.is_object_mode:
+            self._bind_body_labels_at(self._sandbox_pc())
+
+    def _bind_body_labels_at(self, target: Address) -> None:
+        self.resolver.current_scope.add_label(self.name, target)
+        pc = target
+        for node in self.body:
+            pc = node.pc_after(pc)
 
     def _bind_body_labels(self) -> None:
         alloc = self._alloc
         assert alloc is not None
         target = self.resolver.get_bus().get_address(alloc.addr)
-        self.resolver.current_scope.add_label(self.name, target)
-        pc = target
-        for node in self.body:
-            pc = node.pc_after(pc)
+        self._bind_body_labels_at(target)
 
     def pc_after(self, current_pc: Address) -> Address:  # NOSONAR S3516
         # Returning current_pc unchanged is by design: an .alloc block emits

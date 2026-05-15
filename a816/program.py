@@ -394,11 +394,59 @@ class Program:
         common byte accumulator, the `*=` boundary, and the `.includeips`
         passthrough — owns a single concern.
         """
+        if isinstance(node, AllocNode):
+            self._object_emit_alloc(node, object_writer, state)
+            return
         self._accumulate_object_bytes(node, object_writer, state)
         if isinstance(node, CodePositionNode):
             self._object_open_region(object_writer, state, explicit=True)
         if isinstance(node, IncludeIpsNode):
             self._object_emit_ips_blocks(node, object_writer, state)
+
+    def _object_emit_alloc(
+        self, node: "AllocNode", object_writer: ObjectWriter, state: "_ObjectEmitState"
+    ) -> None:
+        """Emit `.alloc` body into a deferred region for link-time placement.
+
+        The body region opens at the sandbox PC (pool's first range start)
+        so the body's own labels — already bound there by AllocNode
+        pass-1 — emit correctly relative to that base. The linker re-runs
+        the allocator across all input modules' pool decls and PoolAlloc
+        requests, then rebases this region; the existing CODE-symbol delta
+        path carries every label inside the body to its final address.
+        """
+        from a816.object_file import PoolAlloc
+
+        alloc = node._alloc
+        if alloc is None:
+            return
+        sandbox_logical = self.resolver.get_bus().get_address(
+            self.resolver.pools[node.pool_name].ranges[0].start
+        ).logical_value
+        self._flush_object_block(object_writer, state)
+        saved_pc = self.resolver.pc
+        saved_reloc = self.resolver.reloc_address
+        try:
+            self.resolver.set_position(sandbox_logical)
+            object_writer.start_region(sandbox_logical, explicit=True)
+            for child in node.body:
+                self._object_emit_one(child, object_writer, state)
+            self._flush_object_block(object_writer, state)
+        finally:
+            self.resolver.pc = saved_pc
+            self.resolver.reloc_address = saved_reloc
+        object_writer.start_region(self.resolver.reloc_address.logical_value, explicit=False)
+        # Region was at index region_idx; if a current_region was lazily
+        # created at start_region above, it's now the last region index.
+        actual_idx = len(object_writer.regions) - 1
+        object_writer.pool_allocs.append(
+            PoolAlloc(
+                pool_name=node.pool_name,
+                symbol_name=node.name,
+                region_idx=actual_idx,
+                size=node._size,
+            )
+        )
 
     def _accumulate_object_bytes(
         self, node: NodeProtocol, object_writer: ObjectWriter, state: "_ObjectEmitState"
@@ -538,6 +586,8 @@ class Program:
         for name, value in self.resolver.get_all_symbols():
             if self.resolver.current_scope.is_external_symbol(name):
                 continue  # already added by ExternNode
+            if name in self.resolver.pool_stat_symbol_names:
+                continue  # pool stat snapshots are per-module, not linker-visible
             sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 

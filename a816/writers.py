@@ -1,7 +1,7 @@
 import struct
 from typing import BinaryIO, Protocol
 
-from a816.object_file import ObjectFile, Region, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, Region, RelocationType, SymbolSection, SymbolType
 
 
 class Writer(Protocol):
@@ -90,6 +90,8 @@ class ObjectWriter(Writer):
         self.aliases: list[tuple[str, str]] = []
         self.files: list[str] = []
         self._file_index: dict[str, int] = {}
+        self.pool_decls: list[PoolDecl] = []  # populated by generate_pool
+        self.pool_allocs: list[PoolAlloc] = []  # populated by AllocNode object-mode emit
         self._current_region: Region | None = None
         self._pending_base_address: int = 0
         self._region_bytes_emitted: int = 0
@@ -111,6 +113,8 @@ class ObjectWriter(Writer):
         self._region_bytes_emitted = 0
         self._pending_emit_bytes = 0
         self._has_explicit_position = False
+        self.pool_decls = []
+        self.pool_allocs = []
 
     def mark_emitted(self, count: int) -> None:
         """Advance the per-region emit cursor by ``count`` bytes.
@@ -191,6 +195,8 @@ class ObjectWriter(Writer):
             aliases=self.aliases,
             files=self.files,
             relocatable=relocatable,
+            pool_decls=list(self.pool_decls),
+            pool_allocs=list(self.pool_allocs),
         )
         obj_file.write(self.output_file)
 
