@@ -245,6 +245,51 @@ class TestAllocPass1ForwardRefs:
         )
 
 
+class TestLspPoolFeatures:
+    """Pool-aware LSP: hover, goto-def, diagnostic, completion-in-context."""
+
+    @staticmethod
+    def _doc(src: str):  # type: ignore[no-untyped-def]
+        from a816.lsp.server import A816Document
+
+        return A816Document(uri="file:///t.s", content=src)
+
+    def test_pool_details_tracked(self) -> None:
+        doc = self._doc(
+            ".pool slack { range 0x028000 0x0280ff fill 0xea strategy order }\n.alloc fn in slack {\n    rts\n}\n"
+        )
+        assert "slack" in doc.pools
+        detail = doc.pool_details["slack"]
+        assert "range" in detail
+        assert "fill" in detail
+        assert "order" in detail
+
+    def test_alloc_target_pool_tracked(self) -> None:
+        doc = self._doc(
+            ".pool p { range 0x028000 0x0280ff }\n"
+            ".alloc helper in p {\n    rts\n}\n"
+            ".relocate moved 0x02c000 0x02c17f into p {\n    rts\n}\n"
+        )
+        assert doc.alloc_target_pool["helper"] == "p"
+        assert doc.alloc_target_pool["moved"] == "p"
+
+    def test_pool_consumers_tracked(self) -> None:
+        doc = self._doc(
+            ".pool p { range 0x028000 0x0280ff }\n.alloc a in p {\n    rts\n}\n.reclaim p 0x02c000 0x02c17f\n"
+        )
+        consumers = doc.pool_consumers["p"]
+        kinds = [k for _, k in consumers]
+        assert "alloc" in kinds
+        assert "reclaim" in kinds
+
+    def test_undeclared_pool_diagnostic(self) -> None:
+        doc = self._doc(
+            ".alloc helper in ghost {\n    rts\n}\n",
+        )
+        msgs = [d.message for d in doc.diagnostics]
+        assert any("undeclared pool 'ghost'" in m for m in msgs)
+
+
 class TestLspDocumentSymbols:
     """`.pool` and `.alloc` / `.relocate` names surface in the LSP
     document outline so editors can show them in the navigation panel."""

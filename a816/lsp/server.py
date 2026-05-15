@@ -113,6 +113,13 @@ class A816Document:
         self.macros: dict[str, tuple[Position, str]] = {}  # macro -> (position, file_uri)
         self.pools: dict[str, tuple[Position, str]] = {}  # pool name -> (position, file_uri)
         self.allocs: dict[str, tuple[Position, str]] = {}  # alloc / relocate name -> (position, file_uri)
+        # pool name -> hover-ready summary line (range count, fill, strategy)
+        self.pool_details: dict[str, str] = {}
+        # alloc / relocate name -> target pool name
+        self.alloc_target_pool: dict[str, str] = {}
+        # pool name -> list of (position, kind) consumer references in this doc
+        # kind ∈ {"alloc", "relocate", "reclaim"}.
+        self.pool_consumers: dict[str, list[tuple[Position, str]]] = {}
         self.externs: set[str] = set()  # extern symbol names (declarations, not definitions)
         self.macro_params: dict[str, list[str]] = {}  # macro_name -> parameter_names
         self.macro_docstrings: dict[str, str] = {}
@@ -137,6 +144,9 @@ class A816Document:
         self.macros.clear()
         self.pools.clear()
         self.allocs.clear()
+        self.pool_details.clear()
+        self.alloc_target_pool.clear()
+        self.pool_consumers.clear()
         self.externs.clear()
         self.macro_params.clear()
         self.macro_docstrings.clear()
@@ -255,10 +265,29 @@ class A816Document:
     def _record_pool_directive(self, node: AstNode) -> None:
         if isinstance(node, PoolAstNode):
             self._record_token_position(node.file_info, self.pools, node.pool_name)
+            self.pool_details[node.pool_name] = self._format_pool_details(node)
         elif isinstance(node, AllocAstNode):
             self._record_token_position(node.file_info, self.allocs, node.name)
+            self.alloc_target_pool[node.name] = node.pool_name
+            self._record_pool_consumer(node.file_info, node.pool_name, "alloc")
         elif isinstance(node, RelocateAstNode):
             self._record_token_position(node.file_info, self.allocs, node.symbol)
+            self.alloc_target_pool[node.symbol] = node.pool_name
+            self._record_pool_consumer(node.file_info, node.pool_name, "relocate")
+        elif isinstance(node, ReclaimAstNode):
+            self._record_pool_consumer(node.file_info, node.pool_name, "reclaim")
+
+    @staticmethod
+    def _format_pool_details(node: PoolAstNode) -> str:
+        range_count = len(node.ranges)
+        fill = node.fill.to_canonical()
+        return f"{range_count} range{'s' if range_count != 1 else ''}, fill {fill}, strategy {node.strategy}"
+
+    def _record_pool_consumer(self, token: Token, pool_name: str, kind: str) -> None:
+        if not token.position:
+            return
+        pos = Position(line=token.position.line, character=token.position.column)
+        self.pool_consumers.setdefault(pool_name, []).append((pos, kind))
 
     def _visit_node_for_symbols(self, node: AstNode) -> None:
         """Recursively visit AST nodes to extract symbols and labels."""
@@ -429,6 +458,26 @@ class A816Document:
             self._add_parse_error_diagnostic()
 
         self._add_fluff_diagnostics()
+        self._add_undeclared_pool_diagnostics()
+
+    def _add_undeclared_pool_diagnostics(self) -> None:
+        """Flag .alloc / .relocate / .reclaim that reference a pool name not
+        declared anywhere in this document."""
+        for pool_name, refs in self.pool_consumers.items():
+            if pool_name in self.pools:
+                continue
+            for pos, kind in refs:
+                self.diagnostics.append(
+                    Diagnostic(
+                        range=Range(
+                            start=pos,
+                            end=Position(line=pos.line, character=pos.character + len(pool_name)),
+                        ),
+                        message=f".{kind} references undeclared pool {pool_name!r}",
+                        severity=DiagnosticSeverity.Error,
+                        source="a816 pool",
+                    )
+                )
 
     def _add_fluff_diagnostics(self) -> None:
         """Surface a816 fluff lint hits as LSP warnings."""
@@ -518,6 +567,8 @@ class WorkspaceIndex:
         self.labels: dict[str, tuple[Position, str]] = {}
         self.symbols: dict[str, tuple[Position, str]] = {}
         self.macros: dict[str, tuple[Position, str]] = {}
+        self.pools: dict[str, tuple[Position, str]] = {}
+        self.allocs: dict[str, tuple[Position, str]] = {}
         self.macro_params: dict[str, list[str]] = {}
         self.macro_docstrings: dict[str, str] = {}
         self.label_docstrings: dict[str, str] = {}
@@ -544,6 +595,8 @@ class WorkspaceIndex:
         self.labels.clear()
         self.symbols.clear()
         self.macros.clear()
+        self.pools.clear()
+        self.allocs.clear()
         self.macro_params.clear()
         self.macro_docstrings.clear()
         self.label_docstrings.clear()
@@ -791,6 +844,18 @@ class WorkspaceIndex:
                 self.macro_params[macro] = doc.macro_params[macro]
         return names
 
+    def _index_pools(self, doc: A816Document) -> set[str]:
+        names = set(doc.pools.keys())
+        for pool in names:
+            self.pools[pool] = doc.pools[pool]
+        return names
+
+    def _index_allocs(self, doc: A816Document) -> set[str]:
+        names = set(doc.allocs.keys())
+        for alloc in names:
+            self.allocs[alloc] = doc.allocs[alloc]
+        return names
+
     def _merge_docstrings(self, doc: A816Document) -> None:
         self.label_docstrings.update(doc.label_docstrings)
         self.macro_docstrings.update(doc.macro_docstrings)
@@ -805,6 +870,8 @@ class WorkspaceIndex:
         new_labels = self._index_labels(doc)
         new_symbols = self._index_symbols(doc)
         new_macros = self._index_macros(doc)
+        self._index_pools(doc)
+        self._index_allocs(doc)
         self._merge_docstrings(doc)
         if doc.module_docstring:
             self.module_docstrings[doc.uri] = doc.module_docstring
@@ -1166,6 +1233,16 @@ class A816LanguageServer:
             word_start -= 1
         current_word = line[word_start:char_pos].lower()
 
+        # Context-aware: cursor after `in` / `into` / `.reclaim` → pool names only.
+        pool_items = self._pool_name_completions_in_context(line, char_pos, doc)
+        if pool_items is not None:
+            filtered = (
+                [item for item in pool_items if item.label.lower().startswith(current_word)]
+                if current_word
+                else pool_items
+            )
+            return CompletionList(is_incomplete=False, items=filtered[:50])
+
         all_items: list[CompletionItem] = []
         all_items.extend(self._opcode_completions)
         all_items.extend(self._keyword_completions)
@@ -1182,6 +1259,34 @@ class A816LanguageServer:
             [item for item in all_items if item.label.lower().startswith(current_word)] if current_word else all_items
         )
         return CompletionList(is_incomplete=False, items=filtered[:50])
+
+    def _pool_name_completions_in_context(
+        self, line: str, char_pos: int, doc: A816Document
+    ) -> list[CompletionItem] | None:
+        """When the cursor sits where a pool name is expected (after
+        `.alloc X in `, `.relocate X N N into `, or `.reclaim `), suggest
+        only declared pool names. Returns None when context doesn't match
+        so the default completion list is used."""
+        prefix = line[:char_pos].rstrip()
+        triggers = (".alloc", ".relocate", ".reclaim")
+        if not any(t in prefix for t in triggers):
+            return None
+        # Heuristic: cursor follows the `in` / `into` keyword (alloc / relocate)
+        # or `.reclaim NAME` (after pool name comes addresses, but the pool name
+        # is the first token after `.reclaim`).
+        tokens = prefix.split()
+        if not tokens:
+            return None
+        last = tokens[-1].lower()
+        if last in ("in", "into") or (last == ".reclaim" and len(tokens) >= 1):
+            workspace = self._ensure_workspace_index()
+            names: set[str] = set(doc.pools)
+            if workspace:
+                names |= set(workspace.pools)
+            return [
+                CompletionItem(label=name, kind=CompletionItemKind.Module, detail=".pool") for name in sorted(names)
+            ]
+        return None
 
     @staticmethod
     def _word_span(line: str, char_pos: int) -> tuple[int, int]:
@@ -1264,9 +1369,27 @@ class A816LanguageServer:
         opcode_or_keyword = self._hover_for_opcode_or_keyword(base_word, word)
         if opcode_or_keyword:
             return opcode_or_keyword
+        pool_hover = self._hover_for_pool_directive(doc, raw_word)
+        if pool_hover:
+            return pool_hover
         return self._hover_for_label_or_scope(doc, workspace, raw_word, word) or self._hover_for_macro(
             doc, workspace, raw_word, word
         )
+
+    def _hover_for_pool_directive(self, doc: A816Document, word: str) -> Hover | None:
+        if word in doc.pools:
+            detail = doc.pool_details.get(word, "")
+            consumer_count = len(doc.pool_consumers.get(word, []))
+            body = f"**`.pool {word}`**\n\n{detail}\n\n{consumer_count} consumer(s) in this document"
+            return self._markdown_hover(body)
+        if word in doc.allocs:
+            pool_name = doc.alloc_target_pool.get(word, "?")
+            detail = doc.pool_details.get(pool_name, "")
+            kind = ".relocate" if word in doc.allocs and pool_name in doc.alloc_target_pool.values() else ".alloc"
+            del kind  # cannot disambiguate cheaply; show generic
+            body = f"**`{word}`** in pool `{pool_name}`\n\n{detail}"
+            return self._markdown_hover(body)
+        return None
 
     def _hover_for_module_directive(
         self, line: str, current_uri: str, workspace: WorkspaceIndex | None
@@ -1394,7 +1517,7 @@ class A816LanguageServer:
         )
 
     def _local_definition(self, doc: A816Document, word: str) -> Location | None:
-        for container in (doc.labels, doc.macros, doc.symbols):
+        for container in (doc.labels, doc.macros, doc.symbols, doc.pools, doc.allocs):
             if word in container:
                 pos, file_uri = container[word]
                 return self._location_for(pos, file_uri, len(word))
@@ -1465,6 +1588,8 @@ class A816LanguageServer:
         results = self._workspace_symbol_entries(workspace.labels, SymbolKind.Function, query, workspace)
         results.extend(self._workspace_symbol_entries(workspace.symbols, SymbolKind.Variable, query, workspace))
         results.extend(self._workspace_symbol_entries(workspace.macros, SymbolKind.Method, query, workspace))
+        results.extend(self._workspace_symbol_entries(workspace.pools, SymbolKind.Namespace, query, workspace))
+        results.extend(self._workspace_symbol_entries(workspace.allocs, SymbolKind.Function, query, workspace))
         return results[:100]
 
     @staticmethod
