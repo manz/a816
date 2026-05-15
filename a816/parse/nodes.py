@@ -783,6 +783,9 @@ class AllocNode(NodeProtocol):
         alloc = self._alloc
         if alloc is None or not alloc.placed:
             return []
+        # Lazy import to avoid the import cycle through codegen.
+        from a816.parse.nodes import LinkedModuleNode
+
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
         try:
@@ -790,6 +793,14 @@ class AllocNode(NodeProtocol):
             out = b""
             cur = self.resolver.reloc_address
             for node in self.body:
+                # Skip loser `.import` duplicates inside the body — their
+                # pc_after returned unchanged so subsequent siblings are
+                # already laid out at the right offsets, and emitting the
+                # loser bytes would both double-emit and overlap the
+                # winner's placement. Mirrors the top-level
+                # `_emit_linked_module` is_loser guard.
+                if isinstance(node, LinkedModuleNode) and node.is_loser:
+                    continue
                 emitted = node.emit(cur)
                 if emitted:
                     out += emitted
