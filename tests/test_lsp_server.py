@@ -385,7 +385,7 @@ main:
         doc = A816Document(uri, content)
         self.server.documents[uri] = doc
 
-        handler = self.server.server.lsp._get_handler("textDocument/hover")  # type: ignore[no-untyped-call]
+        handler = self.server.server.protocol._get_handler("textDocument/hover")
         params = HoverParams(
             text_document=TextDocumentIdentifier(uri=uri),
             position=Position(line=0, character=5),
@@ -414,7 +414,7 @@ main:
             self.server.workspace_index = index
             self.server._ensure_workspace_index = lambda: index  # type: ignore[method-assign]
 
-            handler = self.server.server.lsp._get_handler("workspace/symbol")  # type: ignore[no-untyped-call]
+            handler = self.server.server.protocol._get_handler("workspace/symbol")
             params = WorkspaceSymbolParams(query="lookup")
             results = asyncio.run(handler(params))
 
@@ -453,7 +453,7 @@ main:
             self.server._ensure_workspace_index = lambda: index  # type: ignore[method-assign]
             self.server.documents[ref_path.as_uri()] = ref_doc
 
-            handler = self.server.server.lsp._get_handler("textDocument/references")  # type: ignore[no-untyped-call]
+            handler = self.server.server.protocol._get_handler("textDocument/references")
             params = ReferenceParams(
                 text_document=TextDocumentIdentifier(uri=ref_path.as_uri()),
                 position=Position(line=0, character=10),
@@ -680,7 +680,7 @@ subroutine:
             self.server._ensure_workspace_index = lambda: index  # type: ignore[method-assign]
             self.server.documents[ref_path.as_uri()] = ref_doc
 
-            handler = self.server.server.lsp._get_handler("textDocument/rename")  # type: ignore[no-untyped-call]
+            handler = self.server.server.protocol._get_handler("textDocument/rename")
             params = RenameParams(
                 text_document=TextDocumentIdentifier(uri=ref_path.as_uri()),
                 position=Position(line=0, character=10),
@@ -701,7 +701,7 @@ subroutine:
         content = "    lda #0\n"
         doc = A816Document("test://op.s", content)
         self.server.documents[doc.uri] = doc
-        handler = self.server.server.lsp._get_handler("textDocument/prepareRename")  # type: ignore[no-untyped-call]
+        handler = self.server.server.protocol._get_handler("textDocument/prepareRename")
         params = PrepareRenameParams(
             text_document=TextDocumentIdentifier(uri=doc.uri),
             position=Position(line=0, character=5),  # inside "lda"
@@ -715,7 +715,7 @@ subroutine:
         content = "foo:\n    rtl\n    ; foo in a comment\n    .text 'foo inside string'\n    jsr foo\n"
         doc = A816Document("test://refs.s", content)
         self.server.documents[doc.uri] = doc
-        handler = self.server.server.lsp._get_handler("textDocument/references")  # type: ignore[no-untyped-call]
+        handler = self.server.server.protocol._get_handler("textDocument/references")
         params = ReferenceParams(
             text_document=TextDocumentIdentifier(uri=doc.uri),
             position=Position(line=0, character=1),
@@ -747,7 +747,7 @@ subroutine:
         )
         doc = A816Document("test://refs.s", content)
         self.server.documents[doc.uri] = doc
-        handler = self.server.server.lsp._get_handler("textDocument/references")  # type: ignore[no-untyped-call]
+        handler = self.server.server.protocol._get_handler("textDocument/references")
         params = ReferenceParams(
             text_document=TextDocumentIdentifier(uri=doc.uri),
             position=Position(line=0, character=1),

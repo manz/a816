@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import logging
 import os
@@ -41,13 +42,14 @@ from lsprotocol.types import (
     SemanticTokens,
     SemanticTokensLegend,
     SemanticTokensParams,
+    ShowMessageParams,
     SignatureHelp,
     SignatureHelpParams,
     SignatureInformation,
     SymbolInformation,
     SymbolKind,
-    TextDocumentContentChangeEvent_Type1,
-    TextDocumentContentChangeEvent_Type2,
+    TextDocumentContentChangePartial,
+    TextDocumentContentChangeWholeDocument,
     TextDocumentPositionParams,
     TextEdit,
     WorkspaceEdit,
@@ -56,7 +58,7 @@ from lsprotocol.types import (
 from lsprotocol.types import (
     FormattingOptions as LSPFormattingOptions,
 )
-from pygls.server import LanguageServer
+from pygls.lsp.server import LanguageServer
 
 from a816.cpu.cpu_65c816 import AddressingMode, snes_opcode_table
 from a816.exceptions import FormattingError
@@ -1053,11 +1055,11 @@ class A816LanguageServer:
 
         @self.server.feature("textDocument/didOpen")
         async def did_open(ls: LanguageServer, params: DidOpenTextDocumentParams) -> None:
-            self._handle_did_open(params)
+            await self._handle_did_open(params)
 
         @self.server.feature("textDocument/didChange")
         async def did_change(ls: LanguageServer, params: DidChangeTextDocumentParams) -> None:
-            self._handle_did_change(params)
+            await self._handle_did_change(params)
 
         @self.server.feature("textDocument/didClose")
         async def did_close(ls: LanguageServer, params: DidCloseTextDocumentParams) -> None:
@@ -1065,7 +1067,7 @@ class A816LanguageServer:
 
         @self.server.feature("textDocument/didSave")
         async def did_save(ls: LanguageServer, params: DidSaveTextDocumentParams) -> None:
-            self._handle_did_save(params)
+            await self._handle_did_save(params)
 
         @self.server.feature("textDocument/completion")
         async def completions(ls: LanguageServer, params: CompletionParams) -> CompletionList:
@@ -1133,19 +1135,25 @@ class A816LanguageServer:
                 DocumentFormattingParams(text_document=params.text_document, options=params.options)
             )
 
-    def _handle_did_open(self, params: DidOpenTextDocumentParams) -> None:
+    async def _handle_did_open(self, params: DidOpenTextDocumentParams) -> None:
         workspace = self._ensure_workspace_index()
         include_paths = workspace.include_paths if workspace else []
-        doc = A816Document(params.text_document.uri, params.text_document.text, include_paths=include_paths)
+        # Heavy: scanner + parser + symbol extraction. Off the event loop.
+        doc = await asyncio.to_thread(
+            A816Document,
+            params.text_document.uri,
+            params.text_document.text,
+            include_paths,
+        )
         self.documents[params.text_document.uri] = doc
         if workspace:
-            workspace.replace_document(doc)
+            await asyncio.to_thread(workspace.replace_document, doc)
         self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
 
     def _apply_content_changes(self, doc: A816Document, changes: list[Any]) -> str:
         current_content = doc.content
         for change in changes:
-            if isinstance(change, TextDocumentContentChangeEvent_Type2):
+            if isinstance(change, TextDocumentContentChangeWholeDocument):
                 current_content = change.text
                 logger.debug("Full document replacement")
             else:
@@ -1153,17 +1161,19 @@ class A816LanguageServer:
                 current_content = self._apply_text_change(current_content, change)
         return current_content
 
-    def _handle_did_change(self, params: DidChangeTextDocumentParams) -> None:
+    async def _handle_did_change(self, params: DidChangeTextDocumentParams) -> None:
         doc = self.documents.get(params.text_document.uri)
         if not doc or not params.content_changes:
             return
-        doc.update_content(self._apply_content_changes(doc, list(params.content_changes)))
+        new_content = self._apply_content_changes(doc, list(params.content_changes))
+        # Re-parse off the event loop so large-file edits don't block.
+        await asyncio.to_thread(doc.update_content, new_content)
         workspace = self._ensure_workspace_index()
         if workspace:
-            workspace.replace_document(doc)
+            await asyncio.to_thread(workspace.replace_document, doc)
         self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
         try:
-            self.server.semantic_tokens_refresh()
+            self.server.workspace_semantic_tokens_refresh(None)
         except (AttributeError, RuntimeError, TypeError) as e:
             logger.debug(f"Could not refresh semantic tokens: {e}")
 
@@ -1173,17 +1183,17 @@ class A816LanguageServer:
         if workspace:
             workspace.reload_document_from_disk(params.text_document.uri)
 
-    def _handle_did_save(self, params: DidSaveTextDocumentParams) -> None:
+    async def _handle_did_save(self, params: DidSaveTextDocumentParams) -> None:
         doc = self.documents.get(params.text_document.uri)
         if not doc:
             return
         if params.text is not None:
-            doc.update_content(params.text)
+            await asyncio.to_thread(doc.update_content, params.text)
         else:
-            doc.analyze()
+            await asyncio.to_thread(doc.analyze)
         workspace = self._ensure_workspace_index()
         if workspace:
-            workspace.replace_document(doc)
+            await asyncio.to_thread(workspace.replace_document, doc)
         self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
 
     def _local_completions(self, doc: A816Document) -> list[CompletionItem]:
@@ -1827,7 +1837,7 @@ class A816LanguageServer:
             return []
         except FormattingError as exc:
             logger.exception("Formatter failed for %s: %s", doc.uri, exc)
-            self.server.show_message(str(exc), MessageType.Error)
+            self.server.window_show_message(ShowMessageParams(type=MessageType.Error, message=str(exc)))
             return []
         finally:
             self.formatter = original_formatter
@@ -2440,7 +2450,7 @@ class A816LanguageServer:
             logger.debug(f"Error resolving module path '{module_name}' from '{current_uri}': {e}")
             return None
 
-    def _apply_text_change(self, content: str, change: TextDocumentContentChangeEvent_Type1) -> str:
+    def _apply_text_change(self, content: str, change: TextDocumentContentChangePartial) -> str:
         """Apply an incremental text change to content"""
 
         if not hasattr(change, "range") or change.range is None:
@@ -2492,7 +2502,9 @@ class A816LanguageServer:
 
     def _publish_diagnostics(self, uri: str, diagnostics: list[Diagnostic]) -> None:
         """Publish diagnostics for a document"""
-        self.server.publish_diagnostics(uri, diagnostics)
+        from lsprotocol.types import PublishDiagnosticsParams
+
+        self.server.text_document_publish_diagnostics(PublishDiagnosticsParams(uri=uri, diagnostics=diagnostics))
 
     def start(self) -> None:
         """Start the LSP server"""
