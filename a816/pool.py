@@ -32,13 +32,9 @@ class PoolRange:
 
     def __post_init__(self) -> None:
         if self.end < self.start:
-            raise PoolInvalidRangeError(
-                f"range start 0x{self.start:06x} > end 0x{self.end:06x}"
-            )
+            raise PoolInvalidRangeError(f"range start 0x{self.start:06x} > end 0x{self.end:06x}")
         if (self.start >> 16) != (self.end >> 16):
-            raise PoolInvalidRangeError(
-                f"range 0x{self.start:06x}..0x{self.end:06x} crosses bank boundary"
-            )
+            raise PoolInvalidRangeError(f"range 0x{self.start:06x}..0x{self.end:06x} crosses bank boundary")
 
     @property
     def size(self) -> int:
@@ -145,8 +141,7 @@ def _normalize_ranges(ranges: list[PoolRange]) -> list[PoolRange]:
         last = merged[-1]
         if last.overlaps(r):
             raise PoolOverlapError(
-                f"ranges 0x{last.start:06x}..0x{last.end:06x} and "
-                f"0x{r.start:06x}..0x{r.end:06x} overlap"
+                f"ranges 0x{last.start:06x}..0x{last.end:06x} and 0x{r.start:06x}..0x{r.end:06x} overlap"
             )
         if last.adjacent(r) and (last.start >> 16) == (r.start >> 16):
             merged[-1] = PoolRange(start=last.start, end=max(last.end, r.end))
@@ -166,9 +161,7 @@ def _place(alloc: Allocation, free: list[PoolRange]) -> list[PoolRange]:
         if chunk.size >= alloc.size:
             alloc.addr = chunk.start
             return _shrink_chunk(free, idx, alloc.size)
-    raise PoolOverflowError(
-        f"alloc '{alloc.name}' size {alloc.size} does not fit in any free chunk"
-    )
+    raise PoolOverflowError(f"alloc '{alloc.name}' size {alloc.size} does not fit in any free chunk")
 
 
 def _shrink_chunk(free: list[PoolRange], idx: int, used: int) -> list[PoolRange]:
@@ -180,9 +173,7 @@ def _shrink_chunk(free: list[PoolRange], idx: int, used: int) -> list[PoolRange]
     return [*free[:idx], *tail, *free[idx + 1 :]]
 
 
-def _subtract(
-    ranges: list[PoolRange], placed: list[tuple[int, int]]
-) -> list[PoolRange]:
+def _subtract(ranges: list[PoolRange], placed: list[tuple[int, int]]) -> list[PoolRange]:
     result: list[PoolRange] = []
     for r in ranges:
         result.extend(_subtract_one(r, placed))

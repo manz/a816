@@ -433,16 +433,13 @@ def parse_pool(p: Parser) -> PoolAstNode:
         elif key == "fill":
             fill = _parse_pool_number(p)
             if not 0 <= fill <= 0xFF:
-                raise ParserSyntaxError(
-                    f"pool fill 0x{fill:x} out of byte range", current
-                )
+                raise ParserSyntaxError(f"pool fill 0x{fill:x} out of byte range", current)
         elif key == "strategy":
             strat_token = p.next()
             expect_token(strat_token, TokenType.IDENTIFIER)
             if strat_token.value not in _POOL_STRATEGIES:
                 raise ParserSyntaxError(
-                    f"unknown pool strategy {strat_token.value!r}; "
-                    f"expected one of {sorted(_POOL_STRATEGIES)}",
+                    f"unknown pool strategy {strat_token.value!r}; expected one of {sorted(_POOL_STRATEGIES)}",
                     strat_token,
                 )
             strategy = strat_token.value
@@ -454,9 +451,7 @@ def parse_pool(p: Parser) -> PoolAstNode:
 
     expect_token(p.next(), TokenType.RBRACE)
     if not ranges:
-        raise ParserSyntaxError(
-            f"pool {name_token.value!r} declares no ranges", keyword
-        )
+        raise ParserSyntaxError(f"pool {name_token.value!r} declares no ranges", keyword)
     return PoolAstNode(name_token.value, ranges, fill, strategy, keyword)
 
 
@@ -464,9 +459,7 @@ def _expect_contextual_keyword(p: Parser, expected: str) -> Token:
     token = p.next()
     expect_token(token, TokenType.IDENTIFIER)
     if token.value != expected:
-        raise ParserSyntaxError(
-            f"expected {expected!r}, got {token.value!r}", token
-        )
+        raise ParserSyntaxError(f"expected {expected!r}, got {token.value!r}", token)
     return token
 
 

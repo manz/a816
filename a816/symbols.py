@@ -7,6 +7,7 @@ from a816.cpu.mapping import Address, Bus
 from a816.cpu.types import RomType
 from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import BlockAstNode
+from a816.pool import Pool
 from script import Table
 
 
@@ -246,6 +247,7 @@ class Resolver:
         self.pc = 0
         self.reloc_address: Address
         self.context = AssemblyContext()
+        self.pools: dict[str, Pool] = {}
         self.set_position(pc)
 
     def get_bus(self) -> Bus:

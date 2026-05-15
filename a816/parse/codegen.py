@@ -5,6 +5,7 @@ from a816.cpu.types import AddressingMode
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import (
+    AllocAstNode,
     AsciiAstNode,
     AssignAstNode,
     AstNode,
@@ -32,7 +33,10 @@ from a816.parse.ast.nodes import (
     MacroAstNode,
     MapAstNode,
     OpcodeAstNode,
+    PoolAstNode,
+    ReclaimAstNode,
     RegisterSizeAstNode,
+    RelocateAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
@@ -847,6 +851,77 @@ def generate_debug(
     return [DebugNode(node.message, resolver)]
 
 
+def generate_pool(
+    node: PoolAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    from a816.pool import Pool, PoolRange, Strategy
+
+    if node.pool_name in resolver.pools:
+        raise NodeError(f"pool {node.pool_name!r} already declared", file_info)
+    try:
+        ranges = [PoolRange(start=lo, end=hi) for lo, hi in node.ranges]
+        pool = Pool(
+            name=node.pool_name,
+            ranges=ranges,
+            fill=node.fill,
+            strategy=Strategy(node.strategy),
+        )
+    except Exception as exc:  # PoolError, PoolInvalidRangeError, PoolOverlapError
+        raise NodeError(f"pool {node.pool_name!r}: {exc}", file_info) from exc
+    resolver.pools[node.pool_name] = pool
+    return []
+
+
+def generate_reclaim(
+    node: ReclaimAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    from a816.pool import PoolRange
+
+    pool = resolver.pools.get(node.pool_name)
+    if pool is None:
+        raise NodeError(f"reclaim into unknown pool {node.pool_name!r}", file_info)
+    try:
+        pool.reclaim(PoolRange(start=node.start, end=node.end))
+    except Exception as exc:
+        raise NodeError(f"reclaim into pool {node.pool_name!r}: {exc}", file_info) from exc
+    return []
+
+
+def generate_alloc(
+    node: AllocAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    if node.pool_name not in resolver.pools:
+        raise NodeError(f"alloc into unknown pool {node.pool_name!r}", file_info)
+    raise NodeError(
+        f"alloc into pool {node.pool_name!r}: code generation not yet wired up; tracking in a follow-up to PR #46",
+        file_info,
+    )
+
+
+def generate_relocate(
+    node: RelocateAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    if node.pool_name not in resolver.pools:
+        raise NodeError(f"relocate into unknown pool {node.pool_name!r}", file_info)
+    raise NodeError(
+        f"relocate {node.symbol!r} into pool {node.pool_name!r}: "
+        "code generation not yet wired up; tracking in a follow-up to PR #46",
+        file_info,
+    )
+
+
 generators = {
     "block": generate_block,
     "scope": generate_scope,
@@ -881,6 +956,10 @@ generators = {
     "debug": generate_debug,
     "register_size": generate_register_size,
     "struct": generate_struct,
+    "pool": generate_pool,
+    "alloc": generate_alloc,
+    "relocate": generate_relocate,
+    "reclaim": generate_reclaim,
 }
 
 
