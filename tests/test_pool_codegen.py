@@ -289,6 +289,77 @@ class TestLspPoolFeatures:
         msgs = [d.message for d in doc.diagnostics]
         assert any("undeclared pool 'ghost'" in m for m in msgs)
 
+    def test_hover_on_pool_name_returns_summary(self) -> None:
+        from a816.lsp.server import A816LanguageServer
+
+        server = A816LanguageServer()
+        doc = self._doc(".pool slack { range 0x028000 0x0280ff fill 0xea strategy order }\n")
+        hover = server._hover_for_pool_directive(doc, "slack")
+        assert hover is not None
+        content = hover.contents.value  # type: ignore[union-attr]
+        assert ".pool slack" in content
+        assert "range" in content
+
+    def test_hover_on_alloc_name_returns_target_pool(self) -> None:
+        from a816.lsp.server import A816LanguageServer
+
+        server = A816LanguageServer()
+        doc = self._doc(".pool p { range 0x028000 0x0280ff }\n.alloc helper in p {\n    rts\n}\n")
+        hover = server._hover_for_pool_directive(doc, "helper")
+        assert hover is not None
+        assert "pool `p`" in hover.contents.value  # type: ignore[union-attr]
+
+    def test_hover_on_unrelated_word_returns_none(self) -> None:
+        from a816.lsp.server import A816LanguageServer
+
+        server = A816LanguageServer()
+        doc = self._doc(".pool p { range 0x028000 0x0280ff }\n")
+        assert server._hover_for_pool_directive(doc, "not_a_pool_name") is None
+
+    def test_pool_name_completions_in_context_after_in(self) -> None:
+        from a816.lsp.server import A816LanguageServer
+
+        server = A816LanguageServer()
+        doc = self._doc(".pool slack { range 0x028000 0x0280ff }\n.pool bank20 { range 0x208000 0x20ffff }\n")
+        # Cursor after `.alloc fn in ` — returns pool-name list.
+        items = server._pool_name_completions_in_context(".alloc fn in ", len(".alloc fn in "), doc)
+        assert items is not None
+        labels = {item.label for item in items}
+        assert "slack" in labels
+        assert "bank20" in labels
+
+    def test_pool_name_completions_in_context_after_into(self) -> None:
+        from a816.lsp.server import A816LanguageServer
+
+        server = A816LanguageServer()
+        doc = self._doc(".pool p { range 0x028000 0x0280ff }\n")
+        items = server._pool_name_completions_in_context(
+            ".relocate fn 0x02c000 0x02c17f into ",
+            len(".relocate fn 0x02c000 0x02c17f into "),
+            doc,
+        )
+        assert items is not None
+        assert any(item.label == "p" for item in items)
+
+    def test_pool_name_completions_in_context_after_reclaim(self) -> None:
+        from a816.lsp.server import A816LanguageServer
+
+        server = A816LanguageServer()
+        doc = self._doc(".pool p { range 0x028000 0x0280ff }\n")
+        items = server._pool_name_completions_in_context(".reclaim ", len(".reclaim "), doc)
+        assert items is not None
+        assert any(item.label == "p" for item in items)
+
+    def test_pool_name_completions_in_context_returns_none_outside_pool_context(self) -> None:
+        from a816.lsp.server import A816LanguageServer
+
+        server = A816LanguageServer()
+        doc = self._doc(".pool p { range 0x028000 0x0280ff }\n")
+        # Regular instruction line — not a pool-context completion.
+        assert server._pool_name_completions_in_context("    lda ", len("    lda "), doc) is None
+        # Empty line.
+        assert server._pool_name_completions_in_context("", 0, doc) is None
+
 
 class TestLspDocumentSymbols:
     """`.pool` and `.alloc` / `.relocate` names surface in the LSP

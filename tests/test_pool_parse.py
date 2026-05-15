@@ -338,6 +338,52 @@ label_after:
         assert A816Formatter().format_text(out) == out
 
 
+class TestFluffFormatAllocBodyDetails:
+    """Regression: ff4 Q#11 — three residual formatter bugs after Q#10:
+    inline trailing comments split onto own line, `fill 0` injected
+    unprompted into .pool body, blank lines stripped inside .alloc body."""
+
+    def test_alloc_body_keeps_inline_comments_blank_lines_and_no_default_fill(self) -> None:
+        from a816.formatter import A816Formatter
+
+        src = """.pool demo {
+    range 0x208000 0x20FFFF
+    strategy order
+}
+
+.alloc body in demo {
+    adc 0x43  ; trailing comment
+
+foo:
+    rtl
+
+bar:
+    rtl
+}
+"""
+        out = A816Formatter().format_text(src)
+        # 1. Inline trailing comment stays on instruction line.
+        assert "adc 0x43" in out
+        assert "; trailing comment" in out
+        # No standalone-comment line for what was inline.
+        comment_line_idx = next((i for i, line in enumerate(out.splitlines()) if "trailing comment" in line), -1)
+        assert "adc" in out.splitlines()[comment_line_idx]
+
+        # 2. `fill 0` not injected.
+        assert "fill 0" not in out
+
+        # 3. Blank lines between top-level labels preserved.
+        lines = out.splitlines()
+        foo_idx = next(i for i, line in enumerate(lines) if line.strip() == "foo:")
+        bar_idx = next(i for i, line in enumerate(lines) if line.strip() == "bar:")
+        # At least one blank line between foo: block and bar: block.
+        between = lines[foo_idx + 1 : bar_idx]
+        assert any(line.strip() == "" for line in between)
+
+        # Round-trip converges.
+        assert A816Formatter().format_text(out) == out
+
+
 class TestLspKeywordCompletions:
     def test_pool_keywords_advertised(self) -> None:
         from a816.parse.scanner_states import KEYWORDS

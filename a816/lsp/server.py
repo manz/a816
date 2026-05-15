@@ -1274,19 +1274,15 @@ class A816LanguageServer:
         # Heuristic: cursor follows the `in` / `into` keyword (alloc / relocate)
         # or `.reclaim NAME` (after pool name comes addresses, but the pool name
         # is the first token after `.reclaim`).
-        tokens = prefix.split()
-        if not tokens:
+        # Prefix contains at least one trigger token so split() is non-empty.
+        last = prefix.split()[-1].lower()
+        if last not in ("in", "into", ".reclaim"):
             return None
-        last = tokens[-1].lower()
-        if last in ("in", "into") or (last == ".reclaim" and len(tokens) >= 1):
-            workspace = self._ensure_workspace_index()
-            names: set[str] = set(doc.pools)
-            if workspace:
-                names |= set(workspace.pools)
-            return [
-                CompletionItem(label=name, kind=CompletionItemKind.Module, detail=".pool") for name in sorted(names)
-            ]
-        return None
+        workspace = self._ensure_workspace_index()
+        names: set[str] = set(doc.pools)
+        if workspace:
+            names |= set(workspace.pools)
+        return [CompletionItem(label=name, kind=CompletionItemKind.Module, detail=".pool") for name in sorted(names)]
 
     @staticmethod
     def _word_span(line: str, char_pos: int) -> tuple[int, int]:
