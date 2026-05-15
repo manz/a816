@@ -131,35 +131,14 @@ class Linker:
         `strategy` and contribute non-overlapping ranges. The merged pool
         carries the union of ranges; the linker exposes it on the output
         ObjectFile.pool_decls for tooling (e.g. xobj) and as the source
-        of truth for future link-time allocation passes.
+        of truth for the link-time allocator.
         """
         from a816.object_file import PoolDecl
-        from a816.pool import Pool, PoolRange, Strategy
 
         merged: dict[str, Pool] = {}
         for obj_file in self.object_files:
             for decl in obj_file.pool_decls:
-                if decl.name in merged:
-                    existing = merged[decl.name]
-                    if existing.fill != decl.fill:
-                        raise ValueError(
-                            f"pool {decl.name!r} declared with conflicting fill bytes: "
-                            f"0x{existing.fill:02x} vs 0x{decl.fill:02x}"
-                        )
-                    if existing.strategy.value != decl.strategy:
-                        raise ValueError(
-                            f"pool {decl.name!r} declared with conflicting strategies: "
-                            f"{existing.strategy.value!r} vs {decl.strategy!r}"
-                        )
-                    for start, end in decl.ranges:
-                        existing.reclaim(PoolRange(start=start, end=end))
-                else:
-                    merged[decl.name] = Pool(
-                        name=decl.name,
-                        ranges=[PoolRange(start=s, end=e) for s, e in decl.ranges],
-                        fill=decl.fill,
-                        strategy=Strategy(decl.strategy),
-                    )
+                self._merge_one_pool_decl(merged, decl)
         self._merged_pool_decls = [
             PoolDecl(
                 name=p.name,
@@ -169,6 +148,27 @@ class Linker:
             )
             for p in merged.values()
         ]
+
+    @staticmethod
+    def _merge_one_pool_decl(merged: "dict[str, Pool]", decl: PoolDecl) -> None:
+        from a816.pool import PoolRange
+
+        if decl.name not in merged:
+            merged[decl.name] = Linker._pool_from_decl(decl)
+            return
+        existing = merged[decl.name]
+        if existing.fill != decl.fill:
+            raise ValueError(
+                f"pool {decl.name!r} declared with conflicting fill bytes: "
+                f"0x{existing.fill:02x} vs 0x{decl.fill:02x}"
+            )
+        if existing.strategy.value != decl.strategy:
+            raise ValueError(
+                f"pool {decl.name!r} declared with conflicting strategies: "
+                f"{existing.strategy.value!r} vs {decl.strategy!r}"
+            )
+        for start, end in decl.ranges:
+            existing.reclaim(PoolRange(start=start, end=end))
 
     def _delta_for(self, obj_file: ObjectFile, running_offset: int) -> int:
         """How much to shift this module's logical addresses by.

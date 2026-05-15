@@ -252,6 +252,14 @@ class A816Document:
         if isinstance(else_block, AstNode):
             self._visit_node_for_symbols(else_block)
 
+    def _record_pool_directive(self, node: AstNode) -> None:
+        if isinstance(node, PoolAstNode):
+            self._record_token_position(node.file_info, self.pools, node.pool_name)
+        elif isinstance(node, AllocAstNode):
+            self._record_token_position(node.file_info, self.allocs, node.name)
+        elif isinstance(node, RelocateAstNode):
+            self._record_token_position(node.file_info, self.allocs, node.symbol)
+
     def _visit_node_for_symbols(self, node: AstNode) -> None:
         """Recursively visit AST nodes to extract symbols and labels."""
         if isinstance(node, DocstringAstNode):
@@ -268,15 +276,8 @@ class A816Document:
                 self.scope_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
         elif isinstance(node, MacroAstNode):
             self._record_macro(node)
-        elif isinstance(node, PoolAstNode):
-            self._record_token_position(node.file_info, self.pools, node.pool_name)
-        elif isinstance(node, AllocAstNode):
-            self._record_token_position(node.file_info, self.allocs, node.name)
-        elif isinstance(node, RelocateAstNode):
-            self._record_token_position(node.file_info, self.allocs, node.symbol)
-        elif isinstance(node, ReclaimAstNode):
-            # No definition site to add — reclaim references an existing pool.
-            pass
+        elif isinstance(node, PoolAstNode | AllocAstNode | RelocateAstNode | ReclaimAstNode):
+            self._record_pool_directive(node)
         elif isinstance(node, ImportAstNode):
             self._record_import(node)
         elif isinstance(node, StructAstNode):
