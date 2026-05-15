@@ -394,11 +394,42 @@ class Program:
         common byte accumulator, the `*=` boundary, and the `.includeips`
         passthrough — owns a single concern.
         """
+        if isinstance(node, AllocNode):
+            self._object_emit_alloc(node, object_writer, state)
+            return
         self._accumulate_object_bytes(node, object_writer, state)
         if isinstance(node, CodePositionNode):
             self._object_open_region(object_writer, state, explicit=True)
         if isinstance(node, IncludeIpsNode):
             self._object_emit_ips_blocks(node, object_writer, state)
+
+    def _object_emit_alloc(
+        self, node: "AllocNode", object_writer: ObjectWriter, state: "_ObjectEmitState"
+    ) -> None:
+        """Emit `.alloc` body into a pinned region at the allocator-chosen address.
+
+        Opens a fresh region at `alloc.addr` (explicit=True so the module
+        becomes non-relocatable — the address is already final), walks the
+        body through the usual object-emit path so child nodes record their
+        own relocations/lines, then re-opens a region at the surrounding PC
+        so subsequent inline code keeps its addressing.
+        """
+        alloc = node._alloc
+        if alloc is None or not alloc.placed:
+            return
+        self._flush_object_block(object_writer, state)
+        saved_pc = self.resolver.pc
+        saved_reloc = self.resolver.reloc_address
+        try:
+            self.resolver.set_position(alloc.addr)
+            object_writer.start_region(alloc.addr, explicit=True)
+            for child in node.body:
+                self._object_emit_one(child, object_writer, state)
+            self._flush_object_block(object_writer, state)
+        finally:
+            self.resolver.pc = saved_pc
+            self.resolver.reloc_address = saved_reloc
+        object_writer.start_region(self.resolver.reloc_address.logical_value, explicit=False)
 
     def _accumulate_object_bytes(
         self, node: NodeProtocol, object_writer: ObjectWriter, state: "_ObjectEmitState"

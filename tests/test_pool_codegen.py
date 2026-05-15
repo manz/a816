@@ -245,6 +245,75 @@ class TestAllocPass1ForwardRefs:
         )
 
 
+class TestObjectMode:
+    """`.pool` + `.alloc` work when compiling to .o.
+
+    The module becomes pinned (allocator picks final addresses, so no
+    further relocation makes sense). Each .alloc emits its body as a
+    pinned region at the allocator-chosen address; alloc's label binds
+    there and ships in the symbol table for cross-module callers.
+    """
+
+    def test_alloc_object_mode_writes_region_at_allocated_addr(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.object_file import ObjectFile
+
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            rts
+        }
+        """
+        asm_file = tmp_path / "mod.s"
+        asm_file.write_text(src)
+        obj_file = tmp_path / "mod.o"
+        program = Program()
+        rc = program.assemble_as_object(str(asm_file), obj_file)
+        assert rc == 0
+        obj = ObjectFile.from_file(str(obj_file))
+        # One pinned region landing at the allocator-picked addr (0x028000).
+        alloc_regions = [r for r in obj.regions if r.base_address == 0x028000]
+        assert len(alloc_regions) == 1
+        assert alloc_regions[0].code == b"\x60"  # rts
+        sym_names = [name for name, _, _, _ in obj.symbols]
+        assert "fn" in sym_names
+
+    def test_alloc_object_mode_link_resolves_caller(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        # Provider: defines fn via .alloc.
+        provider_src = """
+        .pool p { range 0x028000 0x0280ff }
+        .alloc fn in p {
+            rts
+        }
+        """
+        # Consumer: external ref to fn.
+        consumer_src = """
+        .extern fn
+        *=0x008000
+        main:
+            jsr.l fn
+            rts
+        """
+        prov_asm = tmp_path / "prov.s"
+        prov_asm.write_text(provider_src)
+        cons_asm = tmp_path / "cons.s"
+        cons_asm.write_text(consumer_src)
+        prov_o = tmp_path / "prov.o"
+        cons_o = tmp_path / "cons.o"
+        assert Program().assemble_as_object(str(prov_asm), prov_o) == 0
+        assert Program().assemble_as_object(str(cons_asm), cons_o) == 0
+        linker = Linker([ObjectFile.from_file(str(prov_o)), ObjectFile.from_file(str(cons_o))])
+        linked = linker.link()
+        # Linker resolves fn to 0x028000 (provider's pinned alloc addr).
+        assert linker.symbol_map["fn"] == 0x028000
+        # Consumer's jsr.l fn (0x22) operand patched to the alloc addr.
+        cons_region = next(r for r in linked.regions if r.base_address == 0x008000)
+        # main: jsr.l fn (4 bytes: 0x22 LO MID HI) + rts (0x60) = 5 bytes
+        assert cons_region.code[:5] == b"\x22\x00\x80\x02\x60"
+
+
 class TestPoolStatsSymbols:
     """`.pool` decl binds `<name>.capacity`, `.fragments`, `.largest_chunk`
     as scope symbols so users can write compile-time guards like:
