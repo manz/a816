@@ -393,6 +393,46 @@ class TestCrossTuPoolMerging:
         assert addr_a == 0x028000
         assert addr_b == 0x02A000
 
+    def test_link_time_pool_overflow_errors(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """Linker errors loud when cross-TU allocs exceed merged pool capacity."""
+        from a816.linker import Linker
+        from a816.object_file import ObjectFile
+
+        # Pool has two 1-byte chunks (no single chunk fits a 2-byte alloc).
+        # First module declares the pool + a 2-byte alloc → won't fit.
+        mod_a = tmp_path / "a.s"
+        mod_a.write_text(
+            """
+            .pool tiny {
+                range 0x028000 0x028000
+            }
+            .alloc fn_a in tiny {
+                rts
+                rts
+            }
+            """
+        )
+        mod_b = tmp_path / "b.s"
+        mod_b.write_text(
+            """
+            .pool tiny {
+                range 0x02a000 0x02a000
+            }
+            .alloc fn_b in tiny {
+                rts
+            }
+            """
+        )
+        for name, src in (("a", mod_a), ("b", mod_b)):
+            obj = tmp_path / f"{name}.o"
+            assert Program().assemble_as_object(str(src), obj) == 0
+        objs = [
+            ObjectFile.from_file(str(tmp_path / "a.o")),
+            ObjectFile.from_file(str(tmp_path / "b.o")),
+        ]
+        with pytest.raises(Exception, match="does not fit"):
+            Linker(objs).link()
+
     def test_linker_pool_fill_mismatch_errors(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         from a816.linker import Linker
         from a816.object_file import ObjectFile
@@ -488,6 +528,42 @@ class TestObjectMode:
         cons_region = next(r for r in linked.regions if r.base_address == 0x008000)
         # main: jsr.l fn (4 bytes: 0x22 LO MID HI) + rts (0x60) = 5 bytes
         assert cons_region.code[:5] == b"\x22\x00\x80\x02\x60"
+
+
+class TestPoolExhaustion:
+    """Pool overflow errors are surfaced loudly in both modes."""
+
+    def test_direct_mode_overflow_raises_with_alloc_name(self) -> None:
+        """One .alloc bigger than the only chunk → loud failure at codegen."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool tiny { range 0x028000 0x028000 }
+        .alloc oversized in tiny {
+            rts
+            rts
+            rts
+        }
+        """
+        with pytest.raises(Exception, match="oversized"):
+            program.assemble_string_with_emitter(src, "test.s", writer)
+
+    def test_direct_mode_two_allocs_overflow_raises(self) -> None:
+        """First .alloc fills pool, second has nowhere to go."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool tiny { range 0x028000 0x028001 strategy order }
+        .alloc filler in tiny {
+            rts
+            rts
+        }
+        .alloc spill in tiny {
+            rts
+        }
+        """
+        with pytest.raises(Exception, match="spill|does not fit"):
+            program.assemble_string_with_emitter(src, "test.s", writer)
 
 
 class TestPoolStatsSymbols:
