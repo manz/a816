@@ -646,6 +646,51 @@ class TestObjectMode:
         assert cons_region.code[:5] == b"\x22\x00\x80\x02\x60"
 
 
+class TestAllocImportLoserSkip:
+    """ff4 Q#14 regression: when .alloc body has multiple .import directives,
+    transitive duplicates (same module pulled in by two different parent
+    modules) get marked is_loser=True for the earlier occurrences. Those
+    losers' pc_after returns current_pc unchanged so winners after them
+    place correctly — but AllocNode.emit_blocks used to call .emit() on
+    losers anyway, accumulating their bytes and overlapping the winner's
+    placement at the same target address."""
+
+    def test_alloc_body_with_duplicate_imports_does_not_double_emit(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Same module imported twice inside one .alloc body — last-wins
+        # makes the first a loser; emit_blocks must skip it so bytes don't
+        # double-emit and overlap the winner at the same offset.
+        dialog_s = tmp_path / "dialog.s"
+        dialog_s.write_text("dialog_fn:\n    rts\n    rts\n    rts\n")
+        Program().assemble_as_object(str(dialog_s), tmp_path / "dialog.o")
+
+        main = tmp_path / "main.s"
+        main.write_text(
+            ".pool slack { range 0x208000 0x20ffff strategy order }\n"
+            '.alloc body in slack {\n    .import "dialog"\n    .import "dialog"\n}\n'
+        )
+        program = Program()
+        program.add_module_path(str(tmp_path))
+        program.assemble_as_patch(str(main), tmp_path / "out.ips")
+
+        d = (tmp_path / "out.ips").read_bytes()
+        pos = 5
+        total = 0
+        while True:
+            if d[pos : pos + 3] == b"EOF":
+                break
+            pos += 3
+            sz = int.from_bytes(d[pos : pos + 2], "big")
+            pos += 2
+            if sz == 0:
+                pos += 3
+                continue
+            total += sz
+            pos += sz
+        # dialog body is 3 bytes (rts × 3). Pre-fix: 6 bytes (two copies
+        # overlapping at same offset). Post-fix: 3 bytes (loser skipped).
+        assert total == 3, f"expected 3 bytes (dialog body once); got {total} — loser emission"
+
+
 class TestAllocImportDedupe:
     """ff4 Q#13: `.import` of the same .o module via both `.include`'d patch
     file AND inside `.alloc` body double-emitted because
