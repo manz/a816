@@ -245,6 +245,162 @@ class TestAllocPass1ForwardRefs:
         )
 
 
+class TestPoolStatsSymbols:
+    """`.pool` decl binds `<name>.capacity`, `.fragments`, `.largest_chunk`
+    as scope symbols so users can write compile-time guards like:
+        .if mypool.capacity < 0x200 { .debug 'pool too small' }
+    """
+
+    def test_capacity_bound(self) -> None:
+        resolver = _gen(
+            """
+            .pool p {
+                range 0x028000 0x0280ff
+                range 0x02a000 0x02a0ff
+            }
+            """,
+        )
+        assert resolver.current_scope.value_for("p.capacity") == 0x200
+
+    def test_fragments_bound(self) -> None:
+        resolver = _gen(
+            """
+            .pool p {
+                range 0x028000 0x0280ff
+                range 0x02a000 0x02a0ff
+            }
+            """,
+        )
+        assert resolver.current_scope.value_for("p.fragments") == 2
+
+    def test_largest_chunk_bound(self) -> None:
+        resolver = _gen(
+            """
+            .pool p {
+                range 0x028000 0x0280ff
+                range 0x02a000 0x02a1ff
+            }
+            """,
+        )
+        assert resolver.current_scope.value_for("p.largest_chunk") == 0x200
+
+    def test_capacity_usable_in_if_guard(self) -> None:
+        # Compile-time .if reading <pool>.capacity must not crash.
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p {
+            range 0x028000 0x0280ff
+        }
+        .if p.capacity < 0x10000 {
+            .debug 'pool small (expected)'
+        }
+        .alloc fn in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+
+
+class TestPoolExpressions:
+    """`.pool` / `.reclaim` / `.relocate` accept constant expressions
+    for range bounds, fill byte, and addresses — not just numeric literals.
+    Limitation: forward refs to user-declared constants aren't resolved
+    yet at code-generation time (they live in SymbolNode.pc_after which
+    runs in pass-2 of resolve_labels). Arithmetic on literals works.
+    """
+
+    def test_pool_fill_arithmetic_expression(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p {
+            range 0x028000 0x028000 + 0xff
+            fill 0xea + 1
+        }
+        .alloc fn in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        pool = program.resolver.pools["p"]
+        assert pool.ranges[0].start == 0x028000
+        assert pool.ranges[0].end == 0x0280FF
+        assert pool.fill == 0xEB
+
+    def test_pool_unknown_symbol_in_literal_raises(self) -> None:
+        from a816.parse.codegen import code_gen
+        from a816.symbols import Resolver
+
+        resolver = Resolver()
+        result = MZParser.parse_as_ast(
+            """
+            .pool p {
+                range undefined_symbol 0x0280ff
+            }
+            """,
+            filename="t.s",
+        )
+        assert result.parse_error is None
+        with pytest.raises(Exception, match="undefined symbol"):
+            code_gen(result.nodes, resolver)
+
+    def test_reclaim_uses_arithmetic_expression(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .reclaim p 0x02c000 0x02c000 + 0x17f
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        pool = program.resolver.pools["p"]
+        assert pool.capacity == 0x100 + 0x180
+
+    def test_relocate_uses_arithmetic_expression(self) -> None:
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .relocate fn 0x02c000 0x02c000 + 0x17f into p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        # Original range reclaimed alongside the body's allocation.
+        pool = program.resolver.pools["p"]
+        assert pool.capacity == 0x100 + 0x180
+
+
+class TestMultiAlloc:
+    def test_two_allocs_order_strategy_contiguous(self) -> None:
+        """Multi-alloc dogfood: two .allocs in order strategy lay out
+        contiguously, byte-identical to a single .alloc of combined size."""
+        program = Program()
+        writer = StubWriter()
+        src = """
+        .pool p {
+            range 0x028000 0x0280ff
+            strategy order
+        }
+        .alloc a in p {
+            nop
+            nop
+            rts
+        }
+        .alloc b in p {
+            rts
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        labels = program.resolver.current_scope.labels
+        a_logical = labels["a"]
+        b_logical = labels["b"]
+        # a is 3 bytes (nop, nop, rts), b should follow at a+3.
+        assert b_logical - a_logical == 3, f"order strategy not contiguous: a=0x{a_logical:06x} b=0x{b_logical:06x}"
+        # a placed at chunk start = 0x028000.
+        assert a_logical == 0x028000
+
+
 class TestAllocNodeInternals:
     """Cover NodeProtocol surface bits (emit, __str__, empty paths)."""
 

@@ -38,8 +38,7 @@ class TestPoolDirective:
             PoolAstNode,
         )
         assert node.pool_name == "bank02_slack"
-        assert node.ranges == [(0x028000, 0x028FFF)]
-        assert node.fill == 0x00
+        assert len(node.ranges) == 1
         assert node.strategy == "pack"
 
     def test_multi_range_with_options(self) -> None:
@@ -54,8 +53,7 @@ class TestPoolDirective:
             """,
             PoolAstNode,
         )
-        assert node.ranges == [(0x028000, 0x028FFF), (0x02A100, 0x02A4C0)]
-        assert node.fill == 0xEA
+        assert len(node.ranges) == 2
         assert node.strategy == "order"
 
     def test_empty_pool_is_error(self) -> None:
@@ -64,12 +62,18 @@ class TestPoolDirective:
         assert "no ranges" in result.parse_error.message
 
     def test_fill_out_of_byte_range_is_error(self) -> None:
+        # Now caught at codegen, not parse. Drive through assemble.
+        from a816.parse.codegen import code_gen
+        from a816.symbols import Resolver
+
+        resolver = Resolver()
         result = MZParser.parse_as_ast(
             ".pool p { range 0x028000 0x028fff fill 0x100 }",
             filename="t.s",
         )
-        assert result.parse_error is not None
-        assert "out of byte range" in result.parse_error.message
+        assert result.parse_error is None
+        with pytest.raises(Exception, match="out of byte range"):
+            code_gen(result.nodes, resolver)
 
     def test_unknown_strategy_is_error(self) -> None:
         result = MZParser.parse_as_ast(
@@ -135,8 +139,9 @@ class TestRelocateDirective:
             RelocateAstNode,
         )
         assert node.symbol == "fn_old"
-        assert node.old_start == 0x02C000
-        assert node.old_end == 0x02C17F
+        # old_start / old_end are now ExpressionAstNodes (evaluated at codegen).
+        assert node.old_start.to_canonical() == "0x02c000"
+        assert node.old_end.to_canonical() == "0x02c17f"
         assert node.pool_name == "bank02_slack"
         assert isinstance(node.body, BlockAstNode)
         opcodes = [n for n in node.body.body if isinstance(n, OpcodeAstNode)]
@@ -172,8 +177,8 @@ class TestReclaimDirective:
             ReclaimAstNode,
         )
         assert node.pool_name == "bank02_slack"
-        assert node.start == 0x02C000
-        assert node.end == 0x02C17F
+        assert node.start.to_canonical() == "0x02c000"
+        assert node.end.to_canonical() == "0x02c17f"
 
     def test_to_canonical(self) -> None:
         node = _first_of(
@@ -219,11 +224,10 @@ class TestAstToRepresentation:
             ".pool p { range 0x028000 0x0280ff fill 0xea strategy order }",
             PoolAstNode,
         )
-        kind, name, ranges, fill, strategy = node.to_representation()
+        kind, name, range_count, strategy = node.to_representation()
         assert kind == "pool"
         assert name == "p"
-        assert ranges == ((0x028000, 0x0280FF),)
-        assert fill == 0xEA
+        assert range_count == 1
         assert strategy == "order"
 
     def test_alloc_representation(self) -> None:
@@ -252,11 +256,9 @@ class TestAstToRepresentation:
             """,
             RelocateAstNode,
         )
-        kind, symbol, lo, hi, pool_name, body = node.to_representation()
+        kind, symbol, pool_name, body = node.to_representation()
         assert kind == "relocate"
         assert symbol == "fn"
-        assert lo == 0x02C000
-        assert hi == 0x02C17F
         assert pool_name == "p"
         assert body == "block"
 
@@ -265,7 +267,7 @@ class TestAstToRepresentation:
             ".reclaim p 0x02c000 0x02c17f",
             ReclaimAstNode,
         )
-        assert node.to_representation() == ("reclaim", "p", 0x02C000, 0x02C17F)
+        assert node.to_representation() == ("reclaim", "p")
 
 
 class TestFluffFormat:
