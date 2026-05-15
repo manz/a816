@@ -20,7 +20,7 @@ from lsprotocol.types import (
     SignatureHelpContext,
     SignatureHelpParams,
     SignatureHelpTriggerKind,
-    TextDocumentContentChangeEvent_Type1,
+    TextDocumentContentChangePartial,
     TextDocumentIdentifier,
     VersionedTextDocumentIdentifier,
     WorkspaceSymbolParams,
@@ -36,14 +36,14 @@ from tests.lsp_helpers import (
 )
 
 
-def _open(server: A816LanguageServer, rel_path: str) -> None:
-    server._handle_did_open(make_did_open_params(rel_path))
+async def _open(server: A816LanguageServer, rel_path: str) -> None:
+    await server._handle_did_open(make_did_open_params(rel_path))
 
 
-def test_main_opens_with_workspace_indexed() -> None:
+async def test_main_opens_with_workspace_indexed() -> None:
     server = server_with_fixture_workspace()
     params = make_did_open_params("src/main.s")
-    server._handle_did_open(params)
+    await server._handle_did_open(params)
 
     assert params.text_document.uri in server.documents
     doc = server.documents[params.text_document.uri]
@@ -51,33 +51,33 @@ def test_main_opens_with_workspace_indexed() -> None:
     assert "DMA_REG" not in doc.labels  # comes via .include, not local label
 
 
-def test_workspace_symbol_finds_module_label() -> None:
+async def test_workspace_symbol_finds_module_label() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     results = server._handle_workspace_symbol(WorkspaceSymbolParams(query="vwf_render"))
     assert "vwf_render" in {sym.name for sym in results}
 
 
-def test_document_symbols_includes_helpers_scope() -> None:
+async def test_document_symbols_includes_helpers_scope() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     params = DocumentSymbolParams(text_document=TextDocumentIdentifier(uri=fixture_uri("src/main.s")))
     symbols = server._handle_document_symbols(params)
     assert "main" in {sym.name for sym in symbols}
 
 
-def test_goto_def_resolves_module_label() -> None:
+async def test_goto_def_resolves_module_label() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, char = locate_in_fixture("src/main.s", "vwf_render")
     locations = server._handle_definition(make_position_params("src/main.s", line, char))
     assert locations is not None
     assert any("vwf.s" in loc.uri for loc in locations)
 
 
-def test_hover_on_opcode_describes_instruction() -> None:
+async def test_hover_on_opcode_describes_instruction() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, char = locate_in_fixture("src/main.s", "lda")
     hover = server._handle_hover(
         HoverParams(
@@ -90,9 +90,9 @@ def test_hover_on_opcode_describes_instruction() -> None:
     assert "65c816 Instruction" in hover.contents.value
 
 
-def test_hover_on_macro_includes_docstring() -> None:
+async def test_hover_on_macro_includes_docstring() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "modules/vwf.s")
+    await _open(server, "modules/vwf.s")
     line, char = locate_in_fixture("modules/vwf.s", "vwf_init")
     hover = server._handle_hover(
         HoverParams(
@@ -105,9 +105,9 @@ def test_hover_on_macro_includes_docstring() -> None:
     assert "Initialise" in hover.contents.value
 
 
-def test_completions_include_local_labels() -> None:
+async def test_completions_include_local_labels() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, _ = locate_in_fixture("src/main.s", "main:")
     params = CompletionParams(
         text_document=TextDocumentIdentifier(uri=fixture_uri("src/main.s")),
@@ -119,9 +119,9 @@ def test_completions_include_local_labels() -> None:
     assert any(op in labels for op in ("LDA", "STA", "JSR"))
 
 
-def test_signature_help_on_lda() -> None:
+async def test_signature_help_on_lda() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, _ = locate_in_fixture("src/main.s", "lda.b")
     params = SignatureHelpParams(
         text_document=TextDocumentIdentifier(uri=fixture_uri("src/main.s")),
@@ -134,10 +134,10 @@ def test_signature_help_on_lda() -> None:
     assert "LDA" in sig.signatures[0].label
 
 
-def test_references_finds_cross_file_uses() -> None:
+async def test_references_finds_cross_file_uses() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
-    _open(server, "modules/vwf.s")
+    await _open(server, "src/main.s")
+    await _open(server, "modules/vwf.s")
     line, char = locate_in_fixture("modules/vwf.s", "vwf_render")
     params = ReferenceParams(
         text_document=TextDocumentIdentifier(uri=fixture_uri("modules/vwf.s")),
@@ -151,19 +151,19 @@ def test_references_finds_cross_file_uses() -> None:
     assert any("vwf.s" in uri for uri in uris)
 
 
-def test_semantic_tokens_returns_data() -> None:
+async def test_semantic_tokens_returns_data() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     params = SemanticTokensParams(text_document=TextDocumentIdentifier(uri=fixture_uri("src/main.s")))
     tokens = server._handle_semantic_tokens_full(params)
     assert tokens is not None
     assert len(tokens.data) > 0
 
 
-def test_format_document_returns_edits_or_empty() -> None:
+async def test_format_document_returns_edits_or_empty() -> None:
     # Use vwf.s: self-contained, no .include side-effects during parse.
     server = server_with_fixture_workspace()
-    _open(server, "modules/vwf.s")
+    await _open(server, "modules/vwf.s")
     params = DocumentFormattingParams(
         text_document=TextDocumentIdentifier(uri=fixture_uri("modules/vwf.s")),
         options=FormattingOptions(tab_size=4, insert_spaces=True),
@@ -173,9 +173,9 @@ def test_format_document_returns_edits_or_empty() -> None:
     assert edits is not None
 
 
-def test_did_close_drops_document() -> None:
+async def test_did_close_drops_document() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     uri = fixture_uri("src/main.s")
     assert uri in server.documents
     from lsprotocol.types import DidCloseTextDocumentParams
@@ -184,13 +184,13 @@ def test_did_close_drops_document() -> None:
     assert uri not in server.documents
 
 
-def test_did_save_with_text_updates_document() -> None:
+async def test_did_save_with_text_updates_document() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     uri = fixture_uri("src/main.s")
     from lsprotocol.types import DidSaveTextDocumentParams
 
-    server._handle_did_save(
+    await server._handle_did_save(
         DidSaveTextDocumentParams(
             text_document=TextDocumentIdentifier(uri=uri),
             text="; saved\nmain:\n    rts\n",
@@ -199,19 +199,19 @@ def test_did_save_with_text_updates_document() -> None:
     assert "; saved" in server.documents[uri].content
 
 
-def test_did_save_without_text_reanalyzes() -> None:
+async def test_did_save_without_text_reanalyzes() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     uri = fixture_uri("src/main.s")
     from lsprotocol.types import DidSaveTextDocumentParams
 
-    server._handle_did_save(DidSaveTextDocumentParams(text_document=TextDocumentIdentifier(uri=uri), text=None))
+    await server._handle_did_save(DidSaveTextDocumentParams(text_document=TextDocumentIdentifier(uri=uri), text=None))
     assert uri in server.documents
 
 
-def test_hover_returns_none_on_unknown_word() -> None:
+async def test_hover_returns_none_on_unknown_word() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, char = locate_in_fixture("src/main.s", "main:")
     # Cursor on an empty / non-identifier column.
     hover = server._handle_hover(
@@ -223,17 +223,17 @@ def test_hover_returns_none_on_unknown_word() -> None:
     assert hover is None
 
 
-def test_definition_returns_none_for_unknown_word() -> None:
+async def test_definition_returns_none_for_unknown_word() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     locations = server._handle_definition(make_position_params("src/main.s", 0, 5))
     # First line is a comment; cursor on whitespace, no definition expected.
     assert locations is None
 
 
-def test_definition_jumps_to_include_target() -> None:
+async def test_definition_jumps_to_include_target() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, _ = locate_in_fixture("src/main.s", "constants.s")
     # Cursor inside the quoted "constants.s" path.
     char = locate_in_fixture("src/main.s", "constants.s")[1]
@@ -242,10 +242,10 @@ def test_definition_jumps_to_include_target() -> None:
     assert any("constants.s" in loc.uri for loc in locs)
 
 
-def test_references_excluding_declaration() -> None:
+async def test_references_excluding_declaration() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
-    _open(server, "modules/vwf.s")
+    await _open(server, "src/main.s")
+    await _open(server, "modules/vwf.s")
     line, char = locate_in_fixture("modules/vwf.s", "vwf_render")
     params = ReferenceParams(
         text_document=TextDocumentIdentifier(uri=fixture_uri("modules/vwf.s")),
@@ -268,9 +268,9 @@ def test_workspace_symbol_empty_workspace_returns_empty() -> None:
     assert server._handle_workspace_symbol(WorkspaceSymbolParams(query="main")) == []
 
 
-def test_hover_on_cross_file_macro() -> None:
+async def test_hover_on_cross_file_macro() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, char = locate_in_fixture("src/main.s", "vwf_init")
     hover = server._handle_hover(
         HoverParams(
@@ -283,10 +283,10 @@ def test_hover_on_cross_file_macro() -> None:
     assert "Initialise" in hover.contents.value
 
 
-def test_hover_on_import_shows_module_docstring() -> None:
+async def test_hover_on_import_shows_module_docstring() -> None:
     """Cursor on `.import "vwf"` in main.s surfaces vwf.s's leading docstring."""
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, _ = locate_in_fixture("src/main.s", '.import "vwf"')
     hover = server._handle_hover(
         HoverParams(
@@ -299,9 +299,9 @@ def test_hover_on_import_shows_module_docstring() -> None:
     assert "Variable-width font helpers" in hover.contents.value
 
 
-def test_hover_on_label_with_docstring() -> None:
+async def test_hover_on_label_with_docstring() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "modules/vwf.s")
+    await _open(server, "modules/vwf.s")
     line, char = locate_in_fixture("modules/vwf.s", "vwf_render:")
     hover = server._handle_hover(
         HoverParams(
@@ -314,9 +314,9 @@ def test_hover_on_label_with_docstring() -> None:
     assert "Render" in hover.contents.value
 
 
-def test_document_symbols_for_module_with_macros() -> None:
+async def test_document_symbols_for_module_with_macros() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "modules/vwf.s")
+    await _open(server, "modules/vwf.s")
     params = DocumentSymbolParams(text_document=TextDocumentIdentifier(uri=fixture_uri("modules/vwf.s")))
     symbols = server._handle_document_symbols(params)
     names = {sym.name for sym in symbols}
@@ -324,9 +324,9 @@ def test_document_symbols_for_module_with_macros() -> None:
     assert any(name.startswith("vwf_init") for name in names)
 
 
-def test_definition_resolves_extern_via_workspace() -> None:
+async def test_definition_resolves_extern_via_workspace() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     line, char = locate_in_fixture("src/main.s", "target_addr", occurrence=1)
     locs = server._handle_definition(make_position_params("src/main.s", line, char))
     # target_addr is declared extern in main.s and dma.s; workspace lookup may
@@ -346,12 +346,12 @@ def test_workspace_index_remove_document() -> None:
     assert "vwf_render" not in ws.labels
 
 
-def test_did_change_updates_document_content() -> None:
+async def test_did_change_updates_document_content() -> None:
     server = server_with_fixture_workspace()
-    _open(server, "src/main.s")
+    await _open(server, "src/main.s")
     uri = fixture_uri("src/main.s")
     new_text = "; replaced\nmain:\n    rts\n"
-    change = TextDocumentContentChangeEvent_Type1(
+    change = TextDocumentContentChangePartial(
         range=Range(start=Position(line=0, character=0), end=Position(line=999, character=0)),
         text=new_text,
     )
@@ -359,5 +359,23 @@ def test_did_change_updates_document_content() -> None:
         text_document=VersionedTextDocumentIdentifier(uri=uri, version=2),
         content_changes=[change],
     )
-    server._handle_did_change(params)
+    await server._handle_did_change(params)
     assert "; replaced" in server.documents[uri].content
+
+
+async def test_did_change_whole_document_replacement() -> None:
+    """LSP clients may send TextDocumentContentChangeWholeDocument (no range,
+    just full text). Exercises the whole-doc branch of _apply_content_changes."""
+    from lsprotocol.types import TextDocumentContentChangeWholeDocument
+
+    server = server_with_fixture_workspace()
+    await _open(server, "src/main.s")
+    uri = fixture_uri("src/main.s")
+    change = TextDocumentContentChangeWholeDocument(text="; whole-doc swap\nstart:\n    rtl\n")
+    params = DidChangeTextDocumentParams(
+        text_document=VersionedTextDocumentIdentifier(uri=uri, version=3),
+        content_changes=[change],
+    )
+    await server._handle_did_change(params)
+    assert "; whole-doc swap" in server.documents[uri].content
+    assert "start" in server.documents[uri].labels
