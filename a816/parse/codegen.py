@@ -899,12 +899,12 @@ def generate_alloc(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
+    from a816.parse.nodes import AllocNode
+
     if node.pool_name not in resolver.pools:
         raise NodeError(f"alloc into unknown pool {node.pool_name!r}", file_info)
-    raise NodeError(
-        f"alloc into pool {node.pool_name!r}: code generation not yet wired up; tracking in a follow-up to PR #46",
-        file_info,
-    )
+    body_nodes = _code_gen(node.body.body, resolver, macro_definitions)
+    return [AllocNode(node.name, node.pool_name, body_nodes, resolver, file_info)]
 
 
 def generate_relocate(

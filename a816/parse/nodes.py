@@ -686,6 +686,93 @@ class OpcodeNode(NodeProtocol):
         return f"OpcodeNode({self.opcode}, {self.addressing_mode}, {self.index}, {self.value_node})"
 
 
+class AllocNode(NodeProtocol):
+    """Emits `body` at an address picked by the named pool's allocator.
+
+    `pc_after` runs once per resolver pass; the pool allocator is invoked
+    by `Resolver.allocate_pools()` between passes. The body is walked
+    first to measure its size, the slot is requested, and once placed the
+    `name` label binds at the allocated address.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        pool_name: str,
+        body: list[NodeProtocol],
+        resolver: "Resolver",
+        file_info: Token,
+    ) -> None:
+        self.name = name
+        self.pool_name = pool_name
+        self.body = body
+        self.resolver = resolver
+        self.file_info = file_info
+        self._alloc: object | None = None
+        self._size: int = 0
+
+    def _sandbox_pc(self) -> Address:
+        pool = self.resolver.pools[self.pool_name]
+        anchor = pool.ranges[0].start if pool.ranges else 0
+        return self.resolver.get_bus().get_address(anchor)
+
+    def _measure_body(self) -> int:
+        start = self._sandbox_pc()
+        pc = start
+        for node in self.body:
+            pc = node.pc_after(pc)
+        return pc.logical_value - start.logical_value
+
+    def pc_after(self, current_pc: Address) -> Address:
+        pool = self.resolver.pools.get(self.pool_name)
+        if pool is None:
+            raise NodeError(f".alloc into unknown pool {self.pool_name!r}", self.file_info)
+
+        if self._alloc is None:
+            self._size = max(1, self._measure_body())
+            self._alloc = pool.request(self.name, self._size)
+            return current_pc
+
+        alloc = self._alloc
+        if getattr(alloc, "placed", False):
+            target = self.resolver.get_bus().get_address(alloc.addr)  # type: ignore[attr-defined]
+            self.resolver.current_scope.add_label(self.name, target)
+            pc = target
+            for node in self.body:
+                pc = node.pc_after(pc)
+        return current_pc
+
+    def emit(self, current_addr: Address) -> bytes:
+        del current_addr
+        return b""
+
+    def emit_blocks(self, current_addr: Address) -> list[tuple[int, bytes]]:
+        del current_addr
+        alloc = self._alloc
+        if alloc is None or not getattr(alloc, "placed", False):
+            return []
+        saved_pc = self.resolver.pc
+        saved_reloc = self.resolver.reloc_address
+        try:
+            self.resolver.set_position(alloc.addr)  # type: ignore[attr-defined]
+            out = b""
+            cur = self.resolver.reloc_address
+            for node in self.body:
+                emitted = node.emit(cur)
+                if emitted:
+                    out += emitted
+                    cur = cur + len(emitted)
+                    self.resolver.pc += len(emitted)
+                    self.resolver.reloc_address = cur
+            return [(alloc.addr, out)]  # type: ignore[attr-defined]
+        finally:
+            self.resolver.pc = saved_pc
+            self.resolver.reloc_address = saved_reloc
+
+    def __str__(self) -> str:
+        return f"AllocNode({self.name} in {self.pool_name})"
+
+
 class CodePositionNode(NodeProtocol):
     def __init__(self, value_node: ValueNodeProtocol, resolver: Resolver):
         self.value_node = value_node
