@@ -210,6 +210,64 @@ class TestIntegration:
         assert "ReclaimAstNode" in kinds
 
 
+class TestAstToRepresentation:
+    """Exercise to_representation on each pool AST node — used by AST
+    inspection tools and round-trip tests."""
+
+    def test_pool_representation(self) -> None:
+        node = _first_of(
+            ".pool p { range 0x028000 0x0280ff fill 0xea strategy order }",
+            PoolAstNode,
+        )
+        kind, name, ranges, fill, strategy = node.to_representation()
+        assert kind == "pool"
+        assert name == "p"
+        assert ranges == ((0x028000, 0x0280FF),)
+        assert fill == 0xEA
+        assert strategy == "order"
+
+    def test_alloc_representation(self) -> None:
+        node = _first_of(
+            """
+            .alloc fn in p {
+                rts
+            }
+            """,
+            AllocAstNode,
+        )
+        kind, name, pool_name, body = node.to_representation()
+        assert kind == "alloc"
+        assert name == "fn"
+        assert pool_name == "p"
+        # body is the first slot of BlockAstNode.to_representation() —
+        # the string kind "block" (the list is index 1).
+        assert body == "block"
+
+    def test_relocate_representation(self) -> None:
+        node = _first_of(
+            """
+            .relocate fn 0x02c000 0x02c17f into p {
+                rts
+            }
+            """,
+            RelocateAstNode,
+        )
+        kind, symbol, lo, hi, pool_name, body = node.to_representation()
+        assert kind == "relocate"
+        assert symbol == "fn"
+        assert lo == 0x02C000
+        assert hi == 0x02C17F
+        assert pool_name == "p"
+        assert body == "block"
+
+    def test_reclaim_representation(self) -> None:
+        node = _first_of(
+            ".reclaim p 0x02c000 0x02c17f",
+            ReclaimAstNode,
+        )
+        assert node.to_representation() == ("reclaim", "p", 0x02C000, 0x02C17F)
+
+
 class TestFluffFormat:
     def test_pool_alloc_relocate_reclaim_round_trip(self) -> None:
         from a816.formatter import A816Formatter
