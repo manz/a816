@@ -1,4 +1,14 @@
 # a816
+
+[![Build](https://github.com/manz/a816/actions/workflows/build.yml/badge.svg)](https://github.com/manz/a816/actions/workflows/build.yml)
+[![Binaries](https://github.com/manz/a816/actions/workflows/binaries.yml/badge.svg)](https://github.com/manz/a816/actions/workflows/binaries.yml)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=manz_a816&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=manz_a816)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=manz_a816&metric=coverage)](https://sonarcloud.io/summary/new_code?id=manz_a816)
+[![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=manz_a816&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=manz_a816)
+[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=manz_a816&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=manz_a816)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=manz_a816&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=manz_a816)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Another 65c816 assembler.
 
 Targets Super Famicom / SNES ROM hacking and patching. Ships a CLI assembler,

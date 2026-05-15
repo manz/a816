@@ -14,7 +14,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
 ]
 
-dependencies = ["pygls==2.1.1", "lsprotocol==2025.0.0"]
+dependencies = ["pygls>=2.1.1,<3", "lsprotocol>=2025.0.0,<2026"]
 
 dynamic = ["version"]
 
@@ -76,7 +76,7 @@ relative_files = true
 
 [tool.hatch.envs.tests]
 detached = true
-dependencies = ["pygls==2.1.1", "lsprotocol==2025.0.0", "pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff"]
+dependencies = ["pygls>=2.1.1,<3", "lsprotocol>=2025.0.0,<2026", "pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff"]
 
 [tool.hatch.envs.tests.scripts]
 coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov=script --cov-branch tests"
