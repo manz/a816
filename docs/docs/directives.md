@@ -156,6 +156,28 @@ of `T`, so `p.field` is just a flat symbol after the bind. Nested
 struct fields chain cleanly: `(o as Outer).pos.y` and
 `o.pos.y` both resolve to `base + Outer.pos + Inner.y`.
 
+#### Auto-sized opcodes on typed accesses
+
+When a typed instance is referenced directly as an operand
+(`lda p.field`), the assembler picks the addressing mode (`lda` /
+`lda.w` / `lda.l`) from the binding's base bank — no operand-string
+guessing involved. The mapping is:
+
+| Base value | Addressing mode |
+|------------|-----------------|
+| `< 0x100`   | direct page (`lda`) |
+| `< 0x10000` | absolute (`lda.w`) |
+| otherwise   | long (`lda.l`)     |
+
+An explicit `.b` / `.w` / `.l` on the opcode always wins. Compound
+operands (`p.field + 1`, raw addresses, casts) keep using the
+existing operand-string heuristic.
+
+If the field's declared width disagrees with the current REP/SEP
+register width (e.g. `lda p.word_field` while `.a8` is in effect),
+the assembler emits a warning suggesting the `rep` / `sep` flip
+the user probably wants.
+
 Lint hooks:
 
 - `S001` — cast targets a struct type the file never declared.

@@ -265,12 +265,21 @@ class Resolver:
         # Populated by `generate_struct`; consumed by typed-bind eager
         # expansion and by `(expr as T).field` field-access codegen so we
         # don't have to walk scopes to enumerate a struct's fields.
-        self.struct_layouts: dict[str, list[tuple[str, int]]] = {}
+        # Each entry: (dotted_field_path, byte_offset, byte_width). The
+        # width column is what enables auto-sized opcode emission on typed
+        # field accesses; nested struct sub-fields inherit their declared
+        # primitive width.
+        self.struct_layouts: dict[str, list[tuple[str, int, int]]] = {}
         # Total size per registered struct type, exposed as `Type.__size`.
         self.struct_sizes: dict[str, int] = {}
         # Typed-bind registry: instance name → struct type name. Lets the
         # linter spot redundant casts and field access on non-typed bindings.
         self.typed_instances: dict[str, str] = {}
+        # Address width per typed instance — "b" (DP), "w" (abs 16-bit),
+        # or "l" (long 24-bit). Derived from the base value's bank at
+        # bind time so opcode emission can pick `lda` / `lda.w` / `lda.l`
+        # without re-parsing the operand string.
+        self.typed_instance_addr_width: dict[str, str] = {}
         # Canonical paths of modules already loaded by `.import`. Used to
         # short-circuit transitive re-imports (file A and file B both import
         # "inc"; without dedup the third party that imports both re-parses
