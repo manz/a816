@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from a816.cpu.types import AddressingMode
+from a816.cpu.types import AddressingMode, ValueSize
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import (
@@ -147,21 +147,26 @@ def _layout_struct_fields(
     node: StructAstNode,
     resolver: Resolver,
     file_info: Token,
-) -> tuple[list[tuple[str, int]], int]:
-    """Compute flat (field_path, offset) entries + total size for a struct.
+) -> tuple[list[tuple[str, int, int]], int]:
+    """Compute flat (field_path, offset, width) entries + total size for a struct.
 
-    Primitive fields contribute one entry. Fields whose declared type is a
-    previously registered struct contribute the field's own offset plus the
-    nested struct's flattened entries with the field name prefixed
-    (`pos`, `pos.x`, `pos.y`). Forward refs and self-references raise a
-    NodeError because the layout would be unresolvable.
+    Primitive fields contribute one entry whose ``width`` is the declared
+    type's byte size (1/2/3/4). Nested struct fields contribute the parent
+    field at its own offset with width equal to the nested struct's
+    ``__size`` plus every flattened sub-entry inheriting its declared
+    primitive width. Forward refs and self-references raise a NodeError.
+
+    Width is what `lda p.field` needs to pick the right operand encoding
+    later; without it auto-sizing would have to fall back to the string
+    heuristic that already misfires for typed accesses.
     """
-    entries: list[tuple[str, int]] = []
+    entries: list[tuple[str, int, int]] = []
     offset = 0
     for field_name, field_type in node.fields:
-        if field_type in _STRUCT_FIELD_SIZES:
-            entries.append((field_name, offset))
-            offset += _STRUCT_FIELD_SIZES[field_type]
+        primitive_size = _STRUCT_FIELD_SIZES.get(field_type)
+        if primitive_size is not None:
+            entries.append((field_name, offset, primitive_size))
+            offset += primitive_size
             continue
         if field_type == node.name:
             raise NodeError(
@@ -176,9 +181,9 @@ def _layout_struct_fields(
             )
         nested_layout = resolver.struct_layouts[field_type]
         nested_size = resolver.struct_sizes[field_type]
-        entries.append((field_name, offset))
-        for sub_path, sub_offset in nested_layout:
-            entries.append((f"{field_name}.{sub_path}", offset + sub_offset))
+        entries.append((field_name, offset, nested_size))
+        for sub_path, sub_offset, sub_width in nested_layout:
+            entries.append((f"{field_name}.{sub_path}", offset + sub_offset, sub_width))
         offset += nested_size
     return entries, offset
 
@@ -212,7 +217,7 @@ def generate_struct(
     resolver.append_named_scope(node.name)
     resolver.use_next_scope()
     code: list[NodeProtocol] = [ScopeNode(resolver)]
-    for field_path, offset in entries:
+    for field_path, offset, _width in entries:
         resolver.current_scope.add_symbol(field_path, offset)
     resolver.current_scope.add_symbol("__size", total_size)
     code.append(PopScopeNode(resolver))
@@ -240,6 +245,109 @@ def generate_map(
     return []
 
 
+def _infer_typed_operand_size(
+    operand: ExpressionAstNode | None, resolver: Resolver
+) -> str | None:
+    """Pick `b`/`w`/`l` from a typed-instance field reference, else None.
+
+    Covers the `lda p.field` shorthand: when the operand is exactly one
+    dotted-identifier term and its base name is in
+    ``resolver.typed_instance_addr_width``, use that addressing width.
+    Compound expressions (`p.x + 1`, casts) fall back to the existing
+    string-heuristic so this is purely additive.
+    """
+    if operand is None or not isinstance(operand, ExpressionAstNode):
+        return None
+    if len(operand.tokens) != 1:
+        return None
+    token = operand.tokens[0]
+    if not isinstance(token, Term) or token.token.type != TokenType.IDENTIFIER:
+        return None
+    name = token.token.value
+    if "." not in name:
+        return None
+    instance = name.split(".", 1)[0]
+    return resolver.typed_instance_addr_width.get(instance)
+
+
+_A_OPCODES = {"lda", "sta", "adc", "sbc", "and", "ora", "eor", "cmp", "bit"}
+_X_Y_OPCODES = {"ldx", "stx", "ldy", "sty", "cpx", "cpy"}
+
+
+def _opcode_register_width(opcode: str, resolver: Resolver) -> int | None:
+    """Bytes-per-register for the current REP/SEP state, or None for opcodes
+    that don't touch A/X/Y."""
+    if opcode in _A_OPCODES:
+        return resolver.a_size // 8
+    if opcode in _X_Y_OPCODES:
+        return resolver.i_size // 8
+    return None
+
+
+def _typed_field_lookup(
+    operand: ExpressionAstNode | None, resolver: Resolver
+) -> tuple[str, str, int] | None:
+    """Resolve a `p.field` operand to `(instance, full_name, field_width)`."""
+    if operand is None or not isinstance(operand, ExpressionAstNode) or len(operand.tokens) != 1:
+        return None
+    token = operand.tokens[0]
+    if not isinstance(token, Term) or token.token.type != TokenType.IDENTIFIER:
+        return None
+    name = token.token.value
+    if "." not in name:
+        return None
+    instance, field_path = name.split(".", 1)
+    type_name = resolver.typed_instances.get(instance)
+    if type_name is None:
+        return None
+    layout = resolver.struct_layouts.get(type_name) or []
+    field_entry = next(((p, o, w) for (p, o, w) in layout if p == field_path), None)
+    if field_entry is None:
+        return None
+    _path, _offset, field_width = field_entry
+    return instance, name, field_width
+
+
+def _register_label(opcode: str) -> str:
+    return "A" if opcode in _A_OPCODES else "X/Y"
+
+
+def _rep_sep_payload(register_label: str, field_width: int) -> int:
+    if register_label == "A":
+        return 0x20
+    return 0x10 if field_width == 2 else 0
+
+
+def _maybe_warn_register_width_mismatch(node: OpcodeAstNode, resolver: Resolver) -> None:
+    """Warn when a typed-field access asks for a width the current
+    `a8`/`a16`/`i8`/`i16` state can't satisfy in one transfer.
+
+    Only fires for the canonical `lda p.field` / `sta p.field` /
+    `ldx p.field` shorthand; richer expressions silently skip.
+    """
+    lookup = _typed_field_lookup(node.operand, resolver)
+    if lookup is None:
+        return
+    _instance, full_name, field_width = lookup
+    register_width = _opcode_register_width(node.opcode, resolver)
+    if register_width is None or field_width == register_width:
+        return
+    register_label = _register_label(node.opcode)
+    rep_sep = "rep" if field_width > register_width else "sep"
+    logger.warning(
+        "field width (%d byte%s) does not match %s register size (%d bits) on `%s %s`; "
+        "consider `%s #$%02x` first",
+        field_width,
+        "" if field_width == 1 else "s",
+        register_label,
+        register_width * 8,
+        node.opcode,
+        full_name,
+        rep_sep,
+        _rep_sep_payload(register_label, field_width),
+    )
+
+
 def generate_opcode(
     node: OpcodeAstNode,
     resolver: Resolver,
@@ -253,6 +361,11 @@ def generate_opcode(
         raise NodeError("Opcode operand must not be code", file_info)
 
     size = node.value_size
+    if size is None:
+        inferred = _infer_typed_operand_size(node.operand, resolver)
+        if inferred in ("b", "w", "l"):
+            size = cast(ValueSize, inferred)
+    _maybe_warn_register_width_mismatch(node, resolver)
     opcode = node.opcode
     mode = node.addressing_mode
     if mode == AddressingMode.none:
@@ -722,10 +835,25 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
             file_info,
         )
     resolver.current_scope.add_symbol(node.symbol, base)
-    for field_path, offset in resolver.struct_layouts[type_name]:
+    for field_path, offset, _width in resolver.struct_layouts[type_name]:
         resolver.current_scope.add_symbol(f"{node.symbol}.{field_path}", base + offset)
     resolver.typed_instances[node.symbol] = type_name
+    resolver.typed_instance_addr_width[node.symbol] = _address_width_for(base)
     return True
+
+
+def _address_width_for(value: int) -> str:
+    """Map an integer address to its natural 65c816 addressing-mode width.
+
+    - `< 0x100`     → "b" (direct page; one-byte operand)
+    - `< 0x10000`   → "w" (absolute; two-byte operand)
+    - otherwise      → "l" (long; three-byte operand)
+    """
+    if value < 0x100:
+        return "b"
+    if value < 0x10000:
+        return "w"
+    return "l"
 
 
 def generate_assign(
