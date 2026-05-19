@@ -3,7 +3,15 @@ import re
 from collections.abc import Callable
 
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
-from a816.parse.ast.nodes import BinOp, ExpressionAstNode, ExprNode, Term, UnaryOp
+from a816.parse.ast.nodes import (
+    BinOp,
+    CastAccessExprNode,
+    CastValueExprNode,
+    ExpressionAstNode,
+    ExprNode,
+    Term,
+    UnaryOp,
+)
 from a816.parse.tokens import TokenType
 from a816.symbols import Resolver
 
@@ -63,7 +71,7 @@ def shunting_yard(expr_nodes: list[ExprNode]) -> list[ExprNode]:
     operator_stack: list[ExprNode] = []
 
     for expr in expr_nodes:
-        if isinstance(expr, Term):
+        if isinstance(expr, Term | CastAccessExprNode | CastValueExprNode):
             output_queue.append(expr)
         elif isinstance(expr, BinOp | UnaryOp):
             current_precedence = OPERATOR_PRECEDENCE[expr.token.value] if isinstance(expr, BinOp) else 2
@@ -157,7 +165,27 @@ def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> se
     return external_symbols
 
 
+def _eval_inner(inner: list[ExprNode], resolver: Resolver) -> int | str:
+    return eval_expression(ExpressionAstNode(list(inner)), resolver)
+
+
 def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | str]) -> None:
+    if isinstance(current, CastAccessExprNode):
+        base = _eval_inner(current.inner, resolver)
+        if not isinstance(base, int):
+            raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")
+        field_symbol = ".".join([current.type_name, *current.field_path])
+        offset = resolver.current_scope.value_for(field_symbol)
+        if not isinstance(offset, int):
+            raise RuntimeError(f"Struct field {field_symbol!r} did not resolve to an offset")
+        values_stack.append(base + offset)
+        return
+    if isinstance(current, CastValueExprNode):
+        base = _eval_inner(current.inner, resolver)
+        if not isinstance(base, int):
+            raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")
+        values_stack.append(base)
+        return
     if current.token.type == TokenType.NUMBER:
         values_stack.append(eval_number(current.token.value))
     elif current.token.type == TokenType.QUOTED_STRING:

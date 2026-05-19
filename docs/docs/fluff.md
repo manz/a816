@@ -49,6 +49,9 @@ placement, `E***` for physical layout, `N***` for naming.
 | `E501` | Source line longer than 120 characters. |
 | `N801` | Label name is not snake_case. |
 | `N802` | Constant name is not snake_case or SCREAMING_SNAKE_CASE. |
+| `S001` | `(expr as T).field` / `p := (expr as T)` references a struct type that isn't declared in the current translation unit. |
+| `S003` | Redundant cast: `(p as T).field` when `p` is already typed-bound to `T`. |
+| `S004` | The same `(expr as T)` cast appears more than once in the file — promote it to a `:=` typed bind. |
 
 Names with a single leading underscore (`_loop`, `_private_macro`) are
 treated as private and skipped by `DOC002` / `DOC003` / naming rules.

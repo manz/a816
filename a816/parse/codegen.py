@@ -10,6 +10,7 @@ from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
     BlockAstNode,
+    CastValueExprNode,
     CodeLookupAstNode,
     CodePositionAstNode,
     CodeRelocationAstNode,
@@ -139,21 +140,67 @@ def generate_scope(
 _STRUCT_FIELD_SIZES = {"byte": 1, "word": 2, "long": 3, "dword": 4}
 
 
+def _layout_struct_fields(
+    node: StructAstNode,
+    resolver: Resolver,
+    file_info: Token,
+) -> tuple[list[tuple[str, int]], int]:
+    """Compute flat (field_path, offset) entries + total size for a struct.
+
+    Primitive fields contribute one entry. Fields whose declared type is a
+    previously registered struct contribute the field's own offset plus the
+    nested struct's flattened entries with the field name prefixed
+    (`pos`, `pos.x`, `pos.y`). Forward refs and self-references raise a
+    NodeError because the layout would be unresolvable.
+    """
+    entries: list[tuple[str, int]] = []
+    offset = 0
+    for field_name, field_type in node.fields:
+        if field_type in _STRUCT_FIELD_SIZES:
+            entries.append((field_name, offset))
+            offset += _STRUCT_FIELD_SIZES[field_type]
+            continue
+        if field_type == node.name:
+            raise NodeError(
+                f"Struct {node.name!r} field {field_name!r} cannot reference its own type.",
+                file_info,
+            )
+        if field_type not in resolver.struct_layouts:
+            raise NodeError(
+                f"Unknown struct field type {field_type!r} for {node.name}.{field_name}; "
+                f"declare `.struct {field_type}` before use.",
+                file_info,
+            )
+        nested_layout = resolver.struct_layouts[field_type]
+        nested_size = resolver.struct_sizes[field_type]
+        entries.append((field_name, offset))
+        for sub_path, sub_offset in nested_layout:
+            entries.append((f"{field_name}.{sub_path}", offset + sub_offset))
+        offset += nested_size
+    return entries, offset
+
+
 def generate_struct(
     node: StructAstNode,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    """Push a NamedScope, register one offset symbol per field, then export."""
+    """Push a NamedScope, register one offset symbol per (possibly nested)
+    field, register the layout for later typed-bind expansion, then export.
+    """
+    if node.name in resolver.struct_layouts:
+        raise NodeError(f"Struct {node.name!r} redefined.", file_info)
+    entries, total_size = _layout_struct_fields(node, resolver, file_info)
+    resolver.struct_layouts[node.name] = entries
+    resolver.struct_sizes[node.name] = total_size
+
     resolver.append_named_scope(node.name)
     resolver.use_next_scope()
     code: list[NodeProtocol] = [ScopeNode(resolver)]
-    offset = 0
-    for field_name, field_type in node.fields:
-        resolver.current_scope.add_symbol(field_name, offset)
-        offset += _STRUCT_FIELD_SIZES[field_type]
-    resolver.current_scope.add_symbol("__size", offset)
+    for field_path, offset in entries:
+        resolver.current_scope.add_symbol(field_path, offset)
+    resolver.current_scope.add_symbol("__size", total_size)
     code.append(PopScopeNode(resolver))
     # exports=True promotes Name.field and Name.__size to the parent scope.
     resolver.restore_scope(exports=True)
@@ -616,6 +663,37 @@ def generate_register_size(
     return [RegisterSizeNode(node.register, node.size, resolver)]
 
 
+def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -> bool:
+    """If RHS is `(expr as T)`, eager-expand the instance's flat field symbols.
+
+    Returns True iff the RHS was a typed cast and the expansion succeeded.
+    Externs in the cast base aren't supported here — the user would lose the
+    static field-access ergonomics anyway, so raise rather than silently
+    falling back to a plain alias.
+    """
+    tokens = node.value.tokens
+    if len(tokens) != 1 or not isinstance(tokens[0], CastValueExprNode):
+        return False
+    cast = tokens[0]
+    type_name = cast.type_name
+    if type_name not in resolver.struct_layouts:
+        raise NodeError(
+            f"Typed bind {node.symbol!r}: unknown struct type {type_name!r}.",
+            file_info,
+        )
+    base = eval_expression(ExpressionAstNode(list(cast.inner)), resolver)
+    if not isinstance(base, int):
+        raise NodeError(
+            f"Typed bind {node.symbol!r}: base expression must evaluate to an integer address.",
+            file_info,
+        )
+    resolver.current_scope.add_symbol(node.symbol, base)
+    for field_path, offset in resolver.struct_layouts[type_name]:
+        resolver.current_scope.add_symbol(f"{node.symbol}.{field_path}", base + offset)
+    resolver.typed_instances[node.symbol] = type_name
+    return True
+
+
 def generate_assign(
     node: AssignAstNode,
     resolver: Resolver,
@@ -623,6 +701,9 @@ def generate_assign(
     file_info: Token,
 ) -> GenNodes:
     from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+
+    if _try_typed_bind(node, resolver, file_info):
+        return []
 
     try:
         value = eval_expression(node.value, resolver)

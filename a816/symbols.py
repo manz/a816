@@ -252,6 +252,16 @@ class Resolver:
         # symbol export so two `.o` files declaring the same pool don't
         # collide on `<pool>.capacity` etc. at link time.
         self.pool_stat_symbol_names: set[str] = set()
+        # Struct layout registry: type name → flat (field_path, offset) pairs.
+        # Populated by `generate_struct`; consumed by typed-bind eager
+        # expansion and by `(expr as T).field` field-access codegen so we
+        # don't have to walk scopes to enumerate a struct's fields.
+        self.struct_layouts: dict[str, list[tuple[str, int]]] = {}
+        # Total size per registered struct type, exposed as `Type.__size`.
+        self.struct_sizes: dict[str, int] = {}
+        # Typed-bind registry: instance name → struct type name. Lets the
+        # linter spot redundant casts and field access on non-typed bindings.
+        self.typed_instances: dict[str, str] = {}
         self.set_position(pc)
 
     def allocate_pools(self) -> None:

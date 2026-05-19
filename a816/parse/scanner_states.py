@@ -24,8 +24,8 @@ def lex_identifier(s: "Scanner") -> None:
         s.next()
         s.ignore()
     else:
-        # handle scoped identifiers
-        if s.peek() == ".":
+        # handle scoped identifiers, including nested struct fields (a.b.c).
+        while s.peek() == "." and s.peek(1) is not None and s.peek(1) in IDENTIFIER_START_CHARS:
             s.next()
             s.accept_run(IDENTIFIER_CHARS)
 
@@ -93,6 +93,20 @@ def accept_opcode(s: "Scanner") -> bool:
     return False
 
 
+def _lex_postfix_dot_chain(s: "Scanner") -> None:
+    """Emit `.field` postfix tokens after `)` or `]` for struct field access.
+
+    Each `.IDENT` becomes a DOT token followed by an IDENTIFIER token so the
+    parser can attach the access to the preceding expression. Multiple dots
+    chain (`).a.b.c`) for nested struct fields.
+    """
+    while s.peek() == "." and s.peek(1) is not None and s.peek(1) in IDENTIFIER_START_CHARS:
+        s.next()
+        s.emit(TokenType.DOT)
+        s.accept_run(IDENTIFIER_CHARS)
+        s.emit(TokenType.IDENTIFIER)
+
+
 def lex_expression(s: "Scanner") -> None:
     while s.pos < len(s.input):
         s.ignore_run(" ")
@@ -126,6 +140,7 @@ def lex_expression(s: "Scanner") -> None:
             s.emit(TokenType.LPAREN)
         elif s.accept(")"):
             s.emit(TokenType.RPAREN)
+            _lex_postfix_dot_chain(s)
         else:
             break
 
@@ -157,9 +172,11 @@ def lex_operand(s: "Scanner") -> None:
     if p == ")":
         s.next()
         s.emit(TokenType.RPAREN)
+        _lex_postfix_dot_chain(s)
     elif p == "]":
         s.next()
         s.emit(TokenType.RBRAKET)
+        _lex_postfix_dot_chain(s)
 
     s.ignore_run(" ")
     if s.accept(","):

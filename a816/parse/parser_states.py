@@ -12,6 +12,8 @@ from a816.parse.ast.nodes import (
     AstNode,
     BinOp,
     BlockAstNode,
+    CastAccessExprNode,
+    CastValueExprNode,
     CodeLookupAstNode,
     CodePositionAstNode,
     CodeRelocationAstNode,
@@ -240,6 +242,8 @@ def parse_for(p: Parser) -> ForAstNode:
     return ForAstNode(variable.value, start, end, block, current)
 
 
+# Primitive struct field types. Field types outside this set are resolved at
+# codegen time against registered struct types so nested layouts compose.
 STRUCT_FIELD_TYPES = {"byte", "word", "long", "dword"}
 
 
@@ -264,12 +268,6 @@ def parse_struct(p: Parser) -> StructAstNode:
 
         type_token = p.current()
         expect_token(type_token, TokenType.IDENTIFIER)
-        if type_token.value not in STRUCT_FIELD_TYPES:
-            raise ParserSyntaxError(
-                f"Unknown struct field type {type_token.value!r}; expected one of {sorted(STRUCT_FIELD_TYPES)}",
-                type_token,
-                TokenType.IDENTIFIER,
-            )
         p.next()
 
         name_token = p.current()
@@ -617,14 +615,57 @@ def parse_expression_ep(p: Parser) -> list[AstNode]:
     return [parse_expression(p)]
 
 
+def _consume_dot_field_path(p: Parser) -> list[str]:
+    """Consume a `.IDENT(.IDENT)*` postfix from the token stream."""
+    path: list[str] = []
+    while p.current().type == TokenType.DOT:
+        p.next()
+        field_token = p.next()
+        expect_token(field_token, TokenType.IDENTIFIER)
+        path.append(field_token.value)
+    return path
+
+
+def _parse_lparen_expression(p: Parser, lparen: Token) -> list[ExprNode]:
+    """Parse `(inner [as TYPE]) [.field...]`.
+
+    Three shapes emerge:
+      - `(inner)` plain parenthesised expression
+      - `(inner as T)` typed value carrying a type tag for assign RHS
+      - `(inner as T).field(.sub)*` field access into the type's layout
+    """
+    inner = _parse_expression(p)
+    type_name: str | None = None
+    as_token = p.current()
+    if as_token.type == TokenType.IDENTIFIER and as_token.value == "as":
+        p.next()
+        type_token = p.next()
+        expect_token(type_token, TokenType.IDENTIFIER)
+        type_name = type_token.value
+    expect_token(p.current(), TokenType.RPAREN)
+    p.next()  # consume RPAREN
+
+    field_path = _consume_dot_field_path(p)
+
+    if type_name is not None and field_path:
+        return [CastAccessExprNode(lparen, inner, type_name, field_path)]
+    if type_name is not None:
+        return [CastValueExprNode(lparen, inner, type_name)]
+    if field_path:
+        raise ParserSyntaxError(
+            "Field access requires a typed cast: `(expr as Type).field`.",
+            lparen,
+        )
+    # Plain parenthesised expression — restore the wrapping tokens for shunting yard.
+    rparen = Token(TokenType.RPAREN, ")", lparen.position)
+    return [Parenthesis(lparen), *inner, Parenthesis(rparen)]
+
+
 def _parse_expression(p: Parser) -> list[ExprNode]:
     tokens: list[ExprNode] = []
     current_token = p.next()
     if accept_token(current_token, TokenType.LPAREN):
-        tokens.append(Parenthesis(current_token))
-        tokens += _parse_expression(p)
-        expect_token(p.current(), TokenType.RPAREN)
-        tokens.append(Parenthesis(p.next()))
+        tokens += _parse_lparen_expression(p, current_token)
     elif accept_tokens(
         current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.QUOTED_STRING, TokenType.IDENTIFIER]
     ):
@@ -661,6 +702,21 @@ def parse_symbol_affectation(
         node_type = AssignAstNode
 
     expression = parse_expression(p)
+
+    # `p := expr as T` (no parens) — wrap RHS as a typed cast so codegen can
+    # eager-expand the per-field instance symbols.
+    as_token = p.current()
+    if as_token.type == TokenType.IDENTIFIER and as_token.value == "as":
+        if operator.type != TokenType.ASSIGN:
+            raise ParserSyntaxError(
+                "Typed-bind cast `as T` requires `:=`, not `=`.",
+                as_token,
+            )
+        p.next()
+        type_token = p.next()
+        expect_token(type_token, TokenType.IDENTIFIER)
+        cast_term = CastValueExprNode(current, list(expression.tokens), type_token.value)
+        expression = ExpressionAstNode([cast_term])
 
     return node_type(symbol.value, expression, current)
 
@@ -699,46 +755,68 @@ def parse_opcode(p: Parser) -> OpcodeAstNode:
     )
 
 
+def _parse_immediate_operand(p: Parser) -> tuple[AddressingMode, None, ExpressionAstNode]:
+    p.next()
+    if accept_token(p.current(), TokenType.EOF):
+        raise ParserSyntaxError("Unexpected end of input.", p.current(), None)
+    return AddressingMode.immediate, None, parse_expression(p)
+
+
+def _parse_indirect_inner(
+    p: Parser,
+) -> tuple[AddressingMode, str | None, ExpressionAstNode]:
+    """Parse `(expr [,X|Y|S])`. Caller-side try/except converts SyntaxError
+    raised here into a fallback to direct addressing.
+    """
+    p.next()
+    operand = parse_expression(p)
+    # Cast inside operand parens (`(addr as T).field`) is not an indirect
+    # addressing mode; bail to the direct path.
+    if p.current().type == TokenType.IDENTIFIER and p.current().value == "as":
+        raise SyntaxError()
+    inner_index: str | None = None
+    addressing_mode = AddressingMode.indirect
+    if accept_token(p.current(), TokenType.ADDRESSING_MODE_INDEX):
+        addressing_mode = AddressingMode.dp_or_sr_indirect_indexed
+        inner_index = p.current().value
+        p.next()
+    expect_token(p.current(), TokenType.RPAREN)
+    if accept_tokens(p.peek(), [TokenType.OPERATOR, TokenType.DOT]):
+        raise SyntaxError()
+    p.next()
+    return addressing_mode, inner_index, operand
+
+
+def _parse_paren_operand(
+    p: Parser,
+) -> tuple[AddressingMode, str | None, ExpressionAstNode]:
+    saved_position = p.pos
+    try:
+        return _parse_indirect_inner(p)
+    except SyntaxError:
+        p.pos = saved_position
+        return AddressingMode.direct, None, parse_expression(p)
+
+
+def _parse_indirect_long_operand(p: Parser) -> tuple[AddressingMode, None, ExpressionAstNode]:
+    p.next()
+    operand = parse_expression(p)
+    expect_token(p.next(), TokenType.RBRAKET)
+    return AddressingMode.indirect_long, None, operand
+
+
 def parse_operand_and_addressing(
     addressing_mode: AddressingMode, opcode: Token, p: Parser
 ) -> tuple[AddressingMode, str | None, ExpressionAstNode | None]:
-    inner_index = None
-    operand = None
     if accept_token(p.current(), TokenType.SHARP):
-        addressing_mode = AddressingMode.immediate
-        p.next()
-        if accept_token(p.current(), TokenType.EOF):
-            raise ParserSyntaxError("Unexpected end of input.", p.current(), None)
-        operand = parse_expression(p)
-    elif accept_token(p.current(), TokenType.LPAREN):
-        saved_position = p.pos
-        try:
-            p.next()
-            operand = parse_expression(p)
-            if accept_token(p.current(), TokenType.ADDRESSING_MODE_INDEX):
-                addressing_mode = AddressingMode.dp_or_sr_indirect_indexed
-                inner_index = p.current().value
-                p.next()
-            else:
-                addressing_mode = AddressingMode.indirect
-
-            expect_token(p.current(), TokenType.RPAREN)
-
-            if accept_token(p.peek(), TokenType.OPERATOR):
-                raise SyntaxError()
-            p.next()
-        except SyntaxError:
-            p.pos = saved_position
-            operand = parse_expression(p)
-            addressing_mode = AddressingMode.direct
-    elif accept_token(p.current(), TokenType.LBRAKET):
-        p.next()
-        operand = parse_expression(p)
-        expect_token(p.next(), TokenType.RBRAKET)
-        addressing_mode = AddressingMode.indirect_long
-    elif accept_token(opcode, TokenType.OPCODE):
-        operand = parse_expression(p)
-    return addressing_mode, inner_index, operand
+        return _parse_immediate_operand(p)
+    if accept_token(p.current(), TokenType.LPAREN):
+        return _parse_paren_operand(p)
+    if accept_token(p.current(), TokenType.LBRAKET):
+        return _parse_indirect_long_operand(p)
+    if accept_token(opcode, TokenType.OPCODE):
+        return addressing_mode, None, parse_expression(p)
+    return addressing_mode, None, None
 
 
 def parse_code_lookup(p: Parser) -> CodeLookupAstNode:
