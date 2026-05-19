@@ -13,6 +13,7 @@ nav = [
         { "Splitting a project into modules" = "tutorials/modules-walkthrough.md" },
     ] },
     { "Directives" = "directives.md" },
+    { "Standard library" = "stdlib.md" },
     { "Modules" = "modules.md" },
     { "Freespace pools" = "freespace-pools.md" },
     { "Fluff (lint + format)" = "fluff.md" },
