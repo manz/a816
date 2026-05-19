@@ -543,9 +543,10 @@ class Program:
                     self.assemble_string_with_emitter(input_program, asm_file, emitter)
                 except AssemblyError as e:
                     # Parser failure: the message already carries source
-                    # location. A Python traceback would just be noise for
-                    # the CLI user.
-                    logger.error(str(e))
+                    # location + caret + hint. A Python traceback would
+                    # bury that under irrelevant frames for a CLI user, so
+                    # `logger.error` (not `logger.exception`) is intentional.
+                    logger.error(str(e))  # NOSONAR python:S8572
                     return 128
                 except NodeError:
                     # Codegen failure: include the traceback — these can
