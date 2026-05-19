@@ -569,6 +569,16 @@ def generate_extern(
     return [ExternNode(node.symbol, resolver)]
 
 
+_STDLIB_PREFIX = "@std/"
+
+
+def _stdlib_root() -> Path:
+    """Directory holding the bundled standard-library modules."""
+    import a816
+
+    return Path(a816.__file__).parent / "stdlib"
+
+
 def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
     paths: list[Path] = []
     if file_info.position and file_info.position.file:
@@ -577,6 +587,15 @@ def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
         paths.append(uri_to_path(file_info.position.file.filename).parent)
     paths.extend(resolver.context.module_paths)
     return paths
+
+
+def _resolve_stdlib_module(module_name: str, extension: str) -> Path | None:
+    """Map `@std/snes/ppu` → `<wheel>/a816/stdlib/snes/ppu.s` (or `.o`)."""
+    if not module_name.startswith(_STDLIB_PREFIX):
+        return None
+    relative = module_name[len(_STDLIB_PREFIX) :]
+    candidate = _stdlib_root() / f"{relative}{extension}"
+    return candidate if candidate.exists() else None
 
 
 def _import_from_object(
@@ -645,13 +664,13 @@ def generate_import(
     direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
     search_paths = _import_search_paths(resolver, file_info)
 
-    obj_path = _resolve_module_path(module_name, ".o", search_paths)
+    obj_path = _resolve_stdlib_module(module_name, ".o") or _resolve_module_path(module_name, ".o", search_paths)
     if obj_path:
         nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
         if nodes is not None:
             return nodes
 
-    src_path = _resolve_module_path(module_name, ".s", search_paths)
+    src_path = _resolve_stdlib_module(module_name, ".s") or _resolve_module_path(module_name, ".s", search_paths)
     if src_path:
         if direct_mode:
             key = _canonical(src_path)
