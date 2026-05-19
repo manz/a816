@@ -26,15 +26,23 @@ from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
     BlockAstNode,
+    CastAccessExprNode,
+    CastValueExprNode,
     CommentAstNode,
     CompoundAstNode,
+    DataNode,
     DocstringAstNode,
+    ExpressionAstNode,
+    ExprNode,
     ForAstNode,
     IfAstNode,
+    IncludeIpsAstNode,
     LabelAstNode,
     LabelDeclAstNode,
     MacroAstNode,
+    OpcodeAstNode,
     ScopeAstNode,
+    StructAstNode,
     SymbolAffectationAstNode,
 )
 from a816.parse.mzparser import MZParser
@@ -822,6 +830,157 @@ class ConstantNaming(Rule):
 
 
 # ---------------------------------------------------------------------------
+# S001 / S003 / S004 — struct ergonomics
+# ---------------------------------------------------------------------------
+
+
+def _expressions_in_node(node: AstNode) -> Iterable[ExpressionAstNode]:
+    """Yield every ExpressionAstNode reachable from `node` without descending
+    into child blocks (the flat-node walker visits those separately)."""
+    match node:
+        case AssignAstNode() | SymbolAffectationAstNode() | LabelDeclAstNode():
+            if isinstance(node.value, ExpressionAstNode):
+                yield node.value
+        case OpcodeAstNode():
+            if node.operand is not None:
+                yield node.operand
+        case DataNode():
+            for expr in node.data:
+                if isinstance(expr, ExpressionAstNode):
+                    yield expr
+        case IncludeIpsAstNode():
+            if isinstance(node.expression, ExpressionAstNode):
+                yield node.expression
+
+
+def _walk_cast_nodes(
+    tokens: list[ExprNode],
+) -> Iterable[CastAccessExprNode | CastValueExprNode]:
+    """Yield Cast* terms in `tokens`, recursing into their inner expressions."""
+    for tok in tokens:
+        if isinstance(tok, CastAccessExprNode | CastValueExprNode):
+            yield tok
+            yield from _walk_cast_nodes(tok.inner)
+
+
+def _collect_known_struct_types(ctx: LintContext) -> set[str]:
+    return {n.name for n in ctx.flat_nodes if isinstance(n, StructAstNode)}
+
+
+def _collect_typed_instances(ctx: LintContext) -> dict[str, str]:
+    """Map instance name → struct type for every `p := (... as T)` bind."""
+    instances: dict[str, str] = {}
+    for node in ctx.flat_nodes:
+        if not isinstance(node, AssignAstNode) or not isinstance(node.value, ExpressionAstNode):
+            continue
+        tokens = node.value.tokens
+        if len(tokens) == 1 and isinstance(tokens[0], CastValueExprNode):
+            instances[node.symbol] = tokens[0].type_name
+    return instances
+
+
+def _inner_canonical(tokens: list[ExprNode]) -> str:
+    return " ".join(tok.to_canonical() for tok in tokens)
+
+
+class UnknownStructTypeCast(Rule):
+    code = "S001"
+    description = "cast references an undeclared struct type"
+    rationale = (
+        "`(expr as T).field` and `p := (expr as T)` resolve `T` against the "
+        "structs declared in the current translation unit. Casting to a "
+        "type the file doesn't know about is almost always a typo — and "
+        "would otherwise blow up at codegen instead of lint time."
+    )
+    bad = '"""Module."""\nlda.w (0x2100 as Unknown).x\n'
+    good = '"""Module."""\n.struct PPU {\n    word OAMADDR\n}\nlda.w (0x2100 as PPU).OAMADDR\n'
+
+    def check(self, ctx: LintContext) -> Iterable[Diagnostic]:
+        known = _collect_known_struct_types(ctx)
+        for parent in ctx.flat_nodes:
+            for expr in _expressions_in_node(parent):
+                for cast in _walk_cast_nodes(expr.tokens):
+                    if cast.type_name not in known:
+                        yield self.diagnose(
+                            ctx,
+                            parent,
+                            f"cast targets unknown struct type '{cast.type_name}'",
+                        )
+
+
+class RedundantTypedCast(Rule):
+    code = "S003"
+    description = "cast on an already-typed binding is redundant"
+    rationale = (
+        "When `p := (addr as Player)` is in scope, `p.field` already "
+        "resolves through the typed binding. Re-casting `(p as Player)` "
+        "adds noise and signals confusion about which binding is in "
+        "effect."
+    )
+    bad = '"""Module."""\n.struct Pt {\n    word x\n}\np := (0x100 as Pt)\nlda.w (p as Pt).x\n'
+    good = '"""Module."""\n.struct Pt {\n    word x\n}\np := (0x100 as Pt)\nlda.w p.x\n'
+
+    def check(self, ctx: LintContext) -> Iterable[Diagnostic]:
+        instances = _collect_typed_instances(ctx)
+        for parent in ctx.flat_nodes:
+            for expr in _expressions_in_node(parent):
+                for cast in _walk_cast_nodes(expr.tokens):
+                    if len(cast.inner) != 1:
+                        continue
+                    inner = cast.inner[0]
+                    if not hasattr(inner, "token"):
+                        continue
+                    name = inner.token.value
+                    bound_type = instances.get(name)
+                    if bound_type is not None and bound_type == cast.type_name:
+                        yield self.diagnose(
+                            ctx,
+                            parent,
+                            f"redundant cast: '{name}' is already bound as '{cast.type_name}'",
+                        )
+
+
+class RepeatedInlineCast(Rule):
+    code = "S004"
+    description = "same cast expression used more than once — prefer `:=`"
+    rationale = (
+        "Repeating `(expr as T)` in several operands is a sign the "
+        "address deserves a typed binding. `p := (expr as T)` lets the "
+        "subsequent code say `p.field` and keeps the address change "
+        "scoped to a single line if it ever moves."
+    )
+    bad = '"""Module."""\n.struct Pt {\n    word x\n    word y\n}\nlda.w (0x100 as Pt).x\nlda.w (0x100 as Pt).y\n'
+    good = '"""Module."""\n.struct Pt {\n    word x\n    word y\n}\np := (0x100 as Pt)\nlda.w p.x\nlda.w p.y\n'
+
+    def check(self, ctx: LintContext) -> Iterable[Diagnostic]:
+        instances = _collect_typed_instances(ctx)
+        # signature → (count, first parent node)
+        seen: dict[tuple[str, str], list[AstNode]] = {}
+        for parent in ctx.flat_nodes:
+            for expr in _expressions_in_node(parent):
+                for cast in _walk_cast_nodes(expr.tokens):
+                    # Skip casts that came from a typed bind itself —
+                    # otherwise the bind line counts against the user.
+                    if (
+                        isinstance(parent, AssignAstNode)
+                        and parent.symbol in instances
+                        and instances[parent.symbol] == cast.type_name
+                    ):
+                        continue
+                    sig = (_inner_canonical(cast.inner), cast.type_name)
+                    seen.setdefault(sig, []).append(parent)
+        for (inner_str, type_name), parents in seen.items():
+            if len(parents) < 2:
+                continue
+            for parent in parents:
+                yield self.diagnose(
+                    ctx,
+                    parent,
+                    f"cast `({inner_str} as {type_name})` repeated {len(parents)}× — prefer typed bind",
+                )
+
+
+# ---------------------------------------------------------------------------
 # Registry + entry points
 # ---------------------------------------------------------------------------
 
@@ -837,6 +996,9 @@ RULES: list[Rule] = [
     LineTooLong(),
     LabelNaming(),
     ConstantNaming(),
+    UnknownStructTypeCast(),
+    RedundantTypedCast(),
+    RepeatedInlineCast(),
 ]
 Rule.registry = {rule.code: rule for rule in RULES}
 

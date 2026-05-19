@@ -105,8 +105,11 @@ references. Sub-symbols (`name.sub`) need their own `.extern`. See
 ### `.struct Name { ... }`
 
 Layout-only declaration; emits no bytes. Field names export as
-`Name.field` byte offsets plus `Name.__size`. Field types: `byte`,
-`word`, `long` (24-bit), `dword` (32-bit).
+`Name.field` byte offsets plus `Name.__size`. Primitive field types:
+`byte`, `word`, `long` (24-bit), `dword` (32-bit). A field type can
+also be the name of another previously declared struct, in which
+case the nested layout flattens into dotted offsets
+(`Outer.pos.x`, `Outer.pos.y`).
 
 ```ca65
 .struct OAM {
@@ -115,7 +118,49 @@ Layout-only declaration; emits no bytes. Field names export as
     byte tile
     byte attr
 }
+
+.struct Inner {
+    word x
+    word y
+}
+.struct Outer {
+    byte tag
+    Inner pos
+    byte flags
+}
+; → Outer.tag = 0, Outer.pos = 1, Outer.pos.x = 1, Outer.pos.y = 3,
+;   Outer.flags = 5, Outer.__size = 6
 ```
+
+#### Typed access: `as` casts and `:=` binds
+
+A `(expr as T)` cast tags an address with a struct type so a postfix
+`.field` resolves through the struct's layout. The two forms share one
+mechanism:
+
+```ca65
+; Inline cast, single use.
+    lda.w (0x2100 as PPU).OAMADDR    ; → lda.w $2102
+
+; Typed bind, reusable across many accesses.
+p := (0x7e0000 as OAM)
+    lda.l p.x                         ; → lda.l $7e0000
+    lda.l p.y                         ; → lda.l $7e0002
+
+; Bare form (no parens) also works for `:=`.
+q := 0x010000 as Pt
+```
+
+`p := (...)` eager-expands one constant per (possibly nested) field
+of `T`, so `p.field` is just a flat symbol after the bind. Nested
+struct fields chain cleanly: `(o as Outer).pos.y` and
+`o.pos.y` both resolve to `base + Outer.pos + Inner.y`.
+
+Lint hooks:
+
+- `S001` — cast targets a struct type the file never declared.
+- `S003` — `(p as T).field` when `p` is already bound as `T`.
+- `S004` — same `(expr as T)` repeated more than once; promote to `:=`.
 
 ## Code
 
