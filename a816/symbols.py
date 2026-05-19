@@ -102,13 +102,22 @@ class Scope:
         return self.labels.items()
 
     def add_symbol(self, symbol: str, value: int | BlockAstNode | str) -> None:
+        """Bind `symbol` to `value`. Silent on idempotent re-bind.
+
+        Multi-pass resolution re-runs `add_symbol` for the same `(name,
+        value)` pair on every pass; warning every time produces thousands
+        of lines of noise on real projects. Only re-binds that actually
+        change the value indicate a real collision worth surfacing.
+        """
         if isinstance(value, BlockAstNode):
-            if symbol in self.code_symbols:
+            existing_code = self.code_symbols.get(symbol)
+            if existing_code is not None and existing_code is not value:
                 logger.warning(f"Symbol already defined ({symbol})")
             self.code_symbols[symbol] = value
         else:
-            if symbol in self.symbols:
-                logger.warning(f"Symbol already defined ({symbol})")
+            existing = self.symbols.get(symbol)
+            if existing is not None and existing != value:
+                logger.warning(f"Symbol already defined ({symbol}): {existing!r} -> {value!r}")
             self.symbols[symbol] = value
 
     def add_external_symbol(self, symbol: str) -> None:
@@ -262,6 +271,11 @@ class Resolver:
         # Typed-bind registry: instance name → struct type name. Lets the
         # linter spot redundant casts and field access on non-typed bindings.
         self.typed_instances: dict[str, str] = {}
+        # Canonical paths of modules already loaded by `.import`. Used to
+        # short-circuit transitive re-imports (file A and file B both import
+        # "inc"; without dedup the third party that imports both re-parses
+        # "inc" twice and trips struct-redef and similar idempotency checks).
+        self.imported_module_paths: set[str] = set()
         self.set_position(pc)
 
     def allocate_pools(self) -> None:

@@ -76,11 +76,7 @@ E_IO_FILE_NOT_FOUND = ErrorCode("E0500", "io", "file not found")
 E_CONFIG_INVALID = ErrorCode("E0501", "config", "invalid project config")
 
 
-_BY_CODE: dict[str, ErrorCode] = {
-    obj.code: obj
-    for obj in globals().values()
-    if isinstance(obj, ErrorCode)
-}
+_BY_CODE: dict[str, ErrorCode] = {obj.code: obj for obj in globals().values() if isinstance(obj, ErrorCode)}
 
 
 def lookup(code: str) -> ErrorCode | None:

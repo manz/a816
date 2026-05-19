@@ -31,9 +31,9 @@ def _levenshtein(a: str, b: str) -> int:
         for j, cb in enumerate(b, start=1):
             cost = 0 if ca == cb else 1
             current[j] = min(
-                current[j - 1] + 1,        # insertion
-                previous[j] + 1,           # deletion
-                previous[j - 1] + cost,    # substitution
+                current[j - 1] + 1,  # insertion
+                previous[j] + 1,  # deletion
+                previous[j - 1] + cost,  # substitution
             )
         previous = current
     return previous[-1]

@@ -911,10 +911,7 @@ def _is_typed_bind_owner(
     """True when `cast` is the very RHS of `parent`'s typed bind — counting that
     line against the user would penalize the `:=` we want them to write.
     """
-    return (
-        isinstance(parent, AssignAstNode)
-        and instances.get(parent.symbol) == cast.type_name
-    )
+    return isinstance(parent, AssignAstNode) and instances.get(parent.symbol) == cast.type_name
 
 
 class UnknownStructTypeCast(Rule):

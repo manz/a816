@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -73,6 +74,8 @@ from a816.parse.tokens import Token, TokenType
 from a816.pool import Pool, PoolRange, Strategy
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
+
+logger = logging.getLogger("a816.codegen")
 
 MacroDefinitions = dict[str, Any]
 GenNodes = list[NodeProtocol]
@@ -188,10 +191,21 @@ def generate_struct(
 ) -> GenNodes:
     """Push a NamedScope, register one offset symbol per (possibly nested)
     field, register the layout for later typed-bind expansion, then export.
+
+    Idempotent: a second `.struct` with the same name + identical field list
+    is treated as a no-op so a header `.include`d twice (or imported via
+    different cascades) doesn't fail. A mismatched redef still raises so
+    real layout bugs surface.
     """
-    if node.name in resolver.struct_layouts:
-        raise NodeError(f"Struct {node.name!r} redefined.", file_info)
     entries, total_size = _layout_struct_fields(node, resolver, file_info)
+    existing = resolver.struct_layouts.get(node.name)
+    if existing is not None:
+        if existing == entries and resolver.struct_sizes.get(node.name) == total_size:
+            return []
+        raise NodeError(
+            f"Struct {node.name!r} redefined with a different field layout.",
+            file_info,
+        )
     resolver.struct_layouts[node.name] = entries
     resolver.struct_sizes[node.name] = total_size
 
@@ -493,13 +507,27 @@ def _import_from_source(
         return None
 
 
+def _canonical(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
 def generate_import(
     node: ImportAstNode,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    """Resolve an .import to ExternNode (object/parse mode) or LinkedModuleNode/inline source (direct)."""
+    """Resolve an .import to ExternNode (object/parse mode) or LinkedModuleNode/inline source (direct).
+
+    Source-inlined imports (direct mode, no `.o` available) are deduped by
+    canonical path so transitive cascades don't re-execute the same module
+    and trip idempotency checks (struct redef, etc). Object-mode imports
+    keep the existing winner/loser mechanism intact — `LinkedModuleNode`
+    already handles duplicates by marking earlier placements as losers.
+    """
     module_name = node.module_name
     direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
     search_paths = _import_search_paths(resolver, file_info)
@@ -512,6 +540,12 @@ def generate_import(
 
     src_path = _resolve_module_path(module_name, ".s", search_paths)
     if src_path:
+        if direct_mode:
+            key = _canonical(src_path)
+            if key in resolver.imported_module_paths:
+                logger.info("`.import %r` deduped — already loaded from %s", module_name, key)
+                return []
+            resolver.imported_module_paths.add(key)
         nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode)
         if nodes is not None:
             return nodes

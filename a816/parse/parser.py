@@ -56,6 +56,7 @@ def _got_label(token: Token) -> str:
         return f"{base} `{token.value}`"
     return base
 
+
 logger = logging.getLogger("a816.parser")
 
 
