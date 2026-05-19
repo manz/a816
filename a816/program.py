@@ -6,6 +6,7 @@ from typing import Any
 
 from a816.context import AssemblyMode
 from a816.cpu.cpu_65c816 import RomType
+from a816.exceptions import A816Error, AssemblyError
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.parse.mzparser import MZParser
 from a816.parse.nodes import (
@@ -492,11 +493,19 @@ class Program:
             object_writer.write_block(state.current_block, 0)
             state.current_block = b""
 
-    def assemble_string_with_emitter(self, input_program: str, filename: str, emitter: Writer) -> str | None:
+    def assemble_string_with_emitter(self, input_program: str, filename: str, emitter: Writer) -> None:
+        """Assemble `input_program` to `emitter`.
+
+        Raises:
+          AssemblyError: parser-level failure (wraps the formatted location
+            string the parser produces).
+          NodeError: codegen-level failure (location-aware; subclass of
+            A816Error so a single `except A816Error` catches both).
+        """
         error, nodes = self.parser.parse(input_program, filename)
 
         if error is not None:
-            return error
+            raise AssemblyError(error)
 
         self._mark_import_winners(nodes)
         self.logger.info("Resolving labels")
@@ -510,12 +519,20 @@ class Program:
         self._program_nodes = list(nodes)
         self.emit(nodes, emitter)
 
-        return None
-
     def assemble_with_emitter(self, asm_file: str, emitter: Writer, prelude: str | None = None) -> int:
+        """CLI-facing wrapper around `assemble_string_with_emitter`.
+
+        Always returns an exit code; never calls `sys.exit`. Embedders that
+        want structured failures should call `assemble_string_with_emitter`
+        directly and catch `A816Error`.
+
+        Returns:
+          0   on success
+          128 on `A816Error` (covers both `AssemblyError` and `NodeError`)
+          -1  on `RuntimeError` (mapping / bus failures bubbling up)
+        """
         previous_mode = self.resolver.context.mode
         try:
-            # Set direct assembly mode so .import includes module code
             self.resolver.context.mode = AssemblyMode.DIRECT
 
             with open(asm_file, encoding="utf-8") as f:
@@ -523,13 +540,10 @@ class Program:
                 if prelude:
                     input_program = prelude + "\n" + input_program
                 try:
-                    error = self.assemble_string_with_emitter(input_program, asm_file, emitter)
-                    if error is not None:
-                        logger.error(error)
-                        exit(128)
-                except NodeError as e:
-                    logger.exception(str(e))
-                    exit(128)
+                    self.assemble_string_with_emitter(input_program, asm_file, emitter)
+                except A816Error as e:
+                    logger.error(str(e))
+                    return 128
 
         except RuntimeError as e:
             self.logger.error(e)

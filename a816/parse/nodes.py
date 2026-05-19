@@ -9,7 +9,7 @@ from a816.cpu.cpu_65c816 import (
 )
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
-from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
+from a816.exceptions import A816Error, ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.object_file import Region
 from a816.parse.ast.expression import eval_expression, eval_expression_str
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
@@ -591,7 +591,7 @@ class UnknownOpcodeError(Exception):
     pass
 
 
-class NodeError(Exception):
+class NodeError(A816Error):
     def __init__(self, message: str, file_info: Token) -> None:
         super().__init__(message)
         self.file_info = file_info

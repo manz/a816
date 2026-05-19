@@ -14,8 +14,7 @@ from a816.program import Program
 def _resolve(source: str) -> Program:
     """Run a program through resolve so resolver scopes are populated."""
     program = Program()
-    error = program.assemble_string_with_emitter(source, "memory.s", _NoopEmitter())
-    assert error is None, error
+    program.assemble_string_with_emitter(source, "memory.s", _NoopEmitter())
     return program
 
 
