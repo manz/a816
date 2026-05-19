@@ -16,6 +16,7 @@ nav = [
     { "Modules" = "modules.md" },
     { "Freespace pools" = "freespace-pools.md" },
     { "Fluff (lint + format)" = "fluff.md" },
+    { "Error codes" = "errors.md" },
     { "LSP" = "lsp.md" },
     { "Editor setup" = "editor-setup.md" },
     { "Object file format (.o)" = "object-file-format.md" },
