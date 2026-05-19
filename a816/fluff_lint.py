@@ -883,6 +883,40 @@ def _inner_canonical(tokens: list[ExprNode]) -> str:
     return " ".join(tok.to_canonical() for tok in tokens)
 
 
+def _iter_casts(
+    ctx: LintContext,
+) -> Iterable[tuple[AstNode, CastAccessExprNode | CastValueExprNode]]:
+    """Yield `(parent_node, cast)` pairs for every cast in the program."""
+    for parent in ctx.flat_nodes:
+        for expr in _expressions_in_node(parent):
+            for cast in _walk_cast_nodes(expr.tokens):
+                yield parent, cast
+
+
+def _single_identifier_name(cast: CastAccessExprNode | CastValueExprNode) -> str | None:
+    """Return the bare identifier `cast` wraps, or None when it wraps a richer expression."""
+    if len(cast.inner) != 1:
+        return None
+    inner = cast.inner[0]
+    if not hasattr(inner, "token"):
+        return None
+    return inner.token.value
+
+
+def _is_typed_bind_owner(
+    parent: AstNode,
+    cast: CastAccessExprNode | CastValueExprNode,
+    instances: dict[str, str],
+) -> bool:
+    """True when `cast` is the very RHS of `parent`'s typed bind — counting that
+    line against the user would penalize the `:=` we want them to write.
+    """
+    return (
+        isinstance(parent, AssignAstNode)
+        and instances.get(parent.symbol) == cast.type_name
+    )
+
+
 class UnknownStructTypeCast(Rule):
     code = "S001"
     description = "cast references an undeclared struct type"
@@ -897,15 +931,13 @@ class UnknownStructTypeCast(Rule):
 
     def check(self, ctx: LintContext) -> Iterable[Diagnostic]:
         known = _collect_known_struct_types(ctx)
-        for parent in ctx.flat_nodes:
-            for expr in _expressions_in_node(parent):
-                for cast in _walk_cast_nodes(expr.tokens):
-                    if cast.type_name not in known:
-                        yield self.diagnose(
-                            ctx,
-                            parent,
-                            f"cast targets unknown struct type '{cast.type_name}'",
-                        )
+        for parent, cast in _iter_casts(ctx):
+            if cast.type_name not in known:
+                yield self.diagnose(
+                    ctx,
+                    parent,
+                    f"cast targets unknown struct type '{cast.type_name}'",
+                )
 
 
 class RedundantTypedCast(Rule):
@@ -922,22 +954,16 @@ class RedundantTypedCast(Rule):
 
     def check(self, ctx: LintContext) -> Iterable[Diagnostic]:
         instances = _collect_typed_instances(ctx)
-        for parent in ctx.flat_nodes:
-            for expr in _expressions_in_node(parent):
-                for cast in _walk_cast_nodes(expr.tokens):
-                    if len(cast.inner) != 1:
-                        continue
-                    inner = cast.inner[0]
-                    if not hasattr(inner, "token"):
-                        continue
-                    name = inner.token.value
-                    bound_type = instances.get(name)
-                    if bound_type is not None and bound_type == cast.type_name:
-                        yield self.diagnose(
-                            ctx,
-                            parent,
-                            f"redundant cast: '{name}' is already bound as '{cast.type_name}'",
-                        )
+        for parent, cast in _iter_casts(ctx):
+            name = _single_identifier_name(cast)
+            if name is None:
+                continue
+            if instances.get(name) == cast.type_name:
+                yield self.diagnose(
+                    ctx,
+                    parent,
+                    f"redundant cast: '{name}' is already bound as '{cast.type_name}'",
+                )
 
 
 class RepeatedInlineCast(Rule):
@@ -954,30 +980,18 @@ class RepeatedInlineCast(Rule):
 
     def check(self, ctx: LintContext) -> Iterable[Diagnostic]:
         instances = _collect_typed_instances(ctx)
-        # signature → (count, first parent node)
         seen: dict[tuple[str, str], list[AstNode]] = {}
-        for parent in ctx.flat_nodes:
-            for expr in _expressions_in_node(parent):
-                for cast in _walk_cast_nodes(expr.tokens):
-                    # Skip casts that came from a typed bind itself —
-                    # otherwise the bind line counts against the user.
-                    if (
-                        isinstance(parent, AssignAstNode)
-                        and parent.symbol in instances
-                        and instances[parent.symbol] == cast.type_name
-                    ):
-                        continue
-                    sig = (_inner_canonical(cast.inner), cast.type_name)
-                    seen.setdefault(sig, []).append(parent)
+        for parent, cast in _iter_casts(ctx):
+            if _is_typed_bind_owner(parent, cast, instances):
+                continue
+            sig = (_inner_canonical(cast.inner), cast.type_name)
+            seen.setdefault(sig, []).append(parent)
         for (inner_str, type_name), parents in seen.items():
             if len(parents) < 2:
                 continue
+            message = f"cast `({inner_str} as {type_name})` repeated {len(parents)}× — prefer typed bind"
             for parent in parents:
-                yield self.diagnose(
-                    ctx,
-                    parent,
-                    f"cast `({inner_str} as {type_name})` repeated {len(parents)}× — prefer typed bind",
-                )
+                yield self.diagnose(ctx, parent, message)
 
 
 # ---------------------------------------------------------------------------
