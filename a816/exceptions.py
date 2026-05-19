@@ -4,6 +4,23 @@ class A816Error(Exception):
     pass
 
 
+class AssemblyError(A816Error):
+    """Raised by `Program.assemble_string_with_emitter` when parsing fails.
+
+    Carries a pre-formatted message (already including source location when
+    the parser attached one). Codegen failures keep raising `NodeError`
+    directly; both share `A816Error` as a base so embedders can catch the
+    entire family with one `except A816Error`.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
+
+
 class SymbolNotDefined(A816Error):
     """Raised when a symbol is not found in the current scope."""
 

@@ -89,7 +89,7 @@ class TestPoolDirective:
             filename="t.s",
         )
         assert result.parse_error is not None
-        assert "unknown pool attribute" in result.parse_error.message
+        assert "unknown `.pool` attribute" in result.parse_error.message
 
     def test_to_canonical_round_trip(self) -> None:
         node = _first_of(
@@ -124,7 +124,7 @@ class TestAllocDirective:
             filename="t.s",
         )
         assert result.parse_error is not None
-        assert "'in'" in result.parse_error.message
+        assert "`in`" in result.parse_error.message
 
 
 class TestRelocateDirective:
@@ -153,7 +153,7 @@ class TestRelocateDirective:
             filename="t.s",
         )
         assert result.parse_error is not None
-        assert "'into'" in result.parse_error.message
+        assert "`into`" in result.parse_error.message
 
     def test_to_canonical_includes_body(self) -> None:
         node = _first_of(

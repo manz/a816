@@ -3,6 +3,11 @@ from a816.cpu.cpu_65c816 import (
     get_opcodes_with_addressing,
     snes_opcode_table,
 )
+from a816.error_codes import (
+    E_SCANNER_INVALID_INPUT,
+    E_SCANNER_UNKNOWN_KEYWORD,
+    E_SCANNER_UNTERMINATED_STRING,
+)
 from a816.parse.errors import ScannerException
 from a816.parse.scanner import Scanner
 from a816.parse.tokens import EOF, TokenType
@@ -39,7 +44,12 @@ def _lex_string(s: "Scanner", quote_char: str) -> None:
     c = s.next()
     while c != quote_char:
         if c == "\n" or c is None:
-            raise ScannerException("Unterminated String", start_position)
+            raise ScannerException(
+                "unterminated string literal",
+                start_position,
+                code=str(E_SCANNER_UNTERMINATED_STRING),
+                hint=f"add a closing `{quote_char}` to terminate the string",
+            )
 
         if c == "\\" and s.peek() == quote_char:
             s.next()
@@ -66,7 +76,12 @@ def lex_docstring(s: "Scanner", quote_char: str) -> None:
     while True:
         c = s.next()
         if c is None:
-            raise ScannerException("Unterminated docstring", start_position)
+            raise ScannerException(
+                "unterminated docstring",
+                start_position,
+                code=str(E_SCANNER_UNTERMINATED_STRING),
+                hint=f"docstrings end with three `{quote_char}` characters",
+            )
         if c == "\\":
             # Skip escaped characters so they don't terminate the string early
             s.next()
@@ -270,7 +285,12 @@ def lex_keyword(s: "Scanner") -> None:
     if s.current_token_text() in KEYWORDS:
         s.emit(TokenType.KEYWORD)
     else:
-        raise ScannerException(f"Unknown Keyword {s.current_token_text()}", s.get_position())
+        raise ScannerException(
+            f"unknown directive `.{s.current_token_text()}`",
+            s.get_position(),
+            code=str(E_SCANNER_UNKNOWN_KEYWORD),
+            hint="see https://a816.ringum.net/directives/ for the list of supported `.` directives",
+        )
 
 
 def lex_number(s: Scanner) -> None:
@@ -459,4 +479,8 @@ def lex_initial(s: Scanner) -> None:
         if handler(s):
             return
     if s.next() is not None:
-        raise ScannerException(f"Invalid Input {s.input[s.start :]}", s.get_position())
+        raise ScannerException(
+            f"invalid character `{s.input[s.start]}`",
+            s.get_position(),
+            code=str(E_SCANNER_INVALID_INPUT),
+        )

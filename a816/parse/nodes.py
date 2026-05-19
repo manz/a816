@@ -9,7 +9,9 @@ from a816.cpu.cpu_65c816 import (
 )
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
-from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
+from a816.diagnostics.suggest import did_you_mean_hint as _did_you_mean_hint
+from a816.error_codes import E_SYMBOL_NOT_DEFINED as _E_SYMBOL_NOT_DEFINED
+from a816.exceptions import A816Error, ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.object_file import Region
 from a816.parse.ast.expression import eval_expression, eval_expression_str
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
@@ -95,7 +97,12 @@ class ExpressionNode(ValueNodeProtocol):
                 return 0
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
         except SymbolNotDefined as e:
-            raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
+            raise NodeError(
+                f"`{e}` is not defined in the current scope",
+                self.file_info,
+                code=str(_E_SYMBOL_NOT_DEFINED),
+                hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
+            ) from e
 
     def get_value_string_len(self) -> int:
         value = self.get_value()
@@ -591,17 +598,26 @@ class UnknownOpcodeError(Exception):
     pass
 
 
-class NodeError(Exception):
-    def __init__(self, message: str, file_info: Token) -> None:
+class NodeError(A816Error):
+    def __init__(
+        self,
+        message: str,
+        file_info: Token,
+        *,
+        code: str | None = None,
+        hint: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.file_info = file_info
         self.message = message
+        self.code = code
+        self.hint = hint
 
     def __str__(self) -> str:
         return self.format()
 
     def format(self) -> str:
-        """Format the error with source location and visual indicator."""
+        """Format the error with source location, visual indicator, code, and hint."""
         # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import SourceLocation, format_error
 
@@ -612,15 +628,25 @@ class NodeError(Exception):
                 source_line = pos.get_line()
             except (IndexError, AttributeError):
                 source_line = ""
+            file = getattr(pos, "file", None)
+            lines = getattr(file, "lines", None)
+            context_before: list[str] | None = None
+            context_after: list[str] | None = None
+            if lines:
+                line_idx = pos.line
+                context_before = [lines[i] for i in range(max(0, line_idx - 1), line_idx)] or None
+                context_after = [lines[i] for i in range(line_idx + 1, min(len(lines), line_idx + 2))] or None
             location = SourceLocation(
                 filename=pos.file.filename,
                 line=pos.line,
                 column=pos.column,
                 source_line=source_line,
                 length=len(self.file_info.value) if self.file_info.value else 1,
+                context_before=context_before,
+                context_after=context_after,
             )
 
-        return format_error(self.message, location)
+        return format_error(self.message, location, code=self.code, hint=self.hint)
 
 
 class OpcodeNode(NodeProtocol):
@@ -675,8 +701,10 @@ class OpcodeNode(NodeProtocol):
             ) from e
         except SymbolNotDefined as e:
             raise NodeError(
-                f"{e} ({self.value_node}) is not defined in the current scope.",
+                f"`{e}` is not defined in the current scope",
                 self.file_info,
+                code=str(_E_SYMBOL_NOT_DEFINED),
+                hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
             ) from e
 
     def pc_after(self, current_pc: Address) -> Address:

@@ -14,8 +14,7 @@ from a816.program import Program
 def _resolve(source: str) -> Program:
     """Run a program through resolve so resolver scopes are populated."""
     program = Program()
-    error = program.assemble_string_with_emitter(source, "memory.s", _NoopEmitter())
-    assert error is None, error
+    program.assemble_string_with_emitter(source, "memory.s", _NoopEmitter())
     return program
 
 
@@ -373,4 +372,4 @@ def test_field_access_without_cast_rejected() -> None:
     """
     error, _ = program.parser.parse(src, "memory.s")
     assert error is not None
-    assert "Field access requires a typed cast" in str(error)
+    assert "field access requires a typed cast" in str(error)

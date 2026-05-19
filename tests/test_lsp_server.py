@@ -109,7 +109,7 @@ subroutine:
 
         # Error should be on line 1 (index 0), not line 2
         self.assertEqual(diag.range.start.line, 0, "Unterminated string error should be on line 1")
-        self.assertIn("Unterminated String", diag.message)
+        self.assertIn("unterminated string", diag.message)
 
     def test_document_update_content(self) -> None:
         """Test document content update"""

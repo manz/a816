@@ -73,7 +73,7 @@ class ParseTest(unittest.TestCase):
 
         # Error should contain key elements
         assert result.error is not None
-        self.assertIn("Unterminated String", result.error)
+        self.assertIn("unterminated string", result.error)
         self.assertIn("memory.s", result.error)
         self.assertIn("'coucou", result.error)
 
@@ -86,7 +86,7 @@ class ParseTest(unittest.TestCase):
 
         # Error should be on line 1, not line 2
         assert result.error is not None
-        self.assertIn("Unterminated String", result.error)
+        self.assertIn("unterminated string", result.error)
         self.assertIn("test.s:1:", result.error, "error should be on line 1")
         self.assertIn(".incbin 'assets/dakuten.bin", result.error)
 
