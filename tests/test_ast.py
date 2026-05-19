@@ -199,7 +199,7 @@ class TestParse(TestCase):
         # Error should contain key elements
         assert result.error is not None
         self.assertIn("memory.s", result.error)
-        self.assertIn("EOF", result.error)
+        self.assertIn("end of input", result.error)
 
     def test_recursive_macros(self) -> None:
         program = """

@@ -26,6 +26,10 @@ class Scanner:
 
     def scan(self, filename: str, input_: str) -> list[Token]:
         self.file = File(filename)
+        # Eagerly populate file lines so error-rendering can pull context
+        # for positions beyond where the scanner halts (otherwise only the
+        # lines already consumed up to the failure point would be available).
+        self.file.lines = input_.split("\n")
         self.input = input_
         self.state = self.initial_state
         self.tokens = []
@@ -45,8 +49,9 @@ class Scanner:
         return self.tokens
 
     def _handle_line(self) -> None:
+        # `scan()` now pre-splits the input into `file.lines`, so the only
+        # work left is bookkeeping for the rolling line-start cursor.
         if self.line_offset <= self.pos:
-            self.file.append(self.input[self.line_offset : self.pos])
             self.line_offset = self.pos + 1
             self.current_line += 1
 

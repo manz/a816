@@ -135,6 +135,7 @@ class A816Document:
         self.diagnostics: list[Diagnostic] = []
         self.ast_nodes: list[AstNode] = []
         self.parse_error: ParseError | None = None
+        self.parse_errors: list[ParseError] = []
         self.analyze()
 
     def update_content(self, content: str) -> None:
@@ -168,6 +169,9 @@ class A816Document:
             parser_result = MZParser.parse_as_ast(self.content, self.uri, include_paths=self.include_paths)
             self.ast_nodes = parser_result.nodes
             self.parse_error = parser_result.parse_error
+            self.parse_errors = list(parser_result.parse_errors or [])
+            if self.parse_error is not None and not self.parse_errors:
+                self.parse_errors = [self.parse_error]
 
             # Extract symbols and labels from AST
             self._extract_symbols_from_ast()
@@ -512,47 +516,44 @@ class A816Document:
                 )
             )
 
-    def _add_parse_error_diagnostic(self) -> None:
-        """Convert parse error to LSP diagnostic"""
-        if not self.parse_error:
-            return
-
-        error = self.parse_error
-        error_line = error.line
-        error_col = error.column
-        error_length = error.length
-
-        # Ensure we don't go beyond document bounds
+    def _clamp_error_span(self, line: int, col: int, length: int) -> tuple[int, int, int]:
+        """Clamp a (line, col, length) tuple inside the current document."""
         if not self.lines:
-            error_line = 0
-            error_col = 0
-        else:
-            if error_line >= len(self.lines):
-                error_line = len(self.lines) - 1
-            if error_line < 0:
-                error_line = 0
-            if error_col < 0:
-                error_col = 0
+            return 0, 0, length
+        if line >= len(self.lines):
+            line = len(self.lines) - 1
+        if line < 0:
+            line = 0
+        if col < 0:
+            col = 0
+        line_length = len(self.lines[line])
+        if col >= line_length:
+            col = max(0, line_length - 1)
+        if col + length > line_length:
+            length = max(1, line_length - col)
+        return line, col, length
 
-            line_length = len(self.lines[error_line]) if self.lines else 0
-            if error_col >= line_length:
-                error_col = max(0, line_length - 1)
-
-            # Ensure error_length doesn't exceed line bounds
-            if error_col + error_length > line_length:
-                error_length = max(1, line_length - error_col)
-
-        # Create diagnostic with proper range
-        self.diagnostics.append(
-            Diagnostic(
-                range=Range(
-                    start=Position(line=error_line, character=error_col),
-                    end=Position(line=error_line, character=error_col + error_length),
-                ),
-                message=error.message,
-                severity=DiagnosticSeverity.Error,
-            )
+    def _build_diagnostic(self, error: ParseError) -> Diagnostic:
+        line, col, length = self._clamp_error_span(error.line, error.column, error.length)
+        message = error.message
+        if error.hint:
+            message = f"{message}\nhint: {error.hint}"
+        return Diagnostic(
+            range=Range(
+                start=Position(line=line, character=col),
+                end=Position(line=line, character=col + length),
+            ),
+            message=message,
+            severity=DiagnosticSeverity.Error,
+            code=error.code,
+            source="a816",
         )
+
+    def _add_parse_error_diagnostic(self) -> None:
+        """Convert collected parse error(s) to LSP diagnostics."""
+        for err in self.parse_errors or ([self.parse_error] if self.parse_error else []):
+            if err is not None:
+                self.diagnostics.append(self._build_diagnostic(err))
 
 
 class WorkspaceIndex:

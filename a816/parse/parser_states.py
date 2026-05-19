@@ -5,6 +5,16 @@ from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
 from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
+from a816.error_codes import (
+    E_PARSER_FIELD_ACCESS_NEEDS_CAST,
+    E_PARSER_INVALID_EXPRESSION,
+    E_PARSER_POOL_NO_RANGES,
+    E_PARSER_STRUCT_DUPLICATE_FIELD,
+    E_PARSER_TYPED_BIND_NEEDS_ASSIGN,
+    E_PARSER_UNEXPECTED_TOKEN,
+    E_PARSER_UNKNOWN_DIRECTIVE_ATTR,
+    E_PARSER_UNKNOWN_POOL_STRATEGY,
+)
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AsciiAstNode,
@@ -57,6 +67,8 @@ from a816.parse.errors import ParserSyntaxError
 from a816.parse.parser import (
     Parser,
     StateFunc,
+    _got_label,
+    _token_label,
     accept_token,
     accept_tokens,
     expect_token,
@@ -208,7 +220,12 @@ def parse_map(p: Parser) -> MapAstNode:
             else:
                 args[map_key] = ast.literal_eval(number1.value)
         else:
-            raise ParserSyntaxError(f"Unknown attribute for map directive. {identifier.value}", identifier)
+            raise ParserSyntaxError(
+                f"unknown attribute for `.map` directive: `{identifier.value}`",
+                identifier,
+                code=str(E_PARSER_UNKNOWN_DIRECTIVE_ATTR),
+                hint="valid attributes: identifier, writable, bank_range, addr_range, mask, mirror_bank_range",
+            )
 
     return MapAstNode(args, first_identifier)
 
@@ -274,9 +291,11 @@ def parse_struct(p: Parser) -> StructAstNode:
         expect_token(name_token, TokenType.IDENTIFIER)
         if name_token.value in seen:
             raise ParserSyntaxError(
-                f"Duplicate struct field {name_token.value!r}",
+                f"Duplicate struct field `{name_token.value}`",
                 name_token,
                 TokenType.IDENTIFIER,
+                code=str(E_PARSER_STRUCT_DUPLICATE_FIELD),
+                hint="each field name must be unique within a `.struct` block",
             )
         seen.add(name_token.value)
         fields.append((name_token.value, type_token.value))
@@ -409,8 +428,10 @@ def _parse_pool_strategy(p: Parser) -> str:
     expect_token(strat_token, TokenType.IDENTIFIER)
     if strat_token.value not in _POOL_STRATEGIES:
         raise ParserSyntaxError(
-            f"unknown pool strategy {strat_token.value!r}; expected one of {sorted(_POOL_STRATEGIES)}",
+            f"unknown pool strategy `{strat_token.value}`",
             strat_token,
+            code=str(E_PARSER_UNKNOWN_POOL_STRATEGY),
+            hint=f"expected one of: {', '.join(sorted(_POOL_STRATEGIES))}",
         )
     return strat_token.value
 
@@ -434,8 +455,10 @@ def _parse_pool_attr(p: Parser, key_token: Token, attrs: _PoolAttrs) -> None:
         attrs.strategy = _parse_pool_strategy(p)
     else:
         raise ParserSyntaxError(
-            f"unknown pool attribute {key!r}; expected range, fill, strategy",
+            f"unknown `.pool` attribute `{key}`",
             key_token,
+            code=str(E_PARSER_UNKNOWN_DIRECTIVE_ATTR),
+            hint="expected one of: range, fill, strategy",
         )
 
 
@@ -461,7 +484,12 @@ def parse_pool(p: Parser) -> PoolAstNode:
 
     expect_token(p.next(), TokenType.RBRACE)
     if not attrs.ranges:
-        raise ParserSyntaxError(f"pool {name_token.value!r} declares no ranges", keyword)
+        raise ParserSyntaxError(
+            f"pool `{name_token.value}` declares no ranges",
+            keyword,
+            code=str(E_PARSER_POOL_NO_RANGES),
+            hint="add at least one `range LO HI` line so the allocator has space to work with",
+        )
     return PoolAstNode(
         name_token.value,
         attrs.ranges,
@@ -475,7 +503,11 @@ def _expect_contextual_keyword(p: Parser, expected: str) -> Token:
     token = p.next()
     expect_token(token, TokenType.IDENTIFIER)
     if token.value != expected:
-        raise ParserSyntaxError(f"expected {expected!r}, got {token.value!r}", token)
+        raise ParserSyntaxError(
+            f"expected `{expected}`, found `{token.value}`",
+            token,
+            code=str(E_PARSER_UNEXPECTED_TOKEN),
+        )
     return token
 
 
@@ -562,7 +594,12 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
     keyword = p.next()
     handler = _KEYWORD_HANDLERS.get(keyword.value)
     if handler is None:
-        raise ParserSyntaxError(f"Unexpected token {keyword}", keyword)
+        raise ParserSyntaxError(
+            f"unknown directive `.{keyword.value}`",
+            keyword,
+            code=str(E_PARSER_UNEXPECTED_TOKEN),
+            hint="see https://a816.ringum.net/directives/ for the list of supported `.` directives",
+        )
     return cast(KeywordAstNode, handler(p, keyword))
 
 
@@ -653,8 +690,10 @@ def _parse_lparen_expression(p: Parser, lparen: Token) -> list[ExprNode]:
         return [CastValueExprNode(lparen, inner, type_name)]
     if field_path:
         raise ParserSyntaxError(
-            "Field access requires a typed cast: `(expr as Type).field`.",
+            "field access requires a typed cast",
             lparen,
+            code=str(E_PARSER_FIELD_ACCESS_NEEDS_CAST),
+            hint="use `(expr as Type).field` so the resolver knows which struct layout to apply",
         )
     # Plain parenthesised expression — restore the wrapping tokens for shunting yard.
     rparen = Token(TokenType.RPAREN, ")", lparen.position)
@@ -674,7 +713,12 @@ def _parse_expression(p: Parser) -> list[ExprNode]:
         tokens.append(UnaryOp(current_token))
         tokens += _parse_expression(p)
     else:
-        raise ParserSyntaxError("Invalid expression", token=current_token)
+        raise ParserSyntaxError(
+            f"invalid expression at {_token_label(current_token.type)}",
+            current_token,
+            code=str(E_PARSER_INVALID_EXPRESSION),
+            hint="expressions accept numbers, identifiers, `(...)`, unary `-`/`~`, and binary operators",
+        )
 
     if tokens:
         operator = p.current()
@@ -709,8 +753,10 @@ def parse_symbol_affectation(
     if as_token.type == TokenType.IDENTIFIER and as_token.value == "as":
         if operator.type != TokenType.ASSIGN:
             raise ParserSyntaxError(
-                "Typed-bind cast `as T` requires `:=`, not `=`.",
+                "typed-cast bind requires `:=`, not `=`",
                 as_token,
+                code=str(E_PARSER_TYPED_BIND_NEEDS_ASSIGN),
+                hint="use `name := expr as T` so the binding eager-expands per-field instance symbols",
             )
         p.next()
         type_token = p.next()
@@ -758,7 +804,13 @@ def parse_opcode(p: Parser) -> OpcodeAstNode:
 def _parse_immediate_operand(p: Parser) -> tuple[AddressingMode, None, ExpressionAstNode]:
     p.next()
     if accept_token(p.current(), TokenType.EOF):
-        raise ParserSyntaxError("Unexpected end of input.", p.current(), None)
+        raise ParserSyntaxError(
+            "unexpected end of input after `#` immediate prefix",
+            p.current(),
+            None,
+            code=str(E_PARSER_INVALID_EXPRESSION),
+            hint="`#` introduces an immediate operand — supply a value, e.g. `lda #0x42`",
+        )
     return AddressingMode.immediate, None, parse_expression(p)
 
 
@@ -861,14 +913,68 @@ def parse_decl(
     elif accept_token(current_token, TokenType.AT_EQ):
         return parse_code_relocation_keyword(p)
     else:
-        raise ParserSyntaxError(f"Unexpected Keyword {current_token}", current_token, None)
+        raise ParserSyntaxError(
+            f"unexpected {_got_label(current_token)} at top level",
+            current_token,
+            None,
+            code=str(E_PARSER_UNEXPECTED_TOKEN),
+            hint="declarations begin with an opcode, label, `.directive`, identifier, or `{...}` block",
+        )
+
+
+_MAX_PARSE_ERRORS = 20
+
+# Tokens that mark a fresh top-level statement; the recovery walker fast-
+# forwards to one of these after a syntax error so a single typo doesn't
+# cascade into dozens of follow-up parse failures.
+_TOP_LEVEL_SYNC_TOKENS = (
+    TokenType.LABEL,
+    TokenType.OPCODE,
+    TokenType.OPCODE_NAKED,
+    TokenType.KEYWORD,
+    TokenType.STAR_EQ,
+    TokenType.AT_EQ,
+    TokenType.DOUBLE_LBRACE,
+)
+
+
+def _recover_to_next_statement(p: Parser) -> None:
+    """Skip ahead to the next plausible statement start after a parse error."""
+    depth = 0
+    while p.current().type != TokenType.EOF:
+        current = p.current()
+        if current.type == TokenType.LBRACE:
+            depth += 1
+            p.next()
+            continue
+        if current.type == TokenType.RBRACE:
+            if depth == 0:
+                return  # let the enclosing block consume it
+            depth -= 1
+            p.next()
+            continue
+        if depth == 0 and current.type in _TOP_LEVEL_SYNC_TOKENS:
+            return
+        p.next()
 
 
 def parse_initial(p: Parser) -> list[AstNode]:
     statements: list[AstNode] = []
     while p.current().type != TokenType.EOF:
-        statement = parse_decl(p)
+        try:
+            statement = parse_decl(p)
+        except ParserSyntaxError as exc:
+            p.errors.append(exc)
+            if len(p.errors) >= _MAX_PARSE_ERRORS:
+                raise
+            _recover_to_next_statement(p)
+            continue
         if statement:
             statements.append(statement)
 
+    if p.errors:
+        # Re-raise the first error so existing single-error callers still
+        # see something. mzparser unpacks the full list off `p.errors` for
+        # multi-diagnostic rendering.
+        raise p.errors[0]
     return statements

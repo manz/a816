@@ -372,4 +372,4 @@ def test_field_access_without_cast_rejected() -> None:
     """
     error, _ = program.parser.parse(src, "memory.s")
     assert error is not None
-    assert "Field access requires a typed cast" in str(error)
+    assert "field access requires a typed cast" in str(error)

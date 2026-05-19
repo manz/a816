@@ -77,16 +77,62 @@ def _magenta(text: str) -> str:
 
 @dataclass
 class SourceLocation:
-    """Represents a location in source code."""
+    """Represents a location in source code.
+
+    `context_before` / `context_after` carry up to N source lines for
+    context-aware error rendering. Both default to empty so existing
+    callers keep working; populate when you have a Position with a
+    `file.lines` handle.
+    """
 
     filename: str
     line: int
     column: int
     source_line: str
     length: int = 1
+    context_before: list[str] | None = None
+    context_after: list[str] | None = None
 
     def __str__(self) -> str:
         return f"{self.filename}:{self.line + 1}:{self.column + 1}"
+
+
+def _gutter(n: int, width: int) -> str:
+    """Right-align line number `n` in a field of `width` chars, colored cyan."""
+    return _cyan(str(n).rjust(width))
+
+
+def _empty_gutter(width: int) -> str:
+    return " " * width
+
+
+def _render_source_block(location: SourceLocation, gutter_width: int) -> list[str]:
+    """Render the `| source` block with context lines and a caret pointer."""
+    out: list[str] = []
+    out.append(f"{_empty_gutter(gutter_width)} {_cyan('|')}")
+
+    main_line = location.line + 1
+    for offset, ctx in enumerate(location.context_before or [], start=1):
+        ln = main_line - len(location.context_before or []) + offset - 1
+        out.append(f"{_gutter(ln, gutter_width)} {_cyan('|')} {ctx.rstrip()}")
+
+    source = location.source_line.rstrip() if location.source_line else ""
+    out.append(f"{_gutter(main_line, gutter_width)} {_cyan('|')} {source}")
+
+    caret_padding = " " * location.column
+    caret = "^" * max(1, location.length)
+    out.append(f"{_empty_gutter(gutter_width)} {_cyan('|')} {caret_padding}{_bold_red(caret)}")
+
+    for offset, ctx in enumerate(location.context_after or [], start=1):
+        ln = main_line + offset
+        out.append(f"{_gutter(ln, gutter_width)} {_cyan('|')} {ctx.rstrip()}")
+
+    return out
+
+
+def _max_line_number(location: SourceLocation) -> int:
+    after_count = len(location.context_after or [])
+    return location.line + 1 + after_count
 
 
 def format_error(
@@ -95,6 +141,7 @@ def format_error(
     error_type: str = "error",
     hint: str | None = None,
     note: str | None = None,
+    code: str | None = None,
 ) -> str:
     """Format an error message with source location and visual indicators.
 
@@ -104,13 +151,13 @@ def format_error(
         error_type: Type of error (e.g., "error", "warning", "note")
         hint: Optional hint for fixing the error
         note: Optional additional note
+        code: Stable error code (e.g. "E0042"). Renders as `error[E0042]: ...`.
 
     Returns:
-        Formatted error string with colors and visual indicators
+        Formatted error string with colors and visual indicators.
     """
     lines: list[str] = []
 
-    # Error type and message header
     if error_type == "error":
         type_str = _bold_red("error")
     elif error_type == "warning":
@@ -118,45 +165,26 @@ def format_error(
     else:
         type_str = _bold(error_type)
 
+    code_str = f"[{code}]" if code else ""
+    if code_str:
+        type_str = f"{type_str}{_bold_red(code_str)}"
     lines.append(f"{type_str}{_bold(':')}{_bold(' ' + message)}")
 
-    # Source location with visual indicator
     if location is not None:
-        # Location header
         location_str = f"{location.filename}:{location.line + 1}:{location.column + 1}"
-        lines.append(f"  {_cyan('-->')} {location_str}")
+        gutter_width = len(str(_max_line_number(location)))
 
-        # Line number gutter width
-        line_num = str(location.line + 1)
-        gutter_width = len(line_num) + 1
+        lines.append(f"{_empty_gutter(gutter_width)} {_cyan('-->')} {location_str}")
+        lines.extend(_render_source_block(location, gutter_width))
 
-        # Empty gutter line
-        lines.append(f"{' ' * gutter_width}{_cyan('|')}")
-
-        # Source line with line number
-        source = location.source_line.rstrip() if location.source_line else ""
-        lines.append(f"{_cyan(line_num)} {_cyan('|')} {source}")
-
-        # Caret indicator line
-        caret_padding = " " * location.column
-        caret = "^" * max(1, location.length)
-        lines.append(f"{' ' * gutter_width}{_cyan('|')} {caret_padding}{_bold_red(caret)}")
-
-    # Add hint if provided
-    if hint:
-        if location:
-            gutter_width = len(str(location.line + 1)) + 1
-            lines.append(f"{' ' * gutter_width}{_cyan('|')}")
-            lines.append(f"{' ' * gutter_width}{_cyan('=')} {_cyan('hint:')} {hint}")
-        else:
+        if hint:
+            lines.append(f"{_empty_gutter(gutter_width)} {_cyan('=')} {_cyan('hint:')} {hint}")
+        if note:
+            lines.append(f"{_empty_gutter(gutter_width)} {_cyan('=')} {_cyan('note:')} {note}")
+    else:
+        if hint:
             lines.append(f"  {_cyan('hint:')} {hint}")
-
-    # Add note if provided
-    if note:
-        if location:
-            gutter_width = len(str(location.line + 1)) + 1
-            lines.append(f"{' ' * gutter_width}{_cyan('=')} {_cyan('note:')} {note}")
-        else:
+        if note:
             lines.append(f"  {_cyan('note:')} {note}")
 
     return "\n".join(lines)

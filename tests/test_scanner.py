@@ -206,4 +206,4 @@ class ScannerTest(TestCase):
         scanner = Scanner(lex_initial)
         with self.assertRaises(ScannerException) as ctx:
             scanner.scan("test.s", "'unterminated")
-        self.assertIn("Unterminated", str(ctx.exception))
+        self.assertIn("unterminated", str(ctx.exception))

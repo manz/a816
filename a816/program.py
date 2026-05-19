@@ -6,7 +6,7 @@ from typing import Any
 
 from a816.context import AssemblyMode
 from a816.cpu.cpu_65c816 import RomType
-from a816.exceptions import A816Error, AssemblyError
+from a816.exceptions import AssemblyError
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.parse.mzparser import MZParser
 from a816.parse.nodes import (
@@ -541,8 +541,16 @@ class Program:
                     input_program = prelude + "\n" + input_program
                 try:
                     self.assemble_string_with_emitter(input_program, asm_file, emitter)
-                except A816Error as e:
+                except AssemblyError as e:
+                    # Parser failure: the message already carries source
+                    # location. A Python traceback would just be noise for
+                    # the CLI user.
                     logger.error(str(e))
+                    return 128
+                except NodeError:
+                    # Codegen failure: include the traceback — these can
+                    # surface internal bugs the user should report.
+                    logger.exception("Codegen failed")
                     return 128
 
         except RuntimeError as e:
