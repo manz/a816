@@ -4,8 +4,6 @@ from typing import Any, Protocol, cast
 
 from a816.cpu.types import AddressingMode
 from a816.exceptions import SymbolNotDefined
-
-logger = logging.getLogger("a816.codegen")
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import (
     AllocAstNode,
@@ -76,6 +74,8 @@ from a816.parse.tokens import Token, TokenType
 from a816.pool import Pool, PoolRange, Strategy
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
+
+logger = logging.getLogger("a816.codegen")
 
 MacroDefinitions = dict[str, Any]
 GenNodes = list[NodeProtocol]
