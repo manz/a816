@@ -99,6 +99,40 @@ ppu := (PPU_BASE as PPU)
         assert b"\xad\x04\x21" in data
 
 
+def test_ppu_inidisp_bitfield_struct() -> None:
+    symbols = _resolve_symbols('.import "@std/snes/ppu"\n')
+    assert symbols["INIDISP.__size"] == 1
+    assert symbols["INIDISP.brightness.mask"] == 0x0F
+    assert symbols["INIDISP.brightness.shift"] == 0
+    assert symbols["INIDISP.force_blank.mask"] == 0x80
+    assert symbols["INIDISP.force_blank.shift"] == 7
+
+
+def test_cpu_nmitimen_bitfield_struct() -> None:
+    symbols = _resolve_symbols('.import "@std/snes/cpu"\n')
+    assert symbols["NMITIMEN.joypad_enable.mask"] == 0x01
+    assert symbols["NMITIMEN.h_irq_enable.mask"] == 0x10
+    assert symbols["NMITIMEN.v_irq_enable.mask"] == 0x20
+    assert symbols["NMITIMEN.nmi_enable.mask"] == 0x80
+    assert symbols["NMITIMEN.__size"] == 1
+
+
+def test_dma_dmap_bitfield_struct() -> None:
+    symbols = _resolve_symbols('.import "@std/snes/dma"\n')
+    assert symbols["DMAP.transfer_pattern.mask"] == 0x07
+    assert symbols["DMAP.increment.mask"] == 0x18
+    assert symbols["DMAP.transfer_direction.mask"] == 0x80
+    assert symbols["DMAP.__size"] == 1
+
+
+def test_byte_and_bitfield_structs_coexist() -> None:
+    """Existing `PPU.INIDISP` byte offset still works alongside the new
+    `INIDISP` bit-field struct."""
+    symbols = _resolve_symbols('.import "@std/snes/ppu"\n')
+    assert symbols["PPU.INIDISP"] == 0x00  # byte offset in monolithic struct
+    assert symbols["INIDISP.force_blank.mask"] == 0x80  # bit-field absolute mask
+
+
 def test_unknown_stdlib_module_falls_through_to_user_paths() -> None:
     """`@std/...` that doesn't exist in the bundle should error like any
     other missing module rather than silently dropping the import."""

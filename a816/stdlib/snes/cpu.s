@@ -51,3 +51,65 @@ CPU_REGS_BASE = 0x4200
     byte PAD4L
     byte PAD4H
 }
+
+; -----------------------------------------------------------------------------
+; Per-register bit-field structs for the regs whose bits the user
+; toggles directly. Bind to the register address; the addressing fields
+; expose the containing byte address, the mask/shift constants stay
+; absolute on the struct type.
+; -----------------------------------------------------------------------------
+
+.struct NMITIMEN {
+    u1 joypad_enable
+    u3 unused
+    u1 h_irq_enable
+    u1 v_irq_enable
+    u1 unused2
+    u1 nmi_enable
+}
+
+.struct MEMSEL {
+    u1 fastrom
+    u7 unused
+}
+
+.struct RDNMI {
+    u4 cpu_version
+    u3 unused
+    u1 nmi_flag
+}
+
+.struct TIMEUP {
+    u7 unused
+    u1 irq_flag
+}
+
+.struct HVBJOY {
+    u1 joypad_busy
+    u5 unused
+    u1 hblank
+    u1 vblank
+}
+
+.struct MDMAEN {
+    u1 ch0
+    u1 ch1
+    u1 ch2
+    u1 ch3
+    u1 ch4
+    u1 ch5
+    u1 ch6
+    u1 ch7
+}
+
+.struct HDMAEN {
+    u1 ch0
+    u1 ch1
+    u1 ch2
+    u1 ch3
+    u1 ch4
+    u1 ch5
+    u1 ch6
+    u1 ch7
+}
+

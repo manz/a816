@@ -265,6 +265,13 @@ STRUCT_FIELD_TYPES = {"byte", "word", "long", "dword"}
 
 
 def parse_struct(p: Parser) -> StructAstNode:
+    """Parse a `.struct Name { ... }` body.
+
+    Field shape is always `type name`. Primitive types are
+    `byte/word/long/dword`; `uN` (any positive `N`) declares a
+    bit-field of `N` bits packed into the surrounding byte run; any
+    other identifier references a previously declared `.struct`.
+    """
     current = p.current()
 
     variable = p.next()
@@ -298,8 +305,8 @@ def parse_struct(p: Parser) -> StructAstNode:
                 hint="each field name must be unique within a `.struct` block",
             )
         seen.add(name_token.value)
-        fields.append((name_token.value, type_token.value))
         p.next()
+        fields.append((name_token.value, type_token.value))
 
     expect_token(p.next(), TokenType.RBRACE)
 
