@@ -47,3 +47,21 @@ DMA_BASE = 0x4300
     byte UNUSED_E
     byte UNUSED_F
 }
+
+; -----------------------------------------------------------------------------
+; DMA channel control register layout. Bind to a channel's DMAP byte
+; (e.g. DMA_BASE + 0 * DMAChannel.__size + DMAChannel.DMAP for ch0):
+;
+;     ch0_ctl := (DMA_BASE + DMAChannel.DMAP as DMAP)
+;         lda #DMAP.transfer_pattern.mask
+;         tsb ch0_ctl                       ; pick a transfer pattern
+; -----------------------------------------------------------------------------
+
+.struct DMAP {
+    u3 transfer_pattern
+    u2 increment
+    u1 unused
+    u1 hdma_address_mode
+    u1 transfer_direction
+}
+
