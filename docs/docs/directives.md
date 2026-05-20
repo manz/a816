@@ -33,6 +33,23 @@ ram_routine:
     rts
 ```
 
+### Write-overlap detection
+
+When two `*=` regions (or one `*=` block plus a `.alloc` placement,
+etc.) produce byte spans that share addresses, the assembler emits a
+diagnostic so a routine that silently grew past its expected end is
+caught early. The default mode is `warn` (logged, assembly continues);
+set it to `error` to abort on the first overlap or `off` to silence
+the check entirely.
+
+The mode lives on `Program.resolver.context.overlap_mode` and is
+intended to be wired through `a816.toml` / a CLI flag in a follow-up.
+
+```
+WARNING write at $008004..$00800b overlaps previous write at
+        $008000..$008009 ($008004..$008009 would be silently overwritten)
+```
+
 ### `.map` — memory map
 
 Selects the cartridge address mapping. Affects how `*=` translates
