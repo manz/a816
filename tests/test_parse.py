@@ -468,7 +468,7 @@ lda #1
                 (
                     "struct",
                     "a_struct",
-                    [("id", "byte"), ("offset", "word"), ("pointer", "long")],
+                    [("id", "byte", None), ("offset", "word", None), ("pointer", "long", None)],
                 )
             ],
             ast.ast,

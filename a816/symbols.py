@@ -272,6 +272,11 @@ class Resolver:
         self.struct_layouts: dict[str, list[tuple[str, int, int]]] = {}
         # Total size per registered struct type, exposed as `Type.__size`.
         self.struct_sizes: dict[str, int] = {}
+        # Bit-field metadata: struct_name → {field_name: (mask, shift)}.
+        # Used by the idempotent-redef check; the mask / shift constants
+        # themselves are also published as flat scope symbols for assembly
+        # use (`Type.field.mask`, `Type.field.shift`).
+        self.struct_bitfields: dict[str, dict[str, tuple[int, int]]] = {}
         # Typed-bind registry: instance name → struct type name. Lets the
         # linter spot redundant casts and field access on non-typed bindings.
         self.typed_instances: dict[str, str] = {}

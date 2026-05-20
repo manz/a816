@@ -78,6 +78,8 @@ class TokenType(Enum):
 
     DOT = auto()
 
+    COLON = auto()
+
 
 class Token:
     def __init__(self, type_: TokenType, value: str, position: Position | None = None) -> None:

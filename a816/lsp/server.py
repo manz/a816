@@ -245,7 +245,7 @@ class A816Document:
             return
         pos = Position(line=token.position.line, character=token.position.column)
         file_uri = self._get_file_uri_for_token(token)
-        for field_name, _field_type in node.fields:
+        for field_name, _field_type, _bit_width in node.fields:
             self.symbols[f"{node.name}.{field_name}"] = (pos, file_uri)
         self.symbols[f"{node.name}.__size"] = (pos, file_uri)
 

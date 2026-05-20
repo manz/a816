@@ -757,19 +757,27 @@ class CodeLookupAstNode(AstNode):
 
 
 class StructAstNode(AstNode):
-    def __init__(self, name: str, fields: list[tuple[str, str]], file_info: Token) -> None:
+    def __init__(self, name: str, fields: list[tuple[str, str, int | None]], file_info: Token) -> None:
         super().__init__("struct", file_info)
         self.name = name
-        # Insertion-ordered (name, type) pairs. List instead of dict so
+        # Insertion-ordered `(name, type, bit_width)` entries. `bit_width`
+        # is non-None only for `bit name : N` declarations; primitive and
+        # nested struct fields keep it as `None`. List instead of dict so
         # downstream consumers can rely on the declared order without poking
         # at dict semantics, and so duplicate names get caught at parse time.
-        self.fields: list[tuple[str, str]] = list(fields)
+        self.fields: list[tuple[str, str, int | None]] = list(fields)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, list(self.fields)
 
     def to_canonical(self) -> str:
-        body = "\n".join(f"    {field_type} {field_name}" for field_name, field_type in self.fields)
+        lines = []
+        for field_name, field_type, bit_width in self.fields:
+            if bit_width is not None:
+                lines.append(f"    bit {field_name} : {bit_width}")
+            else:
+                lines.append(f"    {field_type} {field_name}")
+        body = "\n".join(lines)
         return f".struct {self.name} {{\n{body}\n}}"
 
 

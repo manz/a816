@@ -335,6 +335,11 @@ _SINGLE_CHAR_TOKENS: dict[str, TokenType] = {
     "[": TokenType.LBRAKET,
     "]": TokenType.RBRAKET,
     "=": TokenType.EQUAL,
+    # Plain `:` — used in bit-field declarations (`bit name : N`).
+    # `:=` is consumed earlier as ASSIGN via the multi-char dispatcher,
+    # and `name:` (no whitespace) is already a LABEL emitted by
+    # `lex_identifier`, so this only catches the standalone form.
+    ":": TokenType.COLON,
 }
 
 
