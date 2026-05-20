@@ -1,4 +1,5 @@
 import logging
+import re
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -142,6 +143,22 @@ def generate_scope(
 # write it mean 32-bit; 65c816 effective addresses fit in 24 (use `long`).
 _STRUCT_FIELD_SIZES = {"byte": 1, "word": 2, "long": 3, "dword": 4}
 
+# Bit-field types are spelled `uN` for any positive `N`. The width travels
+# in the type name itself so the parser keeps the simple `type name` shape
+# with no new tokens.
+_BIT_FIELD_TYPE_RE = re.compile(r"u(\d+)$")
+
+
+def _bit_width_from_type(field_type: str) -> int | None:
+    """Return the bit width when `field_type` matches `uN`, else None."""
+    match = _BIT_FIELD_TYPE_RE.fullmatch(field_type)
+    if match is None:
+        return None
+    width = int(match.group(1))
+    if width < 1:
+        return None
+    return width
+
 
 def _layout_struct_fields(
     node: StructAstNode,
@@ -169,11 +186,11 @@ def _layout_struct_fields(
     offset = 0
     bit_position = 0  # cumulative bits inside the current bit-field run
 
-    for field_name, field_type, declared_bit_width in node.fields:
-        if field_type == "bit":
-            assert declared_bit_width is not None  # guaranteed by parser
-            bit_buffer.append((field_name, bit_position, declared_bit_width))
-            bit_position += declared_bit_width
+    for field_name, field_type in node.fields:
+        bit_width = _bit_width_from_type(field_type)
+        if bit_width is not None:
+            bit_buffer.append((field_name, bit_position, bit_width))
+            bit_position += bit_width
             continue
         # Non-bit field — flush any pending bit run before laying it out so
         # mixed structs (`bit a:4 bit b:4 byte tag`) stay coherent.

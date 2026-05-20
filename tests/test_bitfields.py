@@ -1,4 +1,4 @@
-"""`.struct` bit-field declarations: `name : N`.
+"""`.struct` bit-field declarations using `uN` type prefixes.
 
 Each bit field publishes three symbols:
   - `Type.field`        — byte offset of the containing byte.
@@ -32,9 +32,9 @@ def _symbols(program: Program) -> dict[str, int]:
 def test_single_byte_bitfield_layout() -> None:
     program = _resolve("""
         .struct INIDISP {
-            brightness : 4
-            unused : 3
-            force_blank : 1
+            u4 brightness
+            u3 unused
+            u1 force_blank
         }
     """)
     s = _symbols(program)
@@ -56,9 +56,9 @@ def test_single_byte_bitfield_layout() -> None:
 def test_multi_byte_bitfield_packs_across_bytes() -> None:
     program = _resolve("""
         .struct Sixteen {
-            low_nibble : 4
-            mid_byte : 8
-            high_nibble : 4
+            u4 low_nibble
+            u8 mid_byte
+            u4 high_nibble
         }
     """)
     s = _symbols(program)
@@ -78,9 +78,9 @@ def test_multi_byte_bitfield_packs_across_bytes() -> None:
 def test_mixed_bit_and_primitive_fields() -> None:
     program = _resolve("""
         .struct Mixed {
-            flag_a : 1
-            flag_b : 1
-            unused : 6
+            u1 flag_a
+            u1 flag_b
+            u6 unused
             byte tag
             word value
         }
@@ -99,9 +99,9 @@ def test_typed_bind_resolves_bitfield_byte_address() -> None:
     """A typed bind on a bitfield struct exposes per-field byte addresses."""
     program = _resolve("""
         .struct INIDISP {
-            brightness : 4
-            unused : 3
-            force_blank : 1
+            u4 brightness
+            u3 unused
+            u1 force_blank
         }
         ppu_inidisp := (0x2100 as INIDISP)
     """)
@@ -112,25 +112,32 @@ def test_typed_bind_resolves_bitfield_byte_address() -> None:
     assert s["INIDISP.force_blank.mask"] == 0x80
 
 
-def test_zero_width_bitfield_rejected() -> None:
-    program = Program()
-    error, _ = program.parser.parse(".struct Bad {\nflag : 0\n}\n", "memory.s")
-    assert error is not None
-    assert "at least 1" in error
+def test_u8_packs_a_full_byte() -> None:
+    """`u8 foo` is a valid bit-field type — it just fills the byte."""
+    program = _resolve("""
+        .struct Whole {
+            u8 value
+        }
+    """)
+    s = _symbols(program)
+    assert s["Whole.value"] == 0
+    assert s["Whole.value.mask"] == 0xFF
+    assert s["Whole.value.shift"] == 0
+    assert s["Whole.__size"] == 1
 
 
 def test_idempotent_redef_of_bitfield_struct() -> None:
     """Identical re-declaration is a no-op (covers double-include cases)."""
     program = _resolve("""
         .struct INIDISP {
-            brightness : 4
-            unused : 3
-            force_blank : 1
+            u4 brightness
+            u3 unused
+            u1 force_blank
         }
         .struct INIDISP {
-            brightness : 4
-            unused : 3
-            force_blank : 1
+            u4 brightness
+            u3 unused
+            u1 force_blank
         }
     """)
     s = _symbols(program)
@@ -141,14 +148,14 @@ def test_mismatched_bitfield_redef_raises() -> None:
     program = Program()
     src = """
         .struct INIDISP {
-            brightness : 4
-            unused : 3
-            force_blank : 1
+            u4 brightness
+            u3 unused
+            u1 force_blank
         }
         .struct INIDISP {
-            brightness : 3
-            unused : 4
-            force_blank : 1
+            u3 brightness
+            u4 unused
+            u1 force_blank
         }
     """
     with pytest.raises(NodeError, match="different field layout"):

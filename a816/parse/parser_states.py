@@ -264,41 +264,13 @@ def parse_for(p: Parser) -> ForAstNode:
 STRUCT_FIELD_TYPES = {"byte", "word", "long", "dword"}
 
 
-def _parse_bit_field_width(p: Parser) -> int:
-    """Consume `NUMBER` (`:` already eaten) and return the bit width."""
-    width_token = p.next()
-    expect_token(width_token, TokenType.NUMBER)
-    try:
-        width = int(width_token.value, 0)
-    except ValueError as e:
-        raise ParserSyntaxError(
-            f"bit-field width must be a positive integer, got {width_token.value!r}",
-            width_token,
-            code=str(E_PARSER_INVALID_EXPRESSION),
-        ) from e
-    if width < 1:
-        raise ParserSyntaxError(
-            f"bit-field width must be at least 1, got {width}",
-            width_token,
-            code=str(E_PARSER_INVALID_EXPRESSION),
-        )
-    return width
-
-
 def parse_struct(p: Parser) -> StructAstNode:
     """Parse a `.struct Name { ... }` body.
 
-    Two field shapes are accepted, distinguished by what follows the first
-    IDENT token:
-
-    - `type name`           — primitive (`byte`, `word`, `long`, `dword`)
-                              or nested struct field.
-    - `name : N`            — bit field N bits wide. Stored with field
-                              type ``"bit"`` so codegen recognises it.
-
-    `bit` can't be used as the type keyword because it clashes with the
-    `BIT` opcode; the Ada-style `name : N` form avoids the collision
-    while staying compact.
+    Field shape is always `type name`. Primitive types are
+    `byte/word/long/dword`; `uN` (any positive `N`) declares a
+    bit-field of `N` bits packed into the surrounding byte run; any
+    other identifier references a previously declared `.struct`.
     """
     current = p.current()
 
@@ -306,7 +278,7 @@ def parse_struct(p: Parser) -> StructAstNode:
     expect_token(variable, TokenType.IDENTIFIER)
 
     expect_token(p.next(), TokenType.LBRACE)
-    fields: list[tuple[str, str, int | None]] = []
+    fields: list[tuple[str, str]] = []
     seen: set[str] = set()
     while p.current().type != TokenType.EOF:
         if p.current().type == TokenType.COMMENT:
@@ -318,27 +290,10 @@ def parse_struct(p: Parser) -> StructAstNode:
         if p.current().type == TokenType.RBRACE:
             break
 
-        first = p.current()
-        expect_token(first, TokenType.IDENTIFIER)
+        type_token = p.current()
+        expect_token(type_token, TokenType.IDENTIFIER)
         p.next()
 
-        if p.current().type == TokenType.COLON:
-            # `name : N` bit-field shape — first IDENT is the field name.
-            p.next()  # consume COLON
-            if first.value in seen:
-                raise ParserSyntaxError(
-                    f"Duplicate struct field `{first.value}`",
-                    first,
-                    TokenType.IDENTIFIER,
-                    code=str(E_PARSER_STRUCT_DUPLICATE_FIELD),
-                    hint="each field name must be unique within a `.struct` block",
-                )
-            seen.add(first.value)
-            fields.append((first.value, "bit", _parse_bit_field_width(p)))
-            continue
-
-        # `type name` primitive / nested-struct shape.
-        type_token = first
         name_token = p.current()
         expect_token(name_token, TokenType.IDENTIFIER)
         if name_token.value in seen:
@@ -351,7 +306,7 @@ def parse_struct(p: Parser) -> StructAstNode:
             )
         seen.add(name_token.value)
         p.next()
-        fields.append((name_token.value, type_token.value, None))
+        fields.append((name_token.value, type_token.value))
 
     expect_token(p.next(), TokenType.RBRACE)
 

@@ -129,17 +129,18 @@ case the nested layout flattens into dotted offsets
     byte flags
 }
 
-; Bit fields — `name : N` declares an N-bit field. Multiple bit fields
-; pack into bytes; mixing with byte/word/long is allowed.
+; Bit fields — `uN` (any positive N) declares an N-bit field that
+; packs into the surrounding byte run. Mixing with byte/word/long
+; flushes the current byte before the primitive lands.
 .struct INIDISP {
-    brightness : 4
-    unused : 3
-    force_blank : 1
+    u4 brightness
+    u3 unused
+    u1 force_blank
 }
-; → INIDISP.force_blank      = 0     (byte offset)
-;   INIDISP.force_blank.mask = 0x80  (pre-shifted)
-;   INIDISP.force_blank.shift = 7    (LSB position)
-;   INIDISP.__size           = 1
+; → INIDISP.force_blank       = 0     (byte offset)
+;   INIDISP.force_blank.mask  = 0x80  (pre-shifted)
+;   INIDISP.force_blank.shift = 7     (LSB position)
+;   INIDISP.__size            = 1
 ; → Outer.tag = 0, Outer.pos = 1, Outer.pos.x = 1, Outer.pos.y = 3,
 ;   Outer.flags = 5, Outer.__size = 6
 ```
