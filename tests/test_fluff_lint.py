@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from a816.fluff import fluff_main
-from a816.fluff_lint import lint_file
+from a816.fluff import fluff_main, lint_file
 
 
 def test_doc001_flags_missing_module_docstring(tmp_path: Path) -> None:

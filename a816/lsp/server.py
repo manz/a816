@@ -622,7 +622,7 @@ class A816Document:
         """Surface a816 fluff lint hits as LSP warnings."""
         from urllib.parse import urlparse
 
-        from a816.fluff_lint import lint_text
+        from a816.fluff import lint_text
 
         parsed = urlparse(self.uri)
         path = Path(parsed.path) if parsed.scheme == "file" else Path(self.uri)

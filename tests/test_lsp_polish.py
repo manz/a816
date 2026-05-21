@@ -210,7 +210,7 @@ def test_fluff_s001_does_not_fire_on_stdlib_struct_via_import() -> None:
     """Importing `@std/snes/ppu` makes `PPU` known to the linter."""
     from pathlib import Path
 
-    from a816.fluff_lint import lint_text
+    from a816.fluff import lint_text
 
     src = '"""Root."""\n.import "@std/snes/ppu"\n*=0x008000\n    lda.w (PPU_BASE as PPU).INIDISP\n'
     diagnostics = lint_text(src, Path("ff4.s"))
@@ -223,7 +223,7 @@ def test_fluff_s001_does_not_fire_on_module_path_struct() -> None:
     import tempfile
     from pathlib import Path
 
-    from a816.fluff_lint import lint_text
+    from a816.fluff import lint_text
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

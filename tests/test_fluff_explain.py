@@ -10,8 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from a816.fluff import fluff_main
-from a816.fluff_lint import Rule, lint_text
+from a816.fluff import Rule, fluff_main, lint_text
 
 
 @pytest.mark.parametrize("code", sorted(Rule.registry))
