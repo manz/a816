@@ -1,3 +1,7 @@
+"""`a816 fluff` CLI: check / format / explain subcommands."""
+
+from __future__ import annotations
+
 import argparse
 import difflib
 import sys
@@ -6,7 +10,8 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from a816.exceptions import FormattingError
-from a816.fluff_lint import Rule, lint_file
+from a816.fluff.core import Rule
+from a816.fluff.runner import lint_file
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
