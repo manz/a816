@@ -65,41 +65,72 @@ from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter, FormattingOptions
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    AsciiAstNode,
     AssignAstNode,
     AstNode,
+    BinOp,
     BlockAstNode,
+    CastAccessExprNode,
+    CastValueExprNode,
+    CodeLookupAstNode,
     CodePositionAstNode,
+    CodeRelocationAstNode,
     CommentAstNode,
     CompoundAstNode,
     DataNode,
+    DebugAstNode,
     DocstringAstNode,
     ExpressionAstNode,
+    ExprNode,
     ExternAstNode,
+    ForAstNode,
     IfAstNode,
     ImportAstNode,
     IncludeAstNode,
+    IncludeBinaryAstNode,
+    IncludeIpsAstNode,
     LabelAstNode,
+    LabelDeclAstNode,
     MacroApplyAstNode,
     MacroAstNode,
     MapAstNode,
     OpcodeAstNode,
+    Parenthesis,
     PoolAstNode,
     ReclaimAstNode,
+    RegisterSizeAstNode,
     RelocateAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
+    TableAstNode,
     Term,
+    TextAstNode,
+    UnaryOp,
 )
 from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
 from a816.parse.mzparser import A816Parser
 from a816.parse.scanner_states import KEYWORDS
 from a816.parse.tokens import Token, TokenType
+from a816.stdlib import resolve_stdlib_module
 from a816.util import uri_to_path
 
 logger = logging.getLogger(__name__)
 
 FILE_URI_PREFIX = "file://"
+
+
+def _struct_node_in_file(path: Path, name: str) -> "StructAstNode | None":
+    """Parse `path` once and return the first matching `.struct <name>`."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    result = A816Parser.parse_as_ast(text, str(path))
+    for node in result.nodes:
+        if isinstance(node, StructAstNode) and node.name == name:
+            return node
+    return None
 
 
 class A816Document:
@@ -220,8 +251,82 @@ class A816Document:
 
     def _record_symbol_assignment(self, node: AstNode) -> None:
         symbol = getattr(node, "symbol", None)
-        if symbol:
-            self._record_token_position(node.file_info, self.symbols, symbol)
+        if not symbol:
+            return
+        self._record_token_position(node.file_info, self.symbols, symbol)
+        self._record_typed_bind_fields(node, symbol)
+
+    def _record_typed_bind_fields(self, node: AstNode, symbol: str) -> None:
+        """When the RHS is `(expr as T)`, also index `symbol.field` for every
+        field of `T` so `sta.l hdma_ch6.A1TL`-style goto-def lands somewhere.
+
+        Targets the bind site (not the struct field) because that's the
+        location the user usually wants to inspect — `hdma_ch6 := ...` is
+        the line that anchors why the alias exists.
+        """
+        if not isinstance(node, AssignAstNode):
+            return
+        value = getattr(node, "value", None)
+        if not isinstance(value, ExpressionAstNode) or len(value.tokens) != 1:
+            return
+        cast = value.tokens[0]
+        if not isinstance(cast, CastValueExprNode):
+            return
+        if not node.file_info.position:
+            return
+        bind_pos = Position(line=node.file_info.position.line, character=node.file_info.position.column)
+        file_uri = self._get_file_uri_for_token(node.file_info)
+        # Walk the type's flat fields, mirroring the codegen-time eager
+        # expansion. We need a lookup over StructAstNodes in the document.
+        for struct_node in self._iter_struct_nodes(cast.type_name):
+            for field_name, _ftype in struct_node.fields:
+                self.symbols[f"{symbol}.{field_name}"] = (bind_pos, file_uri)
+            return  # only the first matching declaration counts
+
+    def _iter_struct_nodes(self, name: str) -> "list[StructAstNode]":
+        """Find `.struct <name>` declarations reachable from this document.
+
+        Walks the local AST first; if no match, follows `.import`
+        directives (stdlib `@std/...` first, then `include_paths`) and
+        parses the target file once. Cycle-safe via `_seen_imports`.
+        """
+        matches: list[StructAstNode] = []
+        for node in self.ast_nodes:
+            if isinstance(node, StructAstNode) and node.name == name:
+                matches.append(node)
+        if matches:
+            return matches
+
+        for node in self.ast_nodes:
+            if not isinstance(node, ImportAstNode):
+                continue
+            path = self._resolve_import_for_struct_lookup(node.module_name)
+            if path is None:
+                continue
+            found = _struct_node_in_file(path, name)
+            if found is not None:
+                matches.append(found)
+                break
+        return matches
+
+    def _resolve_import_for_struct_lookup(self, module_name: str) -> "Path | None":
+        stdlib_path = resolve_stdlib_module(module_name, ".s")
+        if stdlib_path is not None:
+            return stdlib_path
+        file_name = module_name + ".s"
+        candidates: list[Path] = []
+        if self.include_paths:
+            candidates.extend(self.include_paths)
+        # Document's own directory as a last resort.
+        try:
+            candidates.append(uri_to_path(self.uri).parent)
+        except (OSError, ValueError):
+            pass
+        for base in candidates:
+            candidate = base / file_name
+            if candidate.exists():
+                return candidate
+        return None
 
     def _record_macro(self, node: MacroAstNode) -> None:
         if not getattr(node, "name", None):
@@ -239,14 +344,27 @@ class A816Document:
             self.imports.append(node.module_name)
 
     def _record_struct(self, node: StructAstNode) -> None:
-        """Index struct fields as Name.field symbols so goto-def works."""
+        """Index `Name.field` plus the auto-generated bit-field aux symbols
+        (`.mask` / `.shift`) so goto-def lands on the struct's source line
+        for every spelling a user can type in code."""
+        import re as _re
+
         token = node.file_info
         if not token.position:
             return
         pos = Position(line=token.position.line, character=token.position.column)
         file_uri = self._get_file_uri_for_token(token)
-        for field_name, _field_type in node.fields:
+        # The bare type name (`PPU`) — used in `(addr as PPU)` casts and
+        # nested struct field types — also goto-def's to the declaration.
+        self.symbols[node.name] = (pos, file_uri)
+        bit_field_re = _re.compile(r"u\d+")
+        for field_name, field_type in node.fields:
             self.symbols[f"{node.name}.{field_name}"] = (pos, file_uri)
+            if bit_field_re.fullmatch(field_type):
+                # `uN` fields publish two extra symbols at codegen time —
+                # mirror them here so `Type.field.mask` is also goto-def'able.
+                self.symbols[f"{node.name}.{field_name}.mask"] = (pos, file_uri)
+                self.symbols[f"{node.name}.{field_name}.shift"] = (pos, file_uri)
         self.symbols[f"{node.name}.__size"] = (pos, file_uri)
 
     def _visit_include(self, node: IncludeAstNode) -> None:
@@ -321,8 +439,23 @@ class A816Document:
         elif isinstance(node, IncludeAstNode):
             self._visit_include(node)
             return
+        elif isinstance(node, IncludeBinaryAstNode):
+            self._record_incbin(node)
 
         self._visit_children(node)
+
+    def _record_incbin(self, node: IncludeBinaryAstNode) -> None:
+        """Index the auto-generated `<sanitized_path>` + `<...>__size` symbols
+        so goto-def on either jumps to the `.incbin "..."` line."""
+        token = node.file_info
+        if not token.position:
+            return
+        symbol_base = node.file_path.replace("/", "_").replace(".", "_")
+        pos = Position(line=token.position.line, character=token.position.column)
+        file_uri = self._get_file_uri_for_token(token)
+        self.symbols[symbol_base] = (pos, file_uri)
+        self.labels[symbol_base] = (pos, file_uri)
+        self.symbols[f"{symbol_base}__size"] = (pos, file_uri)
 
     def _set_docstring(self, target: tuple[str, str], text: str) -> None:
         cleaned = inspect.cleandoc(text)
@@ -820,7 +953,14 @@ class WorkspaceIndex:
             if resolved:
                 found_paths.add(resolved)
         for match in re.finditer(r"\.import\s+['\"]([^'\"]+)['\"]", content, re.IGNORECASE):
-            resolved = self._resolve_in_paths(match.group(1).strip() + ".s", file_path.parent, self.module_paths)
+            module_name = match.group(1).strip()
+            # Stdlib `@std/...` modules live inside the wheel — check there
+            # first so the crawler indexes them like any user module.
+            stdlib_path = resolve_stdlib_module(module_name, ".s")
+            if stdlib_path is not None:
+                found_paths.add(stdlib_path)
+                continue
+            resolved = self._resolve_in_paths(module_name + ".s", file_path.parent, self.module_paths)
             if resolved:
                 found_paths.add(resolved)
         return list(found_paths)
@@ -1379,9 +1519,101 @@ class A816LanguageServer:
         pool_hover = self._hover_for_pool_directive(doc, raw_word)
         if pool_hover:
             return pool_hover
+        dotted_word = self._dotted_word_span(line, params.position.character)
+        struct_hover = self._hover_for_struct_field(dotted_word)
+        if struct_hover:
+            return struct_hover
         return self._hover_for_label_or_scope(doc, workspace, raw_word, word) or self._hover_for_macro(
             doc, workspace, raw_word, word
         )
+
+    @staticmethod
+    def _dotted_word_span(line: str, char_pos: int) -> str:
+        """Like `_word_span` but stretches across `.` boundaries so
+        `Type.field.mask` extracts as one string."""
+        start = char_pos
+        while start > 0 and (line[start - 1].isalnum() or line[start - 1] in "_."):
+            start -= 1
+        end = char_pos
+        while end < len(line) and (line[end].isalnum() or line[end] in "_."):
+            end += 1
+        return line[start:end]
+
+    def _hover_for_struct_field(self, word: str) -> Hover | None:
+        """Auto-doc for `Type.field`, `Type.field.mask`, `Type.field.shift`.
+
+        Reaches into the workspace-shared struct registry built during AST
+        indexing. Bit-field aux symbols get computed mask / shift values
+        inlined into the hover so the user doesn't need to mentally compute
+        them while editing.
+        """
+        struct, field, aux = self._parse_struct_field_path(word)
+        if struct is None or field is None:
+            return None
+        meta = self._struct_field_meta(struct, field)
+        if meta is None:
+            return None
+        field_type, bit_width, mask, shift = meta
+        if aux == "mask":
+            body = (
+                f"**`{struct}.{field}.mask`** = `0x{mask:02X}`\n\n"
+                f"Pre-shifted bit-mask for the `{field}` field "
+                f"({bit_width}-bit, shift {shift}). Use as an immediate operand."
+            )
+            return self._markdown_hover(body)
+        if aux == "shift":
+            body = (
+                f"**`{struct}.{field}.shift`** = `{shift}`\n\n"
+                f"LSB position of the `{field}` field inside its containing byte."
+            )
+            return self._markdown_hover(body)
+        if bit_width is not None:
+            body = (
+                f"**`{struct}.{field}`** — `{field_type}` bit-field\n\n"
+                f"Width: `{bit_width}` bits, shift `{shift}`, mask `0x{mask:02X}`."
+            )
+        else:
+            body = f"**`{struct}.{field}`** — `{field_type}` field of struct `{struct}`."
+        return self._markdown_hover(body)
+
+    @staticmethod
+    def _parse_struct_field_path(word: str) -> tuple[str | None, str | None, str | None]:
+        """Split `Type.field` / `Type.field.mask` / `Type.field.shift` into parts."""
+        parts = word.split(".")
+        if len(parts) == 2:
+            return parts[0], parts[1], None
+        if len(parts) == 3 and parts[2] in ("mask", "shift"):
+            return parts[0], parts[1], parts[2]
+        return None, None, None
+
+    _BIT_FIELD_TYPE_RE: ClassVar[re.Pattern[str]] = re.compile(r"u(\d+)")
+
+    def _struct_field_meta(self, struct_name: str, field_name: str) -> tuple[str, int | None, int, int] | None:
+        """Return `(declared_type, bit_width, mask, shift)` for a struct field, or None."""
+        for doc in self.documents.values():
+            for node in doc.ast_nodes:
+                if isinstance(node, StructAstNode) and node.name == struct_name:
+                    meta = self._field_meta_in_struct(node, field_name)
+                    if meta is not None:
+                        return meta
+        return None
+
+    def _field_meta_in_struct(self, node: StructAstNode, field_name: str) -> tuple[str, int | None, int, int] | None:
+        bit_position = 0
+        for fname, ftype in node.fields:
+            bit_match = self._BIT_FIELD_TYPE_RE.fullmatch(ftype)
+            if bit_match:
+                width = int(bit_match.group(1))
+                if fname == field_name:
+                    shift = bit_position % 8
+                    mask = ((1 << width) - 1) << shift
+                    return ftype, width, mask, shift
+                bit_position += width
+                continue
+            bit_position = 0  # primitive flushes the current bit run
+            if fname == field_name:
+                return ftype, None, 0, 0
+        return None
 
     def _hover_for_pool_directive(self, doc: A816Document, word: str) -> Hover | None:
         if word in doc.pools:
@@ -1923,37 +2155,60 @@ class A816LanguageServer:
         return tokens
 
     def _extract_semantic_tokens_from_ast(self, doc: A816Document) -> list[dict[str, Any]]:
-        """Extract semantic tokens from parsed AST nodes only"""
+        """Extract semantic tokens from parsed AST nodes, with a line-based
+        fallback when parsing failed hard (scanner errors leave `ast_nodes`
+        empty, which would otherwise produce zero highlights and a plain-text
+        document in the editor)."""
         tokens: list[dict[str, Any]] = []
 
         logger.debug(f"Processing {len(doc.ast_nodes)} AST nodes for semantic tokens")
 
-        # If no AST nodes, return empty - no fallback
         if not doc.ast_nodes:
             if doc.parse_error:
-                logger.warning(f"No semantic tokens generated due to parse error: {doc.parse_error}")
-            else:
-                logger.warning("No AST nodes found, no semantic tokens generated")
-            return []
+                logger.info("Falling back to line tokenizer: %s", doc.parse_error.message)
+            return self._line_based_tokens(doc)
 
-        # Extract tokens from AST nodes only
         for node in doc.ast_nodes:
             self._visit_node_for_tokens(node, tokens, doc)
 
         logger.debug(f"Generated {len(tokens)} AST-only tokens")
         return tokens
 
+    def _line_based_tokens(self, doc: A816Document) -> list[dict[str, Any]]:
+        """Best-effort highlighting when the AST is unavailable."""
+        tokens: list[dict[str, Any]] = []
+        for idx, line in enumerate(doc.lines):
+            tokens.extend(self._tokenize_line(line, idx))
+        return tokens
+
     _DIRECTIVE_TYPES: ClassVar[tuple[type, ...]] = (
         MacroApplyAstNode,
         CodePositionAstNode,
+        CodeRelocationAstNode,
         MapAstNode,
         IfAstNode,
+        ForAstNode,
         MacroAstNode,
         AssignAstNode,
+        SymbolAffectationAstNode,
         ExternAstNode,
         ImportAstNode,
         StructAstNode,
         DataNode,
+        AsciiAstNode,
+        TextAstNode,
+        TableAstNode,
+        IncludeBinaryAstNode,
+        IncludeIpsAstNode,
+        ScopeAstNode,
+        PoolAstNode,
+        AllocAstNode,
+        RelocateAstNode,
+        ReclaimAstNode,
+        DebugAstNode,
+        LabelDeclAstNode,
+        RegisterSizeAstNode,
+        CodeLookupAstNode,
     )
 
     @staticmethod
@@ -1975,19 +2230,14 @@ class A816LanguageServer:
         return isinstance(node, DocstringAstNode | IncludeAstNode)
 
     def _visit_token_children(self, node: AstNode, tokens: list[dict[str, Any]], doc: A816Document) -> None:
-        body = getattr(node, "body", None)
-        if isinstance(body, list):
-            for child in body:
-                if isinstance(child, AstNode):
-                    self._visit_node_for_tokens(child, tokens, doc)
-        elif isinstance(body, AstNode):
-            self._visit_node_for_tokens(body, tokens, doc)
-        block = getattr(node, "block", None)
-        if isinstance(block, AstNode):
-            self._visit_node_for_tokens(block, tokens, doc)
-        else_block = getattr(node, "else_block", None)
-        if isinstance(else_block, AstNode):
-            self._visit_node_for_tokens(else_block, tokens, doc)
+        for attr in ("body", "block", "else_block", "value", "expression", "min_value", "max_value"):
+            child = getattr(node, attr, None)
+            if isinstance(child, list):
+                for entry in child:
+                    if isinstance(entry, AstNode):
+                        self._visit_node_for_tokens(entry, tokens, doc)
+            elif isinstance(child, AstNode):
+                self._visit_node_for_tokens(child, tokens, doc)
 
     def _visit_node_for_tokens(self, node: AstNode, tokens: list[dict[str, Any]], doc: A816Document) -> None:
         """Recursively visit AST nodes to extract semantic tokens."""
@@ -2017,36 +2267,69 @@ class A816LanguageServer:
             logger.debug(f"Error processing AST node {type(node).__name__}: {e}")
 
     def _analyze_expression_tokens(self, expr_node: ExpressionAstNode, tokens: list[dict[str, Any]]) -> None:
-        """Analyze expression nodes for symbols and identifiers"""
+        """Highlight every token inside an expression — numbers, identifiers,
+        operators, parens, and the `as TYPE` cast wrapping.
+        """
         try:
-            """This is borked"""
-            # Check if the expression represents a symbol/identifier
             for expr_part in expr_node.tokens:
-                if isinstance(expr_part, Term):
-                    expr_token = expr_part.token
-                    if expr_token.position:
-                        match expr_token.type:
-                            case TokenType.NUMBER:
-                                tokens.append(
-                                    {
-                                        "line": expr_token.position.line,
-                                        "char": expr_token.position.column,
-                                        "length": len(expr_token.value),
-                                        "type": 3,  # number
-                                    }
-                                )
-                            case TokenType.IDENTIFIER:
-                                tokens.append(
-                                    {
-                                        "line": expr_token.position.line,
-                                        "char": expr_token.position.column,
-                                        "length": len(expr_token.value),
-                                        "type": 6,  # variable
-                                    }
-                                )
-
+                self._highlight_expr_part(expr_part, tokens)
         except (AttributeError, KeyError, IndexError, TypeError) as e:
             logger.debug(f"Error analyzing expression tokens: {e}")
+
+    def _highlight_expr_part(self, part: ExprNode, tokens: list[dict[str, Any]]) -> None:
+        if isinstance(part, CastValueExprNode | CastAccessExprNode):
+            # Recurse into the cast's inner expression — same shape as the
+            # outer ExpressionAstNode token list.
+            for inner in part.inner:
+                self._highlight_expr_part(inner, tokens)
+            return
+        if isinstance(part, BinOp | UnaryOp):
+            tok = part.token
+            if tok.position:
+                tokens.append(
+                    {
+                        "line": tok.position.line,
+                        "char": tok.position.column,
+                        "length": len(tok.value),
+                        "type": 5,  # operator
+                    }
+                )
+            return
+        if isinstance(part, Parenthesis):
+            return  # parens carry no semantic colour of their own
+        if not isinstance(part, Term):
+            return
+        expr_token = part.token
+        if not expr_token.position:
+            return
+        match expr_token.type:
+            case TokenType.NUMBER:
+                tokens.append(
+                    {
+                        "line": expr_token.position.line,
+                        "char": expr_token.position.column,
+                        "length": len(expr_token.value),
+                        "type": 3,  # number
+                    }
+                )
+            case TokenType.QUOTED_STRING:
+                tokens.append(
+                    {
+                        "line": expr_token.position.line,
+                        "char": expr_token.position.column,
+                        "length": len(expr_token.value),
+                        "type": 4,  # string
+                    }
+                )
+            case TokenType.IDENTIFIER:
+                tokens.append(
+                    {
+                        "line": expr_token.position.line,
+                        "char": expr_token.position.column,
+                        "length": len(expr_token.value),
+                        "type": 6,  # variable
+                    }
+                )
 
     def _classify_identifier(self, identifier: str, doc: A816Document) -> int:
         """Classify an identifier as a specific token type"""
@@ -2427,10 +2710,15 @@ class A816LanguageServer:
         """Resolve module name to source file path for .import directives.
 
         Search order:
-        1. Same directory as current file
-        2. module_paths configured in a816.toml
+        1. Bundled `@std/...` stdlib module (wheel-relative)
+        2. Same directory as current file
+        3. module_paths configured in a816.toml
         """
         try:
+            stdlib_path = resolve_stdlib_module(module_name, ".s")
+            if stdlib_path is not None:
+                return str(stdlib_path)
+
             current_dir = uri_to_path(current_uri).parent
             module_file = module_name + ".s"
 

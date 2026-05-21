@@ -74,6 +74,7 @@ from a816.parse.nodes import (
 from a816.parse.tokens import Token, TokenType
 from a816.pool import Pool, PoolRange, Strategy
 from a816.protocols import NodeProtocol
+from a816.stdlib import resolve_stdlib_module as _resolve_stdlib_module
 from a816.symbols import Resolver
 
 logger = logging.getLogger("a816.codegen")
@@ -639,16 +640,6 @@ def generate_extern(
     return [ExternNode(node.symbol, resolver)]
 
 
-_STDLIB_PREFIX = "@std/"
-
-
-def _stdlib_root() -> Path:
-    """Directory holding the bundled standard-library modules."""
-    import a816
-
-    return Path(a816.__file__).parent / "stdlib"
-
-
 def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
     paths: list[Path] = []
     if file_info.position and file_info.position.file:
@@ -657,15 +648,6 @@ def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
         paths.append(uri_to_path(file_info.position.file.filename).parent)
     paths.extend(resolver.context.module_paths)
     return paths
-
-
-def _resolve_stdlib_module(module_name: str, extension: str) -> Path | None:
-    """Map `@std/snes/ppu` → `<wheel>/a816/stdlib/snes/ppu.s` (or `.o`)."""
-    if not module_name.startswith(_STDLIB_PREFIX):
-        return None
-    relative = module_name[len(_STDLIB_PREFIX) :]
-    candidate = _stdlib_root() / f"{relative}{extension}"
-    return candidate if candidate.exists() else None
 
 
 def _import_from_object(

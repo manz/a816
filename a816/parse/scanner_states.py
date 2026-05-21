@@ -204,7 +204,12 @@ def lex_opcode_index(s: "Scanner") -> None:
     if s.accept("xXyYsS"):
         s.emit(TokenType.ADDRESSING_MODE_INDEX)
     else:
-        raise ScannerException("Invalid index", s.get_position())
+        raise ScannerException(
+            "invalid addressing index",
+            s.get_position(),
+            code=str(E_SCANNER_INVALID_INPUT),
+            hint="expected X, Y, or S after `,` (e.g. `lda 0x12,x`)",
+        )
 
 
 def lex_opcode_size(s: "Scanner") -> None:
@@ -216,7 +221,12 @@ def lex_opcode_size(s: "Scanner") -> None:
         return lex_operand(s)
     else:
         s.next()
-        raise ScannerException("Invalid Size Specifier", s.get_position())
+        raise ScannerException(
+            "invalid opcode size specifier",
+            s.get_position(),
+            code=str(E_SCANNER_INVALID_INPUT),
+            hint="expected `.b`, `.w`, or `.l` after the opcode (e.g. `lda.w 0x1234`)",
+        )
 
 
 def lex_opcode(s: "Scanner") -> None:

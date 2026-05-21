@@ -22,6 +22,7 @@ from a816.parse.ast.nodes import (
     ImportAstNode,
 )
 from a816.parse.mzparser import A816Parser
+from a816.stdlib import resolve_stdlib_module
 
 logger = logging.getLogger("a816.module_builder")
 
@@ -168,12 +169,17 @@ class ModuleBuilder:
         """Find the source file for a module.
 
         Args:
-            module_name: The module name (e.g., "vwf" or "battle/sram")
+            module_name: The module name (e.g., "vwf" or "battle/sram",
+              or `@std/snes/ppu` for bundled stdlib).
             base_dir: The directory of the importing file
 
         Returns:
             Path to the source file, or None if not found.
         """
+        stdlib_path = resolve_stdlib_module(module_name, ".s")
+        if stdlib_path is not None:
+            return stdlib_path
+
         search_paths = [base_dir] + self.module_paths
         module_file = module_name + ".s"
 

@@ -116,7 +116,12 @@ foo = 0x42
     assert not any("already defined" in rec.message for rec in caplog.records), "no-op rebind must not log"
 
 
-def test_symbol_rebind_with_different_value_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_symbol_rebind_is_silent_upsert(caplog: pytest.LogCaptureFixture) -> None:
+    """Multi-pass resolution legitimately rewrites label addresses across
+    passes; the symbol-already-defined warning was producing thousands of
+    false positives on real builds. `add_symbol` is now a silent upsert —
+    real duplicate-declaration errors surface from the parser / codegen
+    layers (struct redef, etc.), not from this hot path."""
     program = Program()
     src = """
 foo = 0x42
@@ -124,7 +129,7 @@ foo = 0x43
 """
     with caplog.at_level(logging.WARNING):
         program.assemble_string_with_emitter(src, "memory.s", _NoopEmitter())
-    assert any("already defined" in rec.message for rec in caplog.records), "value-changing rebind should warn"
+    assert not any("already defined" in rec.message for rec in caplog.records)
 
 
 class _NoopEmitter:
