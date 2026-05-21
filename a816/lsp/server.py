@@ -65,31 +65,48 @@ from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter, FormattingOptions
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    AsciiAstNode,
     AssignAstNode,
     AstNode,
+    BinOp,
     BlockAstNode,
+    CastAccessExprNode,
+    CastValueExprNode,
+    CodeLookupAstNode,
     CodePositionAstNode,
+    CodeRelocationAstNode,
     CommentAstNode,
     CompoundAstNode,
     DataNode,
+    DebugAstNode,
     DocstringAstNode,
     ExpressionAstNode,
+    ExprNode,
     ExternAstNode,
+    ForAstNode,
     IfAstNode,
     ImportAstNode,
     IncludeAstNode,
+    IncludeBinaryAstNode,
+    IncludeIpsAstNode,
     LabelAstNode,
+    LabelDeclAstNode,
     MacroApplyAstNode,
     MacroAstNode,
     MapAstNode,
     OpcodeAstNode,
+    Parenthesis,
     PoolAstNode,
     ReclaimAstNode,
+    RegisterSizeAstNode,
     RelocateAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
+    TableAstNode,
     Term,
+    TextAstNode,
+    UnaryOp,
 )
 from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
 from a816.parse.mzparser import A816Parser
@@ -239,14 +256,24 @@ class A816Document:
             self.imports.append(node.module_name)
 
     def _record_struct(self, node: StructAstNode) -> None:
-        """Index struct fields as Name.field symbols so goto-def works."""
+        """Index `Name.field` plus the auto-generated bit-field aux symbols
+        (`.mask` / `.shift`) so goto-def lands on the struct's source line
+        for every spelling a user can type in code."""
+        import re as _re
+
         token = node.file_info
         if not token.position:
             return
         pos = Position(line=token.position.line, character=token.position.column)
         file_uri = self._get_file_uri_for_token(token)
-        for field_name, _field_type in node.fields:
+        bit_field_re = _re.compile(r"u\d+")
+        for field_name, field_type in node.fields:
             self.symbols[f"{node.name}.{field_name}"] = (pos, file_uri)
+            if bit_field_re.fullmatch(field_type):
+                # `uN` fields publish two extra symbols at codegen time —
+                # mirror them here so `Type.field.mask` is also goto-def'able.
+                self.symbols[f"{node.name}.{field_name}.mask"] = (pos, file_uri)
+                self.symbols[f"{node.name}.{field_name}.shift"] = (pos, file_uri)
         self.symbols[f"{node.name}.__size"] = (pos, file_uri)
 
     def _visit_include(self, node: IncludeAstNode) -> None:
@@ -321,8 +348,23 @@ class A816Document:
         elif isinstance(node, IncludeAstNode):
             self._visit_include(node)
             return
+        elif isinstance(node, IncludeBinaryAstNode):
+            self._record_incbin(node)
 
         self._visit_children(node)
+
+    def _record_incbin(self, node: IncludeBinaryAstNode) -> None:
+        """Index the auto-generated `<sanitized_path>` + `<...>__size` symbols
+        so goto-def on either jumps to the `.incbin "..."` line."""
+        token = node.file_info
+        if not token.position:
+            return
+        symbol_base = node.file_path.replace("/", "_").replace(".", "_")
+        pos = Position(line=token.position.line, character=token.position.column)
+        file_uri = self._get_file_uri_for_token(token)
+        self.symbols[symbol_base] = (pos, file_uri)
+        self.labels[symbol_base] = (pos, file_uri)
+        self.symbols[f"{symbol_base}__size"] = (pos, file_uri)
 
     def _set_docstring(self, target: tuple[str, str], text: str) -> None:
         cleaned = inspect.cleandoc(text)
@@ -1379,9 +1421,105 @@ class A816LanguageServer:
         pool_hover = self._hover_for_pool_directive(doc, raw_word)
         if pool_hover:
             return pool_hover
+        dotted_word = self._dotted_word_span(line, params.position.character)
+        struct_hover = self._hover_for_struct_field(dotted_word)
+        if struct_hover:
+            return struct_hover
         return self._hover_for_label_or_scope(doc, workspace, raw_word, word) or self._hover_for_macro(
             doc, workspace, raw_word, word
         )
+
+    @staticmethod
+    def _dotted_word_span(line: str, char_pos: int) -> str:
+        """Like `_word_span` but stretches across `.` boundaries so
+        `Type.field.mask` extracts as one string."""
+        start = char_pos
+        while start > 0 and (line[start - 1].isalnum() or line[start - 1] in "_."):
+            start -= 1
+        end = char_pos
+        while end < len(line) and (line[end].isalnum() or line[end] in "_."):
+            end += 1
+        return line[start:end]
+
+    def _hover_for_struct_field(self, word: str) -> Hover | None:
+        """Auto-doc for `Type.field`, `Type.field.mask`, `Type.field.shift`.
+
+        Reaches into the workspace-shared struct registry built during AST
+        indexing. Bit-field aux symbols get computed mask / shift values
+        inlined into the hover so the user doesn't need to mentally compute
+        them while editing.
+        """
+        struct, field, aux = self._parse_struct_field_path(word)
+        if struct is None or field is None:
+            return None
+        meta = self._struct_field_meta(struct, field)
+        if meta is None:
+            return None
+        field_type, bit_width, mask, shift = meta
+        if aux == "mask":
+            body = (
+                f"**`{struct}.{field}.mask`** = `0x{mask:02X}`\n\n"
+                f"Pre-shifted bit-mask for the `{field}` field "
+                f"({bit_width}-bit, shift {shift}). Use as an immediate operand."
+            )
+            return self._markdown_hover(body)
+        if aux == "shift":
+            body = (
+                f"**`{struct}.{field}.shift`** = `{shift}`\n\n"
+                f"LSB position of the `{field}` field inside its containing byte."
+            )
+            return self._markdown_hover(body)
+        if bit_width is not None:
+            body = (
+                f"**`{struct}.{field}`** — `{field_type}` bit-field\n\n"
+                f"Width: `{bit_width}` bits, shift `{shift}`, mask `0x{mask:02X}`."
+            )
+        else:
+            body = f"**`{struct}.{field}`** — `{field_type}` field of struct `{struct}`."
+        return self._markdown_hover(body)
+
+    @staticmethod
+    def _parse_struct_field_path(word: str) -> tuple[str | None, str | None, str | None]:
+        """Split `Type.field` / `Type.field.mask` / `Type.field.shift` into parts."""
+        parts = word.split(".")
+        if len(parts) == 2:
+            return parts[0], parts[1], None
+        if len(parts) == 3 and parts[2] in ("mask", "shift"):
+            return parts[0], parts[1], parts[2]
+        return None, None, None
+
+    _BIT_FIELD_TYPE_RE: ClassVar[re.Pattern[str]] = re.compile(r"u(\d+)")
+
+    def _struct_field_meta(
+        self, struct_name: str, field_name: str
+    ) -> tuple[str, int | None, int, int] | None:
+        """Return `(declared_type, bit_width, mask, shift)` for a struct field, or None."""
+        for doc in self.documents.values():
+            for node in doc.ast_nodes:
+                if isinstance(node, StructAstNode) and node.name == struct_name:
+                    meta = self._field_meta_in_struct(node, field_name)
+                    if meta is not None:
+                        return meta
+        return None
+
+    def _field_meta_in_struct(
+        self, node: StructAstNode, field_name: str
+    ) -> tuple[str, int | None, int, int] | None:
+        bit_position = 0
+        for fname, ftype in node.fields:
+            bit_match = self._BIT_FIELD_TYPE_RE.fullmatch(ftype)
+            if bit_match:
+                width = int(bit_match.group(1))
+                if fname == field_name:
+                    shift = bit_position % 8
+                    mask = ((1 << width) - 1) << shift
+                    return ftype, width, mask, shift
+                bit_position += width
+                continue
+            bit_position = 0  # primitive flushes the current bit run
+            if fname == field_name:
+                return ftype, None, 0, 0
+        return None
 
     def _hover_for_pool_directive(self, doc: A816Document, word: str) -> Hover | None:
         if word in doc.pools:
@@ -1923,37 +2061,60 @@ class A816LanguageServer:
         return tokens
 
     def _extract_semantic_tokens_from_ast(self, doc: A816Document) -> list[dict[str, Any]]:
-        """Extract semantic tokens from parsed AST nodes only"""
+        """Extract semantic tokens from parsed AST nodes, with a line-based
+        fallback when parsing failed hard (scanner errors leave `ast_nodes`
+        empty, which would otherwise produce zero highlights and a plain-text
+        document in the editor)."""
         tokens: list[dict[str, Any]] = []
 
         logger.debug(f"Processing {len(doc.ast_nodes)} AST nodes for semantic tokens")
 
-        # If no AST nodes, return empty - no fallback
         if not doc.ast_nodes:
             if doc.parse_error:
-                logger.warning(f"No semantic tokens generated due to parse error: {doc.parse_error}")
-            else:
-                logger.warning("No AST nodes found, no semantic tokens generated")
-            return []
+                logger.info("Falling back to line tokenizer: %s", doc.parse_error.message)
+            return self._line_based_tokens(doc)
 
-        # Extract tokens from AST nodes only
         for node in doc.ast_nodes:
             self._visit_node_for_tokens(node, tokens, doc)
 
         logger.debug(f"Generated {len(tokens)} AST-only tokens")
         return tokens
 
+    def _line_based_tokens(self, doc: A816Document) -> list[dict[str, Any]]:
+        """Best-effort highlighting when the AST is unavailable."""
+        tokens: list[dict[str, Any]] = []
+        for idx, line in enumerate(doc.lines):
+            tokens.extend(self._tokenize_line(line, idx))
+        return tokens
+
     _DIRECTIVE_TYPES: ClassVar[tuple[type, ...]] = (
         MacroApplyAstNode,
         CodePositionAstNode,
+        CodeRelocationAstNode,
         MapAstNode,
         IfAstNode,
+        ForAstNode,
         MacroAstNode,
         AssignAstNode,
+        SymbolAffectationAstNode,
         ExternAstNode,
         ImportAstNode,
         StructAstNode,
         DataNode,
+        AsciiAstNode,
+        TextAstNode,
+        TableAstNode,
+        IncludeBinaryAstNode,
+        IncludeIpsAstNode,
+        ScopeAstNode,
+        PoolAstNode,
+        AllocAstNode,
+        RelocateAstNode,
+        ReclaimAstNode,
+        DebugAstNode,
+        LabelDeclAstNode,
+        RegisterSizeAstNode,
+        CodeLookupAstNode,
     )
 
     @staticmethod
@@ -2017,36 +2178,69 @@ class A816LanguageServer:
             logger.debug(f"Error processing AST node {type(node).__name__}: {e}")
 
     def _analyze_expression_tokens(self, expr_node: ExpressionAstNode, tokens: list[dict[str, Any]]) -> None:
-        """Analyze expression nodes for symbols and identifiers"""
+        """Highlight every token inside an expression — numbers, identifiers,
+        operators, parens, and the `as TYPE` cast wrapping.
+        """
         try:
-            """This is borked"""
-            # Check if the expression represents a symbol/identifier
             for expr_part in expr_node.tokens:
-                if isinstance(expr_part, Term):
-                    expr_token = expr_part.token
-                    if expr_token.position:
-                        match expr_token.type:
-                            case TokenType.NUMBER:
-                                tokens.append(
-                                    {
-                                        "line": expr_token.position.line,
-                                        "char": expr_token.position.column,
-                                        "length": len(expr_token.value),
-                                        "type": 3,  # number
-                                    }
-                                )
-                            case TokenType.IDENTIFIER:
-                                tokens.append(
-                                    {
-                                        "line": expr_token.position.line,
-                                        "char": expr_token.position.column,
-                                        "length": len(expr_token.value),
-                                        "type": 6,  # variable
-                                    }
-                                )
-
+                self._highlight_expr_part(expr_part, tokens)
         except (AttributeError, KeyError, IndexError, TypeError) as e:
             logger.debug(f"Error analyzing expression tokens: {e}")
+
+    def _highlight_expr_part(self, part: ExprNode, tokens: list[dict[str, Any]]) -> None:
+        if isinstance(part, CastValueExprNode | CastAccessExprNode):
+            # Recurse into the cast's inner expression — same shape as the
+            # outer ExpressionAstNode token list.
+            for inner in part.inner:
+                self._highlight_expr_part(inner, tokens)
+            return
+        if isinstance(part, BinOp | UnaryOp):
+            tok = part.token
+            if tok.position:
+                tokens.append(
+                    {
+                        "line": tok.position.line,
+                        "char": tok.position.column,
+                        "length": len(tok.value),
+                        "type": 5,  # operator
+                    }
+                )
+            return
+        if isinstance(part, Parenthesis):
+            return  # parens carry no semantic colour of their own
+        if not isinstance(part, Term):
+            return
+        expr_token = part.token
+        if not expr_token.position:
+            return
+        match expr_token.type:
+            case TokenType.NUMBER:
+                tokens.append(
+                    {
+                        "line": expr_token.position.line,
+                        "char": expr_token.position.column,
+                        "length": len(expr_token.value),
+                        "type": 3,  # number
+                    }
+                )
+            case TokenType.QUOTED_STRING:
+                tokens.append(
+                    {
+                        "line": expr_token.position.line,
+                        "char": expr_token.position.column,
+                        "length": len(expr_token.value),
+                        "type": 4,  # string
+                    }
+                )
+            case TokenType.IDENTIFIER:
+                tokens.append(
+                    {
+                        "line": expr_token.position.line,
+                        "char": expr_token.position.column,
+                        "length": len(expr_token.value),
+                        "type": 6,  # variable
+                    }
+                )
 
     def _classify_identifier(self, identifier: str, doc: A816Document) -> int:
         """Classify an identifier as a specific token type"""

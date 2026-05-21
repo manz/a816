@@ -78,7 +78,7 @@ subroutine:
 
         # Check diagnostic messages - now using actual parser errors
         diagnostic_messages = [diag.message for diag in doc.diagnostics]
-        self.assertTrue(any("Invalid Size Specifier" in msg for msg in diagnostic_messages))
+        self.assertTrue(any("invalid opcode size specifier" in msg for msg in diagnostic_messages))
 
         # Check diagnostic severity
         for diag in doc.diagnostics:

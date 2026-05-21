@@ -2,7 +2,6 @@
 
 from unittest import TestCase
 
-from a816.parse.errors import ScannerException
 from a816.parse.scanner import Scanner
 from a816.parse.scanner_states import lex_initial
 from a816.parse.tokens import TokenType
@@ -204,6 +203,7 @@ class ScannerTest(TestCase):
     def test_unterminated_string_error(self) -> None:
         """Test that unterminated string raises ScannerException."""
         scanner = Scanner(lex_initial)
-        with self.assertRaises(ScannerException) as ctx:
-            scanner.scan("test.s", "'unterminated")
-        self.assertIn("unterminated", str(ctx.exception))
+        scanner.scan("test.s", "'unterminated")
+        # Scanner now collects errors instead of raising — recovery mode.
+        assert scanner.errors, "expected at least one collected ScannerException"
+        self.assertIn("unterminated", str(scanner.errors[0]))

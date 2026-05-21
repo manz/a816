@@ -23,6 +23,13 @@ class Scanner:
         self.current_line = 0
         self.start_line = 0
         self.start_column = 0
+        # Per-line recovery: collected `ScannerException`s. Callers (mzparser)
+        # surface these as multi-error diagnostics; scan() never raises on
+        # the first failure anymore. An aborted scan with no usable tokens
+        # is signalled by an empty `tokens` list combined with non-empty
+        # `errors` — but in practice the recovery loop keeps tokenising
+        # past the offending byte.
+        self.errors: list[ScannerException] = []
 
     def scan(self, filename: str, input_: str) -> list[Token]:
         self.file = File(filename)
@@ -33,17 +40,21 @@ class Scanner:
         self.input = input_
         self.state = self.initial_state
         self.tokens = []
+        self.errors = []
         while self.pos < len(self.input):
-            if self.state is not None:
-                try:
-                    self.state(self)
-                except ScannerException as e:
-                    # consume the rest of the current line
-                    self.accept_run("\n\0", negate=True)
-                    self._handle_line()
-                    raise e
-            else:
+            if self.state is None:
                 break
+            try:
+                self.state(self)
+            except ScannerException as e:
+                self.errors.append(e)
+                # Skip to the next newline so the next iteration has a clean
+                # starting point. Stops on EOF too.
+                self.accept_run("\n\0", negate=True)
+                if self.peek() == "\n":
+                    self.next()
+                self._handle_line()
+                self._sync_start()
         self.emit(TokenType.EOF)
         self._handle_line()
         return self.tokens

@@ -97,7 +97,7 @@ class ParseTest(unittest.TestCase):
         result = program.parser.parse_as_ast(input_program)
         # Error should contain key elements
         assert result.error is not None
-        self.assertIn("Invalid Size Specifier", result.error)
+        self.assertIn("invalid opcode size specifier", result.error)
         self.assertIn("memory.s", result.error)
         self.assertIn("lda.Q #0x00", result.error)
 
@@ -108,7 +108,7 @@ class ParseTest(unittest.TestCase):
         result = program.parser.parse_as_ast(input_program)
         # Error should contain key elements
         assert result.error is not None
-        self.assertIn("Invalid index", result.error)
+        self.assertIn("invalid addressing index", result.error)
         self.assertIn("memory.s", result.error)
         self.assertIn("lda 0x00, O", result.error)
 

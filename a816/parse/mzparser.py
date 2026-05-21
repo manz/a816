@@ -67,15 +67,22 @@ class A816Parser:
             parser = Parser(tokens, parse_initial, include_paths=include_paths)
             ast = parser.parse()
         except ScannerException as e:
+            # Defensive: scanner now recovers per line, but a state hard
+            # crash could still surface as a raised exception.
             parse_error = _scanner_error_to_parse_error(e)
         except ParserSyntaxError as e:
             if verbose_errors:
                 logger.debug("parser raised %s", e)
             parse_error = _parser_error_to_parse_error(e, filename)
 
-        parse_errors = _collected_parse_errors(parser, filename)
-        if parse_error is None and parse_errors:
-            parse_error = parse_errors[0]
+        scanner_errors = [_scanner_error_to_parse_error(err) for err in scanner.errors]
+        parser_errors = _collected_parse_errors(parser, filename) or []
+        all_errors = scanner_errors + parser_errors
+        if parse_error is not None and not all_errors:
+            all_errors = [parse_error]
+        if parse_error is None and all_errors:
+            parse_error = all_errors[0]
+        parse_errors = all_errors or None
         return ParserResult(nodes=ast, parse_error=parse_error, parse_errors=parse_errors)
 
 
