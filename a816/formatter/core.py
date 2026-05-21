@@ -1,11 +1,16 @@
-import re
+"""A816Formatter: AST → formatted assembly source."""
+
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
-from a816.cpu.cpu_65c816 import AddressingMode
 from a816.exceptions import FormattingError
+from a816.formatter.operand_emit import format_data, format_macro_apply, format_opcode
+from a816.formatter.options import FormattingOptions
+from a816.formatter.post_process import finalize_formatting
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AsciiAstNode,
@@ -42,33 +47,6 @@ from a816.parse.errors import ParserSyntaxError
 from a816.parse.mzparser import A816Parser
 
 
-class FormattingOptions:
-    """Configuration for code formatting"""
-
-    def __init__(
-        self,
-        *,
-        indent_size: int = 4,
-        opcode_indent: int | None = None,
-        operand_alignment: int = 16,
-        comment_alignment: int = 0,
-        preserve_empty_lines: bool = True,
-        max_empty_lines: int = 2,
-        align_labels: bool = True,
-        space_after_comma: bool = True,
-        max_line_length: int = 120,
-    ):
-        self.indent_size = indent_size
-        self.opcode_indent = opcode_indent if opcode_indent is not None else indent_size
-        self.operand_alignment = operand_alignment
-        self.comment_alignment = comment_alignment
-        self.preserve_empty_lines = preserve_empty_lines
-        self.max_empty_lines = max_empty_lines
-        self.align_labels = align_labels
-        self.space_after_comma = space_after_comma
-        self.max_line_length = max_line_length
-
-
 class A816Formatter:
     """Assembly code formatter using AST"""
 
@@ -99,13 +77,11 @@ class A816Formatter:
         """Format assembly code from text content"""
         source = file_path or "<input>"
         try:
-            # Parse the content into an AST
             result = A816Parser.parse_as_ast(content, source, include_paths=include_paths)
 
             if result.error:
                 raise FormattingError(f"Unable to format {source}:\n{result.error}")
 
-            # Preserve blank lines from original content
             return self._format_with_preserved_blanks(content, result.nodes)
 
         except ParserSyntaxError as exc:
@@ -288,11 +264,11 @@ class A816Formatter:
     # Single-line emitters keyed by AST node type.
     _SINGLE_LINE_EMITTERS: ClassVar[dict[type, Callable[[Any, Any], str]]] = {
         LabelAstNode: lambda self, ast: ast.to_canonical(),
-        OpcodeAstNode: lambda self, ast: self._format_opcode(ast),
+        OpcodeAstNode: lambda self, ast: format_opcode(ast, self.options),
         TextAstNode: lambda self, ast: f'.text "{ast.text}"',
         AsciiAstNode: lambda self, ast: f'.ascii "{ast.text}"',
-        DataNode: lambda self, ast: self._format_data(ast),
-        MacroApplyAstNode: lambda self, ast: self._format_macro_apply(ast),
+        DataNode: lambda self, ast: format_data(ast, self.options),
+        MacroApplyAstNode: lambda self, ast: format_macro_apply(ast, self.options),
         IncludeAstNode: lambda self, ast: f'.include "{ast.file_path}"',
         IncludeIpsAstNode: lambda self, ast: f'.include_ips "{ast.file_path}"',
         IncludeBinaryAstNode: lambda self, ast: f'.incbin "{ast.file_path}"',
@@ -341,85 +317,6 @@ class A816Formatter:
             return [emitter(self, ast)]
         return ast.to_canonical().splitlines()
 
-    def _format_opcode(self, opcode_ast: OpcodeAstNode) -> str:
-        """Format an opcode instruction"""
-        # Build opcode with size specifier (always lowercase)
-        opcode = opcode_ast.opcode.lower()
-        if opcode_ast.value_size:
-            opcode += f".{opcode_ast.value_size.lower()}"
-
-        # Add operand if present
-        operand = self._format_operand(opcode_ast)
-
-        # Format with single space between opcode and operand (no indentation here)
-        if operand:
-            return f"{opcode} {operand}"
-        else:
-            return f"{opcode}"
-
-    @staticmethod
-    def _format_immediate(operand: str, _comma: str, _index: str | None) -> str:
-        return operand if operand.startswith("#") else f"#{operand}"
-
-    @staticmethod
-    def _format_indirect(operand: str, _comma: str, _index: str | None) -> str:
-        return f"({operand})"
-
-    @staticmethod
-    def _format_indirect_long(operand: str, _comma: str, _index: str | None) -> str:
-        return f"[{operand}]"
-
-    @staticmethod
-    def _format_dp_or_sr(operand: str, comma: str, index: str | None) -> str:
-        inner = f"{operand}{comma}{index}" if index else operand
-        return f"({inner})"
-
-    def _format_operand(self, opcode_ast: OpcodeAstNode) -> str:
-        """Format an opcode operand for its addressing mode."""
-        if not opcode_ast.operand:
-            return ""
-
-        operand = opcode_ast.operand.to_canonical().strip()
-        addressing_mode = opcode_ast.addressing_mode
-        index = opcode_ast.index.lower() if opcode_ast.index else None
-        comma = ", " if self.options.space_after_comma else ","
-
-        def with_index(base: str) -> str:
-            return f"{base}{comma}{index}" if index else base
-
-        # Modes that wrap base then optionally append index.
-        wrappers: dict[AddressingMode, Callable[[str], str]] = {
-            AddressingMode.indirect_indexed: lambda o: with_index(f"({o})"),
-            AddressingMode.indirect_indexed_long: lambda o: with_index(f"[{o}]"),
-            AddressingMode.stack_indexed_indirect_indexed: lambda o: with_index(f"({o}{comma}s)"),
-        }
-        if addressing_mode in wrappers:
-            return wrappers[addressing_mode](operand)
-
-        # Modes with no index dependency.
-        simple: dict[AddressingMode, Callable[[str, str, str | None], str]] = {
-            AddressingMode.immediate: self._format_immediate,
-            AddressingMode.indirect: self._format_indirect,
-            AddressingMode.indirect_long: self._format_indirect_long,
-            AddressingMode.dp_or_sr_indirect_indexed: self._format_dp_or_sr,
-        }
-        if addressing_mode in simple:
-            return simple[addressing_mode](operand, comma, index)
-        return with_index(operand)
-
-    def _format_data(self, data_ast: DataNode) -> str:
-        """Format a data directive"""
-        directive = f".{data_ast.kind}"
-        values = []
-
-        for expr in data_ast.data:
-            values.append(expr.to_canonical())
-
-        operand = ", ".join(values) if self.options.space_after_comma else ",".join(values)
-
-        # Format with single space between directive and operand (no indentation here)
-        return f"{directive} {operand}"
-
     def _format_macro(self, macro_ast: MacroAstNode) -> list[str]:
         """Format a macro definition with its body"""
         params = ", ".join(macro_ast.args) if self.options.space_after_comma else ",".join(macro_ast.args)
@@ -436,17 +333,6 @@ class A816Formatter:
         body_lines.extend(self._indent_block_lines(self._format_ast(macro_ast.block)))
 
         return [header, *body_lines, "}"]
-
-    def _format_macro_apply(self, apply_ast: MacroApplyAstNode) -> str:
-        """Format a macro application"""
-        if apply_ast.args:
-            args = []
-            for arg in apply_ast.args:
-                args.append(arg.to_canonical())
-            arg_str = ", ".join(args) if self.options.space_after_comma else ",".join(args)
-            return f"{apply_ast.name}({arg_str})"
-        else:
-            return f"{apply_ast.name}()"
 
     def _format_alloc(self, ast: AllocAstNode) -> list[str]:
         """Format `.alloc NAME in POOL { body }`."""
@@ -575,166 +461,6 @@ class A816Formatter:
             else:
                 indented.append(self._indent(line, levels))
         return indented
-
-    def _collapse_empty_lines(self, lines: list[str]) -> list[str]:
-        if not self.options.preserve_empty_lines:
-            return [line for line in lines if line.strip()]
-        result: list[str] = []
-        empty_count = 0
-        for line in lines:
-            if line.strip():
-                empty_count = 0
-                result.append(line)
-            else:
-                empty_count += 1
-                if empty_count <= self.options.max_empty_lines:
-                    result.append("")
-        return result
-
-    @staticmethod
-    def _separate_labels(lines: list[str]) -> list[str]:
-        """Insert a blank line before top-level labels (function entries
-        / scope boundaries) for breathing room.
-
-        Inside `{ ... }` blocks, labels render flush-left as section
-        markers (`_loop:`, `_skip:`) and the author tends to pack them
-        tightly with surrounding code, so don't force blanks there.
-        Track brace depth across the line stream to distinguish.
-        """
-        adjusted: list[str] = []
-        depth = 0
-        for line in lines:
-            stripped = line.strip()
-            is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
-            at_top_level = depth == 0
-            if is_label and at_top_level and adjusted and adjusted[-1].strip():
-                adjusted.append("")
-            adjusted.append(line)
-            depth += stripped.count("{") - stripped.count("}")
-            if depth < 0:
-                depth = 0
-        return adjusted
-
-    @staticmethod
-    def _collect_inline_comment_groups(lines: list[str]) -> dict[int, list[tuple[int, str, str]]]:
-        groups: dict[int, list[tuple[int, str, str]]] = {}
-        for index, line in enumerate(lines):
-            if ";" not in line or line.lstrip().startswith(";"):
-                continue
-            semicolon_index = line.find(";")
-            if semicolon_index <= 0:
-                continue
-            indent = len(line) - len(line.lstrip())
-            code_part = line[indent:semicolon_index].rstrip()
-            if not code_part:
-                continue
-            comment_part = line[semicolon_index + 1 :].strip()
-            groups.setdefault(indent, []).append((index, code_part, comment_part))
-        return groups
-
-    def _align_inline_comments(self, lines: list[str]) -> None:
-        """Normalize inline comments without forcing column alignment.
-
-        The default policy emits `code  ; comment` with two spaces — a
-        light convention that matches the project's casual style. Set
-        `comment_alignment > 0` to force a target column for groups of
-        same-indent comments.
-        """
-        groups = self._collect_inline_comment_groups(lines)
-        force_column = self.options.comment_alignment
-        for indent, entries in groups.items():
-            if not entries:
-                continue
-            target_column: int | None = None
-            if force_column > 0:
-                max_code_len = max(len(code_part) for _, code_part, _ in entries)
-                target_column = max(indent + max_code_len + 1, force_column)
-            for index, code_part, comment_part in entries:
-                comment_text = f"; {comment_part}" if comment_part else ";"
-                if target_column is None:
-                    lines[index] = f"{' ' * indent}{code_part}  {comment_text}"
-                else:
-                    padding = max(target_column - (indent + len(code_part)), 1)
-                    lines[index] = f"{' ' * indent}{code_part}{' ' * padding}{comment_text}"
-
-    # Each line is rstripped before this regex sees it, so the trailing
-    # group is bounded — no nested overlapping `\s*` runs that could
-    # backtrack on adversarial input.
-    _PAREN_WRAP_RE: ClassVar[re.Pattern[str]] = re.compile(
-        r"^(?P<indent>[ \t]*)(?P<head>(?:\.macro[ \t]+)?[A-Za-z_][\w.]*)"
-        r"\((?P<params>[^()]*)\)(?P<tail>[ \t]*\{?)$"
-    )
-
-    def _wrap_long_paren_lines(self, lines: list[str]) -> list[str]:
-        """Wrap macro defs / applies whose single-line form exceeds max_line_length.
-
-        Match shape `[indent]head(params)tail`. `head` may be prefixed with
-        `.macro `; `tail` is empty (macro apply) or ` {` (macro def). Lines
-        with embedded comments, nested parens, or no params are left alone.
-        """
-        limit = self.options.max_line_length
-        out: list[str] = []
-        for line in lines:
-            if len(line) <= limit:
-                out.append(line)
-                continue
-            match = self._PAREN_WRAP_RE.match(line)
-            if not match:
-                out.append(line)
-                continue
-            params_raw = match.group("params").strip()
-            if not params_raw:
-                out.append(line)
-                continue
-            params = [p.strip() for p in params_raw.split(",") if p.strip()]
-            if any(("(" in p or ")" in p) for p in params):
-                out.append(line)
-                continue
-            indent = match.group("indent")
-            head = match.group("head")
-            tail = match.group("tail").strip()
-            inner_indent = indent + " " * self.options.indent_size
-            out.append(f"{indent}{head}(")
-            for param in params:
-                out.append(f"{inner_indent}{param},")
-            closing = f"{indent}){' ' + tail if tail else ''}".rstrip()
-            out.append(closing)
-        return out
-
-    @staticmethod
-    def _strip_blanks_after_position_directive(lines: list[str]) -> list[str]:
-        """Collapse blank lines immediately after `*=` / `@=` directives.
-
-        Position directives sit tight with the data they place — blank
-        lines between `*= 0xADDR` and the following `.incbin` / opcode
-        read as noise rather than separation. The author can still put
-        blank lines *before* the directive to break up sections.
-        """
-        out: list[str] = []
-        skip_blanks = False
-        for line in lines:
-            stripped = line.lstrip()
-            if skip_blanks and not stripped:
-                continue
-            out.append(line)
-            skip_blanks = stripped.startswith(("*=", "@="))
-        return out
-
-    def _finalize_formatting(self, lines: list[str]) -> str:
-        """Strip trailing whitespace, collapse blanks, separate labels, align inline comments."""
-        lines = [line.rstrip() for line in lines]
-        lines = self._wrap_long_paren_lines(lines)
-        lines = self._collapse_empty_lines(lines)
-        lines = self._separate_labels(lines)
-        # Position directives sit tight with their data; strip blanks
-        # after `_separate_labels` because that pass would otherwise
-        # re-insert a blank between `*=` / `@=` and the next label.
-        lines = self._strip_blanks_after_position_directive(lines)
-        self._align_inline_comments(lines)
-        content = "\n".join(lines)
-        if content and not content.endswith("\n"):
-            content += "\n"
-        return content
 
     @staticmethod
     def _node_line_num(node: AstNode) -> int | None:
@@ -923,7 +649,7 @@ class A816Formatter:
         formatted: list[str],
         original_lines: list[str],
         processed: set[int],
-        state: "A816Formatter._PreservedBlankState",
+        state: A816Formatter._PreservedBlankState,
     ) -> None:
         state.current_idx = self._emit_preserved_blanks(
             original_lines, processed, state.current_idx, line_num, formatted
@@ -971,4 +697,4 @@ class A816Formatter:
             self._emit_one_top_level(node, line_num, formatted, original_lines, processed, state)
 
         self._emit_preserved_blanks(original_lines, processed, state.current_idx, len(original_lines), formatted)
-        return self._finalize_formatting(formatted)
+        return finalize_formatting(formatted, self.options)
