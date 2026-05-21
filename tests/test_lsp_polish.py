@@ -175,6 +175,43 @@ def test_workspace_index_picks_up_stdlib_symbols() -> None:
         assert "PPU.INIDISP" in workspace.symbols
 
 
+def test_fluff_s001_does_not_fire_on_stdlib_struct_via_import() -> None:
+    """Importing `@std/snes/ppu` makes `PPU` known to the linter."""
+    from pathlib import Path
+
+    from a816.fluff_lint import lint_text
+
+    src = '"""Root."""\n.import "@std/snes/ppu"\n*=0x008000\n    lda.w (PPU_BASE as PPU).INIDISP\n'
+    diagnostics = lint_text(src, Path("ff4.s"))
+    s001_hits = [d for d in diagnostics if d.code == "S001"]
+    assert not s001_hits, f"unexpected S001 diagnostics: {[d.message for d in s001_hits]}"
+
+
+def test_fluff_s001_does_not_fire_on_module_path_struct() -> None:
+    """`module_paths` from a816.toml lets user imports resolve too."""
+    import tempfile
+    from pathlib import Path
+
+    from a816.fluff_lint import lint_text
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        modules = root / "modules"
+        modules.mkdir()
+        (modules / "player.s").write_text(
+            ".struct Player {\n    word x\n    word y\n}\n",
+            encoding="utf-8",
+        )
+        src = '"""Root."""\n.import "player"\n*=0x008000\n    lda.w (0x7e0000 as Player).x\n'
+        diagnostics = lint_text(
+            src,
+            root / "ff4.s",
+            module_paths=[modules],
+        )
+        s001 = [d for d in diagnostics if d.code == "S001"]
+        assert not s001
+
+
 def test_polished_lex_errors_carry_codes_and_hints() -> None:
     """Invalid addressing index emits a stellar diagnostic with a code + hint.
 

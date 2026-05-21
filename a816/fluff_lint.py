@@ -36,6 +36,7 @@ from a816.parse.ast.nodes import (
     ExprNode,
     ForAstNode,
     IfAstNode,
+    ImportAstNode,
     IncludeIpsAstNode,
     LabelAstNode,
     LabelDeclAstNode,
@@ -46,6 +47,7 @@ from a816.parse.ast.nodes import (
     SymbolAffectationAstNode,
 )
 from a816.parse.mzparser import A816Parser
+from a816.stdlib import resolve_stdlib_module
 
 MAX_LINE_LENGTH = 120
 
@@ -83,10 +85,17 @@ class LintContext:
     text: str
     nodes: list[AstNode] | None
     parse_failed: bool
+    # Search paths forwarded by the lint entry-points. `module_paths` lets
+    # struct-type rules (S001) follow `.import` chains so cross-module
+    # struct names resolve. `include_paths` is reserved for future rules
+    # that need to chase `.include` outside the already-inlined AST.
+    module_paths: list[Path] | None = None
+    include_paths_for_lookup: list[Path] | None = None
 
     _flat_nodes: list[AstNode] | None = field(default=None, init=False, repr=False)
     _expanded_top_level: list[AstNode] | None = field(default=None, init=False, repr=False)
     _placement_hits: dict[str, list[Diagnostic]] | None = field(default=None, init=False, repr=False)
+    _imported_struct_types: set[str] | None = field(default=None, init=False, repr=False)
 
     @property
     def flat_nodes(self) -> list[AstNode]:
@@ -864,7 +873,73 @@ def _walk_cast_nodes(
 
 
 def _collect_known_struct_types(ctx: LintContext) -> set[str]:
-    return {n.name for n in ctx.flat_nodes if isinstance(n, StructAstNode)}
+    """Struct types declared in this file plus those reachable via imports.
+
+    Local `.struct` decls are always available. `.import` targets are
+    resolved through the stdlib + module-path search order; their files
+    get parsed once per lint and the discovered struct names cached on
+    the context.
+    """
+    known = {n.name for n in ctx.flat_nodes if isinstance(n, StructAstNode)}
+    known |= _collect_imported_struct_types(ctx)
+    return known
+
+
+def _collect_imported_struct_types(ctx: LintContext) -> set[str]:
+    if ctx._imported_struct_types is not None:  # noqa: SLF001 — cache on ctx
+        return ctx._imported_struct_types
+    discovered: set[str] = set()
+    seen_paths: set[str] = set()
+    for node in ctx.flat_nodes:
+        if isinstance(node, ImportAstNode):
+            module_path = _resolve_import_for_lint(node.module_name, ctx)
+            if module_path is not None:
+                discovered |= _struct_names_in_file(module_path, seen_paths)
+    ctx._imported_struct_types = discovered  # noqa: SLF001
+    return discovered
+
+
+def _resolve_import_for_lint(module_name: str, ctx: LintContext) -> Path | None:
+    """Map a `.import` module name to an absolute path.
+
+    Tries the stdlib `@std/...` mapping first, then the lint context's
+    configured `module_paths`, then the document's own directory.
+    """
+    stdlib_path = resolve_stdlib_module(module_name, ".s")
+    if stdlib_path is not None:
+        return stdlib_path
+    candidates: list[Path] = []
+    if ctx.module_paths:
+        candidates.extend(ctx.module_paths)
+    candidates.append(ctx.path.parent)
+    file_name = module_name + ".s"
+    for base in candidates:
+        candidate = base / file_name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _struct_names_in_file(path: Path, seen_paths: set[str]) -> set[str]:
+    """Parse `path` (recursive cycle-safe) and return every declared struct name."""
+    canonical = str(path.resolve())
+    if canonical in seen_paths:
+        return set()
+    seen_paths.add(canonical)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    result = A816Parser.parse_as_ast(text, str(path))
+    names: set[str] = set()
+    for node in _flatten(list(result.nodes)):
+        if isinstance(node, StructAstNode):
+            names.add(node.name)
+        elif isinstance(node, ImportAstNode):
+            transitive = resolve_stdlib_module(node.module_name, ".s")
+            if transitive is not None:
+                names |= _struct_names_in_file(transitive, seen_paths)
+    return names
 
 
 def _collect_typed_instances(ctx: LintContext) -> dict[str, str]:
@@ -1023,18 +1098,28 @@ def lint_text(
     path: Path,
     *,
     include_paths: list[Path] | None = None,
+    module_paths: list[Path] | None = None,
 ) -> list[Diagnostic]:
     """Run every registered rule against in-memory source text.
 
     `include_paths` is forwarded to the parser so `.include` directives
-    resolve the same way they do under the assembler. The fluff CLI
-    fills it from the project's `a816.toml`; callers without a config
-    can pass it explicitly.
+    resolve the same way they do under the assembler. `module_paths`
+    lets struct-type rules (S001) follow `.import` chains so cross-
+    module struct names resolve. The fluff CLI fills both from the
+    project's `a816.toml`; callers without a config can pass them
+    explicitly.
     """
     result = A816Parser.parse_as_ast(text, str(path), include_paths=include_paths)
     parse_failed = bool(result.error)
     nodes = None if parse_failed else list(result.nodes)
-    ctx = LintContext(path=path, text=text, nodes=nodes, parse_failed=parse_failed)
+    ctx = LintContext(
+        path=path,
+        text=text,
+        nodes=nodes,
+        parse_failed=parse_failed,
+        module_paths=module_paths,
+        include_paths_for_lookup=include_paths,
+    )
 
     diagnostics: list[Diagnostic] = []
     for rule in RULES:
@@ -1050,8 +1135,15 @@ def lint_file(path: Path) -> list[Diagnostic]:
     """Run every registered rule against a single source file.
 
     Discovers the project's `a816.toml` by walking up from `path` and
-    forwards its `include-paths` to the parser.
+    forwards its `include-paths` + `module-paths` to the parser and
+    lint context respectively.
     """
     config = discover_a816_config(path)
     include_paths = config.include_paths if config is not None else None
-    return lint_text(path.read_text(encoding="utf-8"), path, include_paths=include_paths)
+    module_paths = config.module_paths if config is not None else None
+    return lint_text(
+        path.read_text(encoding="utf-8"),
+        path,
+        include_paths=include_paths,
+        module_paths=module_paths,
+    )
