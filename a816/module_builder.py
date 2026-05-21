@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from a816.program import Program
 
 from a816.linker import Linker
+from a816.module_loader import resolve_module
 from a816.object_file import ObjectFile
 from a816.parse.ast.nodes import (
     AstNode,
@@ -22,7 +23,6 @@ from a816.parse.ast.nodes import (
     ImportAstNode,
 )
 from a816.parse.mzparser import A816Parser
-from a816.stdlib import resolve_stdlib_module
 
 logger = logging.getLogger("a816.module_builder")
 
@@ -166,29 +166,11 @@ class ModuleBuilder:
         return [node.module_name for node in walk(nodes) if isinstance(node, ImportAstNode)]
 
     def _resolve_module_source(self, module_name: str, base_dir: Path) -> Path | None:
-        """Find the source file for a module.
+        """Find the source file for a module via the shared `module_loader`.
 
-        Args:
-            module_name: The module name (e.g., "vwf" or "battle/sram",
-              or `@std/snes/ppu` for bundled stdlib).
-            base_dir: The directory of the importing file
-
-        Returns:
-            Path to the source file, or None if not found.
+        Search order: stdlib `@std/...` → `base_dir` → configured `module_paths`.
         """
-        stdlib_path = resolve_stdlib_module(module_name, ".s")
-        if stdlib_path is not None:
-            return stdlib_path
-
-        search_paths = [base_dir] + self.module_paths
-        module_file = module_name + ".s"
-
-        for search_path in search_paths:
-            candidate = search_path / module_file
-            if candidate.exists():
-                return candidate
-
-        return None
+        return resolve_module(module_name, ".s", [base_dir, *self.module_paths])
 
     def _needs_recompilation(self, module_name: str) -> bool:
         """Check if a module needs to be recompiled.
