@@ -1,7 +1,10 @@
+import logging
 import struct
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Literal, Protocol
 
 from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, Region, RelocationType, SymbolSection, SymbolType
+
+logger = logging.getLogger("a816.writers")
 
 
 class Writer(Protocol):
@@ -16,6 +19,65 @@ class Writer(Protocol):
 
     def end(self) -> None:
         """Writes the footer."""
+
+
+OverlapMode = Literal["error", "warn", "off"]
+
+
+class WriteAuditor:
+    """Wraps a `Writer` to detect overlapping byte writes.
+
+    Every `write_block` records the `[addr, addr + len)` byte range it
+    served. Subsequent writes that touch any already-recorded byte are
+    reported per the configured `mode`:
+
+      - `error`: raise `OverlapError`
+      - `warn` (default): log a WARNING and continue
+      - `off`: silent passthrough
+
+    Non-overlapping adjacent blocks are silent. The implementation is
+    naive O(n) per write — fine for typical ROM patches that emit a
+    handful of regions; if that ever becomes hot, switch the inner
+    structure to an interval tree.
+    """
+
+    def __init__(self, inner: Writer, mode: OverlapMode = "warn") -> None:
+        self._inner = inner
+        self._mode: OverlapMode = mode
+        self._ranges: list[tuple[int, int]] = []  # sorted by start; non-overlapping when no conflicts
+
+    def begin(self) -> None:
+        self._inner.begin()
+
+    def write_block_header(self, block: bytes, block_address: int) -> None:
+        self._inner.write_block_header(block, block_address)
+
+    def write_block(self, block: bytes, block_address: int) -> None:
+        if self._mode != "off" and block:
+            self._check_overlap(block_address, block_address + len(block))
+        self._inner.write_block(block, block_address)
+
+    def end(self) -> None:
+        self._inner.end()
+
+    def _check_overlap(self, start: int, end: int) -> None:
+        for existing_start, existing_end in self._ranges:
+            if start < existing_end and existing_start < end:
+                overlap_start = max(start, existing_start)
+                overlap_end = min(end, existing_end)
+                message = (
+                    f"write at ${start:06x}..${end - 1:06x} overlaps previous "
+                    f"write at ${existing_start:06x}..${existing_end - 1:06x} "
+                    f"(${overlap_start:06x}..${overlap_end - 1:06x} would be silently overwritten)"
+                )
+                if self._mode == "error":
+                    raise OverlapError(message)
+                logger.warning(message)
+        self._ranges.append((start, end))
+
+
+class OverlapError(Exception):
+    """Raised by `WriteAuditor` in `error` mode when two writes share bytes."""
 
 
 class IPSWriter(Writer):

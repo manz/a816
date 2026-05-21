@@ -320,9 +320,7 @@ def generate_map(
     return []
 
 
-def _infer_typed_operand_size(
-    operand: ExpressionAstNode | None, resolver: Resolver
-) -> str | None:
+def _infer_typed_operand_size(operand: ExpressionAstNode | None, resolver: Resolver) -> str | None:
     """Pick `b`/`w`/`l` from a typed-instance field reference, else None.
 
     Covers the `lda p.field` shorthand: when the operand is exactly one
@@ -359,9 +357,7 @@ def _opcode_register_width(opcode: str, resolver: Resolver) -> int | None:
     return None
 
 
-def _typed_field_lookup(
-    operand: ExpressionAstNode | None, resolver: Resolver
-) -> tuple[str, str, int] | None:
+def _typed_field_lookup(operand: ExpressionAstNode | None, resolver: Resolver) -> tuple[str, str, int] | None:
     """Resolve a `p.field` operand to `(instance, full_name, field_width)`."""
     if operand is None or not isinstance(operand, ExpressionAstNode) or len(operand.tokens) != 1:
         return None
@@ -410,8 +406,7 @@ def _maybe_warn_register_width_mismatch(node: OpcodeAstNode, resolver: Resolver)
     register_label = _register_label(node.opcode)
     rep_sep = "rep" if field_width > register_width else "sep"
     logger.warning(
-        "field width (%d byte%s) does not match %s register size (%d bits) on `%s %s`; "
-        "consider `%s #$%02x` first",
+        "field width (%d byte%s) does not match %s register size (%d bits) on `%s %s`; consider `%s #$%02x` first",
         field_width,
         "" if field_width == 1 else "s",
         register_label,

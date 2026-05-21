@@ -26,6 +26,12 @@ class AssemblyContext:
     module_paths: list[Path] = field(default_factory=list)
     include_paths: list[Path] = field(default_factory=list)
     prelude_file: Path | None = None
+    # How the WriteAuditor reacts to overlapping byte writes from
+    # different `*=` / `.alloc` / `.relocate` regions. `"warn"` keeps
+    # behaviour backwards-compatible (log + continue); flip to
+    # `"error"` to abort on the first overlap, or `"off"` to skip the
+    # check entirely.
+    overlap_mode: str = "warn"
 
     @property
     def is_object_mode(self) -> bool:

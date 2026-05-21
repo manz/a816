@@ -21,7 +21,7 @@ from a816.parse.nodes import (
 )
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
-from a816.writers import IPSWriter, ObjectWriter, SFCWriter, Writer
+from a816.writers import IPSWriter, ObjectWriter, SFCWriter, WriteAuditor, Writer
 
 logger = logging.getLogger("a816")
 
@@ -517,7 +517,18 @@ class Program:
         # Stash the resolved node list so the .adbg producer can introspect
         # LinkedModuleNode placements after emission.
         self._program_nodes = list(nodes)
-        self.emit(nodes, emitter)
+        self.emit(nodes, self._wrap_emitter_for_overlap_audit(emitter))
+
+    def _wrap_emitter_for_overlap_audit(self, emitter: Writer) -> Writer:
+        """Auto-wrap SFC / IPS emitters so overlapping writes get reported.
+
+        `ObjectWriter` is left untouched — it tracks regions in a richer
+        structure and the linker has its own overlap pass.
+        """
+        mode = self.resolver.context.overlap_mode
+        if mode == "off" or isinstance(emitter, ObjectWriter):
+            return emitter
+        return WriteAuditor(emitter, mode=mode)  # type: ignore[arg-type]
 
     def assemble_with_emitter(self, asm_file: str, emitter: Writer, prelude: str | None = None) -> int:
         """CLI-facing wrapper around `assemble_string_with_emitter`.
