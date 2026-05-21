@@ -48,6 +48,37 @@ def test_incbin_symbols_are_goto_definable() -> None:
             assert symbols[sym][0].line == symbols["assets_intro_bin"][0].line
 
 
+def test_typed_bind_instance_fields_goto_definable() -> None:
+    """`hdma_ch6 := (addr as DMAChannel)` then `hdma_ch6.A1TL` should jump
+    to the bind line so the user can see where the alias came from."""
+    server = A816LanguageServer()
+    content = """.struct DMAChannel {
+    byte DMAP
+    byte BBAD
+    byte A1TL
+}
+hdma_ch6 := (0x4360 as DMAChannel)
+    sta.l hdma_ch6.A1TL
+"""
+    doc = A816Document("file:///dma.s", content)
+    server.documents[doc.uri] = doc
+    assert "hdma_ch6" in doc.symbols
+    assert "hdma_ch6.A1TL" in doc.symbols
+    assert "hdma_ch6.DMAP" in doc.symbols
+
+
+def test_bare_struct_type_name_is_goto_definable() -> None:
+    """`(addr as PPU)` should jump to the `.struct PPU { ... }` line."""
+    server = A816LanguageServer()
+    content = """.struct PPU {
+    byte INIDISP
+}
+"""
+    doc = A816Document("file:///ppu_type.s", content)
+    server.documents[doc.uri] = doc
+    assert "PPU" in doc.symbols
+
+
 def test_bit_field_aux_symbols_are_goto_definable() -> None:
     """`Type.field.mask` and `Type.field.shift` join the LSP symbol index."""
     server = A816LanguageServer()

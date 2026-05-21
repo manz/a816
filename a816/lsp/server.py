@@ -120,6 +120,19 @@ logger = logging.getLogger(__name__)
 FILE_URI_PREFIX = "file://"
 
 
+def _struct_node_in_file(path: Path, name: str) -> "StructAstNode | None":
+    """Parse `path` once and return the first matching `.struct <name>`."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    result = A816Parser.parse_as_ast(text, str(path))
+    for node in result.nodes:
+        if isinstance(node, StructAstNode) and node.name == name:
+            return node
+    return None
+
+
 class A816Document:
     """Represents an a816 assembly document with analysis capabilities"""
 
@@ -238,8 +251,82 @@ class A816Document:
 
     def _record_symbol_assignment(self, node: AstNode) -> None:
         symbol = getattr(node, "symbol", None)
-        if symbol:
-            self._record_token_position(node.file_info, self.symbols, symbol)
+        if not symbol:
+            return
+        self._record_token_position(node.file_info, self.symbols, symbol)
+        self._record_typed_bind_fields(node, symbol)
+
+    def _record_typed_bind_fields(self, node: AstNode, symbol: str) -> None:
+        """When the RHS is `(expr as T)`, also index `symbol.field` for every
+        field of `T` so `sta.l hdma_ch6.A1TL`-style goto-def lands somewhere.
+
+        Targets the bind site (not the struct field) because that's the
+        location the user usually wants to inspect — `hdma_ch6 := ...` is
+        the line that anchors why the alias exists.
+        """
+        if not isinstance(node, AssignAstNode):
+            return
+        value = getattr(node, "value", None)
+        if not isinstance(value, ExpressionAstNode) or len(value.tokens) != 1:
+            return
+        cast = value.tokens[0]
+        if not isinstance(cast, CastValueExprNode):
+            return
+        if not node.file_info.position:
+            return
+        bind_pos = Position(line=node.file_info.position.line, character=node.file_info.position.column)
+        file_uri = self._get_file_uri_for_token(node.file_info)
+        # Walk the type's flat fields, mirroring the codegen-time eager
+        # expansion. We need a lookup over StructAstNodes in the document.
+        for struct_node in self._iter_struct_nodes(cast.type_name):
+            for field_name, _ftype in struct_node.fields:
+                self.symbols[f"{symbol}.{field_name}"] = (bind_pos, file_uri)
+            return  # only the first matching declaration counts
+
+    def _iter_struct_nodes(self, name: str) -> "list[StructAstNode]":
+        """Find `.struct <name>` declarations reachable from this document.
+
+        Walks the local AST first; if no match, follows `.import`
+        directives (stdlib `@std/...` first, then `include_paths`) and
+        parses the target file once. Cycle-safe via `_seen_imports`.
+        """
+        matches: list[StructAstNode] = []
+        for node in self.ast_nodes:
+            if isinstance(node, StructAstNode) and node.name == name:
+                matches.append(node)
+        if matches:
+            return matches
+
+        for node in self.ast_nodes:
+            if not isinstance(node, ImportAstNode):
+                continue
+            path = self._resolve_import_for_struct_lookup(node.module_name)
+            if path is None:
+                continue
+            found = _struct_node_in_file(path, name)
+            if found is not None:
+                matches.append(found)
+                break
+        return matches
+
+    def _resolve_import_for_struct_lookup(self, module_name: str) -> "Path | None":
+        stdlib_path = resolve_stdlib_module(module_name, ".s")
+        if stdlib_path is not None:
+            return stdlib_path
+        file_name = module_name + ".s"
+        candidates: list[Path] = []
+        if self.include_paths:
+            candidates.extend(self.include_paths)
+        # Document's own directory as a last resort.
+        try:
+            candidates.append(uri_to_path(self.uri).parent)
+        except (OSError, ValueError):
+            pass
+        for base in candidates:
+            candidate = base / file_name
+            if candidate.exists():
+                return candidate
+        return None
 
     def _record_macro(self, node: MacroAstNode) -> None:
         if not getattr(node, "name", None):
@@ -267,6 +354,9 @@ class A816Document:
             return
         pos = Position(line=token.position.line, character=token.position.column)
         file_uri = self._get_file_uri_for_token(token)
+        # The bare type name (`PPU`) — used in `(addr as PPU)` casts and
+        # nested struct field types — also goto-def's to the declaration.
+        self.symbols[node.name] = (pos, file_uri)
         bit_field_re = _re.compile(r"u\d+")
         for field_name, field_type in node.fields:
             self.symbols[f"{node.name}.{field_name}"] = (pos, file_uri)

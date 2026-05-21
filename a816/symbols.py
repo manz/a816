@@ -102,22 +102,19 @@ class Scope:
         return self.labels.items()
 
     def add_symbol(self, symbol: str, value: int | BlockAstNode | str) -> None:
-        """Bind `symbol` to `value`. Silent on idempotent re-bind.
+        """Bind `symbol` to `value`. Idempotent upsert.
 
-        Multi-pass resolution re-runs `add_symbol` for the same `(name,
-        value)` pair on every pass; warning every time produces thousands
-        of lines of noise on real projects. Only re-binds that actually
-        change the value indicate a real collision worth surfacing.
+        Multi-pass resolution re-runs `add_symbol` on every pass — first
+        with a guessed address, later with the refined one — so the
+        value legitimately changes between calls. Distinguishing
+        "expected refinement" from "real duplicate declaration" needs
+        per-call source attribution we don't currently track; the parser
+        + codegen layers catch the user-visible duplicates (struct
+        redefinition, etc.), so this is a silent upsert.
         """
         if isinstance(value, BlockAstNode):
-            existing_code = self.code_symbols.get(symbol)
-            if existing_code is not None and existing_code is not value:
-                logger.warning(f"Symbol already defined ({symbol})")
             self.code_symbols[symbol] = value
         else:
-            existing = self.symbols.get(symbol)
-            if existing is not None and existing != value:
-                logger.warning(f"Symbol already defined ({symbol}): {existing!r} -> {value!r}")
             self.symbols[symbol] = value
 
     def add_external_symbol(self, symbol: str) -> None:
