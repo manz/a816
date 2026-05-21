@@ -2230,19 +2230,14 @@ class A816LanguageServer:
         return isinstance(node, DocstringAstNode | IncludeAstNode)
 
     def _visit_token_children(self, node: AstNode, tokens: list[dict[str, Any]], doc: A816Document) -> None:
-        body = getattr(node, "body", None)
-        if isinstance(body, list):
-            for child in body:
-                if isinstance(child, AstNode):
-                    self._visit_node_for_tokens(child, tokens, doc)
-        elif isinstance(body, AstNode):
-            self._visit_node_for_tokens(body, tokens, doc)
-        block = getattr(node, "block", None)
-        if isinstance(block, AstNode):
-            self._visit_node_for_tokens(block, tokens, doc)
-        else_block = getattr(node, "else_block", None)
-        if isinstance(else_block, AstNode):
-            self._visit_node_for_tokens(else_block, tokens, doc)
+        for attr in ("body", "block", "else_block", "value", "expression", "min_value", "max_value"):
+            child = getattr(node, attr, None)
+            if isinstance(child, list):
+                for entry in child:
+                    if isinstance(entry, AstNode):
+                        self._visit_node_for_tokens(entry, tokens, doc)
+            elif isinstance(child, AstNode):
+                self._visit_node_for_tokens(child, tokens, doc)
 
     def _visit_node_for_tokens(self, node: AstNode, tokens: list[dict[str, Any]], doc: A816Document) -> None:
         """Recursively visit AST nodes to extract semantic tokens."""

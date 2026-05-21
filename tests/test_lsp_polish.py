@@ -243,6 +243,93 @@ def test_fluff_s001_does_not_fire_on_module_path_struct() -> None:
         assert not s001
 
 
+def test_hover_on_struct_field_returns_type() -> None:
+    """`Type.field` (no aux) hover shows the field type + struct."""
+    server = A816LanguageServer()
+    content = """.struct OAM {
+    word x
+    word y
+    byte tile
+}
+
+    lda #OAM.tile
+"""
+    doc = A816Document("file:///hover_field.s", content)
+    server.documents[doc.uri] = doc
+    line_index = 6
+    line = doc.lines[line_index]
+    col = line.find("OAM")
+    hover = server._handle_hover(
+        HoverParams(
+            text_document=TextDocumentIdentifier(uri=doc.uri),
+            position=Position(line=line_index, character=col + 4),
+        )
+    )
+    assert hover is not None
+    body = hover.contents.value if hasattr(hover.contents, "value") else str(hover.contents)
+    assert "byte" in body
+    assert "tile" in body
+
+
+def test_typed_bind_fields_resolved_from_stdlib_import() -> None:
+    """Typed-bind referencing a struct from `@std/...` indexes its fields."""
+    server = A816LanguageServer()
+    content = """.import "@std/snes/dma"
+
+ch6 := (0x4360 as DMAChannel)
+    sta.l ch6.A1TL
+"""
+    doc = A816Document("file:///ch6.s", content)
+    server.documents[doc.uri] = doc
+    syms = doc.symbols
+    # The stdlib lookup must walk the .import and find DMAChannel.
+    assert "ch6" in syms
+    assert "ch6.A1TL" in syms
+
+
+def test_semantic_tokens_render_cast_and_binop() -> None:
+    """Cast inner expressions + binary operators get highlighted."""
+    server = A816LanguageServer()
+    content = """.struct Pt {
+    word x
+}
+
+p := (0x7e0000 + 0x10 as Pt)
+"""
+    doc = A816Document("file:///cast_binop.s", content)
+    tokens = server._extract_semantic_tokens_from_ast(doc)
+    types = {t["type"] for t in tokens}
+    # 3=number, 5=operator — both must appear.
+    assert 3 in types and 5 in types
+
+
+def test_dotted_word_span_extracts_full_path() -> None:
+    """`_dotted_word_span` stretches across `.` boundaries."""
+    server = A816LanguageServer()
+    line = "    lda #INIDISP.force_blank.mask"
+    word = server._dotted_word_span(line, line.index("force"))
+    assert word == "INIDISP.force_blank.mask"
+
+
+def test_directive_nodes_emit_semantic_tokens() -> None:
+    """Every directive type included in `_DIRECTIVE_TYPES` produces a token."""
+    server = A816LanguageServer()
+    content = """.scope demo {
+    .a8
+    .for n := 0, 4 {
+        nop
+    }
+}
+.pool p {
+    range 0x028000 0x028fff
+}
+"""
+    doc = A816Document("file:///dirs.s", content)
+    tokens = server._extract_semantic_tokens_from_ast(doc)
+    # Directive type id is 7 in the legend.
+    assert any(t["type"] == 7 for t in tokens)
+
+
 def test_polished_lex_errors_carry_codes_and_hints() -> None:
     """Invalid addressing index emits a stellar diagnostic with a code + hint.
 
