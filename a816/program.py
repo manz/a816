@@ -8,7 +8,7 @@ from a816.context import AssemblyMode
 from a816.cpu.cpu_65c816 import RomType
 from a816.exceptions import AssemblyError
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import (
     AllocNode,
     BinaryNode,
@@ -60,17 +60,17 @@ class Program:
         ...     print("Assembly successful")
     """
 
-    def __init__(self, parser: MZParser | None = None, dump_symbols: bool = False):
+    def __init__(self, parser: A816Parser | None = None, dump_symbols: bool = False):
         """Initialize the assembler program.
 
         Args:
-            parser: Optional custom parser instance. If None, creates a default MZParser.
+            parser: Optional custom parser instance. If None, creates a default A816Parser.
             dump_symbols: If True, prints the symbol table after assembly.
         """
         self.resolver = Resolver()
         self.logger = logging.getLogger("a816")
         self.dump_symbols = dump_symbols
-        self.parser = parser or MZParser(self.resolver)
+        self.parser = parser or A816Parser(self.resolver)
         self._debug_capture: bool = False
         # (address, filename, line, column) recorded during emit() when capture is on.
         self._debug_lines: list[tuple[int, str, int, int]] = []

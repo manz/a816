@@ -11,11 +11,11 @@ from a816.parse.ast.nodes import (
     ReclaimAstNode,
     RelocateAstNode,
 )
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 
 
 def _parse(src: str) -> list[AstNode]:
-    result = MZParser.parse_as_ast(src, filename="t.s")
+    result = A816Parser.parse_as_ast(src, filename="t.s")
     assert result.parse_error is None, result.parse_error and result.parse_error.format()
     return result.nodes
 
@@ -57,7 +57,7 @@ class TestPoolDirective:
         assert node.strategy == "order"
 
     def test_empty_pool_is_error(self) -> None:
-        result = MZParser.parse_as_ast(".pool empty {}", filename="t.s")
+        result = A816Parser.parse_as_ast(".pool empty {}", filename="t.s")
         assert result.parse_error is not None
         assert "no ranges" in result.parse_error.message
 
@@ -67,7 +67,7 @@ class TestPoolDirective:
         from a816.symbols import Resolver
 
         resolver = Resolver()
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             ".pool p { range 0x028000 0x028fff fill 0x100 }",
             filename="t.s",
         )
@@ -76,7 +76,7 @@ class TestPoolDirective:
             code_gen(result.nodes, resolver)
 
     def test_unknown_strategy_is_error(self) -> None:
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             ".pool p { range 0x028000 0x028fff strategy bogus }",
             filename="t.s",
         )
@@ -84,7 +84,7 @@ class TestPoolDirective:
         assert "unknown pool strategy" in result.parse_error.message
 
     def test_unknown_attribute_is_error(self) -> None:
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             ".pool p { range 0x028000 0x028fff bogus 1 }",
             filename="t.s",
         )
@@ -119,7 +119,7 @@ class TestAllocDirective:
         assert len(opcodes) == 1
 
     def test_missing_in_keyword_is_error(self) -> None:
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             ".alloc helper bank20 { rts }",
             filename="t.s",
         )
@@ -148,7 +148,7 @@ class TestRelocateDirective:
         assert len(opcodes) == 2
 
     def test_missing_into_keyword_is_error(self) -> None:
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             ".relocate fn 0x02c000 0x02c17f bank02 { rts }",
             filename="t.s",
         )
