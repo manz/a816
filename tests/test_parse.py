@@ -6,7 +6,7 @@ from typing import cast
 from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.nodes import DocstringAstNode, IncludeIpsAstNode, MacroAstNode, ScopeAstNode, Term, UnaryOp
 from a816.parse.codegen import code_gen
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import OpcodeNode
 from a816.parse.tokens import Token, TokenType
 from a816.program import Program
@@ -177,7 +177,7 @@ class ParseTest(unittest.TestCase):
         """
 
         program = Program()
-        program.parser = MZParser(program.resolver)
+        program.parser = A816Parser(program.resolver)
         ast = program.parser.parse_as_ast(input_program)
         print(ast)
         nodes = program.parser.parse(input_program)

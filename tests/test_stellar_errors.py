@@ -8,7 +8,7 @@ import pytest
 
 from a816.diagnostics.suggest import closest_matches, did_you_mean_hint
 from a816.error_codes import all_codes, lookup
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import NodeError
 from a816.program import Program
 from a816.symbols import Resolver
@@ -41,7 +41,7 @@ def test_lookup_known_and_unknown_codes() -> None:
 
 
 def test_parser_error_renders_code_and_hint() -> None:
-    result = MZParser.parse_as_ast(".pool p { range 0x1000 0x1fff bogus 1 }\n", "demo.s")
+    result = A816Parser.parse_as_ast(".pool p { range 0x1000 0x1fff bogus 1 }\n", "demo.s")
     assert result.error is not None
     assert "[E0106]" in result.error
     assert "unknown `.pool` attribute" in result.error
@@ -51,7 +51,7 @@ def test_parser_error_renders_code_and_hint() -> None:
 
 def test_parser_error_includes_context_lines() -> None:
     src = "; line above\n.lalala foo\n; line below\n"
-    result = MZParser.parse_as_ast(src, "ctx.s")
+    result = A816Parser.parse_as_ast(src, "ctx.s")
     assert result.error is not None
     # Above + below should appear in the rendered block.
     assert "; line above" in result.error
@@ -97,7 +97,7 @@ def test_multi_error_collects_top_level_failures() -> None:
 }
 lda.w (0x2100).hp
 """
-    result = MZParser.parse_as_ast(src, "multi.s")
+    result = A816Parser.parse_as_ast(src, "multi.s")
     assert result.parse_errors is not None
     assert len(result.parse_errors) >= 2
     rendered = result.error or ""
@@ -107,7 +107,7 @@ lda.w (0x2100).hp
 
 def test_token_type_label_uses_friendly_name() -> None:
     """Generic expect_token errors no longer leak `TokenType.X` to the user."""
-    result = MZParser.parse_as_ast(".include\n", "missing.s")
+    result = A816Parser.parse_as_ast(".include\n", "missing.s")
     assert result.error is not None
     assert "quoted string" in result.error
     assert "TokenType" not in result.error
@@ -120,7 +120,7 @@ def test_typed_bind_with_equal_shows_code_and_hint() -> None:
 }
 p = 0x100 as Pt
 """
-    result = MZParser.parse_as_ast(src, "tb.s")
+    result = A816Parser.parse_as_ast(src, "tb.s")
     assert result.error is not None
     assert "[E0104]" in result.error
     assert "use `name := expr as T`" in result.error
@@ -135,7 +135,7 @@ def _strip_ansi(s: str) -> str:
 def test_format_error_respects_no_color_env() -> None:
     """With NO_COLOR set, no ANSI escapes leak into the output."""
     src = ".pool p { range 0x1000 0x1fff bogus 1 }\n"
-    result = MZParser.parse_as_ast(src, "nc.s")
+    result = A816Parser.parse_as_ast(src, "nc.s")
     assert result.error is not None
     assert "\x1b[" not in result.error, "ANSI escapes leaked despite NO_COLOR"
     assert _strip_ansi(result.error) == result.error

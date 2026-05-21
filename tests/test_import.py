@@ -8,7 +8,7 @@ import pytest
 from a816.linker import Linker
 from a816.object_file import ObjectFile, SymbolType
 from a816.parse.ast.nodes import ImportAstNode
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import ExternNode
 from a816.program import Program
 
@@ -19,7 +19,7 @@ class TestImportParsing:
     def test_parse_import_directive(self) -> None:
         """Test that .import "module" is parsed correctly."""
         source = '.import "vwf"'
-        result = MZParser.parse_as_ast(source, "test.s")
+        result = A816Parser.parse_as_ast(source, "test.s")
 
         assert len(result.nodes) == 1
         assert isinstance(result.nodes[0], ImportAstNode)
@@ -28,7 +28,7 @@ class TestImportParsing:
     def test_parse_import_with_path(self) -> None:
         """Test that .import "path/to/module" is parsed correctly."""
         source = '.import "battle/sram"'
-        result = MZParser.parse_as_ast(source, "test.s")
+        result = A816Parser.parse_as_ast(source, "test.s")
 
         assert len(result.nodes) == 1
         assert isinstance(result.nodes[0], ImportAstNode)
@@ -41,7 +41,7 @@ class TestImportParsing:
 .import "dialog"
 .import "utils/math"
 """
-        result = MZParser.parse_as_ast(source, "test.s")
+        result = A816Parser.parse_as_ast(source, "test.s")
 
         import_nodes = [n for n in result.nodes if isinstance(n, ImportAstNode)]
         assert len(import_nodes) == 3
@@ -52,7 +52,7 @@ class TestImportParsing:
     def test_import_ast_representation(self) -> None:
         """Test ImportAstNode representation methods."""
         source = '.import "vwf"'
-        result = MZParser.parse_as_ast(source, "test.s")
+        result = A816Parser.parse_as_ast(source, "test.s")
         node = result.nodes[0]
 
         assert isinstance(node, ImportAstNode)

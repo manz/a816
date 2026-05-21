@@ -45,7 +45,7 @@ from a816.parse.ast.nodes import (
     StructAstNode,
     SymbolAffectationAstNode,
 )
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 
 MAX_LINE_LENGTH = 120
 
@@ -1031,7 +1031,7 @@ def lint_text(
     fills it from the project's `a816.toml`; callers without a config
     can pass it explicitly.
     """
-    result = MZParser.parse_as_ast(text, str(path), include_paths=include_paths)
+    result = A816Parser.parse_as_ast(text, str(path), include_paths=include_paths)
     parse_failed = bool(result.error)
     nodes = None if parse_failed else list(result.nodes)
     ctx = LintContext(path=path, text=text, nodes=nodes, parse_failed=parse_failed)

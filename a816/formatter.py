@@ -39,7 +39,7 @@ from a816.parse.ast.nodes import (
     TextAstNode,
 )
 from a816.parse.errors import ParserSyntaxError
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 
 
 class FormattingOptions:
@@ -100,7 +100,7 @@ class A816Formatter:
         source = file_path or "<input>"
         try:
             # Parse the content into an AST
-            result = MZParser.parse_as_ast(content, source, include_paths=include_paths)
+            result = A816Parser.parse_as_ast(content, source, include_paths=include_paths)
 
             if result.error:
                 raise FormattingError(f"Unable to format {source}:\n{result.error}")

@@ -21,7 +21,7 @@ from a816.parse.ast.nodes import (
     CodeRelocationAstNode,
     ImportAstNode,
 )
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 
 logger = logging.getLogger("a816.module_builder")
 
@@ -140,7 +140,7 @@ class ModuleBuilder:
                 nodes = parsed_nodes
             else:
                 content = source_path.read_text(encoding="utf-8")
-                nodes = MZParser.parse_as_ast(content, str(source_path)).nodes
+                nodes = A816Parser.parse_as_ast(content, str(source_path)).nodes
 
             imports = self._collect_imports(nodes)
 
@@ -321,7 +321,7 @@ def build_with_imports(
 
     # Check if the main file uses *= or @= directives (position-dependent code)
     # If so, use the direct assembly approach instead of full object linking
-    parse_result = MZParser.parse_as_ast(main_source.read_text(encoding="utf-8"), str(main_source))
+    parse_result = A816Parser.parse_as_ast(main_source.read_text(encoding="utf-8"), str(main_source))
     main_nodes = parse_result.nodes
     if _has_position_directives(main_nodes):
         logger.info("Detected position-dependent code (*=), using direct assembly mode")

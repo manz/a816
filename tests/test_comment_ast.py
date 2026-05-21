@@ -5,7 +5,7 @@ Unit tests for CommentAstNode and comment parsing functionality
 from unittest import TestCase
 
 from a816.parse.ast.nodes import CommentAstNode
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 from a816.parse.tokens import File, Position, Token, TokenType
 
 
@@ -76,7 +76,7 @@ class TestCommentParsing(TestCase):
         """Test parsing a single comment line"""
         program_text = "; This is a comment"
 
-        result = MZParser.parse_as_ast(program_text)
+        result = A816Parser.parse_as_ast(program_text)
 
         self.assertIsNone(result.error)
         self.assertEqual(len(result.nodes), 1)
@@ -92,7 +92,7 @@ class TestCommentParsing(TestCase):
 ; Another comment
 ; Final comment"""
 
-        result = MZParser.parse_as_ast(program_text)
+        result = A816Parser.parse_as_ast(program_text)
 
         self.assertIsNone(result.error)
         self.assertEqual(len(result.nodes), 3)
@@ -115,7 +115,7 @@ main:
     sta 0x2000
 ; Footer comment"""
 
-        result = MZParser.parse_as_ast(program_text)
+        result = A816Parser.parse_as_ast(program_text)
 
         self.assertIsNone(result.error)
 
@@ -135,7 +135,7 @@ main:
         """Test that comment AST can be converted back to representation"""
         program_text = "; Test comment"
 
-        result = MZParser.parse_as_ast(program_text)
+        result = A816Parser.parse_as_ast(program_text)
 
         self.assertIsNone(result.error)
         self.assertEqual(len(result.nodes), 1)
@@ -160,7 +160,7 @@ main:
 
 ; End of program"""
 
-        result = MZParser.parse_as_ast(program_text)
+        result = A816Parser.parse_as_ast(program_text)
 
         self.assertIsNone(result.error)
 
@@ -187,7 +187,7 @@ main:
 
 ; Comment 3"""
 
-        result = MZParser.parse_as_ast(program_text)
+        result = A816Parser.parse_as_ast(program_text)
 
         self.assertIsNone(result.error)
 
@@ -198,7 +198,7 @@ main:
         """Test parsing comments with special characters"""
         program_text = "; Comment with special chars: @#$%^&*()[]{}|\\:;\"'<>?/.,`~"
 
-        result = MZParser.parse_as_ast(program_text)
+        result = A816Parser.parse_as_ast(program_text)
 
         self.assertIsNone(result.error)
         self.assertEqual(len(result.nodes), 1)

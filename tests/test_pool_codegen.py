@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from a816.parse.codegen import code_gen
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 from a816.pool import Strategy
 from a816.program import Program
 from a816.symbols import Resolver
@@ -12,7 +12,7 @@ from tests import StubWriter
 
 def _gen(src: str) -> Resolver:
     resolver = Resolver()
-    result = MZParser.parse_as_ast(src, filename="t.s")
+    result = A816Parser.parse_as_ast(src, filename="t.s")
     assert result.parse_error is None
     code_gen(result.nodes, resolver)
     return resolver
@@ -117,7 +117,7 @@ class TestAllocCodegen:
         from a816.parse.nodes import AllocNode
 
         resolver = Resolver()
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             """
             .pool p { range 0x028000 0x0280ff }
             .alloc fn in p {
@@ -183,7 +183,7 @@ class TestRelocateCodegen:
         from a816.parse.nodes import RelocateNode
 
         resolver = Resolver()
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             """
             .pool p { range 0x028000 0x0280ff }
             .relocate fn 0x02c000 0x02c17f into p {
@@ -892,7 +892,7 @@ class TestPoolExpressions:
         from a816.symbols import Resolver
 
         resolver = Resolver()
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             """
             .pool p {
                 range undefined_symbol 0x0280ff
@@ -968,7 +968,7 @@ class TestAllocNodeInternals:
         from a816.parse.nodes import AllocNode
 
         resolver = Resolver()
-        result = MZParser.parse_as_ast(src, filename="t.s")
+        result = A816Parser.parse_as_ast(src, filename="t.s")
         assert result.parse_error is None
         nodes = code_gen(result.nodes, resolver)
         allocs = [n for n in nodes if isinstance(n, AllocNode)]
@@ -1037,7 +1037,7 @@ class TestRelocateNodeInternals:
         from a816.parse.nodes import RelocateNode
 
         resolver = Resolver()
-        result = MZParser.parse_as_ast(
+        result = A816Parser.parse_as_ast(
             """
             .pool p { range 0x028000 0x0280ff }
             .relocate fn 0x02c000 0x02c17f into p {

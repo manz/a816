@@ -92,7 +92,7 @@ from a816.parse.ast.nodes import (
     Term,
 )
 from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
-from a816.parse.mzparser import MZParser
+from a816.parse.mzparser import A816Parser
 from a816.parse.scanner_states import KEYWORDS
 from a816.parse.tokens import Token, TokenType
 from a816.util import uri_to_path
@@ -166,7 +166,7 @@ class A816Document:
         """Analyze document using the parser and extract symbols, labels, and diagnostics"""
         try:
             # Parse using the actual a816 parser
-            parser_result = MZParser.parse_as_ast(self.content, self.uri, include_paths=self.include_paths)
+            parser_result = A816Parser.parse_as_ast(self.content, self.uri, include_paths=self.include_paths)
             self.ast_nodes = parser_result.nodes
             self.parse_error = parser_result.parse_error
             self.parse_errors = list(parser_result.parse_errors or [])
@@ -178,7 +178,7 @@ class A816Document:
             self._collect_docstrings()
 
         except (ScannerException, ParserSyntaxError) as e:
-            # These should be handled by MZParser.parse_as_ast, but just in case
+            # These should be handled by A816Parser.parse_as_ast, but just in case
             self.parse_error = ParseError(
                 message=str(e),
                 filename=self.uri,
@@ -186,7 +186,7 @@ class A816Document:
                 column=0,
             )
             self.ast_nodes = []
-            logger.warning("Parser exception not caught by MZParser: %s", e)
+            logger.warning("Parser exception not caught by A816Parser: %s", e)
         except (AttributeError, KeyError, IndexError, TypeError) as e:
             # Catch AST processing exceptions
             self.parse_error = ParseError(

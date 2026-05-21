@@ -40,7 +40,7 @@ class ParserResult:
         return [node.to_representation() for node in self.nodes]
 
 
-class MZParser:
+class A816Parser:
     def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
 
@@ -151,3 +151,9 @@ def _gather_context(position: Any, *, before: int, after: int) -> tuple[list[str
     before_lines = [lines[i] for i in range(max(0, line_idx - before), line_idx)]
     after_lines = [lines[i] for i in range(line_idx + 1, min(len(lines), line_idx + 1 + after))]
     return before_lines, after_lines
+
+
+# Deprecated alias for the prior `MZParser` name. Downstream callers can
+# keep working through one more alpha cycle while they migrate to
+# `A816Parser`; remove this on the 1.2.0 line.
+MZParser = A816Parser

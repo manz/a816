@@ -698,10 +698,10 @@ def _import_from_source(
 ) -> GenNodes | None:
     try:
         if direct_mode:
-            from a816.parse.mzparser import MZParser
+            from a816.parse.mzparser import A816Parser
 
             content = src_path.read_text(encoding="utf-8")
-            result = MZParser.parse_as_ast(content, str(src_path))
+            result = A816Parser.parse_as_ast(content, str(src_path))
             return _code_gen(result.nodes, resolver, macro_definitions) if result.nodes else []
 
         return [ExternNode(symbol_name, resolver) for symbol_name in _extract_public_symbols_from_source(src_path)]
@@ -786,13 +786,13 @@ def _extract_public_symbols_from_source(source_path: Path) -> list[str]:
 
     Uses the full parser to correctly handle comments, strings, conditionals, etc.
     """
-    from a816.parse.mzparser import MZParser
+    from a816.parse.mzparser import A816Parser
 
     symbols: list[str] = []
     content = source_path.read_text(encoding="utf-8")
 
     # Parse using the actual parser
-    result = MZParser.parse_as_ast(content, str(source_path))
+    result = A816Parser.parse_as_ast(content, str(source_path))
 
     # Extract symbols from AST nodes
     _collect_public_symbols(result.nodes, symbols)

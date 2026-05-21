@@ -6,7 +6,7 @@ from a816.cpu.cpu_65c816 import AddressingMode
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import AssignAstNode
 from a816.parse.codegen import code_gen
-from a816.parse.mzparser import MZParser, ParserResult
+from a816.parse.mzparser import A816Parser, ParserResult
 from a816.program import Program
 from a816.symbols import Resolver
 from tests import StubWriter
@@ -17,7 +17,7 @@ class TestParse(TestCase):
 
     @staticmethod
     def _get_result_for(program_text: str) -> ParserResult:
-        return MZParser.parse_as_ast(program_text)
+        return A816Parser.parse_as_ast(program_text)
 
     def _get_ast_for(self, program_text: str) -> list[tuple[Any, ...]]:
         return self._get_result_for(program_text).ast
