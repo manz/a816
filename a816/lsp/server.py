@@ -112,6 +112,7 @@ from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
 from a816.parse.mzparser import A816Parser
 from a816.parse.scanner_states import KEYWORDS
 from a816.parse.tokens import Token, TokenType
+from a816.stdlib import resolve_stdlib_module
 from a816.util import uri_to_path
 
 logger = logging.getLogger(__name__)
@@ -862,7 +863,14 @@ class WorkspaceIndex:
             if resolved:
                 found_paths.add(resolved)
         for match in re.finditer(r"\.import\s+['\"]([^'\"]+)['\"]", content, re.IGNORECASE):
-            resolved = self._resolve_in_paths(match.group(1).strip() + ".s", file_path.parent, self.module_paths)
+            module_name = match.group(1).strip()
+            # Stdlib `@std/...` modules live inside the wheel — check there
+            # first so the crawler indexes them like any user module.
+            stdlib_path = resolve_stdlib_module(module_name, ".s")
+            if stdlib_path is not None:
+                found_paths.add(stdlib_path)
+                continue
+            resolved = self._resolve_in_paths(module_name + ".s", file_path.parent, self.module_paths)
             if resolved:
                 found_paths.add(resolved)
         return list(found_paths)
@@ -1490,9 +1498,7 @@ class A816LanguageServer:
 
     _BIT_FIELD_TYPE_RE: ClassVar[re.Pattern[str]] = re.compile(r"u(\d+)")
 
-    def _struct_field_meta(
-        self, struct_name: str, field_name: str
-    ) -> tuple[str, int | None, int, int] | None:
+    def _struct_field_meta(self, struct_name: str, field_name: str) -> tuple[str, int | None, int, int] | None:
         """Return `(declared_type, bit_width, mask, shift)` for a struct field, or None."""
         for doc in self.documents.values():
             for node in doc.ast_nodes:
@@ -1502,9 +1508,7 @@ class A816LanguageServer:
                         return meta
         return None
 
-    def _field_meta_in_struct(
-        self, node: StructAstNode, field_name: str
-    ) -> tuple[str, int | None, int, int] | None:
+    def _field_meta_in_struct(self, node: StructAstNode, field_name: str) -> tuple[str, int | None, int, int] | None:
         bit_position = 0
         for fname, ftype in node.fields:
             bit_match = self._BIT_FIELD_TYPE_RE.fullmatch(ftype)
@@ -2621,10 +2625,15 @@ class A816LanguageServer:
         """Resolve module name to source file path for .import directives.
 
         Search order:
-        1. Same directory as current file
-        2. module_paths configured in a816.toml
+        1. Bundled `@std/...` stdlib module (wheel-relative)
+        2. Same directory as current file
+        3. module_paths configured in a816.toml
         """
         try:
+            stdlib_path = resolve_stdlib_module(module_name, ".s")
+            if stdlib_path is not None:
+                return str(stdlib_path)
+
             current_dir = uri_to_path(current_uri).parent
             module_file = module_name + ".s"
 

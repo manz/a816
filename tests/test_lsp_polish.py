@@ -143,6 +143,38 @@ lda.l 0x123456
     assert len(result.nodes) == 3
 
 
+def test_goto_def_on_stdlib_import_resolves_to_wheel_module() -> None:
+    """`.import "@std/snes/ppu"` resolves to the bundled stdlib file."""
+    server = A816LanguageServer()
+    resolved = server._resolve_module_path("@std/snes/ppu", "file:///irrelevant.s")
+    assert resolved is not None
+    assert resolved.endswith("a816/stdlib/snes/ppu.s")
+
+
+def test_workspace_index_picks_up_stdlib_symbols() -> None:
+    """A document that imports `@std/snes/ppu` exposes PPU.* via the
+    workspace index — goto-def on `PPU.INIDISP` lands in the stdlib file."""
+    import tempfile
+    from pathlib import Path
+
+    from a816.lsp.server import WorkspaceIndex
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        entrypoint = root / "main.s"
+        entrypoint.write_text(
+            '"""Project root."""\n;! a816-lsp entrypoint\n.import "@std/snes/ppu"\n*=0x008000\n    lda PPU_BASE\n',
+            encoding="utf-8",
+        )
+        workspace = WorkspaceIndex(root)
+        workspace.rebuild()
+        # PPU_BASE comes from the stdlib's ppu.s; the crawler should have
+        # indexed it as a symbol.
+        assert "PPU_BASE" in workspace.symbols
+        # Likewise for the struct's flat field constants.
+        assert "PPU.INIDISP" in workspace.symbols
+
+
 def test_polished_lex_errors_carry_codes_and_hints() -> None:
     """Invalid addressing index emits a stellar diagnostic with a code + hint.
 
