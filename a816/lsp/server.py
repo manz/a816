@@ -2709,32 +2709,19 @@ class A816LanguageServer:
     def _resolve_module_path(self, module_name: str, current_uri: str) -> str | None:
         """Resolve module name to source file path for .import directives.
 
-        Search order:
-        1. Bundled `@std/...` stdlib module (wheel-relative)
-        2. Same directory as current file
-        3. module_paths configured in a816.toml
+        Search order: stdlib `@std/...` → current file's directory →
+        workspace `module_paths`. Backed by the shared `module_loader`.
         """
         try:
-            stdlib_path = resolve_stdlib_module(module_name, ".s")
-            if stdlib_path is not None:
-                return str(stdlib_path)
+            from a816.module_loader import resolve_module
 
             current_dir = uri_to_path(current_uri).parent
-            module_file = module_name + ".s"
-
-            candidate = (current_dir / module_file).resolve()
-            if candidate.exists():
-                return str(candidate)
-
+            search_paths = [current_dir]
             workspace = self.workspace_index
             if workspace:
-                for search_dir in workspace.module_paths:
-                    workspace_candidate = (search_dir / module_file).resolve()
-                    if workspace_candidate.exists():
-                        return str(workspace_candidate)
-
-            return None
-
+                search_paths.extend(workspace.module_paths)
+            resolved = resolve_module(module_name, ".s", search_paths)
+            return str(resolved.resolve()) if resolved is not None else None
         except (OSError, ValueError) as e:
             logger.debug(f"Error resolving module path '{module_name}' from '{current_uri}': {e}")
             return None

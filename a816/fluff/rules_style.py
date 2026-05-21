@@ -12,6 +12,7 @@ from a816.fluff.core import (
     Rule,
     flatten_nodes,
 )
+from a816.module_loader import resolve_module
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
@@ -28,7 +29,6 @@ from a816.parse.ast.nodes import (
     SymbolAffectationAstNode,
 )
 from a816.parse.mzparser import A816Parser
-from a816.stdlib import resolve_stdlib_module
 
 
 class LineTooLong(Rule):
@@ -114,22 +114,15 @@ def _collect_imported_struct_types(ctx: LintContext) -> set[str]:
 def _resolve_import_for_lint(module_name: str, ctx: LintContext) -> Path | None:
     """Map a `.import` module name to an absolute path.
 
-    Tries the stdlib `@std/...` mapping first, then the lint context's
-    configured `module_paths`, then the document's own directory.
+    Search order (via the shared `module_loader`): stdlib `@std/...`,
+    then the lint context's configured `module_paths`, then the
+    document's own directory.
     """
-    stdlib_path = resolve_stdlib_module(module_name, ".s")
-    if stdlib_path is not None:
-        return stdlib_path
-    candidates: list[Path] = []
+    search_paths: list[Path] = []
     if ctx.module_paths:
-        candidates.extend(ctx.module_paths)
-    candidates.append(ctx.path.parent)
-    file_name = module_name + ".s"
-    for base in candidates:
-        candidate = base / file_name
-        if candidate.exists():
-            return candidate
-    return None
+        search_paths.extend(ctx.module_paths)
+    search_paths.append(ctx.path.parent)
+    return resolve_module(module_name, ".s", search_paths)
 
 
 def _struct_names_in_file(path: Path, seen_paths: set[str]) -> set[str]:
@@ -148,7 +141,7 @@ def _struct_names_in_file(path: Path, seen_paths: set[str]) -> set[str]:
         if isinstance(node, StructAstNode):
             names.add(node.name)
         elif isinstance(node, ImportAstNode):
-            transitive = resolve_stdlib_module(node.module_name, ".s")
+            transitive = resolve_module(node.module_name, ".s", [])
             if transitive is not None:
                 names |= _struct_names_in_file(transitive, seen_paths)
     return names

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from a816.module_loader import resolve_module
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
@@ -16,7 +17,6 @@ from a816.parse.ast.nodes import (
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators, logger
 from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
-from a816.stdlib import resolve_stdlib_module as _resolve_stdlib_module
 from a816.symbols import Resolver
 
 
@@ -96,13 +96,13 @@ def generate_import(
     direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
     search_paths = _import_search_paths(resolver, file_info)
 
-    obj_path = _resolve_stdlib_module(module_name, ".o") or _resolve_module_path(module_name, ".o", search_paths)
+    obj_path = resolve_module(module_name, ".o", search_paths)
     if obj_path:
         nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
         if nodes is not None:
             return nodes
 
-    src_path = _resolve_stdlib_module(module_name, ".s") or _resolve_module_path(module_name, ".s", search_paths)
+    src_path = resolve_module(module_name, ".s", search_paths)
     if src_path:
         if direct_mode:
             key = _canonical(src_path)
@@ -115,28 +115,6 @@ def generate_import(
             return nodes
 
     raise NodeError(f'Module not found: "{module_name}"', file_info)
-
-
-def _resolve_module_path(module_name: str, extension: str, search_paths: list[Path]) -> Path | None:
-    """Resolve a module name to a file path.
-
-    Args:
-        module_name: The module name (e.g., "vwf" or "battle/sram")
-        extension: File extension to try (e.g., ".o" or ".s")
-        search_paths: List of directories to search
-
-    Returns:
-        Path to the module file if found, None otherwise
-    """
-    # Module name can contain path separators (e.g., "battle/sram")
-    module_file = module_name + extension
-
-    for search_path in search_paths:
-        candidate = search_path / module_file
-        if candidate.exists():
-            return candidate
-
-    return None
 
 
 def _extract_public_symbols_from_source(source_path: Path) -> list[str]:
