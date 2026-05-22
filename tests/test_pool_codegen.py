@@ -152,6 +152,41 @@ class TestAllocEndToEnd:
         # 0x028000 which maps to physical 0x010000 under low_rom.
         assert writer.data_addresses[idx] in (0x028000, 0x010000)
 
+    def test_alloc_with_register_size_toggle_reserves_full_body(self) -> None:
+        """`.a16` toggle inside an `.alloc` makes immediates whose value
+        fits in a byte still emit as 16-bit. Pool body sizing must walk
+        with the same A/X state emission will see — otherwise the slot
+        reserved is too small and the next alloc overwrites the tail.
+
+        Pre-fix: `lda #0x01` in `.a16` measured as 2 bytes (operand
+        guessed as `b` from value, no resolver state consulted) but
+        emitted as 3 bytes (resolver A=16). The second alloc lands one
+        byte inside the first's body."""
+        writer = StubWriter()
+        program = Program()
+        src = """
+        .pool p { range 0x028000 0x0280ff strategy order }
+        .alloc first in p {
+            rep #0x20
+            .a16
+            lda #0x01
+            rts
+        }
+        .alloc second in p {
+            nop
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        labels = program.resolver.current_scope.labels
+        first = labels["first"]
+        second = labels["second"]
+        # first body: c2 20 a9 01 00 60 = 6 bytes (lda imm is 3 bytes under A16
+        # even though 0x01 fits in a byte).
+        assert second - first == 6, (
+            f"second alloc should land 6 bytes past first; got {second - first}. "
+            f"Pool reserved too little — body sized with stale A=8 state."
+        )
+
     def test_alloc_binds_symbol(self) -> None:
         program = Program()
         resolver = program.resolver

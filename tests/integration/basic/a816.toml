@@ -1,0 +1,4 @@
+entrypoint = "main.s"
+include-paths = [".", "../assets"]
+module-paths = ["."]
+prelude = "preamble.s"

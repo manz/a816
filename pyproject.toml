@@ -46,6 +46,11 @@ build-backend = "hatchling.build"
 dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
+    # Headless SNES emulator used by tests/integration to verify that
+    # assembled ROMs actually render the expected VRAM / framebuffer
+    # state. Distributed as a wheel on PyPI so CI doesn't need the
+    # native build toolchain.
+    "kintsuki>=0.0.0a14",
 ]
 
 [tool.ruff]
@@ -76,7 +81,7 @@ relative_files = true
 
 [tool.hatch.envs.tests]
 detached = true
-dependencies = ["pygls>=2.1.1,<3", "lsprotocol>=2025.0.0,<2026", "pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff"]
+dependencies = ["pygls>=2.1.1,<3", "lsprotocol>=2025.0.0,<2026", "pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff", "kintsuki>=0.0.0a14"]
 
 [tool.hatch.envs.tests.scripts]
 coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov=script --cov-branch tests"
