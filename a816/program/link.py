@@ -129,8 +129,8 @@ class LinkMixin:
                 self.logger.info("Successfully created IPS patch")
                 return 0
 
-        except OSError as e:
-            self.logger.error(f"Failed to create IPS patch: {e}")
+        except OSError:
+            self.logger.exception("Failed to create IPS patch")
             return -1
 
     def link_as_sfc(self, linked_obj: ObjectFile, sfc_file: Path) -> int:
@@ -160,8 +160,8 @@ class LinkMixin:
                 self.logger.info("Successfully created SFC file")
                 return 0
 
-        except OSError as e:
-            self.logger.error(f"Failed to create SFC file: {e}")
+        except OSError:
+            self.logger.exception("Failed to create SFC file")
             return -1
 
     def _get_code_start_address(self, linked_obj: ObjectFile) -> int:

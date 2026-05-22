@@ -104,9 +104,7 @@ class ObjectEmitMixin:
             )
         )
 
-    def _accumulate_object_bytes(
-        self, node: NodeProtocol, object_writer: ObjectWriter, state: ObjectEmitState
-    ) -> None:
+    def _accumulate_object_bytes(self, node: NodeProtocol, object_writer: ObjectWriter, state: ObjectEmitState) -> None:
         node_bytes = node.emit(self.resolver.reloc_address)
         if not node_bytes:
             return
