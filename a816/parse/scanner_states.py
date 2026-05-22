@@ -255,7 +255,7 @@ def lex_opcode(s: "Scanner") -> None:
     lex_operand(s)
 
 
-KEYWORDS = {
+DIRECTIVE_NAMES = {
     "scope",
     "table",
     "include",
@@ -289,10 +289,16 @@ KEYWORDS = {
 }
 
 
-def lex_keyword(s: "Scanner") -> None:
+def lex_directive(s: "Scanner") -> None:
+    """Scan a `.NAME` directive token.
+
+    Caller consumed the leading dot. Reads the name + emits a KEYWORD
+    token when `NAME` is in `DIRECTIVE_NAMES`; raises a clean
+    diagnostic otherwise.
+    """
     s.ignore()
     s.accept_run("abcdefghijklmnopqrstuvwxyz_0123456789")
-    if s.current_token_text() in KEYWORDS:
+    if s.current_token_text() in DIRECTIVE_NAMES:
         s.emit(TokenType.KEYWORD)
     else:
         raise ScannerException(
@@ -301,6 +307,12 @@ def lex_keyword(s: "Scanner") -> None:
             code=str(E_SCANNER_UNKNOWN_KEYWORD),
             hint="see https://a816.ringum.net/directives/ for the list of supported `.` directives",
         )
+
+
+# Back-compat alias for callers that imported the old name. Drop in
+# a follow-up once the rest of the codebase migrates.
+lex_keyword = lex_directive
+KEYWORDS = DIRECTIVE_NAMES
 
 
 def lex_number(s: Scanner) -> None:
