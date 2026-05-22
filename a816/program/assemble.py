@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("a816")
 
+_ASSEMBLY_FAILED_MSG = "Assembly failed: %s"
+
 
 class AssembleMixin:
     """Pipeline entry points. Mixed into `Program`."""
@@ -117,7 +119,7 @@ class AssembleMixin:
                     return 128
 
         except RuntimeError as e:
-            self.logger.exception("Assembly failed: %s", e)
+            self.logger.exception(_ASSEMBLY_FAILED_MSG, e)
             return -1
         finally:
             self.resolver.context.mode = previous_mode
@@ -155,7 +157,7 @@ class AssembleMixin:
             object_writer.end()
             return exit_code
         except RuntimeError as e:
-            self.logger.exception("Assembly failed: %s", e)
+            self.logger.exception(_ASSEMBLY_FAILED_MSG, e)
             return -1
 
     def _classify_object_symbol(
@@ -222,7 +224,7 @@ class AssembleMixin:
                 logger.exception(str(e))
                 return -1
         except RuntimeError as e:
-            self.logger.exception("Assembly failed: %s", e)
+            self.logger.exception(_ASSEMBLY_FAILED_MSG, e)
             return -1
         finally:
             self.resolver.context.mode = previous_mode
