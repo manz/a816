@@ -51,14 +51,25 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         ...     print("Assembly successful")
     """
 
-    def __init__(self, parser: A816Parser | None = None, dump_symbols: bool = False):
+    def __init__(
+        self,
+        parser: A816Parser | None = None,
+        dump_symbols: bool = False,
+        overlap_mode: str | None = None,
+    ):
         """Initialize the assembler program.
 
         Args:
             parser: Optional custom parser instance. If None, creates a default A816Parser.
             dump_symbols: If True, prints the symbol table after assembly.
+            overlap_mode: How the WriteAuditor reacts to overlapping byte
+                writes. `None` (default) keeps the context default
+                (`error` since 2026-05). Pass `"warn"` or `"off"` to
+                override for legacy ROMs mid-migration.
         """
         self.resolver = Resolver()
+        if overlap_mode is not None:
+            self.resolver.context.overlap_mode = overlap_mode
         self.logger = logging.getLogger("a816")
         self.dump_symbols = dump_symbols
         self.parser = parser or A816Parser(self.resolver)

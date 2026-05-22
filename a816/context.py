@@ -27,11 +27,12 @@ class AssemblyContext:
     include_paths: list[Path] = field(default_factory=list)
     prelude_file: Path | None = None
     # How the WriteAuditor reacts to overlapping byte writes from
-    # different `*=` / `.alloc` / `.relocate` sections. `"warn"` keeps
-    # behaviour backwards-compatible (log + continue); flip to
-    # `"error"` to abort on the first overlap, or `"off"` to skip the
-    # check entirely.
-    overlap_mode: str = "warn"
+    # different `*=` / `.alloc` / `.relocate` sections. Default is
+    # `"error"` since 2026-05: silent last-write-wins on `*=` overlap
+    # was the #1 footgun in user code (cross-repo feedback). Flip to
+    # `"warn"` to keep building while migrating, or `"off"` to skip
+    # the check entirely. CLI: `--overlap-mode={error,warn,off}`.
+    overlap_mode: str = "error"
 
     @property
     def is_object_mode(self) -> bool:

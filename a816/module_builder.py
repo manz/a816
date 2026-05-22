@@ -276,6 +276,7 @@ def build_with_imports(
     copier_header: bool = False,
     include_paths: list[Path] | None = None,
     prelude_file: Path | None = None,
+    overlap_mode: str | None = None,
 ) -> BuildResult:
     """Build a project with automatic import resolution.
 
@@ -324,6 +325,7 @@ def build_with_imports(
             include_paths=include_paths,
             prelude_file=prelude_file,
             parsed_main_nodes=main_nodes,
+            overlap_mode=overlap_mode,
         )
 
     try:
@@ -338,7 +340,7 @@ def build_with_imports(
         # Output the final file
         from a816.program import Program
 
-        program = Program()
+        program = Program(overlap_mode=overlap_mode)
         if output_format == "ips":
             exit_code = program.link_as_patch(linked, output_file, copier_header=copier_header)
         elif output_format == "sfc":
@@ -399,10 +401,11 @@ def _assemble_main_direct(
     copier_header: bool,
     prelude_content: str | None,
     capture_debug: bool = False,
+    overlap_mode: str | None = None,
 ) -> "tuple[int, Program] | BuildResult":  # noqa: F821
     from a816.program import Program
 
-    program = Program()
+    program = Program(overlap_mode=overlap_mode)
     if capture_debug:
         program.enable_debug_capture()
     program.add_module_path(output_dir)
@@ -437,6 +440,7 @@ def build_with_imports_direct(
     prelude_file: Path | None = None,
     parsed_main_nodes: list[AstNode] | None = None,
     emit_debug_info: bool = True,
+    overlap_mode: str | None = None,
 ) -> BuildResult:
     """Pre-compile imported modules then assemble main directly (position-dependent ROM patches)."""
     main_source = Path(main_source)
@@ -496,6 +500,7 @@ def build_with_imports_direct(
             copier_header=copier_header,
             prelude_content=prelude_content,
             capture_debug=emit_debug_info,
+            overlap_mode=overlap_mode,
         )
         if isinstance(result, BuildResult):
             return result

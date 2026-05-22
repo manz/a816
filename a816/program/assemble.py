@@ -20,7 +20,7 @@ from a816.object_file import SymbolSection, SymbolType
 from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import NodeError
 from a816.protocols import NodeProtocol
-from a816.writers import IPSWriter, ObjectWriter, SFCWriter, WriteAuditor, Writer
+from a816.writers import IPSWriter, ObjectWriter, OverlapError, SFCWriter, WriteAuditor, Writer
 
 if TYPE_CHECKING:
     from a816.symbols import Resolver
@@ -116,6 +116,12 @@ class AssembleMixin:
                     # Codegen failure: include the traceback — these can
                     # surface internal bugs the user should report.
                     logger.exception("Codegen failed")
+                    return 128
+                except OverlapError as e:
+                    # Section-overlap = hard error since the default flip
+                    # to `overlap_mode="error"`. Message names both
+                    # sections + bytes; no traceback needed.
+                    logger.error(str(e))  # NOSONAR python:S8572
                     return 128
 
         except RuntimeError as e:
