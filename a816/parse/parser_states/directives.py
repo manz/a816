@@ -8,7 +8,7 @@ import ast
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from a816.error_codes import (
     E_PARSER_POOL_NO_RANGES,
@@ -445,19 +445,69 @@ def _expect_contextual_keyword(p: Parser, expected: str) -> Token:
 
 
 def parse_alloc(p: Parser) -> AllocAstNode:
-    """Parse `.alloc NAME in POOL { body }`."""
+    """Parse `.alloc` in three shapes:
+
+    * `.alloc NAME in POOL { body }` — pooled.
+    * `.alloc NAME at ADDR [size N] { body }` — pinned, named.
+    * `.alloc at ADDR [size N] { body }` — pinned, anonymous (3-byte
+      hijacks shouldn't tax with names).
+    """
     from a816.parse.parser_states.core import parse_block
 
     keyword = p.current()
-    name_token = p.next()
-    expect_token(name_token, TokenType.IDENTIFIER)
-    _expect_contextual_keyword(p, "in")
-    pool_token = p.next()
-    expect_token(pool_token, TokenType.IDENTIFIER)
+    first = p.next()
+    expect_token(first, TokenType.IDENTIFIER)
+
+    # `.alloc at ADDR ...` — anonymous pinned.
+    if first.value == "at":
+        return _parse_pinned_alloc_tail(p, parse_block, keyword, name=None)
+
+    # `.alloc NAME ...` — pooled or named-pinned.
+    name = first.value
+    separator = _expect_contextual_keyword_one_of(p, ("in", "at"))
+    if separator.value == "in":
+        pool_token = p.next()
+        expect_token(pool_token, TokenType.IDENTIFIER)
+        body = _parse_alloc_body(p, parse_block)
+        return AllocAstNode(name, pool_token.value, body, keyword)
+
+    return _parse_pinned_alloc_tail(p, parse_block, keyword, name=name)
+
+
+def _parse_pinned_alloc_tail(p: Parser, parse_block: Any, keyword: Token, *, name: str | None) -> AllocAstNode:
+    """Common tail for the two pinned alloc shapes: ADDR [size N] { body }."""
+    at_address = parse_expression(p)
+    at_size = _parse_optional_size_clause(p)
+    body = _parse_alloc_body(p, parse_block)
+    return AllocAstNode(name, None, body, keyword, at_address=at_address, at_size=at_size)
+
+
+def _parse_alloc_body(p: Parser, parse_block: Any) -> BlockAstNode:
     lbrace = p.next()
     expect_token(lbrace, TokenType.LBRACE)
-    body = BlockAstNode(parse_block(p), lbrace)
-    return AllocAstNode(name_token.value, pool_token.value, body, keyword)
+    return BlockAstNode(parse_block(p), lbrace)
+
+
+def _parse_optional_size_clause(p: Parser) -> ExpressionAstNode | None:
+    """`size N` after `at ADDR`. Optional; returns None when absent."""
+    if p.current().type == TokenType.IDENTIFIER and p.current().value == "size":
+        p.next()  # consume 'size'
+        return parse_expression(p)
+    return None
+
+
+def _expect_contextual_keyword_one_of(p: Parser, options: tuple[str, ...]) -> Token:
+    """Like `_expect_contextual_keyword` but matches any of `options`."""
+    token = p.next()
+    expect_token(token, TokenType.IDENTIFIER)
+    if token.value not in options:
+        joined = " | ".join(f"`{o}`" for o in options)
+        raise ParserSyntaxError(
+            f"expected one of {joined}, found `{token.value}`",
+            token,
+            code=str(E_PARSER_UNEXPECTED_TOKEN),
+        )
+    return token
 
 
 def parse_relocate(p: Parser) -> RelocateAstNode:

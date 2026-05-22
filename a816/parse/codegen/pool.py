@@ -143,10 +143,62 @@ def generate_alloc(
 ) -> GenNodes:
     from a816.parse.nodes import AllocNode
 
-    if node.pool_name not in resolver.pools:
-        raise NodeError(f"alloc into unknown pool {node.pool_name!r}", file_info)
+    if node.is_pinned:
+        pool_name = _synthesize_pinned_pool(node, resolver, file_info)
+        alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
+    else:
+        if node.pool_name is None or node.pool_name not in resolver.pools:
+            raise NodeError(f"alloc into unknown pool {node.pool_name!r}", file_info)
+        pool_name = node.pool_name
+        alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
+
     body_nodes = _code_gen(node.body.body, resolver, macro_definitions)
-    return [AllocNode(node.name, node.pool_name, body_nodes, resolver, file_info)]
+    return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info)]
+
+
+def _anonymous_alloc_name(file_info: Token, pool_name: str) -> str:
+    """Auto-name for anonymous allocs. Stable per source location so
+    repeat builds don't churn the linker's symbol map."""
+    line = getattr(getattr(file_info, "position", None), "line", 0)
+    column = getattr(getattr(file_info, "position", None), "column", 0)
+    return f"__anon_alloc_{pool_name}_{line}_{column}"
+
+
+def _synthesize_pinned_pool(
+    node: AllocAstNode,
+    resolver: Resolver,
+    file_info: Token,
+) -> str:
+    """Pinned allocs desugar to an anonymous single-range pool plus an
+    alloc into it. Pool is named for the source location so two pinned
+    allocs at the same address (likely a bug) collide on pool decl
+    rather than silently last-write-wins."""
+    if node.at_address is None:  # pragma: no cover (defensive)
+        raise NodeError("pinned alloc without at_address", file_info)
+    addr = _eval_int(node.at_address, resolver, file_info)
+    if node.at_size is not None:
+        size = _eval_int(node.at_size, resolver, file_info)
+        if size <= 0:
+            raise NodeError(f"`.alloc at` size must be positive, got {size}", file_info)
+        end = addr + size - 1
+    else:
+        # Unbounded: range extends to end of bank. Body overflow past
+        # bank boundary will hit the regular pool overflow path.
+        end = (addr & 0xFF0000) | 0xFFFF
+    line = getattr(getattr(file_info, "position", None), "line", 0)
+    pool_name = f"__pinned_at_{addr:06X}_L{line}"
+    if pool_name in resolver.pools:
+        raise NodeError(
+            f"pinned alloc at ${addr:06X} (line {line}) collides with a prior pinned alloc at the same site",
+            file_info,
+        )
+    resolver.pools[pool_name] = Pool(
+        name=pool_name,
+        ranges=[PoolRange(start=addr, end=end)],
+        fill=0x00,
+        strategy=Strategy.PACK,
+    )
+    return pool_name
 
 
 def generate_relocate(
