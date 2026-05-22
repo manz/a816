@@ -35,6 +35,12 @@ class AllocNode(NodeProtocol):
         self.file_info = file_info
         self._alloc: Allocation | None = None
         self._size: int = 0
+        # Snapshot of the A/X size that the body should assume on
+        # entry — captured once in `_measure_body` from the running
+        # `alloc_carry_*` channel, then reused by `_bind_body_labels_at`
+        # so label placement matches the measured-size pass.
+        self._entry_a_size: int = 8
+        self._entry_i_size: int = 8
 
     def _sandbox_pc(self) -> Address:
         pool = self.resolver.pools[self.pool_name]
@@ -53,12 +59,47 @@ class AllocNode(NodeProtocol):
         return isinstance(node, SymbolNode)
 
     def _measure_body(self) -> int:
+        # Mirror `RegisterSizeNode.emit`'s mutation across the body walk
+        # so `OpcodeNode.pc_after` sees the A/X size that emission will
+        # see. Inherit the size state from whichever alloc was measured
+        # immediately before this one (stashed on the resolver under
+        # `_alloc_carry_a_size`/`_alloc_carry_i_size`) — matches runtime,
+        # where the CPU's M/X flags carry across `jsr` calls. Restore
+        # the live resolver state on exit so top-level passes (which
+        # historically treat `.a8`/`.a16` as no-ops) stay unaffected.
+        from a816.parse.nodes.data import RegisterSizeNode
+
         start = self._sandbox_pc()
         pc = start
-        for node in self.body:
-            if self._skip_in_pass1(node):
-                continue
-            pc = node.pc_after(pc)
+        saved_a = self.resolver.a_size
+        saved_i = self.resolver.i_size
+        self._entry_a_size = self.resolver.alloc_carry_a_size
+        self._entry_i_size = self.resolver.alloc_carry_i_size
+        self.resolver.a_size = self._entry_a_size
+        self.resolver.i_size = self._entry_i_size
+        try:
+            for node in self.body:
+                if self._skip_in_pass1(node):
+                    continue
+                if isinstance(node, RegisterSizeNode):
+                    if node.register == "a":
+                        self.resolver.a_size = node.size
+                    else:
+                        self.resolver.i_size = node.size
+                pc = node.pc_after(pc)
+            self.resolver.alloc_carry_a_size = self.resolver.a_size
+            self.resolver.alloc_carry_i_size = self.resolver.i_size
+        finally:
+            self.resolver.a_size = saved_a
+            self.resolver.i_size = saved_i
+        # Use physical-address diff so bank-edge allocs measure
+        # correctly. `pc.logical_value - start.logical_value` jumps
+        # `0x8020` for a 32-byte alloc that ends at `$00:FFFF` because
+        # the next logical address `$01:0000` is bus-mapped past the
+        # WRAM-mirror low half of bank 1. Physical (file-offset) diff
+        # is the true byte count for any in-ROM pool range.
+        if start.physical is not None and pc.physical is not None:
+            return pc.physical - start.physical
         return pc.logical_value - start.logical_value
 
     def _request_slot(self) -> None:
@@ -74,10 +115,30 @@ class AllocNode(NodeProtocol):
             self._bind_body_labels_at(self._sandbox_pc())
 
     def _bind_body_labels_at(self, target: Address) -> None:
+        # Mirror `_measure_body`: walk with the inherited A/X carry so
+        # `OpcodeNode.pc_after` sizes opcodes the same way emission will,
+        # and body labels (e.g. `_draw_string_loop:`) bind at the right
+        # offsets. Restore live resolver state on exit so top-level
+        # passes stay clean.
+        from a816.parse.nodes.data import RegisterSizeNode
+
         self.resolver.current_scope.add_label(self.name, target)
         pc = target
-        for node in self.body:
-            pc = node.pc_after(pc)
+        saved_a = self.resolver.a_size
+        saved_i = self.resolver.i_size
+        self.resolver.a_size = self._entry_a_size
+        self.resolver.i_size = self._entry_i_size
+        try:
+            for node in self.body:
+                if isinstance(node, RegisterSizeNode):
+                    if node.register == "a":
+                        self.resolver.a_size = node.size
+                    else:
+                        self.resolver.i_size = node.size
+                pc = node.pc_after(pc)
+        finally:
+            self.resolver.a_size = saved_a
+            self.resolver.i_size = saved_i
 
     def _bind_body_labels(self) -> None:
         alloc = self._alloc

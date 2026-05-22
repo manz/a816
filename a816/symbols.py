@@ -244,6 +244,14 @@ class Resolver:
         self.reloc = False
         self.a_size: int = 8  # Accumulator size: 8 or 16 bits
         self.i_size: int = 8  # Index register size: 8 or 16 bits
+        # Carried A/X size between `.alloc` body measurements: each
+        # alloc starts measuring with the prior alloc's exit state so
+        # `ldx #0` in a callee sees the caller's `rep #$10`. Tracked
+        # separately from live `a_size`/`i_size` so top-level resolver
+        # passes (which treat `.a8`/`.a16` as no-ops in `pc_after`)
+        # stay unaffected.
+        self.alloc_carry_a_size: int = 8
+        self.alloc_carry_i_size: int = 8
         self.rom_type = RomType.low_rom
         self.current_scope_index = 0
         self.last_used_scope = 0

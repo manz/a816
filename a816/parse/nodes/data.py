@@ -28,6 +28,12 @@ class RegisterSizeNode(NodeProtocol):
         return b""
 
     def pc_after(self, current_pc: Address) -> Address:
+        # Intentionally a no-op for the resolver's top-level pc_after
+        # passes — historically those passes don't propagate `.a8`/`.a16`
+        # so callers (incl. legacy ff4-modules code) rely on `.b`/`.w`
+        # suffixes or operand value width to pick the right opcode size.
+        # `AllocNode._measure_body` mirrors emit's mutation locally so
+        # pool sizing stays accurate without leaking the change globally.
         return current_pc
 
     def __str__(self) -> str:
