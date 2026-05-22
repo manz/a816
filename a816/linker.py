@@ -164,8 +164,16 @@ class Linker:
                 f"pool {decl.name!r} declared with conflicting strategies: "
                 f"{existing.strategy.value!r} vs {decl.strategy!r}"
             )
+        # Dedupe identical ranges: a prelude-declared pool replicates
+        # across every module's .o, and reclaiming the same bytes twice
+        # is an error. Skip ranges already covered; only contribute
+        # genuinely new ones.
+        existing_ranges = {(r.start, r.end) for r in existing.ranges}
         for start, end in decl.ranges:
+            if (start, end) in existing_ranges:
+                continue
             existing.reclaim(PoolRange(start=start, end=end))
+            existing_ranges.add((start, end))
 
     def _delta_for(self, obj_file: ObjectFile, running_offset: int) -> int:
         """How much to shift this module's logical addresses by.

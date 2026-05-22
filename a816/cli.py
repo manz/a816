@@ -32,9 +32,26 @@ from a816.exceptions import LinkerError
 from a816.linker import Linker
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
+from a816.config import discover_a816_config
 from a816.program import Program
 
 logger = logging.getLogger("x816")
+
+
+def _apply_a816_toml(args: argparse.Namespace) -> None:
+    """Merge `a816.toml` settings into `args` (CLI flags win over file)."""
+    if not args.input_files:
+        return
+    start = args.input_files[0]
+    config = discover_a816_config(start if start.is_file() else start.parent)
+    if config is None:
+        return
+    if config.include_paths and not args.include_paths:
+        args.include_paths = [str(p) for p in config.include_paths]
+    if config.module_paths and not args.module_paths:
+        args.module_paths = [str(p) for p in config.module_paths]
+    if config.prelude_file is not None and args.prelude_file is None:
+        args.prelude_file = config.prelude_file
 
 
 _ASM_SUFFIXES = (".s", ".asm")
@@ -204,6 +221,7 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
 
 
 def _run_assemble(args: argparse.Namespace) -> int:
+    _apply_a816_toml(args)
     use_auto_imports = (
         not args.no_auto_imports
         and not args.compile_only

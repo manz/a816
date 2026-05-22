@@ -30,6 +30,17 @@ def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
     return paths
 
 
+def _object_has_pool_allocs(obj_path: Path) -> bool:
+    """Cheap check: parse the .o header to see if it carries any
+    `.alloc` requests. Used to gate the direct-mode `.o` shortcut."""
+    from a816.object_file import ObjectFile
+
+    try:
+        return bool(ObjectFile.from_file(str(obj_path)).pool_allocs)
+    except (FileNotFoundError, ValueError):
+        return False
+
+
 def _import_from_object(
     module_name: str,
     obj_path: Path,
@@ -47,7 +58,12 @@ def _import_from_object(
         symbols_data = [
             (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
         ]
-        return [LinkedModuleNode(module_name, obj_file.regions, symbols_data, resolver, obj_file.relocatable)]
+        node = LinkedModuleNode(module_name, obj_file.regions, symbols_data, resolver, obj_file.relocatable)
+        # Direct mode collapses object compilation + link into a single
+        # resolver pass: surface the .o's pool decls so top-level
+        # `.alloc` sites (and subsequent imports) can find the pools.
+        node.imported_pool_decls = list(obj_file.pool_decls)
+        return [node]
 
     return [ExternNode(name, resolver) for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
 
@@ -59,7 +75,13 @@ def _import_from_source(
     direct_mode: bool,
 ) -> GenNodes | None:
     try:
-        if direct_mode:
+        # Inline-parse when the importer is in direct mode OR when the
+        # module is a stdlib source (always under `@std/...`, never
+        # pre-compiled to a `.o`). Stdlib modules publish struct +
+        # macro definitions that the importer needs at codegen time —
+        # ExternNodes alone would lose those.
+        is_stdlib = "stdlib" in src_path.parts
+        if direct_mode or is_stdlib:
             from a816.parse.mzparser import A816Parser
 
             content = src_path.read_text(encoding="utf-8")
@@ -98,9 +120,17 @@ def generate_import(
 
     obj_path = resolve_module(module_name, ".o", search_paths)
     if obj_path:
-        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
-        if nodes is not None:
-            return nodes
+        # Direct mode + .o-with-pool-allocs would emit each alloc twice
+        # (once at the module's sandbox PC inside the .o, once at the
+        # main allocator's pick) → write-overlap auditor noise + the
+        # module bytes get clobbered. Fall through to source re-parse
+        # so the main resolver owns alloc placement.
+        if direct_mode and _object_has_pool_allocs(obj_path):
+            pass
+        else:
+            nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
+            if nodes is not None:
+                return nodes
 
     src_path = resolve_module(module_name, ".s", search_paths)
     if src_path:

@@ -46,6 +46,13 @@ class LinkedModuleNode(NodeProtocol):
         self._delta = 0
         # Cache placed regions for emit_blocks; refreshed on every pc_after.
         self._placed: list[tuple[int, bytes]] = []
+        # Populated by `_import_from_object` in direct mode so the .o's
+        # pool declarations land in the main resolver on first pc_after.
+        # Empty in object mode (the linker handles cross-module merging).
+        from a816.object_file import PoolDecl
+
+        self.imported_pool_decls: list[PoolDecl] = []
+        self._pools_registered = False
 
     def emit(self, current_addr: Address) -> bytes:
         # Single-region modules still flow through the legacy single-bytes
@@ -66,9 +73,32 @@ class LinkedModuleNode(NodeProtocol):
 
     def pc_after(self, current_pc: Address) -> Address:
         self._local_map: dict[str, int] = {}
+        self._register_imported_pools()
         self._compute_delta_and_base(current_pc)
         self._bind_module_symbols()
         return self._advance_pc(current_pc)
+
+    def _register_imported_pools(self) -> None:
+        """Surface the imported module's pool decls into the main
+        resolver's pool registry. Runs once. Silently skips pools
+        already declared by the main file (idempotent re-imports +
+        diamond imports collapse cleanly)."""
+        if self._pools_registered:
+            return
+        self._pools_registered = True
+        if not self.imported_pool_decls:
+            return
+        from a816.pool import Pool, PoolRange, Strategy
+
+        for decl in self.imported_pool_decls:
+            if decl.name in self.resolver.pools:
+                continue
+            self.resolver.pools[decl.name] = Pool(
+                name=decl.name,
+                ranges=[PoolRange(start=lo, end=hi) for lo, hi in decl.ranges],
+                fill=decl.fill,
+                strategy=Strategy(decl.strategy),
+            )
 
     def _compute_delta_and_base(self, current_pc: Address) -> None:
         if self.regions:

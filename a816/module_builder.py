@@ -452,7 +452,16 @@ def build_with_imports_direct(
     try:
         builder = ModuleBuilder(module_paths=paths, output_dir=output_dir, symbols=symbols)
         builder.discover_imports(main_source, parsed_main_nodes)
-        modules_to_compile = [m for m in builder.graph.topological_sort() if m != "__main__"]
+        # When a prelude declares shared pools / constants / typed
+        # binds, per-module precompile would need every symbol that the
+        # prelude introduces to flow through ExternNodes — including
+        # `.alloc` names from sibling modules. Cheapest fix: skip the
+        # precompile loop and let main's direct-mode `.import` inline
+        # each module's source. Single resolver, one allocator pass,
+        # no cross-module extern dance.
+        modules_to_compile = (
+            [] if prelude_content else [m for m in builder.graph.topological_sort() if m != "__main__"]
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
 
         accumulated_constants: dict[str, int] = {}
