@@ -95,38 +95,31 @@ _idle:
     bra _idle
 }
 
-.pool vectors {
-    range 0x00FFE0 0x00FFFF
-    strategy pack
-}
-
-.alloc vector_table in vectors {
-    .dw 0  ; $FFE0 reserved
-    .dw 0  ; $FFE2 reserved
-    .dw brk_handler  ; $FFE4 native COP
-    .dw brk_handler  ; $FFE6 native BRK -> STP
-    .dw brk_handler  ; $FFE8 native ABORT
-    .dw nmi_handler  ; $FFEA native NMI
-    .dw 0  ; $FFEC native reserved
-    .dw brk_handler  ; $FFEE native IRQ
-    .dw 0  ; $FFF0 reserved
-    .dw 0  ; $FFF2 reserved
-    .dw brk_handler  ; $FFF4 emulation COP
-    .dw 0  ; $FFF6 reserved
-    .dw brk_handler  ; $FFF8 emulation ABORT
-    .dw 0  ; $FFFA emulation NMI
-    .dw reset  ; $FFFC emulation reset
-    .dw brk_handler  ; $FFFE emulation IRQ/BRK
+; --- Vectors (LoROM, $00:FFE0..$00:FFFF) ----------------------------------
+; Pinned at the hardware-mandated SNES vector address. `size 0x20`
+; bounds the body so a stray `.dw` past the table fails the build
+; instead of trampling the rest of the bank.
+.alloc vector_table at 0x00FFE0 size 0x20 {
+    .dw 0                ; $FFE0 reserved
+    .dw 0                ; $FFE2 reserved
+    .dw brk_handler      ; $FFE4 native COP
+    .dw brk_handler      ; $FFE6 native BRK -> STP
+    .dw brk_handler      ; $FFE8 native ABORT
+    .dw nmi_handler      ; $FFEA native NMI
+    .dw 0                ; $FFEC native reserved
+    .dw brk_handler      ; $FFEE native IRQ
+    .dw 0                ; $FFF0 reserved
+    .dw 0                ; $FFF2 reserved
+    .dw brk_handler      ; $FFF4 emulation COP
+    .dw 0                ; $FFF6 reserved
+    .dw brk_handler      ; $FFF8 emulation ABORT
+    .dw 0                ; $FFFA emulation NMI
+    .dw reset            ; $FFFC emulation reset
+    .dw brk_handler      ; $FFFE emulation IRQ/BRK
 }
 
 ; --- Pad ROM to 256KB (kintsuki refuses sub-power-of-two LoROM) -----------
-
-.pool rom_tail {
-    range 0x07FFFF 0x07FFFF
-    strategy pack
-}
-
-.alloc rom_pad in rom_tail {
+.alloc rom_pad at 0x07FFFF size 0x01 {
     .db 0
 }
 
