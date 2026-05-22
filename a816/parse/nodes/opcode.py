@@ -74,7 +74,7 @@ class OpcodeNode(NodeProtocol):
 
     def pc_after(self, current_pc: Address) -> Address:
         opcode_emitter = self._get_emitter()
-        return current_pc + opcode_emitter.supposed_length(self.value_node, self.size)
+        return current_pc + opcode_emitter.supposed_length(self.value_node, self.size, self.resolver)
 
     def __str__(self) -> str:
         return f"OpcodeNode({self.opcode}, {self.addressing_mode}, {self.index}, {self.value_node})"
