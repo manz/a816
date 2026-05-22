@@ -74,23 +74,130 @@ def _import_from_source(
     macro_definitions: MacroDefinitions,
     direct_mode: bool,
 ) -> GenNodes | None:
+    """Bring an `.import`ed source module into the importer.
+
+    Direct mode = importer building the final ROM in one resolver
+    pass. Every node from the imported module runs inline so its
+    bytes land in the right place.
+
+    Object mode = importer being compiled to its own `.o`. The
+    imported module's `.o` owns its emitted bytes + runtime symbols;
+    the importer only needs:
+      * compile-time-only nodes (structs, macros, constants, typed
+        binds, sub-imports) inlined so codegen of THIS module can
+        resolve them, and
+      * extern stubs for runtime-bound names (labels, alloc names,
+        `.incbin` auto-symbols) so cross-module refs link.
+
+    Per-node split lives in `_import_object_mode`.
+    """
     try:
-        # Inline-parse when the importer is in direct mode OR when the
-        # module is a stdlib source (always under `@std/...`, never
-        # pre-compiled to a `.o`). Stdlib modules publish struct +
-        # macro definitions that the importer needs at codegen time —
-        # ExternNodes alone would lose those.
-        is_stdlib = "stdlib" in src_path.parts
-        if direct_mode or is_stdlib:
-            from a816.parse.mzparser import A816Parser
+        from a816.parse.mzparser import A816Parser
 
-            content = src_path.read_text(encoding="utf-8")
-            result = A816Parser.parse_as_ast(content, str(src_path))
-            return _code_gen(result.nodes, resolver, macro_definitions) if result.nodes else []
-
-        return [ExternNode(symbol_name, resolver) for symbol_name in _extract_public_symbols_from_source(src_path)]
+        content = src_path.read_text(encoding="utf-8")
+        result = A816Parser.parse_as_ast(content, str(src_path))
+        if not result.nodes:
+            return []
+        if direct_mode:
+            return _code_gen(result.nodes, resolver, macro_definitions)
+        return _import_object_mode(result.nodes, resolver, macro_definitions)
     except OSError:
         return None
+
+
+def _import_object_mode(
+    nodes: list,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+) -> GenNodes:
+    """Per-node classifier for object-mode `.import`s.
+
+    Inlines compile-time-only nodes (struct, macro, constant, typed
+    bind, `.label`, scope, `.if`, `.for`, nested `.import`) into the
+    importer's resolver so codegen of this module sees their effects.
+    Emits `ExternNode` for runtime-bound names so cross-module
+    references resolve at link time.
+
+    Names contributed by the inline pass land in
+    `Resolver.imported_symbol_names`; `_export_object_symbols` skips
+    them so the importer's `.o` doesn't re-export symbols owned by
+    its dependency. The owning module's `.o` is the single source.
+    """
+    from a816.parse.ast.nodes import (
+        AssignAstNode,
+        CommentAstNode,
+        DocstringAstNode,
+        ForAstNode,
+        IfAstNode,
+        ImportAstNode,
+        LabelDeclAstNode,
+        MacroAstNode,
+        ScopeAstNode,
+        StructAstNode,
+        SymbolAffectationAstNode,
+    )
+
+    inline_types = (
+        StructAstNode,
+        MacroAstNode,
+        SymbolAffectationAstNode,
+        AssignAstNode,
+        LabelDeclAstNode,
+        ScopeAstNode,
+        IfAstNode,
+        ForAstNode,
+        ImportAstNode,
+        DocstringAstNode,
+        CommentAstNode,
+    )
+
+    out: GenNodes = []
+    root = resolver.scopes[0]
+    before_labels = set(root.labels.keys())
+    before_symbols = set(root.symbols.keys())
+
+    for node in nodes:
+        if isinstance(node, inline_types):
+            out.extend(_code_gen([node], resolver, macro_definitions) or [])
+            continue
+        for name in _runtime_extern_names(node):
+            out.append(ExternNode(name, resolver))
+
+    resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)
+    resolver.imported_symbol_names.update(set(root.symbols.keys()) - before_symbols)
+    return out
+
+
+def _runtime_extern_names(node: object) -> list[str]:
+    """Names a runtime-bound node would publish in its owning `.o`,
+    surfaced to the importer as externs.
+
+    Underscore-prefixed names are LOCAL by convention (matches
+    `_classify_object_symbol`) and never get exported, so we don't
+    extern them either — referencing a `_local` symbol from another
+    module is a use error, not something the linker should pretend
+    to support.
+    """
+    from a816.parse.ast.nodes import (
+        AllocAstNode,
+        IncludeBinaryAstNode,
+        LabelAstNode,
+        RelocateAstNode,
+    )
+
+    def _public(names: list[str]) -> list[str]:
+        return [n for n in names if not n.startswith("_")]
+
+    if isinstance(node, LabelAstNode):
+        return _public([node.label])
+    if isinstance(node, AllocAstNode):
+        return _public([node.name]) if node.name else []
+    if isinstance(node, RelocateAstNode):
+        return _public([node.symbol])
+    if isinstance(node, IncludeBinaryAstNode):
+        base = node.file_path.replace("/", "_").replace(".", "_")
+        return _public([base, f"{base}__size"])
+    return []
 
 
 def _canonical(path: Path) -> str:

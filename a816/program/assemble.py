@@ -193,6 +193,8 @@ class AssembleMixin:
                 continue  # already added by ExternNode
             if name in self.resolver.pool_stat_symbol_names:
                 continue  # pool stat snapshots are per-module, not linker-visible
+            if name in self.resolver.imported_symbol_names:
+                continue  # contributed by an inlined `.import`; owner's `.o` is the sole source
             sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 

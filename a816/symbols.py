@@ -295,6 +295,12 @@ class Resolver:
         # "inc"; without dedup the third party that imports both re-parses
         # "inc" twice and trips struct-redef and similar idempotency checks).
         self.imported_module_paths: set[str] = set()
+        # Names contributed to the root scope by inlined `.import`
+        # passes (object mode). `_export_object_symbols` skips these
+        # so the importing module's `.o` doesn't re-export symbols
+        # owned by its dependencies — the owner's `.o` is the single
+        # source of truth, downstream `.o`s carry externs.
+        self.imported_symbol_names: set[str] = set()
         self.set_position(pc)
 
     def allocate_pools(self) -> None:
