@@ -65,7 +65,39 @@ def _import_from_object(
         node.imported_pool_decls = list(obj_file.pool_decls)
         return [node]
 
-    return [ExternNode(name, resolver) for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
+    # Object mode: importer is being compiled to its own `.o`. Surface
+    # the imported `.o`'s pool decls in the importer's resolver so any
+    # `.alloc NAME in <pool>` site at the importer's top level resolves
+    # at codegen. Tagged as imported so the resolver knows the linker
+    # will handle final placement.
+    _register_imported_object_pools(obj_file, resolver)
+
+    # Pick up both GLOBAL (real owners) and EXTERNAL (re-exports from
+    # facade modules like `preamble.s` that inline imports purely to
+    # surface them downstream). The linker resolves each extern back to
+    # its single GLOBAL definition during merge.
+    return [
+        ExternNode(name, resolver)
+        for name, _, sym_type, _ in obj_file.symbols
+        if sym_type in (SymbolType.GLOBAL, SymbolType.EXTERNAL)
+    ]
+
+
+def _register_imported_object_pools(obj_file: "object", resolver: Resolver) -> None:
+    """Mirror the imported `.o`'s pool decls into the importer's
+    resolver.pools so `.alloc ... in POOL` sites resolve at codegen.
+    Idempotent: identical re-registrations are skipped silently."""
+    from a816.pool import Pool, PoolRange, Strategy
+
+    for decl in getattr(obj_file, "pool_decls", []):
+        if decl.name in resolver.pools:
+            continue
+        resolver.pools[decl.name] = Pool(
+            name=decl.name,
+            ranges=[PoolRange(start=lo, end=hi) for lo, hi in decl.ranges],
+            fill=decl.fill,
+            strategy=Strategy(decl.strategy),
+        )
 
 
 def _import_from_source(
@@ -132,6 +164,8 @@ def _import_object_mode(
         ImportAstNode,
         LabelDeclAstNode,
         MacroAstNode,
+        PoolAstNode,
+        ReclaimAstNode,
         ScopeAstNode,
         StructAstNode,
         SymbolAffectationAstNode,
@@ -147,6 +181,8 @@ def _import_object_mode(
         IfAstNode,
         ForAstNode,
         ImportAstNode,
+        PoolAstNode,
+        ReclaimAstNode,
         DocstringAstNode,
         CommentAstNode,
     )
@@ -177,6 +213,10 @@ def _runtime_extern_names(node: object) -> list[str]:
     extern them either — referencing a `_local` symbol from another
     module is a use error, not something the linker should pretend
     to support.
+
+    Alloc + relocate bodies get walked for nested public names —
+    `.incbin` auto-symbols + labels declared inside the body are
+    visible to downstream importers, so they need extern stubs too.
     """
     from a816.parse.ast.nodes import (
         AllocAstNode,
@@ -191,13 +231,32 @@ def _runtime_extern_names(node: object) -> list[str]:
     if isinstance(node, LabelAstNode):
         return _public([node.label])
     if isinstance(node, AllocAstNode):
-        return _public([node.name]) if node.name else []
+        return list(_public([node.name])) if node.name else []
     if isinstance(node, RelocateAstNode):
-        return _public([node.symbol])
+        return list(_public([node.symbol]))
     if isinstance(node, IncludeBinaryAstNode):
+        # Auto-symbols from `.incbin` aren't user-named — leading
+        # underscores in the sanitised path (e.g. `___assets_...` from
+        # `../assets/...`) are encoding artefacts, not privacy markers.
+        # Always expose.
         base = node.file_path.replace("/", "_").replace(".", "_")
-        return _public([base, f"{base}__size"])
+        return [base, f"{base}__size"]
     return []
+
+
+def _walk_body_extern_names(body: object) -> list[str]:
+    """Recurse into an `.alloc` / `.relocate` body collecting names
+    downstream importers might reference (incbin auto-symbols, public
+    labels). Body sub-labels are still allocator-placed; the extern
+    stub gives them link-time resolution."""
+    from a816.parse.ast.nodes import BlockAstNode
+
+    names: list[str] = []
+    if not isinstance(body, BlockAstNode):
+        return names
+    for child in body.body:
+        names.extend(_runtime_extern_names(child))
+    return names
 
 
 def _canonical(path: Path) -> str:

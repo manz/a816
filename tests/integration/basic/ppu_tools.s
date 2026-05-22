@@ -1,3 +1,7 @@
+.import "@std/snes/ppu"
+.import "@std/snes/cpu"
+.import "@std/snes/dma"
+.import "preamble"
 """PPU upload primitives + runtime palette API.
 
 `palette_buffer` is a full 256-entry CGRAM shadow living in WRAM —
@@ -60,9 +64,9 @@ direct-mode `.import` inlines both regardless.
     lda.b #(font_data >> 16) & 0xFF
     sta.l 0x4304
 
-    lda.b #___assets_ff4_font_fixed_bin__size & 0xFF
+    lda.b #assets_ff4_font_fixed_bin__size & 0xFF
     sta.l 0x4305
-    lda.b #(___assets_ff4_font_fixed_bin__size >> 8) & 0xFF
+    lda.b #(assets_ff4_font_fixed_bin__size >> 8) & 0xFF
     sta.l 0x4306
 
     lda #0x01

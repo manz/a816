@@ -1,3 +1,7 @@
+.import "@std/snes/ppu"
+.import "@std/snes/cpu"
+.import "@std/snes/dma"
+.import "preamble"
 """Tilemap-stamping routine: walk a null-terminated `.text` blob and
 write one tilemap entry per glyph into `tilemap_buffer` at offset
 $40 (row 2 of the 32-wide BG1 layer).

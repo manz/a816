@@ -1,3 +1,7 @@
+.import "@std/snes/ppu"
+.import "@std/snes/cpu"
+.import "@std/snes/dma"
+.import "preamble"
 """Interrupt thunks in bank 0: BRK→STP, NMI→engine_update_l.
 
 Imports `engine` so per-module precompile (object mode) can resolve

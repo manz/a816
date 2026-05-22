@@ -45,22 +45,17 @@ def _run_in_source_cwd(source: Path, fn):
         os.chdir(prev)
 
 
-def _prelude_for(source: Path) -> str | None:
-    """Read `<source>.parent/preamble.s` so the integration ROM gets the
-    same prepend the CLI applies via `a816.toml`'s `prelude` setting."""
-    candidate = source.parent / "preamble.s"
-    return candidate.read_text(encoding="utf-8") if candidate.is_file() else None
-
-
 def assemble_sfc(source: Path, out: Path) -> Path:
-    """Build `source` into an SFC file at `out`. Returns `out` on success."""
+    """Build `source` into an SFC file at `out`. Returns `out` on success.
+
+    Preamble (shared pool decls, typed binds, struct imports) lives in
+    `preamble.s` and is brought in via an explicit `.import "preamble"`
+    inside each source module. No `prelude=` text-prepend.
+    """
     program = Program()
     program.add_include_path(ASSETS_DIR)
     program.add_include_path(source.parent)
-    prelude = _prelude_for(source)
-    rc = _run_in_source_cwd(source,
-        lambda: program.assemble(str(source), out, prelude=prelude),
-    )
+    rc = _run_in_source_cwd(source, lambda: program.assemble(str(source), out))
     assert rc == 0, f"assemble({source.name}) returned {rc}"
     return out
 
@@ -70,10 +65,7 @@ def assemble_ips(source: Path, out: Path) -> Path:
     program = Program()
     program.add_include_path(ASSETS_DIR)
     program.add_include_path(source.parent)
-    prelude = _prelude_for(source)
-    rc = _run_in_source_cwd(source,
-        lambda: program.assemble_as_patch(str(source), out, prelude=prelude),
-    )
+    rc = _run_in_source_cwd(source, lambda: program.assemble_as_patch(str(source), out))
     assert rc == 0, f"assemble_as_patch({source.name}) returned {rc}"
     return out
 

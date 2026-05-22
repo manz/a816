@@ -17,6 +17,10 @@ shadow the dirty flag advertises.
 """
 
 
+.import "@std/snes/ppu"
+.import "@std/snes/cpu"
+.import "@std/snes/dma"
+.import "preamble"
 .import "data"
 .import "ppu_tools"
 .import "draw_string"

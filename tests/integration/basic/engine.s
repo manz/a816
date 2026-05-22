@@ -1,3 +1,7 @@
+.import "@std/snes/ppu"
+.import "@std/snes/cpu"
+.import "@std/snes/dma"
+.import "preamble"
 """Engine entry points + BRK trap.
 
 Engine code lives in its own bank (`engine` pool). Cross-bank

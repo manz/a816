@@ -192,12 +192,28 @@ def _synthesize_pinned_pool(
             f"pinned alloc at ${addr:06X} (line {line}) collides with a prior pinned alloc at the same site",
             file_info,
         )
-    resolver.pools[pool_name] = Pool(
+    pool = Pool(
         name=pool_name,
         ranges=[PoolRange(start=addr, end=end)],
         fill=0x00,
         strategy=Strategy.PACK,
     )
+    resolver.pools[pool_name] = pool
+    # Mirror `generate_pool`'s object-mode side effect: the linker needs
+    # the synthetic pool's decl in the `.o` to satisfy the pool_alloc
+    # request that the AllocNode will queue. Without this, link fails
+    # with "alloc references undeclared pool".
+    if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+        from a816.object_file import PoolDecl
+
+        resolver.context.object_writer.pool_decls.append(
+            PoolDecl(
+                name=pool_name,
+                ranges=[(addr, end)],
+                fill=0x00,
+                strategy=Strategy.PACK.value,
+            )
+        )
     return pool_name
 
 
