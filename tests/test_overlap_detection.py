@@ -1,5 +1,5 @@
 """WriteAuditor: catches overlapping byte writes from multiple `*=`
-regions, `.alloc` blocks, etc."""
+sections, `.alloc` blocks, etc."""
 
 from __future__ import annotations
 
@@ -100,7 +100,7 @@ def test_default_mode_is_warn() -> None:
 
 
 def test_end_to_end_overlap_via_two_star_eq_blocks(caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
-    """Two `*=` regions writing to overlapping byte spans → warning."""
+    """Two `*=` sections writing to overlapping byte spans → warning."""
     from a816.program import Program
 
     src = tmp_path / "main.s"
@@ -118,4 +118,4 @@ def test_end_to_end_overlap_via_two_star_eq_blocks(caplog: pytest.LogCaptureFixt
     with caplog.at_level(logging.WARNING):
         assert program.assemble_as_patch(str(src), ips) == 0
     warnings = [rec for rec in caplog.records if "overlap" in rec.message]
-    assert warnings, "expected overlap warning from two overlapping `*=` regions"
+    assert warnings, "expected overlap warning from two overlapping `*=` sections"

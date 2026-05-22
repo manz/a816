@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from a816.object_file import ObjectFile, Region, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, Section, RelocationType, SymbolSection, SymbolType
 
 
 def test_write_empty_object_file(tmp_path: Path) -> None:
@@ -9,20 +9,20 @@ def test_write_empty_object_file(tmp_path: Path) -> None:
     obj.write(str(test_filename))
 
     obj2 = ObjectFile.from_file(str(test_filename))
-    assert obj2.regions == []
+    assert obj2.sections == []
     assert obj2.symbols == []
 
 
 def test_write_object_file_with_code(tmp_path: Path) -> None:
     test_filename = tmp_path / "test_object_file.o"
     code = b"\x01\x02\x03\x04"
-    obj = ObjectFile([Region(base_address=0x008000, code=code)], [])
+    obj = ObjectFile([Section.anonymous_pinned(base_address=0x008000, code=code)], [])
     obj.write(str(test_filename))
 
     obj2 = ObjectFile.from_file(str(test_filename))
-    assert len(obj2.regions) == 1
-    assert obj2.regions[0].base_address == 0x008000
-    assert obj2.regions[0].code == code
+    assert len(obj2.sections) == 1
+    assert obj2.sections[0].base_address == 0x008000
+    assert obj2.sections[0].code == code
 
 
 def test_write_object_file_with_symbols(tmp_path: Path) -> None:
@@ -44,12 +44,12 @@ def test_write_object_file_with_relocations(tmp_path: Path) -> None:
         (0x10, "symbol1", RelocationType.ABSOLUTE_16),
         (0x20, "symbol2", RelocationType.RELATIVE_24),
     ]
-    region = Region(base_address=0, code=b"\x00" * 0x40, relocations=relocations)
-    obj = ObjectFile([region], [])
+    section = Section.anonymous_pinned(base_address=0, code=b"\x00" * 0x40, relocations=relocations)
+    obj = ObjectFile([section], [])
     obj.write(str(test_filename))
 
     obj2 = ObjectFile.from_file(str(test_filename))
-    assert obj2.regions[0].relocations == relocations
+    assert obj2.sections[0].relocations == relocations
 
 
 def test_write_object_file_with_expression_relocations(tmp_path: Path) -> None:
@@ -58,12 +58,12 @@ def test_write_object_file_with_expression_relocations(tmp_path: Path) -> None:
         (0x10, "symbol1 + 5", 2),
         (0x20, "symbol2 - 1", 3),
     ]
-    region = Region(base_address=0, code=b"\x00" * 0x40, expression_relocations=expression_relocations)
-    obj = ObjectFile([region], [])
+    section = Section.anonymous_pinned(base_address=0, code=b"\x00" * 0x40, expression_relocations=expression_relocations)
+    obj = ObjectFile([section], [])
     obj.write(str(test_filename))
 
     obj2 = ObjectFile.from_file(str(test_filename))
-    assert obj2.regions[0].expression_relocations == expression_relocations
+    assert obj2.sections[0].expression_relocations == expression_relocations
 
 
 def test_read_write(tmp_path: Path) -> None:
@@ -94,24 +94,24 @@ def test_read_write_with_expression_relocations(tmp_path: Path) -> None:
     assert obj.expression_relocations == obj2.expression_relocations
 
 
-def test_multi_region_round_trip(tmp_path: Path) -> None:
-    regions = [
-        Region(base_address=0x008000, code=b"\xea\xea"),
-        Region(
+def test_multi_section_round_trip(tmp_path: Path) -> None:
+    sections = [
+        Section.anonymous_pinned(base_address=0x008000, code=b"\xea\xea"),
+        Section.anonymous_pinned(
             base_address=0x018000,
             code=b"\xa9\x42",
             expression_relocations=[(1, "external + 1", 1)],
         ),
     ]
-    obj = ObjectFile(regions, [], relocatable=False)
+    obj = ObjectFile(sections, [], relocatable=False)
     obj.write(str(tmp_path / "multi.o"))
     obj2 = ObjectFile.from_file(str(tmp_path / "multi.o"))
-    assert len(obj2.regions) == 2
-    assert obj2.regions[0].base_address == 0x008000
-    assert obj2.regions[0].code == b"\xea\xea"
-    assert obj2.regions[1].base_address == 0x018000
-    assert obj2.regions[1].code == b"\xa9\x42"
-    assert obj2.regions[1].expression_relocations == [(1, "external + 1", 1)]
+    assert len(obj2.sections) == 2
+    assert obj2.sections[0].base_address == 0x008000
+    assert obj2.sections[0].code == b"\xea\xea"
+    assert obj2.sections[1].base_address == 0x018000
+    assert obj2.sections[1].code == b"\xa9\x42"
+    assert obj2.sections[1].expression_relocations == [(1, "external + 1", 1)]
     assert obj2.relocatable is False
 
 

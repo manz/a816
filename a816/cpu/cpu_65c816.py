@@ -142,7 +142,7 @@ class Opcode(OpcodeProtocol):
                     size_bytes = 2
                 else:
                     size_bytes = 3
-                # Operand lands one byte past the opcode in the current region.
+                # Operand lands one byte past the opcode in the current section.
                 writer = resolver.context.object_writer
                 if writer is not None:
                     current_offset = writer.relocation_offset(pending_block_bytes=1)

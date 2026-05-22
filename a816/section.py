@@ -28,8 +28,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
 
-from a816.object_file import RelocationType
+if TYPE_CHECKING:
+    from a816.object_file import RelocationType
 
 
 class Placement(Enum):
@@ -164,3 +166,33 @@ class Section:
             return False
         last_byte = self.base_address + self.size - 1
         return last_byte > self.end_address
+
+    @classmethod
+    def anonymous_pinned(
+        cls,
+        base_address: int,
+        code: bytes,
+        *,
+        relocations: list[tuple[int, str, RelocationType]] | None = None,
+        expression_relocations: list[tuple[int, str, int]] | None = None,
+        lines: list[tuple[int, int, int, int, int]] | None = None,
+        end_address: int | None = None,
+    ) -> Section:
+        """Convenience for the common case: a PINNED section with an
+        auto-generated name derived from `base_address`.
+
+        Used by the wire-format reader (no name metadata yet),
+        legacy-shape constructors (`ObjectFile(bytes)`, ad-hoc test
+        sections), and the `*=` parse-time desugar pass. Once every
+        site can supply a real name, this can shrink.
+        """
+        return cls(
+            name=f"__anon_pin_{base_address:06X}",
+            placement=Placement.PINNED,
+            code=code,
+            base_address=base_address,
+            end_address=end_address,
+            relocations=list(relocations or []),
+            expression_relocations=list(expression_relocations or []),
+            lines=list(lines or []),
+        )

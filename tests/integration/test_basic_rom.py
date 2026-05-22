@@ -45,7 +45,7 @@ def test_basic_rom_assembles_and_boots(tmp_path: Path) -> None:
 
 
 def test_basic_rom_dma_uploads_fixed_font_to_vram(tmp_path: Path) -> None:
-    """After DMA, VRAM at the font region matches the fixture bytes."""
+    """After DMA, VRAM at the font section matches the fixture bytes."""
     sfc = assemble_sfc(BASIC_DIR / "main.s", tmp_path / "basic.sfc")
     emu = boot_emu(sfc, frames=60)
     vram = bytes(emu.vram_read_range(FONT_VRAM_BYTE_ADDR, FONT_SIZE_BYTES))

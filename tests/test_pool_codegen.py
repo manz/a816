@@ -617,11 +617,11 @@ class TestObjectMode:
 
     The module becomes pinned (allocator picks final addresses, so no
     further relocation makes sense). Each .alloc emits its body as a
-    pinned region at the allocator-chosen address; alloc's label binds
+    pinned section at the allocator-chosen address; alloc's label binds
     there and ships in the symbol table for cross-module callers.
     """
 
-    def test_alloc_object_mode_writes_region_at_allocated_addr(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    def test_alloc_object_mode_writes_section_at_allocated_addr(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         from a816.object_file import ObjectFile
 
         src = """
@@ -637,10 +637,10 @@ class TestObjectMode:
         rc = program.assemble_as_object(str(asm_file), obj_file)
         assert rc == 0
         obj = ObjectFile.from_file(str(obj_file))
-        # One pinned region landing at the allocator-picked addr (0x028000).
-        alloc_regions = [r for r in obj.regions if r.base_address == 0x028000]
-        assert len(alloc_regions) == 1
-        assert alloc_regions[0].code == b"\x60"  # rts
+        # One pinned section landing at the allocator-picked addr (0x028000).
+        alloc_sections = [r for r in obj.sections if r.base_address == 0x028000]
+        assert len(alloc_sections) == 1
+        assert alloc_sections[0].code == b"\x60"  # rts
         sym_names = [name for name, _, _, _ in obj.symbols]
         assert "fn" in sym_names
 
@@ -676,9 +676,9 @@ class TestObjectMode:
         # Linker resolves fn to 0x028000 (provider's pinned alloc addr).
         assert linker.symbol_map["fn"] == 0x028000
         # Consumer's jsr.l fn (0x22) operand patched to the alloc addr.
-        cons_region = next(r for r in linked.regions if r.base_address == 0x008000)
+        cons_section = next(r for r in linked.sections if r.base_address == 0x008000)
         # main: jsr.l fn (4 bytes: 0x22 LO MID HI) + rts (0x60) = 5 bytes
-        assert cons_region.code[:5] == b"\x22\x00\x80\x02\x60"
+        assert cons_section.code[:5] == b"\x22\x00\x80\x02\x60"
 
 
 class TestAllocImportLoserSkip:
@@ -774,7 +774,7 @@ class TestAllocImportDedupe:
                 records.append((addr, d[pos : pos + sz]))
                 pos += sz
         # Patch at $01:8798 stays 3B (the jsr.w), dialog body lands ONLY in
-        # the alloc region. Pre-fix: patch record swelled by 18B (dialog bytes).
+        # the alloc section. Pre-fix: patch record swelled by 18B (dialog bytes).
         patch_record = next(b for a, b in records if a == 0x008798)
         assert len(patch_record) == 3, (
             f"patch record should be 3 bytes (jsr.w only); got {len(patch_record)} — duplicate import emission"

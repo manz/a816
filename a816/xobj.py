@@ -1,7 +1,7 @@
 """xobj - inspect a816 .o object files.
 
 Companion to the IPS/SFC emit trace. xobj shows pre-link intent (what each
-.o claims for regions, symbols, relocations, debug info); the emit trace
+.o claims for sections, symbols, relocations, debug info); the emit trace
 shows post-link reality (what landed where in the ROM). Diff the two when
 hunting subtle drift.
 """
@@ -17,7 +17,7 @@ from typing import Any, TextIO
 from a816.object_file import (
     INVALID_FILE_FORMAT,
     ObjectFile,
-    Region,
+    Section,
 )
 
 
@@ -45,7 +45,7 @@ def _read_any_version(path: Path) -> ObjectFile:
         if magic != ObjectFile.MAGIC_NUMBER:
             raise ValueError("Invalid magic number")
         relocatable = bool(flags & 0x01)
-        regions = ObjectFile._read_regions(f)
+        sections = ObjectFile._read_sections(f)
         symbols = ObjectFile._read_symbol_table(f)
         try:
             aliases = ObjectFile._read_alias_table(f)
@@ -55,7 +55,7 @@ def _read_any_version(path: Path) -> ObjectFile:
             files = ObjectFile._read_file_table(f)
         except struct.error:
             files = []
-        return ObjectFile(regions, symbols, aliases=aliases, files=files, relocatable=relocatable)
+        return ObjectFile(sections, symbols, aliases=aliases, files=files, relocatable=relocatable)
 
 
 def _detect_version(path: Path) -> int:
@@ -69,14 +69,14 @@ def _detect_version(path: Path) -> int:
 
 def print_summary(path: Path, obj: ObjectFile, out: TextIO) -> None:
     version = _detect_version(path)
-    total_code = sum(len(r.code) for r in obj.regions)
-    total_relocs = sum(len(r.relocations) for r in obj.regions)
-    total_expr = sum(len(r.expression_relocations) for r in obj.regions)
-    total_lines = sum(len(r.lines) for r in obj.regions)
+    total_code = sum(len(r.code) for r in obj.sections)
+    total_relocs = sum(len(r.relocations) for r in obj.sections)
+    total_expr = sum(len(r.expression_relocations) for r in obj.sections)
+    total_lines = sum(len(r.lines) for r in obj.sections)
     print(f"file: {path}", file=out)
     print(f"version: {version}", file=out)
     print(f"relocatable: {obj.relocatable}", file=out)
-    print(f"regions: {len(obj.regions)}", file=out)
+    print(f"sections: {len(obj.sections)}", file=out)
     print(f"code_bytes: {total_code}", file=out)
     print(f"symbols: {len(obj.symbols)}", file=out)
     print(f"aliases: {len(obj.aliases)}", file=out)
@@ -95,19 +95,19 @@ def _hex_dump(data: bytes, out: TextIO, indent: str = "  ") -> None:
         print(f"{indent}{i:04x}: {hex_part}  {ascii_part}", file=out)
 
 
-def print_regions(obj: ObjectFile, out: TextIO, dump_bytes: int = 0) -> None:
-    print(f"# regions ({len(obj.regions)}) — emission order", file=out)
-    for idx, region in enumerate(obj.regions):
+def print_sections(obj: ObjectFile, out: TextIO, dump_bytes: int = 0) -> None:
+    print(f"# sections ({len(obj.sections)}) — emission order", file=out)
+    for idx, section in enumerate(obj.sections):
         print(
-            f"[{idx}] base={_fmt_addr(region.base_address)}"
-            f" size={len(region.code)}"
-            f" relocs={len(region.relocations)}"
-            f" expr_relocs={len(region.expression_relocations)}"
-            f" lines={len(region.lines)}",
+            f"[{idx}] base={_fmt_addr(section.base_address)}"
+            f" size={len(section.code)}"
+            f" relocs={len(section.relocations)}"
+            f" expr_relocs={len(section.expression_relocations)}"
+            f" lines={len(section.lines)}",
             file=out,
         )
-        if dump_bytes > 0 and region.code:
-            _hex_dump(region.code[:dump_bytes], out)
+        if dump_bytes > 0 and section.code:
+            _hex_dump(section.code[:dump_bytes], out)
 
 
 def print_symbols(obj: ObjectFile, out: TextIO) -> None:
@@ -119,31 +119,31 @@ def print_symbols(obj: ObjectFile, out: TextIO) -> None:
         )
 
 
-def _print_region_relocs(idx: int, region: Region, out: TextIO) -> None:
-    if not region.relocations and not region.expression_relocations:
+def _print_section_relocs(idx: int, section: Section, out: TextIO) -> None:
+    if not section.relocations and not section.expression_relocations:
         return
-    print(f"# region [{idx}] base={_fmt_addr(region.base_address)}", file=out)
-    for offset, name, reloc_type in region.relocations:
+    print(f"# section [{idx}] base={_fmt_addr(section.base_address)}", file=out)
+    for offset, name, reloc_type in section.relocations:
         print(f"  +0x{offset:04x}  {reloc_type.name:<12} {name}", file=out)
-    for offset, expression, size_bytes in region.expression_relocations:
+    for offset, expression, size_bytes in section.expression_relocations:
         print(f"  +0x{offset:04x}  EXPR(size={size_bytes})  {expression}", file=out)
 
 
 def print_relocs(obj: ObjectFile, out: TextIO) -> None:
-    total = sum(len(r.relocations) + len(r.expression_relocations) for r in obj.regions)
+    total = sum(len(r.relocations) + len(r.expression_relocations) for r in obj.sections)
     print(f"# relocations ({total} total)", file=out)
-    for idx, region in enumerate(obj.regions):
-        _print_region_relocs(idx, region, out)
+    for idx, section in enumerate(obj.sections):
+        _print_section_relocs(idx, section, out)
 
 
 def print_lines(obj: ObjectFile, out: TextIO) -> None:
-    total = sum(len(r.lines) for r in obj.regions)
+    total = sum(len(r.lines) for r in obj.sections)
     print(f"# debug lines ({total} total)", file=out)
-    for idx, region in enumerate(obj.regions):
-        if not region.lines:
+    for idx, section in enumerate(obj.sections):
+        if not section.lines:
             continue
-        print(f"# region [{idx}] base={_fmt_addr(region.base_address)}", file=out)
-        for offset, file_idx, line, column, flags in region.lines:
+        print(f"# section [{idx}] base={_fmt_addr(section.base_address)}", file=out)
+        for offset, file_idx, line, column, flags in section.lines:
             file_name = obj.files[file_idx] if 0 <= file_idx < len(obj.files) else "<oob>"
             print(
                 f"  +0x{offset:04x}  file_idx={file_idx} ({file_name}) line={line} col={column} flags=0x{flags:02x}",
@@ -169,18 +169,18 @@ def _enum_or_value(value: Any) -> Any:
     return value
 
 
-def _region_to_dict(region: Region) -> dict[str, Any]:
+def _section_to_dict(section: Section) -> dict[str, Any]:
     return {
-        "base_address": region.base_address,
-        "size": len(region.code),
-        "code": region.code.hex(),
-        "relocations": [{"offset": off, "name": name, "type": rt.name} for off, name, rt in region.relocations],
+        "base_address": section.base_address,
+        "size": len(section.code),
+        "code": section.code.hex(),
+        "relocations": [{"offset": off, "name": name, "type": rt.name} for off, name, rt in section.relocations],
         "expression_relocations": [
-            {"offset": off, "expression": expr, "size_bytes": sz} for off, expr, sz in region.expression_relocations
+            {"offset": off, "expression": expr, "size_bytes": sz} for off, expr, sz in section.expression_relocations
         ],
         "lines": [
             {"offset": off, "file_idx": fi, "line": ln, "column": col, "flags": fl}
-            for off, fi, ln, col, fl in region.lines
+            for off, fi, ln, col, fl in section.lines
         ],
     }
 
@@ -190,7 +190,7 @@ def to_json_dict(path: Path, obj: ObjectFile) -> dict[str, Any]:
         "file": str(path),
         "version": _detect_version(path),
         "relocatable": obj.relocatable,
-        "regions": [_region_to_dict(r) for r in obj.regions],
+        "sections": [_section_to_dict(r) for r in obj.sections],
         "symbols": [
             {
                 "name": name,
@@ -209,17 +209,17 @@ def print_diff(path_a: Path, path_b: Path, obj_a: ObjectFile, obj_b: ObjectFile,
     print(f"--- {path_a}", file=out)
     print(f"+++ {path_b}", file=out)
     counts = [
-        ("regions", len(obj_a.regions), len(obj_b.regions)),
+        ("sections", len(obj_a.sections), len(obj_b.sections)),
         ("symbols", len(obj_a.symbols), len(obj_b.symbols)),
         (
             "relocations",
-            sum(len(r.relocations) for r in obj_a.regions),
-            sum(len(r.relocations) for r in obj_b.regions),
+            sum(len(r.relocations) for r in obj_a.sections),
+            sum(len(r.relocations) for r in obj_b.sections),
         ),
         (
             "expression_relocations",
-            sum(len(r.expression_relocations) for r in obj_a.regions),
-            sum(len(r.expression_relocations) for r in obj_b.regions),
+            sum(len(r.expression_relocations) for r in obj_a.sections),
+            sum(len(r.expression_relocations) for r in obj_b.sections),
         ),
         ("aliases", len(obj_a.aliases), len(obj_b.aliases)),
         ("files", len(obj_a.files), len(obj_b.files)),
@@ -228,21 +228,21 @@ def print_diff(path_a: Path, path_b: Path, obj_a: ObjectFile, obj_b: ObjectFile,
         marker = " " if av == bv else "!"
         print(f"{marker} {name}: {av} -> {bv}", file=out)
 
-    max_regions = max(len(obj_a.regions), len(obj_b.regions))
-    for idx in range(max_regions):
-        if idx >= len(obj_a.regions):
-            rb = obj_b.regions[idx]
-            print(f"+ region[{idx}] only in B: base={_fmt_addr(rb.base_address)} size={len(rb.code)}", file=out)
+    max_sections = max(len(obj_a.sections), len(obj_b.sections))
+    for idx in range(max_sections):
+        if idx >= len(obj_a.sections):
+            rb = obj_b.sections[idx]
+            print(f"+ section[{idx}] only in B: base={_fmt_addr(rb.base_address)} size={len(rb.code)}", file=out)
             continue
-        if idx >= len(obj_b.regions):
-            ra = obj_a.regions[idx]
-            print(f"- region[{idx}] only in A: base={_fmt_addr(ra.base_address)} size={len(ra.code)}", file=out)
+        if idx >= len(obj_b.sections):
+            ra = obj_a.sections[idx]
+            print(f"- section[{idx}] only in A: base={_fmt_addr(ra.base_address)} size={len(ra.code)}", file=out)
             continue
-        ra = obj_a.regions[idx]
-        rb = obj_b.regions[idx]
+        ra = obj_a.sections[idx]
+        rb = obj_b.sections[idx]
         if ra.base_address != rb.base_address or len(ra.code) != len(rb.code):
             print(
-                f"! region[{idx}]: base {_fmt_addr(ra.base_address)} -> {_fmt_addr(rb.base_address)},"
+                f"! section[{idx}]: base {_fmt_addr(ra.base_address)} -> {_fmt_addr(rb.base_address)},"
                 f" size {len(ra.code)} -> {len(rb.code)}",
                 file=out,
             )
@@ -255,8 +255,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("files", nargs="+", type=Path, help="object file(s)")
     p.add_argument("--summary", action="store_true", help="high-level counts (default)")
-    p.add_argument("--regions", action="store_true", help="region table")
-    p.add_argument("--bytes", type=int, default=0, metavar="N", help="dump first N bytes of each region")
+    p.add_argument("--sections", action="store_true", help="section table")
+    p.add_argument("--bytes", type=int, default=0, metavar="N", help="dump first N bytes of each section")
     p.add_argument("--symbols", action="store_true", help="symbol table sorted by address")
     p.add_argument("--relocs", action="store_true", help="relocations (legacy + expression)")
     p.add_argument("--lines", action="store_true", help="debug line table")
@@ -270,7 +270,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-_SECTION_FLAGS: tuple[str, ...] = ("regions", "symbols", "relocs", "lines", "files", "aliases", "imports", "exports")
+_SECTION_FLAGS: tuple[str, ...] = ("sections", "symbols", "relocs", "lines", "files", "aliases", "imports", "exports")
 
 
 def _print_optional_listing(obj: ObjectFile, attr: str, label: str, out: TextIO) -> None:
@@ -305,7 +305,7 @@ def _emit_text_sections(path: Path, obj: ObjectFile, args: argparse.Namespace, o
         emitted = True
 
     section(args.summary or show_all, lambda: print_summary(path, obj, out))
-    section(args.regions or show_all, lambda: print_regions(obj, out, dump_bytes=args.bytes))
+    section(args.sections or show_all, lambda: print_sections(obj, out, dump_bytes=args.bytes))
     section(args.symbols or show_all, lambda: print_symbols(obj, out))
     section(args.relocs or show_all, lambda: print_relocs(obj, out))
     section(args.lines or show_all, lambda: print_lines(obj, out))

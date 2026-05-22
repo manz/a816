@@ -9,7 +9,7 @@ from a816.object_file import ObjectFile
 from a816.program import Program
 
 
-def _build_two_region_linked() -> tuple[Path, ObjectFile, str]:
+def _build_two_section_linked() -> tuple[Path, ObjectFile, str]:
     source = """*=0x008000
 .db 0x11, 0x22
 *=0x028000
@@ -26,7 +26,7 @@ def _build_two_region_linked() -> tuple[Path, ObjectFile, str]:
 
 def test_emit_trace_off_no_log(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("A816_EMIT_TRACE", raising=False)
-    tmpdir, linked, _ = _build_two_region_linked()
+    tmpdir, linked, _ = _build_two_section_linked()
     ips_path = tmpdir / "out.ips"
     assert Program().link_as_patch(linked, ips_path) == 0
     assert not (tmpdir / "out.ips.emit.log").exists()
@@ -34,7 +34,7 @@ def test_emit_trace_off_no_log(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_emit_trace_on_writes_log(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("A816_EMIT_TRACE", "1")
-    tmpdir, linked, asm_path = _build_two_region_linked()
+    tmpdir, linked, asm_path = _build_two_section_linked()
     ips_path = tmpdir / "out.ips"
     assert Program().link_as_patch(linked, ips_path) == 0
     log_path = tmpdir / "out.ips.emit.log"
@@ -54,10 +54,10 @@ def test_emit_trace_on_writes_log(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_emit_trace_unknown_src_when_no_lines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("A816_EMIT_TRACE", "1")
-    from a816.object_file import Region
+    from a816.object_file import Section
 
-    region = Region(base_address=0x008000, code=b"\xea\xea")
-    linked = ObjectFile([region], [], files=[])
+    section = Section.anonymous_pinned(base_address=0x008000, code=b"\xea\xea")
+    linked = ObjectFile([section], [], files=[])
     ips_path = tmp_path / "out.ips"
     assert Program().link_as_patch(linked, ips_path) == 0
     log_path = tmp_path / "out.ips.emit.log"
@@ -87,7 +87,7 @@ def test_emit_trace_direct_assemble_as_patch(monkeypatch: pytest.MonkeyPatch, tm
 
 def test_emit_trace_sfc_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("A816_EMIT_TRACE", "1")
-    tmpdir, linked, _ = _build_two_region_linked()
+    tmpdir, linked, _ = _build_two_section_linked()
     sfc_path = tmpdir / "out.sfc"
     assert Program().link_as_sfc(linked, sfc_path) == 0
     log_path = tmpdir / "out.sfc.emit.log"

@@ -2,7 +2,7 @@
 
 Walks resolved nodes and emits machine code one block at a time, flushing
 pending bytes at `*=` boundaries and routing `.import` LinkedModuleNode
-blocks + `.alloc` body regions through their own placement paths.
+blocks + `.alloc` body sections through their own placement paths.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class EmitMixin:
             self._emit_ips_blocks(node, writer)
 
     def _emit_linked_module(self, node: LinkedModuleNode, writer: Writer, state: EmitState) -> None:
-        """Emit a `.import`'d module's regions and refresh emission state.
+        """Emit a `.import`'d module's sections and refresh emission state.
 
         Loser duplicates are pure no-ops (pc_after also bailed out so
         the resolver PC is untouched — leaving current_block alone keeps
@@ -85,7 +85,7 @@ class EmitMixin:
             if block:
                 writer.write_block(block, self._to_physical(base))
         # Only relocatable modules consume linear PC at the import site;
-        # pinned regions land at their declared `*=` and the importer's
+        # pinned sections land at their declared `*=` and the importer's
         # PC stays where it was.
         if blocks and node.relocatable:
             advance = len(blocks[0][1])

@@ -191,11 +191,11 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
 
         IPS/SFC writers expect physical (file) offsets. The legacy emit()
         path got this for free because resolver.pc tracks physical, but
-        regions carry logical bases — convert at the write boundary.
+        sections carry logical bases — convert at the write boundary.
 
         Falls back to the logical address if no mapping is configured for
         the current rom_type (some rom types have no default bus); the
-        caller would have written the logical address pre-multi-region
+        caller would have written the logical address pre-multi-section
         anyway, so the fallback preserves existing behavior.
         """
         try:
@@ -226,19 +226,19 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
                 logf.write(f"snes=${snes & 0xFFFFFF:06X}  phys=0x{phys & 0xFFFFFF:06X}  size={size}  src={src}\n")
         self._emit_trace = []
 
-    def _trace_linked_regions(self, linked_obj: ObjectFile) -> None:
-        """Replay a linked ObjectFile's regions into the trace buffer."""
+    def _trace_linked_sections(self, linked_obj: ObjectFile) -> None:
+        """Replay a linked ObjectFile's sections into the trace buffer."""
         if not self._emit_trace_enabled():
             return
         files = getattr(linked_obj, "files", []) or []
-        for region in linked_obj.regions:
-            if not region.code:
+        for section in linked_obj.sections:
+            if not section.code:
                 continue
-            snes = region.base_address
+            snes = section.base_address
             phys = self._to_physical(snes)
-            size = len(region.code)
-            if region.lines:
-                _, file_idx, line, *_rest = region.lines[0]
+            size = len(section.code)
+            if section.lines:
+                _, file_idx, line, *_rest = section.lines[0]
                 src = f"{files[file_idx]}:{line}" if 0 <= file_idx < len(files) else _UNKNOWN_SRC
             else:
                 src = _UNKNOWN_SRC

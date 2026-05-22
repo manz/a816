@@ -542,8 +542,8 @@ class A816Formatter:
             return True
         # A docstring immediately after a label documents the symbol and
         # stays flush-left, hugging the label with no blank line in
-        # between. After a `*=` (region opener) the docstring documents
-        # the region and follows body indentation like any other body
+        # between. After a `*=` (section opener) the docstring documents
+        # the section and follows body indentation like any other body
         # statement — fall through to the normal indent path.
         if isinstance(node, DocstringAstNode) and prev_was_label:
             while formatted and not formatted[-1].strip():

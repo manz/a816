@@ -2,7 +2,7 @@ import logging
 import struct
 from typing import BinaryIO, Literal, Protocol
 
-from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, Region, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, Section, RelocationType, SymbolSection, SymbolType
 
 logger = logging.getLogger("a816.writers")
 
@@ -37,7 +37,7 @@ class WriteAuditor:
 
     Non-overlapping adjacent blocks are silent. The implementation is
     naive O(n) per write — fine for typical ROM patches that emit a
-    handful of regions; if that ever becomes hot, switch the inner
+    handful of sections; if that ever becomes hot, switch the inner
     structure to an interval tree.
     """
 
@@ -83,7 +83,7 @@ class OverlapError(Exception):
 class IPSWriter(Writer):
     def __init__(self, file: BinaryIO, copier_header: bool = False) -> None:
         self.file = file
-        self._regions: list[tuple[int, int]] = []
+        self._sections: list[tuple[int, int]] = []
         self._copier_header = copier_header
 
     def begin(self) -> None:
@@ -132,54 +132,54 @@ class SFCWriter(Writer):
 
 
 class ObjectWriter(Writer):
-    """Collects regions, symbols, relocations into a v6 ObjectFile.
+    """Collects sections, symbols, relocations into a v6 ObjectFile.
 
-    Region lifecycle:
-        start_region(base_address) opens a new region and resets the
-        per-region byte counter. Subsequent write_block() appends to the
-        current region; add_relocation/add_expression_relocation/add_line
-        record their offsets relative to the current region's start.
+    Section lifecycle:
+        start_section(base_address) opens a new section and resets the
+        per-section byte counter. Subsequent write_block() appends to the
+        current section; add_relocation/add_expression_relocation/add_line
+        record their offsets relative to the current section's start.
 
-    The first region opens lazily on first write_block() (or first add_*
+    The first section opens lazily on first write_block() (or first add_*
     call) using `_pending_base_address`, which the emit driver seeds via
-    `start_region(initial_base)` before emission begins.
+    `start_section(initial_base)` before emission begins.
     """
 
     def __init__(self, output_file: str) -> None:
         self.output_file = output_file
-        self.regions: list[Region] = []
+        self.sections: list[Section] = []
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
         self.aliases: list[tuple[str, str]] = []
         self.files: list[str] = []
         self._file_index: dict[str, int] = {}
         self.pool_decls: list[PoolDecl] = []  # populated by generate_pool
         self.pool_allocs: list[PoolAlloc] = []  # populated by AllocNode object-mode emit
-        self._current_region: Region | None = None
+        self._current_section: Section | None = None
         self._pending_base_address: int = 0
-        self._region_bytes_emitted: int = 0
+        self._section_bytes_emitted: int = 0
         # Bytes emitted from the active node but not yet flushed to the
-        # region via write_block. The driver (emit_with_relocations) calls
+        # section via write_block. The driver (emit_with_relocations) calls
         # mark_emitted(len(node_bytes)) after each node so relocation
-        # offsets recorded mid-emit reflect the right intra-region position.
+        # offsets recorded mid-emit reflect the right intra-section position.
         self._pending_emit_bytes: int = 0
         self._has_explicit_position: bool = False
 
     def begin(self) -> None:
-        self.regions = []
+        self.sections = []
         self.symbols = []
         self.aliases = []
         self.files = []
         self._file_index = {}
-        self._current_region = None
+        self._current_section = None
         self._pending_base_address = 0
-        self._region_bytes_emitted = 0
+        self._section_bytes_emitted = 0
         self._pending_emit_bytes = 0
         self._has_explicit_position = False
         self.pool_decls = []
         self.pool_allocs = []
 
     def mark_emitted(self, count: int) -> None:
-        """Advance the per-region emit cursor by ``count`` bytes.
+        """Advance the per-section emit cursor by ``count`` bytes.
 
         Reloc emit sites query relocation_offset() before write_block is
         called for the surrounding block, so this method lets the emit
@@ -188,26 +188,26 @@ class ObjectWriter(Writer):
         """
         self._pending_emit_bytes += count
 
-    def start_region(self, base_address: int, explicit: bool = False) -> None:
-        """Open a new region at base_address, closing any current region.
+    def start_section(self, base_address: int, explicit: bool = False) -> None:
+        """Open a new section at base_address, closing any current section.
 
         `explicit=True` marks this as the result of a `*=` directive — the
-        module loses single-region relocatability once any explicit region
+        module loses single-section relocatability once any explicit section
         is opened.
         """
-        # Drop empty pending regions instead of leaving zero-byte placeholders.
-        if self._current_region is not None and not self._current_region.code:
-            self.regions.pop()
+        # Drop empty pending sections instead of leaving zero-byte placeholders.
+        if self._current_section is not None and not self._current_section.code:
+            self.sections.pop()
         self._pending_base_address = base_address
-        self._current_region = None
-        self._region_bytes_emitted = 0
+        self._current_section = None
+        self._section_bytes_emitted = 0
         self._pending_emit_bytes = 0
         if explicit:
             self._has_explicit_position = True
 
     def relocation_offset(self, pending_block_bytes: int = 0) -> int:
-        """Byte offset where the next emitted byte will land in the region."""
-        return self._region_bytes_emitted + self._pending_emit_bytes + pending_block_bytes
+        """Byte offset where the next emitted byte will land in the section."""
+        return self._section_bytes_emitted + self._pending_emit_bytes + pending_block_bytes
 
     def add_file(self, path: str) -> int:
         if path in self._file_index:
@@ -219,17 +219,17 @@ class ObjectWriter(Writer):
 
     def add_line(self, offset: int, file_path: str, line: int, column: int, flags: int = 0) -> None:
         file_idx = self.add_file(file_path)
-        self._ensure_region().lines.append((offset, file_idx, line, column, flags))
+        self._ensure_section().lines.append((offset, file_idx, line, column, flags))
 
     def write_block_header(self, block: bytes, block_address: int) -> None:
         del block, block_address
 
     def write_block(self, block: bytes, block_address: int) -> None:
-        del block_address  # object files key code by region, not absolute address
-        region = self._ensure_region()
-        region.code = region.code + block
-        self._region_bytes_emitted = len(region.code)
-        # Bytes are now part of the region, drop the pending counter.
+        del block_address  # object files key code by section, not absolute address
+        section = self._ensure_section()
+        section.code = section.code + block
+        self._section_bytes_emitted = len(section.code)
+        # Bytes are now part of the section, drop the pending counter.
         self._pending_emit_bytes = 0
 
     def add_symbol(
@@ -238,21 +238,21 @@ class ObjectWriter(Writer):
         self.symbols.append((name, address, symbol_type, section))
 
     def add_relocation(self, offset: int, symbol_name: str, relocation_type: RelocationType) -> None:
-        self._ensure_region().relocations.append((offset, symbol_name, relocation_type))
+        self._ensure_section().relocations.append((offset, symbol_name, relocation_type))
 
     def add_expression_relocation(self, offset: int, expression: str, size_bytes: int) -> None:
-        self._ensure_region().expression_relocations.append((offset, expression, size_bytes))
+        self._ensure_section().expression_relocations.append((offset, expression, size_bytes))
 
     def add_alias(self, name: str, expression: str) -> None:
         self.aliases.append((name, expression))
 
     def end(self) -> None:
-        # Strip a trailing empty region (e.g. trailing `*=` with no code).
-        if self.regions and not self.regions[-1].code:
-            self.regions.pop()
+        # Strip a trailing empty section (e.g. trailing `*=` with no code).
+        if self.sections and not self.sections[-1].code:
+            self.sections.pop()
         relocatable = not self._has_explicit_position
         obj_file = ObjectFile(
-            self.regions,
+            self.sections,
             self.symbols,
             aliases=self.aliases,
             files=self.files,
@@ -262,10 +262,10 @@ class ObjectWriter(Writer):
         )
         obj_file.write(self.output_file)
 
-    def _ensure_region(self) -> Region:
-        if self._current_region is None:
-            region = Region(base_address=self._pending_base_address, code=b"")
-            self.regions.append(region)
-            self._current_region = region
-            self._region_bytes_emitted = 0
-        return self._current_region
+    def _ensure_section(self) -> Section:
+        if self._current_section is None:
+            section = Section.anonymous_pinned(base_address=self._pending_base_address, code=b"")
+            self.sections.append(section)
+            self._current_section = section
+            self._section_bytes_emitted = 0
+        return self._current_section

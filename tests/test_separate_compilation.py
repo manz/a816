@@ -614,8 +614,8 @@ helper:
             assert result == 0
             assert sfc_file.exists()
 
-    def test_multi_region_module_compiles_to_separate_regions(self) -> None:
-        """A module with two `*=` directives produces two regions in the .o."""
+    def test_multi_section_module_compiles_to_separate_sections(self) -> None:
+        """A module with two `*=` directives produces two sections in the .o."""
         source = """*=0x008000
 first_label:
     nop
@@ -632,10 +632,10 @@ second_label:
 
             o = ObjectFile.from_file(str(obj))
             assert o.relocatable is False, "explicit *= must mark module as pinned"
-            bases = [r.base_address for r in o.regions]
+            bases = [r.base_address for r in o.sections]
             assert 0x008000 in bases
             assert 0x018000 in bases
-            by_base = {r.base_address: r for r in o.regions}
+            by_base = {r.base_address: r for r in o.sections}
             assert by_base[0x008000].code == b"\xea"
             assert by_base[0x018000].code == b"\xea\xea"
 
@@ -643,8 +643,8 @@ second_label:
             assert by_name["first_label"] == 0x008000
             assert by_name["second_label"] == 0x018000
 
-    def test_multi_region_link_keeps_regions_at_declared_bases(self) -> None:
-        """Pinned multi-region modules ignore the linker base_address."""
+    def test_multi_section_link_keeps_sections_at_declared_bases(self) -> None:
+        """Pinned multi-section modules ignore the linker base_address."""
         source = """*=0x008000
 entry:
     nop
@@ -661,12 +661,12 @@ data:
 
             linker = Linker([o], base_address=0x9000)
             linked = linker.link()
-            assert {r.base_address for r in linked.regions} == {0x008000, 0x018000}
+            assert {r.base_address for r in linked.sections} == {0x008000, 0x018000}
             assert linker.symbol_map["entry"] == 0x008000
             assert linker.symbol_map["data"] == 0x018000
 
-    def test_multi_region_cross_region_symbol_reloc(self) -> None:
-        """A reference from region A to a label in region B patches the right region."""
+    def test_multi_section_cross_section_symbol_reloc(self) -> None:
+        """A reference from section A to a label in section B patches the right section."""
         source = """*=0x008000
 entry:
     .dw far_label & 0xFFFF
@@ -683,7 +683,7 @@ far_label:
 
             linker = Linker([o], base_address=0)
             linked = linker.link()
-            by_base = {r.base_address: r for r in linked.regions}
+            by_base = {r.base_address: r for r in linked.sections}
             patched = by_base[0x008000].code
             target = linker.symbol_map["far_label"] & 0xFFFF
             assert patched[0] | (patched[1] << 8) == target
@@ -693,14 +693,14 @@ far_label:
 
         Regression: even though pinned modules correctly leave the
         importer's PC alone, the emit driver was failing to refresh
-        `current_block_addr` after writing the module's regions. The
+        `current_block_addr` after writing the module's sections. The
         next current_block flush therefore wrote the post-import
         inline bytes back to the address used for the pre-import flush
         — clobbering whatever module / inline run had landed there.
 
         In ff4-modules this manifested as ~12 KB of `.incbin` data
         (attack_names, monsters, places_names, …) overwriting the
-        menu-text region right after `.import "assets"`, so menu
+        menu-text section right after `.import "assets"`, so menu
         screens displayed asset bytes instead of menu strings.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -727,20 +727,20 @@ far_label:
             assert placements.get(0x000003) == b"\xbb\xbb\xbb\xbb"
             assert b"\xbb\xbb\xbb\xbb" not in placements.get(0x000000, b"")[3:]
 
-    def test_multi_region_module_addresses_are_exact(self) -> None:
-        """End-to-end check that every region of a pinned multi-region
+    def test_multi_section_module_addresses_are_exact(self) -> None:
+        """End-to-end check that every section of a pinned multi-section
         module lands at its declared `*=` address, with symbols and
         bytes at the same address, and no inline-PC movement.
 
         Covers the layout assumptions ff4-modules' assets module relies
-        on: three regions in distant LoROM banks ($20:8000, $22:8000,
+        on: three sections in distant LoROM banks ($20:8000, $22:8000,
         $30:8000), each carrying a labeled byte sentinel. The test
         asserts:
 
-        - the .o has three regions with the right base_address values;
-        - each region's symbol resolves to its compile-time absolute
+        - the .o has three sections with the right base_address values;
+        - each section's symbol resolves to its compile-time absolute
           logical address (no delta) after `.import`;
-        - the IPS contains each region's sentinel at the correct
+        - the IPS contains each section's sentinel at the correct
           LoROM-physical file offset and nowhere else;
         - the importer's PC does not move across the `.import` (a
           label placed right after the import sits next to inline code
@@ -754,7 +754,7 @@ far_label:
                 "region_a:\n"
                 ".db 0xA1, 0xA2, 0xA3, 0xA4\n"
                 "*=0x228000\n"
-                "region_b:\n"
+                "section_b:\n"
                 ".db 0xB1, 0xB2, 0xB3, 0xB4\n"
                 "*=0x308000\n"
                 "region_c:\n"
@@ -764,15 +764,15 @@ far_label:
 
             obj = ObjectFile.from_file(str(tmp / "tri.o"))
             assert obj.relocatable is False
-            assert len(obj.regions) == 3
-            by_base = {r.base_address: r for r in obj.regions}
+            assert len(obj.sections) == 3
+            by_base = {r.base_address: r for r in obj.sections}
             assert by_base[0x208000].code == b"\xa1\xa2\xa3\xa4"
             assert by_base[0x228000].code == b"\xb1\xb2\xb3\xb4"
             assert by_base[0x308000].code == b"\xc1\xc2\xc3\xc4"
 
             sym_addr = {name: addr for name, addr, _, _ in obj.symbols}
             assert sym_addr["region_a"] == 0x208000
-            assert sym_addr["region_b"] == 0x228000
+            assert sym_addr["section_b"] == 0x228000
             assert sym_addr["region_c"] == 0x308000
 
             main = tmp / "main.s"
@@ -792,13 +792,13 @@ far_label:
                 return inner
 
             assert _logical(symbols["region_a"]) == 0x208000
-            assert _logical(symbols["region_b"]) == 0x228000
+            assert _logical(symbols["section_b"]) == 0x228000
             assert _logical(symbols["region_c"]) == 0x308000
 
             # Importer PC stays put across pinned .import.
             assert _logical(label["after_import"]) - _logical(label["before_import"]) == 1
 
-            # Verify each region's bytes land at exactly the right LoROM
+            # Verify each section's bytes land at exactly the right LoROM
             # physical offset and only there.
             content = ips.read_bytes()
             records = self._parse_ips_records(content)
@@ -812,7 +812,7 @@ far_label:
                 f"region_a bytes missing/misplaced at physical 0x{phys_a:06x}"
             )
             assert placements.get(phys_b, b"") == b"\xb1\xb2\xb3\xb4", (
-                f"region_b bytes missing/misplaced at physical 0x{phys_b:06x}"
+                f"section_b bytes missing/misplaced at physical 0x{phys_b:06x}"
             )
             assert placements.get(phys_c, b"") == b"\xc1\xc2\xc3\xc4", (
                 f"region_c bytes missing/misplaced at physical 0x{phys_c:06x}"
@@ -823,10 +823,10 @@ far_label:
             assert content.count(b"\xb1\xb2\xb3\xb4") == 1
             assert content.count(b"\xc1\xc2\xc3\xc4") == 1
 
-    def test_multi_region_cross_region_symbol_reference_in_module(self) -> None:
-        """A `dw label_in_other_region` inside a pinned multi-region
+    def test_multi_section_cross_section_symbol_reference_in_module(self) -> None:
+        """A `dw label_in_other_region` inside a pinned multi-section
         module patches with the target's *absolute* logical address —
-        not an offset, not a region-relative value.
+        not an offset, not a section-relative value.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -849,16 +849,16 @@ far_label:
             assert patched is not None and len(patched) >= 2
             operand = patched[0] | (patched[1] << 8)
             assert operand == 0x308000 & 0xFFFF, (
-                f"cross-region operand patched as {operand:#x}, expected {0x308000 & 0xFFFF:#x}"
+                f"cross-section operand patched as {operand:#x}, expected {0x308000 & 0xFFFF:#x}"
             )
 
     def test_pinned_module_import_does_not_advance_importer_pc(self) -> None:
         """A `.import` of a pinned (`*=`) module must not consume PC.
 
         Regression: LinkedModuleNode.pc_after used to return
-        `regions[0].base_address + len(regions[0].code)` for every
+        `sections[0].base_address + len(sections[0].code)` for every
         module, including pinned ones. For ff4-modules' assets module,
-        that landed the importer's PC at SNES $0B0000 (end of region
+        that landed the importer's PC at SNES $0B0000 (end of section
         0 at $0AF000 + 0x1000), so any label following `.import "assets"`
         was bound inside WRAM mirror space, and JSL operands compiled
         against those labels jumped to RAM and BRK'd.
@@ -902,7 +902,7 @@ far_label:
         """A skipped duplicate `.import` must consume zero PC — not its size.
 
         Regression: the loser `.import` used to advance both pc_after and
-        the emit driver's PC by `len(region 0)`. When the loser sat in
+        the emit driver's PC by `len(section 0)`. When the loser sat in
         a source-inlined patch file (e.g. ff4-modules' battle/sram.s
         carrying `.import "dakuten"` while ff4.s also imports dakuten
         later), the surrounding inline source ended up shifted forward
@@ -985,8 +985,8 @@ far_label:
             # (SNES 0x009000 → LoROM physical 0x000800).
             assert content.count(b"\xcc\xcc\xcc\xcc") == 1
             # Inline AA AA AA must land at SNES 0x008000 → physical 0,
-            # and BB BB at PC 3 + len(mod region) (physical 0x000007 in
-            # LoROM since region is 4 bytes).
+            # and BB BB at PC 3 + len(mod section) (physical 0x000007 in
+            # LoROM since section is 4 bytes).
             records = self._parse_ips_records(content)
             placements = {phys: data for phys, data in records}
             assert placements.get(0x000000, b"")[:3] == b"\xaa\xaa\xaa"
@@ -1049,12 +1049,12 @@ far_label:
                 f"module bytes must appear exactly once in the IPS, got {content.count(b'\\x42\\x42\\x42\\x42')}"
             )
 
-    def test_multiple_intra_region_expression_relocations_get_distinct_offsets(self) -> None:
+    def test_multiple_intra_section_expression_relocations_get_distinct_offsets(self) -> None:
         """Three references to the same forward label must record three offsets.
 
         Regression: ObjectWriter.relocation_offset() used to read only
-        _region_bytes_emitted, which only advances on write_block. Inside
-        a single region, every reloc emitted before the next *= boundary
+        _section_bytes_emitted, which only advances on write_block. Inside
+        a single section, every reloc emitted before the next *= boundary
         therefore reported the same offset (the last flushed position),
         and the linker patched only one of them — the other call sites
         kept the compile-time placeholder and jumped to garbage.
@@ -1075,15 +1075,15 @@ target:
             asm.write_text(source)
             assert Program().assemble_as_object(str(asm), obj) == 0
             o = ObjectFile.from_file(str(obj))
-            offsets = sorted(off for r in o.regions for off, expr, _ in r.expression_relocations if expr == "target")
+            offsets = sorted(off for r in o.sections for off, expr, _ in r.expression_relocations if expr == "target")
             assert len(offsets) == 3, f"expected 3 expression relocations, got {len(offsets)}: {offsets}"
             assert len(set(offsets)) == 3, f"expected 3 distinct offsets, got {offsets}"
             # Each jsr.w is 3 bytes (opcode + 2-byte operand). Reloc points
             # to the operand byte, so offsets are 1, 4, 7.
             assert offsets == [1, 4, 7]
 
-    def test_multi_region_module_writes_multiple_ips_blocks(self) -> None:
-        """Linking a multi-region module emits one IPS block per region.
+    def test_multi_section_module_writes_multiple_ips_blocks(self) -> None:
+        """Linking a multi-section module emits one IPS block per section.
 
         IPS records are keyed by physical (file) offset, so logical
         SNES addresses must go through the LoROM bus mapping at the
@@ -1109,7 +1109,7 @@ target:
             # Headers are 24-bit big-endian physical offsets:
             #   *=0x008000 (LoROM) → physical 0x000000
             #   *=0x028000 (LoROM) → physical 0x010000
-            # Length 2 then payload "\x11\x22" for region 0,
-            # length 1 then "\x33" for region 1.
+            # Length 2 then payload "\x11\x22" for section 0,
+            # length 1 then "\x33" for section 1.
             assert b"\x00\x00\x00\x00\x02\x11\x22" in content
             assert b"\x01\x00\x00\x00\x01\x33" in content

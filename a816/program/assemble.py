@@ -75,7 +75,7 @@ class AssembleMixin:
     def _wrap_emitter_for_overlap_audit(self, emitter: Writer) -> Writer:
         """Auto-wrap SFC / IPS emitters so overlapping writes get reported.
 
-        `ObjectWriter` is left untouched — it tracks regions in a richer
+        `ObjectWriter` is left untouched — it tracks sections in a richer
         structure and the linker has its own overlap pass.
         """
         mode = self.resolver.context.overlap_mode

@@ -72,7 +72,7 @@ def _consume_line_comment(raw: str, i: int, mask: list[bool]) -> int:
 
 
 def _open_region(raw: str, i: int, mask: list[bool], state: _MaskState) -> tuple[int, str | None]:
-    """Examine the current character and open a comment/string region
+    """Examine the current character and open a comment/string section
     if one starts here. Returns `(new_i, in_string_delim)` where the
     delimiter is non-None when a single-line string just opened.
     """

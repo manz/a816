@@ -22,7 +22,7 @@ class LinkMixin:
         logger: logging.Logger
 
         def _to_physical(self, logical_address: int) -> int: ...
-        def _trace_linked_regions(self, linked_obj: ObjectFile) -> None: ...
+        def _trace_linked_sections(self, linked_obj: ObjectFile) -> None: ...
         def _flush_emit_trace(self, output_path: Path) -> None: ...
 
     def import_linked_symbols(self, linked_obj: ObjectFile) -> None:
@@ -54,11 +54,11 @@ class LinkMixin:
             SymbolScope,
         )
 
-        # Lines are stored region-relative; bake the final logical address.
+        # Lines are stored section-relative; bake the final logical address.
         all_lines: list[tuple[int, int, int, int, int]] = []
-        for region in linked_obj.regions:
-            for offset, file_idx, line, column, flags in region.lines:
-                all_lines.append((region.base_address + offset, file_idx, line, column, flags))
+        for section in linked_obj.sections:
+            for offset, file_idx, line, column, flags in section.lines:
+                all_lines.append((section.base_address + offset, file_idx, line, column, flags))
         if not linked_obj.symbols and not all_lines:
             return None
 
@@ -118,12 +118,12 @@ class LinkMixin:
                 ips_emitter = IPSWriter(f, copier_header)
                 ips_emitter.begin()
 
-                for region in linked_obj.regions:
-                    if region.code:
-                        ips_emitter.write_block(region.code, self._to_physical(region.base_address))
+                for section in linked_obj.sections:
+                    if section.code:
+                        ips_emitter.write_block(section.code, self._to_physical(section.base_address))
 
                 ips_emitter.end()
-                self._trace_linked_regions(linked_obj)
+                self._trace_linked_sections(linked_obj)
                 self._flush_emit_trace(ips_file)
                 self.write_debug_info_for_linked(linked_obj, ips_file)
                 self.logger.info("Successfully created IPS patch")
@@ -149,12 +149,12 @@ class LinkMixin:
                 sfc_emitter = SFCWriter(f)
                 sfc_emitter.begin()
 
-                for region in linked_obj.regions:
-                    if region.code:
-                        sfc_emitter.write_block(region.code, self._to_physical(region.base_address))
+                for section in linked_obj.sections:
+                    if section.code:
+                        sfc_emitter.write_block(section.code, self._to_physical(section.base_address))
 
                 sfc_emitter.end()
-                self._trace_linked_regions(linked_obj)
+                self._trace_linked_sections(linked_obj)
                 self._flush_emit_trace(sfc_file)
                 self.write_debug_info_for_linked(linked_obj, sfc_file)
                 self.logger.info("Successfully created SFC file")

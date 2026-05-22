@@ -58,7 +58,7 @@ def _import_from_object(
         symbols_data = [
             (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
         ]
-        node = LinkedModuleNode(module_name, obj_file.regions, symbols_data, resolver, obj_file.relocatable)
+        node = LinkedModuleNode(module_name, obj_file.sections, symbols_data, resolver, obj_file.relocatable)
         # Direct mode collapses object compilation + link into a single
         # resolver pass: surface the .o's pool decls so top-level
         # `.alloc` sites (and subsequent imports) can find the pools.

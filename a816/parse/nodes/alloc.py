@@ -109,7 +109,7 @@ class AllocNode(NodeProtocol):
         # Object mode defers allocator to link time. Bind the alloc's
         # symbol + body labels at the sandbox PC (pool.ranges[0].start)
         # so they record sensible offsets; the linker rebases the body
-        # region at link time and the existing CODE-symbol delta path
+        # section at link time and the existing CODE-symbol delta path
         # carries every label to its final address.
         if self.resolver.context.is_object_mode:
             self._bind_body_labels_at(self._sandbox_pc())

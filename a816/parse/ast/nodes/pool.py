@@ -77,7 +77,7 @@ class AllocAstNode(AstNode):
 class RelocateAstNode(AstNode):
     """AST node for `.relocate SYMBOL OLD_START OLD_END into POOL { body }`.
 
-    Moves the labelled region `SYMBOL` from `[OLD_START, OLD_END]` into the
+    Moves the labelled section `SYMBOL` from `[OLD_START, OLD_END]` into the
     named pool. The old range is reclaimed back into the pool (fill byte
     applied during emission) and `body` is placed at the allocator-chosen
     address; `SYMBOL` resolves to the new location.
