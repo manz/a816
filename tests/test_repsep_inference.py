@@ -20,10 +20,22 @@ def _emitted_bytes(writer: StubWriter) -> bytes:
 
 
 class TestRepSetTracksASize:
+    def test_rep_30_widens_small_immediate_to_16bit(self) -> None:
+        # `lda #0x42` fits in 8 bits and would normally emit `A9 42`.
+        # After `rep #0x30` the inference flips A to 16-bit, so the
+        # same operand becomes `A9 42 00` — proves the size choice
+        # is driven by M, not by the value's width.
+        before = _assemble("*=0x008000\nlda #0x42\n")
+        after = _assemble("*=0x008000\nrep #0x30\nlda #0x42\n")
+        assert _emitted_bytes(before) == b"\xa9\x42"
+        assert _emitted_bytes(after) == b"\xc2\x30\xa9\x42\x00"
+
     def test_rep_30_lets_lda_imm_emit_16bit_without_explicit_directive(self) -> None:
         src = "*=0x008000\nrep #0x30\nlda #0xbeef\n"
         writer = _assemble(src)
         # rep #$30 = C2 30; lda #imm16 = A9 EF BE — 5 bytes total.
+        # (The wide immediate would emit 2-byte either way; this just
+        # confirms the byte order under the widened form.)
         assert _emitted_bytes(writer) == b"\xc2\x30\xa9\xef\xbe"
 
     def test_sep_20_after_rep_30_restores_8bit_immediate(self) -> None:
