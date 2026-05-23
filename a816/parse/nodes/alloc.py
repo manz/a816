@@ -35,7 +35,11 @@ class AllocNode(NodeProtocol):
         self.file_info = file_info
         self._alloc: Allocation | None = None
         self._size: int = 0
-        self._sandbox_base: int = 0
+        # Only set in object mode (`_request_slot`). Stays `None` in
+        # direct mode where the alloc body emits at the allocator's
+        # chosen address directly. Object-emit reads it; reading in
+        # any other path is a bug, so keep the optional shape loud.
+        self._sandbox_base: int | None = None
         # Snapshot of the A/X size that the body should assume on
         # entry — captured once in `_measure_body` from the running
         # `alloc_carry_*` channel, then reused by `_bind_body_labels_at`

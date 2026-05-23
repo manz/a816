@@ -17,9 +17,13 @@ def resolve_asset_path(path: str, include_paths: list[Path]) -> str:
 
     Absolute paths and paths that exist relative to cwd are returned
     as-is (cwd preserves legacy behaviour). Otherwise the first hit
-    across `include_paths` wins. Returns the original path unchanged
-    if nothing matches — let the caller's `open()` raise with the
-    untransformed name so the error message points at the source.
+    across `include_paths` wins.
+
+    Miss semantics: returns the original path unchanged. The caller's
+    `open()` then raises with the source's actual literal so the
+    error message points at the user-written string, not at the
+    last include-paths candidate we happened to try. Do not raise
+    here.
     """
     candidate = Path(path)
     if candidate.is_absolute() or candidate.exists():

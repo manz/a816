@@ -8,7 +8,7 @@ import ast
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from a816.error_codes import (
     E_PARSER_POOL_NO_RANGES,
@@ -474,7 +474,10 @@ def parse_alloc(p: Parser) -> AllocAstNode:
     return _parse_pinned_alloc_tail(p, parse_block, keyword, name=name)
 
 
-def _parse_pinned_alloc_tail(p: Parser, parse_block: Any, keyword: Token, *, name: str | None) -> AllocAstNode:
+ParseBlockFn = Callable[[Parser], list[AstNode]]
+
+
+def _parse_pinned_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Token, *, name: str | None) -> AllocAstNode:
     """Common tail for the two pinned alloc shapes: ADDR [size N] { body }."""
     at_address = parse_expression(p)
     at_size = _parse_optional_size_clause(p)
@@ -482,7 +485,7 @@ def _parse_pinned_alloc_tail(p: Parser, parse_block: Any, keyword: Token, *, nam
     return AllocAstNode(name, None, body, keyword, at_address=at_address, at_size=at_size)
 
 
-def _parse_alloc_body(p: Parser, parse_block: Any) -> BlockAstNode:
+def _parse_alloc_body(p: Parser, parse_block: ParseBlockFn) -> BlockAstNode:
     lbrace = p.next()
     expect_token(lbrace, TokenType.LBRACE)
     return BlockAstNode(parse_block(p), lbrace)

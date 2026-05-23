@@ -122,18 +122,18 @@ def _import_from_source(
 
     Per-node split lives in `_import_object_mode`.
     """
-    try:
-        from a816.parse.mzparser import A816Parser
+    from a816.parse.mzparser import A816Parser
 
+    try:
         content = src_path.read_text(encoding="utf-8")
-        result = A816Parser.parse_as_ast(content, str(src_path))
-        if not result.nodes:
-            return []
-        if direct_mode:
-            return _code_gen(result.nodes, resolver, macro_definitions)
-        return _import_object_mode(result.nodes, resolver, macro_definitions)
     except OSError:
         return None
+    result = A816Parser.parse_as_ast(content, str(src_path))
+    if not result.nodes:
+        return []
+    if direct_mode:
+        return _code_gen(result.nodes, resolver, macro_definitions)
+    return _import_object_mode(result.nodes, resolver, macro_definitions)
 
 
 def _import_object_mode(

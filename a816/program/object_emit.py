@@ -82,6 +82,8 @@ class ObjectEmitMixin:
         # every alloc's section base collapses to the same address
         # and the linker's `_pool_delta_for_symbol` can't tell them
         # apart.
+        if node._sandbox_base is None:
+            raise RuntimeError(f"alloc {node.name!r} reached object-emit without a sandbox base")
         sandbox_logical = node._sandbox_base
         self._flush_object_block(object_writer, state)
         saved_pc = self.resolver.pc
