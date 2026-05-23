@@ -8,8 +8,9 @@ control so tests stay readable.
 
 from __future__ import annotations
 
+import shutil
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,20 @@ from a816.module_builder import build_with_imports
 INTEGRATION_DIR = Path(__file__).parent
 ASSETS_DIR = INTEGRATION_DIR / "assets"
 BASIC_DIR = INTEGRATION_DIR / "basic"
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _drop_stale_build_caches() -> Iterator[None]:
+    """Wipe per-source `build/` dirs at session start so integration
+    tests always re-assemble from current sources. Stale `.o` files
+    hide source-time regressions in opcode emit / codegen / symbol
+    resolution — the kind of bug that ships green locally then
+    explodes on CI's fresh checkout.
+    """
+    for build_dir in INTEGRATION_DIR.rglob("build"):
+        if build_dir.is_dir():
+            shutil.rmtree(build_dir, ignore_errors=True)
+    yield
 
 
 @pytest.fixture
