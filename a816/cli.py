@@ -249,8 +249,11 @@ def _run_assemble(args: argparse.Namespace) -> int:
 
 def cli_main() -> None:
     """a816 CLI entry. Exit 0 success, 1 assembly/link error, -1 invalid input."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
     argv = sys.argv[1:]
+    # `--verbose` flips root logger to DEBUG so caught NodeError/IPS/etc.
+    # paths emit their stashed traceback via `logger.debug(exc_info=True)`.
+    level = logging.DEBUG if "--verbose" in argv else logging.INFO
+    logging.basicConfig(level=level, format="%(levelname)s - %(message)s")
     try:
         rc = _dispatch_subcommand(argv)
         if rc is not None:

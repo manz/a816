@@ -398,7 +398,8 @@ def _apply_ips_to_temp(input_file: Path, ips_file: Path) -> tuple[Path, Path]:
         logger.info(f"Applying IPS patch: {ips_file}")
         apply_ips_patch(input_file, ips_file, tmp_path)
     except ValueError as e:
-        logger.exception(str(e))
+        logger.error(str(e))  # NOSONAR python:S8572
+        logger.debug("IPS apply traceback", exc_info=True)
         sys.exit(-1)
     return tmp_path, tmp_path
 

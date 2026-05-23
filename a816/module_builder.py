@@ -156,7 +156,8 @@ class ModuleBuilder:
                     logger.warning(f"Could not find source for module '{import_name}'")
 
         except OSError as e:
-            logger.exception(f"Error reading {source_path}: {e}")
+            logger.error(f"Error reading {source_path}: {e}")  # NOSONAR python:S8572
+            logger.debug("Source read traceback", exc_info=True)
             raise
 
     def _collect_imports(self, nodes: list[AstNode]) -> list[str]:
@@ -364,7 +365,8 @@ def build_with_imports(
         return BuildResult(exit_code=exit_code, symbol_map=symbol_map, program=program)
 
     except Exception as e:
-        logger.exception(f"Build failed: {e}")
+        logger.error(f"Build failed: {e}")  # NOSONAR python:S8572
+        logger.debug("Build traceback", exc_info=True)
         return BuildResult(exit_code=1, diagnostics=[str(e)])
 
 
@@ -530,5 +532,6 @@ def build_with_imports_direct(
         )
 
     except Exception as e:
-        logger.exception(f"Build failed: {e}")
+        logger.error(f"Build failed: {e}")  # NOSONAR python:S8572
+        logger.debug("Build traceback", exc_info=True)
         return BuildResult(exit_code=1, diagnostics=[str(e)])

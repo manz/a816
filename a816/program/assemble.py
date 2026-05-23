@@ -112,10 +112,12 @@ class AssembleMixin:
                     # `logger.error` (not `logger.exception`) is intentional.
                     logger.error(str(e))  # NOSONAR python:S8572
                     return 128
-                except NodeError:
-                    # Codegen failure: include the traceback — these can
-                    # surface internal bugs the user should report.
-                    logger.exception("Codegen failed")
+                except NodeError as e:
+                    # NodeError already carries source location + hint;
+                    # surface that as the user-facing line, keep the
+                    # traceback at debug for postmortem.
+                    logger.error(str(e))  # NOSONAR python:S8572
+                    logger.debug("Codegen failure traceback", exc_info=True)
                     return 128
                 except OverlapError as e:
                     # Section-overlap = hard error since the default flip
@@ -229,7 +231,8 @@ class AssembleMixin:
 
                 self.emit_with_relocations(nodes, object_writer)
             except NodeError as e:
-                logger.exception(str(e))
+                logger.error(str(e))  # NOSONAR python:S8572
+                logger.debug("Object emit failure traceback", exc_info=True)
                 return -1
         except RuntimeError as e:
             self.logger.exception(_ASSEMBLY_FAILED_MSG, e)
