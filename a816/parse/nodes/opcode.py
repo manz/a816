@@ -55,7 +55,6 @@ class OpcodeNode(NodeProtocol):
 
     def emit(self, current_pc: Address) -> bytes:
         opcode_emitter = self._get_emitter()
-        self._check_immediate_overflow()
         try:
             return opcode_emitter.emit(self.value_node, self.resolver, self.size)
         except NoOpcodeForOperandSize as e:
@@ -72,40 +71,6 @@ class OpcodeNode(NodeProtocol):
                 code=str(_E_SYMBOL_NOT_DEFINED),
                 hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
             ) from e
-
-    def _check_immediate_overflow(self) -> None:
-        """Reject `lda.b #0xDEAD`-style operand overflow.
-
-        Immediate addressing is the one case where the operand value
-        IS the data the CPU reads — truncation here corrupts the
-        program. Address-form operands (`jsr.w label`, `lda abs`)
-        legitimately drop the bank byte because PB / DB supplies it
-        at runtime, so this check only fires for `#imm`.
-
-        Skips when the value can't be resolved (deferred / external
-        symbols) — those are linker-time.
-        """
-        if self.addressing_mode is not AddressingMode.immediate:
-            return
-        # Immediate-mode parser always populates value_node — no
-        # `value_node is None` guard. Forward-referenced immediates
-        # (`lda #FORWARD`) raise `SymbolNotDefined` on pass 1; skip
-        # silently so pass 2 picks up the resolved value.
-        assert self.value_node is not None
-        try:
-            value = self.value_node.get_value()
-        except SymbolNotDefined:
-            return
-        size = self.size or guess_value_size(self.value_node, self.size, self.resolver)
-        max_for_size = {"b": 0xFF, "w": 0xFFFF, "l": 0xFFFFFF}
-        ceiling = max_for_size.get(size)
-        if ceiling is None or 0 <= value <= ceiling:
-            return
-        raise NodeError(
-            f"operand 0x{value:X} does not fit in .{size} "
-            f"(.b max 0xFF, .w max 0xFFFF, .l max 0xFFFFFF)",
-            self.file_info,
-        )
 
     def pc_after(self, current_pc: Address) -> Address:
         self._maybe_update_register_sizes()
