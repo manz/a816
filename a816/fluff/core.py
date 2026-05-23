@@ -66,6 +66,7 @@ class Fix:
     applicability: Applicability
     description: str
 
+
 MAX_LINE_LENGTH = 120
 
 _SNAKE_CASE_RE = re.compile(r"^_?[a-z][a-z0-9_]*$")
@@ -360,14 +361,49 @@ class Rule:
         """Per-node rules override this when `accepts` is non-empty."""
         return iter(())
 
-    def diagnose(
-        self, ctx: LintContext, node: AstNode, message: str, fix: Fix | None = None
-    ) -> Diagnostic:
+    def diagnose(self, ctx: LintContext, node: AstNode, message: str, fix: Fix | None = None) -> Diagnostic:
         line, col = node_position(node)
         return Diagnostic(path=ctx.path, line=line, column=col, code=self.code, message=message, fix=fix)
 
 
 _DOC004_MSG = "orphan docstring; convert to a `;` comment or attach to a target"
+
+
+def _build_drop_comment_block_fix(text: str, comments: list[CommentAstNode]) -> Fix | None:
+    """Drop a leading comment block that duplicates an inside-body
+    docstring (DOC006).
+
+    Span runs from the first comment's opening column on its line
+    (covering any leading indentation) through the newline that
+    terminates the last comment, so the block leaves no blank
+    placeholder behind. Safe: removing the redundant comment doesn't
+    change semantics or emitted bytes, and the inside-body docstring
+    keeps the description.
+    """
+    if not comments:
+        return None
+    first_token = comments[0].file_info
+    last_token = comments[-1].file_info
+    first_pos = getattr(first_token, "position", None)
+    last_pos = getattr(last_token, "position", None)
+    last_end = last_token.end_position if last_pos is not None else None
+    if first_pos is None or last_end is None:
+        return None
+    # Anchor at column 0 of the first comment's line so leading
+    # indentation goes with the block.
+    start = line_col_to_offset(text, first_pos.line + 1, 1)
+    end = line_col_to_offset(text, last_end.line + 1, last_end.column + 1)
+    # Swallow the trailing newline so the file doesn't keep a blank
+    # line where the comment block used to sit.
+    if end < len(text) and text[end] == "\n":
+        end += 1
+    if start >= end:
+        return None
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=""),),
+        applicability=Applicability.SAFE,
+        description="drop leading comment block (duplicated by inside-body docstring)",
+    )
 
 
 def _build_orphan_docstring_fix(text: str, doc: DocstringAstNode) -> Fix | None:
@@ -432,9 +468,7 @@ class _PlacementWalker:
 
     def _emit(self, code: str, node: AstNode, message: str, fix: Fix | None = None) -> None:
         line, col = node_position(node)
-        self.out[code].append(
-            Diagnostic(path=self._path, line=line, column=col, code=code, message=message, fix=fix)
-        )
+        self.out[code].append(Diagnostic(path=self._path, line=line, column=col, code=code, message=message, fix=fix))
 
     def _flush_orphan(self, state: _PlacementState) -> None:
         if state.pending_doc is not None:
@@ -475,6 +509,7 @@ class _PlacementWalker:
                 "DOC006",
                 node,
                 f"{kind_label(node)} '{target_name_str}' has both a leading comment block and a docstring; pick one",
+                fix=_build_drop_comment_block_fix(self._text, state.comment_run),
             )
         elif not inside_doc and not has_above_doc and comment_block:
             self._emit(

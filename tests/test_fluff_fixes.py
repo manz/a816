@@ -95,6 +95,20 @@ class TestOrphanDocstringFix:
         assert "    ;     line b\n" in new
 
 
+class TestDropCommentBlockFix:
+    def test_doc006_drops_leading_comment_block(self) -> None:
+        src = '"""m"""\n; banner one\n; banner two\n.macro setup() {\n    """real docstring"""\n    ldx.w #0\n}\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        d6 = [d for d in diagnostics if d.code == "DOC006"]
+        assert len(d6) == 1 and d6[0].fix is not None
+        new, _ = apply_fixes(src, diagnostics)
+        assert "; banner one" not in new
+        assert "; banner two" not in new
+        assert '"""real docstring"""' in new
+        # Macro still in place.
+        assert ".macro setup()" in new
+
+
 class TestRedundantTypedCastFix:
     def test_strips_cast_and_keeps_field_access(self) -> None:
         src = '"""m"""\n.struct Pt { word x }\np := (0x100 as Pt)\nlda.w (p as Pt).x\n'
