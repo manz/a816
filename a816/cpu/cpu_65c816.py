@@ -148,12 +148,27 @@ class Opcode(OpcodeProtocol):
                     current_offset = writer.relocation_offset(pending_block_bytes=1)
                     writer.add_expression_relocation(current_offset, value_node._deferred_expression, size_bytes)
 
-        if size == "b":
-            return struct.pack("B", value & 0xFF)
-        elif size == "w":
-            return struct.pack("<H", value & 0xFFFF)
-        elif size == "l":
-            return struct.pack("<HB", value & 0xFFFF, value >> 16)
+        # No silent mask. `struct.pack` rejects out-of-range values,
+        # turning `lda.b #0xDEAD` from a silent `A9 AD` truncation
+        # into a hard error the user catches at assemble time.
+        # OpcodeNode.emit wraps the struct.error into a NodeError
+        # with source location.
+        try:
+            if size == "b":
+                return struct.pack("B", value)
+            elif size == "w":
+                return struct.pack("<H", value)
+            elif size == "l":
+                # 24-bit packed as low-16 + high-8. The high-8 slot
+                # rejects anything past 0xFFFFFF naturally; the low
+                # mask stays because that part is genuinely just the
+                # bottom 16 bits of an in-range 24-bit value.
+                return struct.pack("<HB", value & 0xFFFF, value >> 16)
+        except struct.error as e:
+            raise ValueError(
+                f"operand 0x{value:X} does not fit in .{size} "
+                f"(.b max 0xFF, .w max 0xFFFF, .l max 0xFFFFFF)"
+            ) from e
         return b""
 
     def supposed_length(

@@ -71,6 +71,12 @@ class OpcodeNode(NodeProtocol):
                 code=str(_E_SYMBOL_NOT_DEFINED),
                 hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
             ) from e
+        except ValueError as e:
+            # `Opcode.emit_value` raises ValueError when an operand
+            # exceeds the destination width (`.b` / `.w` / `.l`).
+            # Re-raise with source location so the user sees the
+            # caret on the offending instruction.
+            raise NodeError(str(e), self.file_info) from e
 
     def pc_after(self, current_pc: Address) -> Address:
         self._maybe_update_register_sizes()
