@@ -41,7 +41,9 @@ class TestFixCli:
         out = capsys.readouterr().out
         assert "fixed DOC004" in out
 
-    def test_fix_check_exits_nonzero_when_changes_pending(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_fix_check_exits_nonzero_when_changes_pending(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         target = self._write(tmp_path)
         rc = fluff_main(["fix", "--check", str(target)])
         assert rc == 1
@@ -84,9 +86,7 @@ class TestFixCli:
         assert '"""orphan"""' not in new
         assert "*=0x008000" in new
 
-    def test_fix_missing_path_reports_and_returns_2(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_fix_missing_path_reports_and_returns_2(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         rc = fluff_main(["fix", str(tmp_path / "does-not-exist.s")])
         assert rc == 2
         assert "path not found" in capsys.readouterr().err
