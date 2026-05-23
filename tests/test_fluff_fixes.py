@@ -23,6 +23,45 @@ def _diag(start: int, end: int, replacement: str, app: Applicability = Applicabi
     )
 
 
+class TestStripCommentPrefix:
+    def test_strips_semicolon_and_one_space(self) -> None:
+        from a816.fluff.core import _strip_comment_prefix
+
+        assert _strip_comment_prefix("; hello") == "hello"
+        assert _strip_comment_prefix(";hello") == "hello"
+
+    def test_strips_block_comment_delimiters(self) -> None:
+        from a816.fluff.core import _strip_comment_prefix
+
+        assert _strip_comment_prefix("/* hello */") == " hello "
+        assert _strip_comment_prefix("/*\nlines\n*/") == "\nlines\n".strip("\n")
+
+
+class TestDocstringFixGuards:
+    """Cover the defensive None-return paths that fix builders take
+    when token positions can't be resolved."""
+
+    def test_orphan_docstring_fix_returns_none_when_position_missing(self) -> None:
+        from unittest.mock import MagicMock
+        from a816.fluff.core import _build_orphan_docstring_fix
+
+        node = MagicMock()
+        node.file_info = MagicMock(position=None)
+        assert _build_orphan_docstring_fix("text", node) is None
+
+    def test_drop_comment_block_fix_returns_none_on_empty_list(self) -> None:
+        from a816.fluff.core import _build_drop_comment_block_fix
+
+        assert _build_drop_comment_block_fix("text", []) is None
+
+    def test_comment_to_docstring_fix_returns_none_on_empty_list(self) -> None:
+        from unittest.mock import MagicMock
+        from a816.fluff.core import _build_comment_to_docstring_fix
+
+        target = MagicMock()
+        assert _build_comment_to_docstring_fix("text", [], target) is None
+
+
 class TestApplyFixes:
     def test_single_edit_applied(self) -> None:
         text = "hello world"
