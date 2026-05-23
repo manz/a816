@@ -236,6 +236,17 @@ class TestStarEqMigrationContainers:
         up1 = [d for d in diagnostics if d.code == "UP001"]
         assert len(up1) == 1
 
+    def test_up001_stops_wrap_at_following_alloc(self) -> None:
+        """`.alloc NAME in POOL { ... }` and `.alloc NAME at ADDR { ... }`
+        are placement directives too — the `*=` body run must end
+        there, not swallow the alloc whole."""
+        src = '"""m"""\n.pool client { range 0x008100 0x008200 }\n*=0x008000\n.db 0\n.alloc reset in client {\n    .db 1\n}\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        new, _ = apply_fixes(src, diagnostics, allow_unsafe=True)
+        assert ".alloc at 0x008000 {\n    .db 0\n}" in new
+        assert "\n.alloc reset in client {" in new
+        assert "    .alloc reset in client" not in new
+
 
 class TestStarEqMigrationFix:
     def test_up001_wraps_single_star_eq_into_alloc_at(self) -> None:
