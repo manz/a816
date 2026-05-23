@@ -159,6 +159,23 @@ class TestDocstringAlignmentFix:
         assert "\nunder body\n" not in new
 
 
+class TestUp001FixWrapping:
+    def test_up001_indents_each_body_line_4_spaces(self) -> None:
+        src = '"""m"""\n*=0x008000\n    lda.b #0\n    nop\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        new, _ = apply_fixes(src, diagnostics, allow_unsafe=True)
+        # Body lines keep an extra 4-space indent inside the alloc braces.
+        assert "    lda.b #0" in new
+        assert "}" in new
+
+    def test_up001_leaves_blank_lines_blank(self) -> None:
+        src = '"""m"""\n*=0x008000\n.db 0xAA\n\n.db 0xBB\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        new, _ = apply_fixes(src, diagnostics, allow_unsafe=True)
+        # The blank line between two .db rows shouldn't pick up trailing spaces.
+        assert "\n\n    .db 0xBB" in new
+
+
 class TestStarEqMigrationContainers:
     def test_up001_recurses_into_scope_body(self) -> None:
         src = '"""m"""\n.scope my_scope {\n    *=0x008000\n    .db 0x42\n}\n'

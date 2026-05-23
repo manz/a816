@@ -56,6 +56,29 @@ def test_code_action_returns_none_when_no_hits_in_range() -> None:
     assert actions is None
 
 
+def test_code_action_returns_none_for_unknown_doc() -> None:
+    server = A816LanguageServer()
+    actions = server._handle_code_action(_params_for("file:///not-loaded.s", 0))
+    assert actions is None
+
+
+def test_code_action_carries_workspace_edit_with_correct_replacement() -> None:
+    src = '"""m"""\nmain:\n    rts\n    """orphan"""\n    nop\n'
+    server = A816LanguageServer()
+    doc = A816Document("file:///mem.s", src)
+    server.documents[doc.uri] = doc
+    actions = server._handle_code_action(_params_for(doc.uri, 3))
+    assert actions is not None
+    doc004 = next(a for a in actions if a.title.startswith("DOC004:"))
+    assert doc004.edit is not None
+    assert doc004.edit.changes is not None
+    edits = doc004.edit.changes[doc.uri]
+    assert len(edits) == 1
+    assert "; orphan" in edits[0].new_text
+    assert edits[0].range.start.line == 3
+    assert edits[0].range.end.line == 3
+
+
 def test_code_action_quickfix_kind_is_correct() -> None:
     src = '"""m"""\nmain:\n    rts\n    """orphan"""\n    nop\n'
     server = A816LanguageServer()
