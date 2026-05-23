@@ -438,9 +438,7 @@ def _build_comment_to_docstring_fix(
     span = _comment_block_span(text, comments)
     if span is None:
         return None
-    block_pos = getattr(
-        (target.block if isinstance(target, MacroAstNode) else target.body).file_info, "position", None
-    )
+    block_pos = getattr((target.block if isinstance(target, MacroAstNode) else target.body).file_info, "position", None)
     if block_pos is None:
         return None
     after_brace = _block_brace_offset(text, target)
@@ -449,7 +447,7 @@ def _build_comment_to_docstring_fix(
     indent = _detect_body_indent(text, after_brace, fallback_column=block_pos.column)
     body_lines = [_strip_comment_prefix(c.comment or "") for c in comments]
     doc_lines = [f"{indent}{line}".rstrip() for line in body_lines]
-    insertion = f"\n{indent}\"\"\"\n" + "\n".join(doc_lines) + f"\n{indent}\"\"\""
+    insertion = f'\n{indent}"""\n' + "\n".join(doc_lines) + f'\n{indent}"""'
     start, end = span
     return Fix(
         edits=(

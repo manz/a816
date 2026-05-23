@@ -197,7 +197,7 @@ def _build_docstring_alignment_fix(
     return Fix(
         edits=(TextEdit(start=start, end=end, replacement=new_snippet),),
         applicability=Applicability.SAFE,
-        description=f'align docstring body to column {open_col + 1}',
+        description=f"align docstring body to column {open_col + 1}",
     )
 
 
