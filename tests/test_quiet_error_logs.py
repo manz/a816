@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from a816.module_builder import build_with_imports
+from a816.module_builder import build_with_imports, build_with_imports_direct
 from a816.program import Program
 from a816.writers import ObjectWriter
 
@@ -70,6 +70,48 @@ def test_module_builder_failure_quiet_at_info_level(
         build_with_imports(main, tmp / "out.ips", output_dir=tmp / "build")
     traceback_records = [r for r in caplog.records if "traceback" in r.message.lower()]
     assert traceback_records == [], "no traceback should appear at INFO level"
+
+
+def test_module_builder_direct_failure_demotes_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Direct-mode (position-dependent) build path has its own
+    # top-level except. Same demotion behavior expected.
+    tmp, main = _write("*=0x008000\nnop #0x00\n")
+    with caplog.at_level(logging.DEBUG):
+        result = build_with_imports_direct(main, tmp / "out.ips", output_dir=tmp / "build")
+    assert result.exit_code != 0
+    debug_traces = [r for r in caplog.records if r.levelno == logging.DEBUG and "traceback" in r.message.lower()]
+    assert debug_traces
+    assert debug_traces[0].exc_info is not None
+
+
+def test_discover_imports_oserror_demotes_traceback(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `_discover_imports_recursive` opens source files to scan for
+    # nested .imports. Patch Path.read_text to raise PermissionError
+    # mid-walk to exercise the OSError handler.
+    from a816 import module_builder
+
+    tmp, main = _write("*=0x008000\nnop\n")
+
+    original_read = Path.read_text
+
+    def fake_read(self: Path, *a: object, **kw: object) -> str:
+        if self == main:
+            raise PermissionError(f"denied: {self}")
+        return original_read(self, *a, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", fake_read)
+    builder = module_builder.ModuleBuilder(output_dir=tmp / "build")
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(OSError):
+            builder._discover_imports_recursive(main, "__main__")
+    debug_traces = [r for r in caplog.records if r.levelno == logging.DEBUG and "traceback" in r.message.lower()]
+    assert debug_traces
+    assert debug_traces[0].exc_info is not None
 
 
 def test_ips_apply_value_error_demotes_traceback(
