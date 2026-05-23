@@ -73,8 +73,45 @@ class OpcodeNode(NodeProtocol):
             ) from e
 
     def pc_after(self, current_pc: Address) -> Address:
+        self._maybe_update_register_sizes()
         opcode_emitter = self._get_emitter()
         return current_pc + opcode_emitter.supposed_length(self.value_node, self.size, self.resolver)
+
+    def _maybe_update_register_sizes(self) -> None:
+        """`rep`/`sep` change M/X at runtime; the assembler-time analog
+        is `.a8` / `.a16` / `.i8` / `.i16`. Without bridging the two,
+        source has to repeat itself after every `rep` / `sep`:
+
+            rep #0x30
+            .a16        ; redundant — assembler should infer this
+            .i16
+
+        Bridge: when we see `rep`/`sep` with an immediate operand
+        whose value resolves to a constant, mutate
+        `resolver.a_size` / `i_size` the same way the CPU would.
+        Subsequent opcode-width inference picks the right form
+        without the explicit directive. Explicit `.a*` / `.i*`
+        still wins because it runs through `RegisterSizeNode` which
+        sets the size directly; running after a `rep`/`sep` just
+        re-asserts what the inference already chose.
+        """
+        if self.opcode not in ("rep", "sep") or self.addressing_mode is not AddressingMode.immediate:
+            return
+        if self.value_node is None:
+            return
+        try:
+            value = self.value_node.get_value()
+        except Exception:  # noqa: BLE001 — expression may reference an unresolved forward symbol
+            return
+        if not isinstance(value, int):
+            return
+        # `rep #N` clears the named flag bits → 16-bit register.
+        # `sep #N` sets them → 8-bit register.
+        new_size = 16 if self.opcode == "rep" else 8
+        if value & 0x20:
+            self.resolver.a_size = new_size
+        if value & 0x10:
+            self.resolver.i_size = new_size
 
     def __str__(self) -> str:
         return f"OpcodeNode({self.opcode}, {self.addressing_mode}, {self.index}, {self.value_node})"
