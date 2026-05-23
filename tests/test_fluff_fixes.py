@@ -159,6 +159,34 @@ class TestDocstringAlignmentFix:
         assert "\nunder body\n" not in new
 
 
+class TestStarEqMigrationContainers:
+    def test_up001_recurses_into_scope_body(self) -> None:
+        src = '"""m"""\n.scope my_scope {\n    *=0x008000\n    .db 0x42\n}\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        up1 = [d for d in diagnostics if d.code == "UP001"]
+        assert len(up1) == 1
+
+    def test_up001_recurses_into_macro_body(self) -> None:
+        src = '"""m"""\n.macro shim() {\n    """body"""\n    *=0x008000\n    .db 0x42\n}\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        up1 = [d for d in diagnostics if d.code == "UP001"]
+        assert len(up1) == 1
+
+    def test_up001_recurses_into_if_then_and_else(self) -> None:
+        src = (
+            '"""m"""\nDEBUG = 1\n.if DEBUG {\n    *=0x008000\n    .db 0xAA\n} else {\n    *=0x009000\n    .db 0xBB\n}\n'
+        )
+        diagnostics = lint_text(src, Path("<mem>"))
+        up1 = [d for d in diagnostics if d.code == "UP001"]
+        assert len(up1) == 2
+
+    def test_up001_recurses_into_for_body(self) -> None:
+        src = '"""m"""\n.for i := 0, 1 {\n    *=0x008000\n    .db 0xCC\n}\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        up1 = [d for d in diagnostics if d.code == "UP001"]
+        assert len(up1) == 1
+
+
 class TestStarEqMigrationFix:
     def test_up001_wraps_single_star_eq_into_alloc_at(self) -> None:
         src = '"""m"""\n*=0x008000\n.db 0xEA\n.db 0xEB\n'
