@@ -115,22 +115,13 @@ class WorkspaceIndex:
 
     def _crawl_imports_from(self, source_path: Path, content: str) -> None:
         """Index every file transitively reachable via `.include` / `.import`
-        from `source_path`. Skips files already in the index so updates
+        from `source_path`, skipping files already in the index so updates
         from open buffers aren't clobbered by their on-disk versions."""
-        queue: list[Path] = list(self._extract_includes(source_path, content))
-        visited: set[Path] = {source_path.resolve()}
-        while queue:
-            current = queue.pop().resolve()
-            if current in visited:
-                continue
-            visited.add(current)
-            if current.as_uri() in self.documents:
-                continue
-            sub_content = self._read_or_log(current)
-            if sub_content is None:
-                continue
-            self._store_document(A816Document(current.as_uri(), sub_content, include_paths=self.include_paths))
-            queue.extend(self._extract_includes(current, sub_content))
+        self._bfs_index(
+            seed=list(self._extract_includes(source_path, content)),
+            already_visited={source_path.resolve()},
+            skip_indexed=True,
+        )
 
     def remove_document(self, uri: str) -> None:
         """Remove a document from the index."""
@@ -286,13 +277,30 @@ class WorkspaceIndex:
             return None
 
     def _explore_from(self, entrypoint: Path) -> None:
-        queue: list[Path] = [entrypoint.resolve()]
-        visited: set[Path] = set()
+        """Index everything reachable from `entrypoint`. Called at
+        workspace rebuild; never skips already-indexed files because
+        the index has just been cleared."""
+        self._bfs_index(seed=[entrypoint.resolve()], already_visited=set(), skip_indexed=False)
+
+    def _bfs_index(self, seed: list[Path], already_visited: set[Path], skip_indexed: bool) -> None:
+        """Breadth-first walk over `.include`/`.import` graph. Reads
+        each file off disk, parses it into an `A816Document`, stores
+        it, queues its imports.
+
+        `skip_indexed=True` short-circuits files already in
+        `self.documents`. The open-buffer crawl uses it so it
+        doesn't trample edits with a stale on-disk copy. The
+        entrypoint rebuild leaves it off because the index is empty
+        at that point and every file is fair game."""
+        queue: list[Path] = list(seed)
+        visited: set[Path] = set(already_visited)
         while queue:
-            current = queue.pop()
+            current = queue.pop().resolve()
             if current in visited:
                 continue
             visited.add(current)
+            if skip_indexed and current.as_uri() in self.documents:
+                continue
             content = self._read_or_log(current)
             if content is None:
                 continue

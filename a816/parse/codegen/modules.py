@@ -3,21 +3,55 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from a816.object_file import ObjectFile
 
 from a816.module_loader import resolve_module
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
+    CommentAstNode,
+    DocstringAstNode,
+    ForAstNode,
+    IfAstNode,
     ImportAstNode,
     IncludeBinaryAstNode,
     LabelAstNode,
     LabelDeclAstNode,
+    MacroAstNode,
+    PoolAstNode,
+    ReclaimAstNode,
+    ScopeAstNode,
+    StructAstNode,
     SymbolAffectationAstNode,
 )
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators, logger
 from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
 from a816.symbols import Resolver
+
+# AST node types whose effect must be visible to codegen of the
+# importer (struct/macro/const defs, scopes, conditionals, nested
+# imports, pool decls, reclaims, docstrings). Everything else is
+# runtime-bound and surfaces as an `ExternNode` so the linker wires
+# it up at link time.
+_INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
+    StructAstNode,
+    MacroAstNode,
+    SymbolAffectationAstNode,
+    AssignAstNode,
+    LabelDeclAstNode,
+    ScopeAstNode,
+    IfAstNode,
+    ForAstNode,
+    ImportAstNode,
+    PoolAstNode,
+    ReclaimAstNode,
+    DocstringAstNode,
+    CommentAstNode,
+)
 
 
 def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
@@ -82,13 +116,13 @@ def _import_from_object(
     return [ExternNode(name, resolver) for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
 
 
-def _register_imported_object_pools(obj_file: object, resolver: Resolver) -> None:
+def _register_imported_object_pools(obj_file: ObjectFile, resolver: Resolver) -> None:
     """Mirror the imported `.o`'s pool decls into the importer's
     resolver.pools so `.alloc ... in POOL` sites resolve at codegen.
     Idempotent: identical re-registrations are skipped silently."""
     from a816.pool import Pool, PoolRange, Strategy
 
-    for decl in getattr(obj_file, "pool_decls", []):
+    for decl in obj_file.pool_decls:
         if decl.name in resolver.pools:
             continue
         resolver.pools[decl.name] = Pool(
@@ -154,45 +188,13 @@ def _import_object_mode(
     them so the importer's `.o` doesn't re-export symbols owned by
     its dependency. The owning module's `.o` is the single source.
     """
-    from a816.parse.ast.nodes import (
-        AssignAstNode,
-        CommentAstNode,
-        DocstringAstNode,
-        ForAstNode,
-        IfAstNode,
-        ImportAstNode,
-        LabelDeclAstNode,
-        MacroAstNode,
-        PoolAstNode,
-        ReclaimAstNode,
-        ScopeAstNode,
-        StructAstNode,
-        SymbolAffectationAstNode,
-    )
-
-    inline_types = (
-        StructAstNode,
-        MacroAstNode,
-        SymbolAffectationAstNode,
-        AssignAstNode,
-        LabelDeclAstNode,
-        ScopeAstNode,
-        IfAstNode,
-        ForAstNode,
-        ImportAstNode,
-        PoolAstNode,
-        ReclaimAstNode,
-        DocstringAstNode,
-        CommentAstNode,
-    )
-
     out: GenNodes = []
     root = resolver.scopes[0]
     before_labels = set(root.labels.keys())
     before_symbols = set(root.symbols.keys())
 
     for node in nodes:
-        if isinstance(node, inline_types):
+        if isinstance(node, _INLINE_IMPORT_TYPES):
             out.extend(_code_gen([node], resolver, macro_definitions) or [])
             continue
         for name in _runtime_extern_names(node):
@@ -241,21 +243,6 @@ def _runtime_extern_names(node: object) -> list[str]:
         base = node.file_path.replace("/", "_").replace(".", "_")
         return [base, f"{base}__size"]
     return []
-
-
-def _walk_body_extern_names(body: object) -> list[str]:
-    """Recurse into an `.alloc` / `.relocate` body collecting names
-    downstream importers might reference (incbin auto-symbols, public
-    labels). Body sub-labels are still allocator-placed; the extern
-    stub gives them link-time resolution."""
-    from a816.parse.ast.nodes import BlockAstNode
-
-    names: list[str] = []
-    if not isinstance(body, BlockAstNode):
-        return names
-    for child in body.body:
-        names.extend(_runtime_extern_names(child))
-    return names
 
 
 def _canonical(path: Path) -> str:
