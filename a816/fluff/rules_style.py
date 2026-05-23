@@ -7,10 +7,14 @@ from pathlib import Path
 
 from a816.fluff.core import (
     MAX_LINE_LENGTH,
+    Applicability,
     Diagnostic,
+    Fix,
     LintContext,
     Rule,
+    TextEdit,
     flatten_nodes,
+    line_col_to_offset,
 )
 from a816.module_loader import resolve_module
 from a816.parse.ast.nodes import (
@@ -236,11 +240,52 @@ class RedundantTypedCast(Rule):
             if name is None:
                 continue
             if instances.get(name) == cast.type_name:
+                fix = _build_redundant_cast_fix(ctx, cast, name)
                 yield self.diagnose(
                     ctx,
                     parent,
                     f"redundant cast: '{name}' is already bound as '{cast.type_name}'",
+                    fix=fix,
                 )
+
+
+def _build_redundant_cast_fix(
+    ctx: LintContext,
+    cast: CastAccessExprNode | CastValueExprNode,
+    name: str,
+) -> Fix | None:
+    """Replace `(name as Type)` with just `name`.
+
+    Pos info on the cast token points at the opening `(`. We find the
+    matching `)` by paren counting through `ctx.text` from there.
+    Safe: the cast is provably a no-op (typed binding already in
+    scope), and the inner identifier is preserved verbatim, so the
+    edit is a pure shrink with no behaviour change."""
+    token = cast.token
+    pos = getattr(token, "position", None)
+    if pos is None:
+        return None
+    start = line_col_to_offset(ctx.text, pos.line + 1, pos.column + 1)
+    if start >= len(ctx.text) or ctx.text[start] != "(":
+        return None
+    depth = 0
+    end = start
+    for idx in range(start, len(ctx.text)):
+        ch = ctx.text[idx]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                end = idx + 1
+                break
+    else:
+        return None
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=name),),
+        applicability=Applicability.SAFE,
+        description=f"replace `(... as {cast.type_name})` with `{name}`",
+    )
 
 
 class RepeatedInlineCast(Rule):

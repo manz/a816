@@ -6,9 +6,11 @@ from pathlib import Path
 
 from a816.config import discover_a816_config
 from a816.fluff.core import (
+    Applicability,
     Diagnostic,
     LintContext,
     Rule,
+    TextEdit,
     build_noqa_map,
     is_suppressed,
 )
@@ -88,6 +90,54 @@ def lint_text(
 
     noqa_map = build_noqa_map(text)
     return [d for d in diagnostics if not is_suppressed(d.line, d.code, noqa_map)]
+
+
+def apply_fixes(
+    text: str,
+    diagnostics: list[Diagnostic],
+    *,
+    allow_unsafe: bool = False,
+    select: set[str] | None = None,
+) -> tuple[str, list[Diagnostic]]:
+    """Return `(new_text, applied_diagnostics)` after applying fixes.
+
+    Filters:
+      * `allow_unsafe=False` (default) skips fixes marked UNSAFE.
+      * `select` limits to a specific rule-code subset; `None` means all.
+
+    Edits are applied in reverse-offset order so an earlier edit's
+    replacement length cannot invalidate a later edit's offsets.
+    Overlapping edits are dropped silently — the lint runs again after
+    fixes converge so the next pass can produce non-overlapping edits.
+    """
+    candidates: list[tuple[Diagnostic, TextEdit]] = []
+    for diag in diagnostics:
+        if diag.fix is None:
+            continue
+        if select is not None and diag.code not in select:
+            continue
+        if diag.fix.applicability is Applicability.UNSAFE and not allow_unsafe:
+            continue
+        for edit in diag.fix.edits:
+            candidates.append((diag, edit))
+
+    # Sort by descending start; for equal starts, descending end so the
+    # widest replacement at a given anchor wins the overlap rejection.
+    candidates.sort(key=lambda pair: (pair[1].start, pair[1].end), reverse=True)
+
+    new_text = text
+    applied: list[Diagnostic] = []
+    last_kept_start: int | None = None
+    seen_diags: set[int] = set()
+    for diag, edit in candidates:
+        if last_kept_start is not None and edit.end > last_kept_start:
+            continue  # overlaps a previously kept edit
+        new_text = new_text[: edit.start] + edit.replacement + new_text[edit.end :]
+        last_kept_start = edit.start
+        if id(diag) not in seen_diags:
+            applied.append(diag)
+            seen_diags.add(id(diag))
+    return new_text, applied
 
 
 def lint_file(path: Path) -> list[Diagnostic]:

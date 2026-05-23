@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import ClassVar
 
@@ -22,6 +23,49 @@ from a816.parse.ast.nodes import (
     ScopeAstNode,
 )
 
+
+class Applicability(Enum):
+    """How safe a fix is.
+
+    SAFE — guaranteed behaviour-preserving. Applied unconditionally by
+    `a816 fix`.
+
+    UNSAFE — might change runtime semantics, drop comments / whitespace,
+    or surface latent bugs as new errors. Requires `--unsafe-fixes` to
+    apply. Reported as fixable in the listing either way.
+
+    Ruff uses the same split; mirroring keeps the mental model aligned
+    for anyone who already lints Python with ruff.
+    """
+
+    SAFE = "safe"
+    UNSAFE = "unsafe"
+
+
+@dataclass(frozen=True)
+class TextEdit:
+    """One contiguous text replacement, expressed in byte offsets so the
+    driver can apply edits in reverse order without needing to maintain
+    a running line/column shift."""
+
+    start: int  # inclusive byte offset into source text
+    end: int  # exclusive byte offset
+    replacement: str
+
+
+@dataclass(frozen=True)
+class Fix:
+    """One or more text edits that resolve a diagnostic.
+
+    Edits target the source `text` the diagnostic was produced against;
+    applying multiple fixes to the same file requires the driver to sort
+    by descending offset so earlier edits don't invalidate later ones.
+    """
+
+    edits: tuple[TextEdit, ...]
+    applicability: Applicability
+    description: str
+
 MAX_LINE_LENGTH = 120
 
 _SNAKE_CASE_RE = re.compile(r"^_?[a-z][a-z0-9_]*$")
@@ -33,16 +77,24 @@ _NOQA_RE = re.compile(r";[ \t]*noqa\b(.*)$", re.IGNORECASE)
 
 @dataclass(frozen=True)
 class Diagnostic:
-    """One lint hit. `path:line:col code message`, ruff-style."""
+    """One lint hit. `path:line:col code message`, ruff-style.
+
+    `fix` is the optional autofix. `None` means the rule has no
+    mechanical resolution; the user has to edit the source themselves.
+    """
 
     path: Path
     line: int  # 1-based for human output
     column: int  # 1-based
     code: str
     message: str
+    fix: Fix | None = None
 
     def format(self) -> str:
-        return f"{self.path}:{self.line}:{self.column} {self.code} {self.message}"
+        marker = ""
+        if self.fix is not None:
+            marker = " [*]" if self.fix.applicability is Applicability.SAFE else " [!]"
+        return f"{self.path}:{self.line}:{self.column} {self.code}{marker} {self.message}"
 
 
 @dataclass
@@ -137,6 +189,29 @@ def node_position(node: AstNode) -> tuple[int, int]:
     if pos is None:
         return 1, 1
     return pos.line + 1, pos.column + 1
+
+
+def line_col_to_offset(text: str, line_1based: int, column_1based: int) -> int:
+    """Convert a 1-based (line, column) pair into a 0-based byte offset
+    into `text`. Used by fix builders that need a TextEdit range from
+    a Token's position.
+
+    Columns past the end of the line clamp to the line's length —
+    diagnostics that point one past the visible content (typical
+    end-of-token marker) still produce a valid offset."""
+    line_idx = max(line_1based - 1, 0)
+    col_idx = max(column_1based - 1, 0)
+    cursor = 0
+    current_line = 0
+    while current_line < line_idx:
+        nl = text.find("\n", cursor)
+        if nl == -1:
+            return len(text)
+        cursor = nl + 1
+        current_line += 1
+    next_nl = text.find("\n", cursor)
+    line_end = len(text) if next_nl == -1 else next_nl
+    return min(cursor + col_idx, line_end)
 
 
 def kind_label(node: AstNode) -> str:
@@ -285,9 +360,11 @@ class Rule:
         """Per-node rules override this when `accepts` is non-empty."""
         return iter(())
 
-    def diagnose(self, ctx: LintContext, node: AstNode, message: str) -> Diagnostic:
+    def diagnose(
+        self, ctx: LintContext, node: AstNode, message: str, fix: Fix | None = None
+    ) -> Diagnostic:
         line, col = node_position(node)
-        return Diagnostic(path=ctx.path, line=line, column=col, code=self.code, message=message)
+        return Diagnostic(path=ctx.path, line=line, column=col, code=self.code, message=message, fix=fix)
 
 
 _DOC004_MSG = "orphan docstring; convert to a `;` comment or attach to a target"
