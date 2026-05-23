@@ -256,30 +256,23 @@ def _build_redundant_cast_fix(
 ) -> Fix | None:
     """Replace `(name as Type)` with just `name`.
 
-    Pos info on the cast token points at the opening `(`. We find the
-    matching `)` by paren counting through `ctx.text` from there.
-    Safe: the cast is provably a no-op (typed binding already in
-    scope), and the inner identifier is preserved verbatim, so the
-    edit is a pure shrink with no behaviour change."""
-    token = cast.token
-    pos = getattr(token, "position", None)
-    if pos is None:
+    Span comes from `cast.token` (the opening `(`) and
+    `cast.close_token` (the matching `)`); both are recorded by
+    the expression parser. Falls back to None when either anchor
+    is missing (e.g. paren-less `name := expr as T` syntactic
+    sugar where there's no `)` to point at).
+
+    Safe: cast is provably a no-op (typed binding already in scope);
+    inner identifier preserved verbatim; edit is a pure shrink.
+    """
+    open_pos = getattr(cast.token, "position", None)
+    close_token = getattr(cast, "close_token", None)
+    close_end = close_token.end_position if close_token is not None else None
+    if open_pos is None or close_end is None:
         return None
-    start = line_col_to_offset(ctx.text, pos.line + 1, pos.column + 1)
-    if start >= len(ctx.text) or ctx.text[start] != "(":
-        return None
-    depth = 0
-    end = start
-    for idx in range(start, len(ctx.text)):
-        ch = ctx.text[idx]
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                end = idx + 1
-                break
-    else:
+    start = line_col_to_offset(ctx.text, open_pos.line + 1, open_pos.column + 1)
+    end = line_col_to_offset(ctx.text, close_end.line + 1, close_end.column + 1)
+    if start >= end or start >= len(ctx.text) or ctx.text[start] != "(":
         return None
     return Fix(
         edits=(TextEdit(start=start, end=end, replacement=name),),

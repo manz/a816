@@ -72,13 +72,25 @@ class CastAccessExprNode(ExprNode):
     Supports chained access (`).a.b.c`) via the `field_path` list. Only the
     leaf access produces a value; intermediate names look up nested struct
     sub-fields registered as `TYPE.a.b.c` during struct codegen.
+
+    `close_token` is the `)` that closed the cast expression (no field
+    path included). Fluff fix builders use it to know the byte range
+    of `(inner as TYPE)` without re-scanning source.
     """
 
-    def __init__(self, token: Token, inner: list[ExprNode], type_name: str, field_path: list[str]):
+    def __init__(
+        self,
+        token: Token,
+        inner: list[ExprNode],
+        type_name: str,
+        field_path: list[str],
+        close_token: Token | None = None,
+    ):
         super().__init__(token)
         self.inner = inner
         self.type_name = type_name
         self.field_path = field_path
+        self.close_token = close_token
 
     def to_canonical(self) -> str:
         suffix = ".".join(self.field_path)
@@ -88,12 +100,22 @@ class CastAccessExprNode(ExprNode):
 class CastValueExprNode(ExprNode):
     """`(inner as TYPE)` — atomic term that evaluates to `eval(inner)` and carries
     the type tag so an assign RHS can eager-expand into per-field instance symbols.
+
+    `close_token` is the `)` that closed the cast. Fluff fix builders
+    use it for the byte range of the full cast expression.
     """
 
-    def __init__(self, token: Token, inner: list[ExprNode], type_name: str):
+    def __init__(
+        self,
+        token: Token,
+        inner: list[ExprNode],
+        type_name: str,
+        close_token: Token | None = None,
+    ):
         super().__init__(token)
         self.inner = inner
         self.type_name = type_name
+        self.close_token = close_token
 
     def to_canonical(self) -> str:
         return f"({_inner_canonical(self.inner)} as {self.type_name})"

@@ -7,10 +7,11 @@ import difflib
 import sys
 import textwrap
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from a816.exceptions import FormattingError
-from a816.fluff.core import Rule
+from a816.fluff.core import Diagnostic, Rule
 from a816.fluff.runner import apply_fixes, lint_file, lint_text
 from a816.formatter import A816Formatter
 
@@ -297,6 +298,75 @@ def _config_paths_for(source: Path) -> tuple[list[Path] | None, list[Path] | Non
     )
 
 
+@dataclass
+class _FixOutcome:
+    """Per-file result of one `a816 fix` pass."""
+
+    changed: bool
+    unfixed_count: int
+    error_code: int = 0
+
+
+def _process_fix_target(source: Path, args: argparse.Namespace, select: set[str] | None) -> _FixOutcome:
+    """Read `source`, run lint + fix, dispatch to diff / check / write."""
+    original = source.read_text(encoding="utf-8")
+    include_paths, module_paths = _config_paths_for(source)
+    diagnostics = lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
+    new_text, applied = apply_fixes(original, diagnostics, allow_unsafe=args.unsafe_fixes, select=select)
+    unfixed = [d for d in diagnostics if d not in applied]
+    if args.diff:
+        _print_fix_diff(source, original, new_text, unfixed)
+        return _FixOutcome(changed=new_text != original, unfixed_count=len(unfixed))
+    if args.check:
+        if new_text != original:
+            print(f"Would fix {source}")
+        for diag in unfixed:
+            print(diag.format())
+        return _FixOutcome(changed=new_text != original, unfixed_count=len(unfixed))
+    return _apply_fix_writes(source, original, new_text, applied, unfixed)
+
+
+def _print_fix_diff(source: Path, original: str, new_text: str, unfixed: list[Diagnostic]) -> None:
+    if new_text != original:
+        diff_lines = difflib.unified_diff(
+            original.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=str(source),
+            tofile=str(source),
+        )
+        sys.stdout.write(_colorize_diff(diff_lines))
+    for diag in unfixed:
+        print(diag.format())
+
+
+def _apply_fix_writes(
+    source: Path, original: str, new_text: str, applied: list[Diagnostic], unfixed: list[Diagnostic]
+) -> _FixOutcome:
+    changed = new_text != original
+    if changed:
+        try:
+            source.write_text(new_text, encoding="utf-8")
+        except OSError as exc:
+            print(f"Failed to write {source}: {exc}", file=sys.stderr)
+            return _FixOutcome(changed=False, unfixed_count=len(unfixed), error_code=2)
+        for diag in applied:
+            print(f"fixed {diag.code} in {source}")
+    for diag in unfixed:
+        print(diag.format())
+    return _FixOutcome(changed=changed, unfixed_count=len(unfixed))
+
+
+def _report_fix_summary(check: bool, fixed_files: int, remaining: int, missing_err: int) -> int:
+    if check:
+        if fixed_files or remaining:
+            print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) remain.", file=sys.stderr)
+            return missing_err or 1
+        print("No fixes needed.")
+        return missing_err
+    print(f"Fixed {fixed_files} file(s), {remaining} hit(s) remain.")
+    return missing_err or (1 if remaining else 0)
+
+
 def _run_fix(args: argparse.Namespace) -> int:
     sources, missing_err = _collect_sources(list(args.paths))
     if not sources:
@@ -306,57 +376,13 @@ def _run_fix(args: argparse.Namespace) -> int:
     fixed_files = 0
     remaining = 0
     for source in sources:
-        original = source.read_text(encoding="utf-8")
-        include_paths, module_paths = _config_paths_for(source)
-        diagnostics = lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
-        new_text, applied = apply_fixes(
-            original, diagnostics, allow_unsafe=args.unsafe_fixes, select=select
-        )
-        unfixed = [d for d in diagnostics if d not in applied]
-        if args.diff:
-            if new_text != original:
-                diff_lines = difflib.unified_diff(
-                    original.splitlines(keepends=True),
-                    new_text.splitlines(keepends=True),
-                    fromfile=str(source),
-                    tofile=str(source),
-                )
-                sys.stdout.write(_colorize_diff(diff_lines))
-            for diag in unfixed:
-                print(diag.format())
-            if new_text != original:
-                fixed_files += 1
-            remaining += len(unfixed)
-            continue
-        if args.check:
-            if new_text != original:
-                print(f"Would fix {source}")
-                fixed_files += 1
-            for diag in unfixed:
-                print(diag.format())
-            remaining += len(unfixed)
-            continue
-        if new_text != original:
-            try:
-                source.write_text(new_text, encoding="utf-8")
-            except OSError as exc:
-                print(f"Failed to write {source}: {exc}", file=sys.stderr)
-                return 2
+        outcome = _process_fix_target(source, args, select)
+        if outcome.error_code:
+            return outcome.error_code
+        if outcome.changed:
             fixed_files += 1
-            for diag in applied:
-                print(f"fixed {diag.code} in {source}")
-        for diag in unfixed:
-            print(diag.format())
-        remaining += len(unfixed)
-
-    if args.check:
-        if fixed_files or remaining:
-            print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) remain.", file=sys.stderr)
-            return missing_err or 1
-        print("No fixes needed.")
-        return missing_err
-    print(f"Fixed {fixed_files} file(s), {remaining} hit(s) remain.")
-    return missing_err or (1 if remaining else 0)
+        remaining += outcome.unfixed_count
+    return _report_fix_summary(args.check, fixed_files, remaining, missing_err)
 
 
 def _run_explain(args: argparse.Namespace) -> int:

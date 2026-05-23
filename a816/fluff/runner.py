@@ -110,21 +110,40 @@ def apply_fixes(
     Overlapping edits are dropped silently — the lint runs again after
     fixes converge so the next pass can produce non-overlapping edits.
     """
-    candidates: list[tuple[Diagnostic, TextEdit]] = []
-    for diag in diagnostics:
-        if diag.fix is None:
-            continue
-        if select is not None and diag.code not in select:
-            continue
-        if diag.fix.applicability is Applicability.UNSAFE and not allow_unsafe:
-            continue
-        for edit in diag.fix.edits:
-            candidates.append((diag, edit))
-
+    candidates = _collect_fix_candidates(diagnostics, allow_unsafe=allow_unsafe, select=select)
     # Sort by descending start; for equal starts, descending end so the
     # widest replacement at a given anchor wins the overlap rejection.
     candidates.sort(key=lambda pair: (pair[1].start, pair[1].end), reverse=True)
+    return _apply_candidate_edits(text, candidates)
 
+
+def _collect_fix_candidates(
+    diagnostics: list[Diagnostic],
+    *,
+    allow_unsafe: bool,
+    select: set[str] | None,
+) -> list[tuple[Diagnostic, TextEdit]]:
+    candidates: list[tuple[Diagnostic, TextEdit]] = []
+    for diag in diagnostics:
+        if not _candidate_passes_filters(diag, allow_unsafe=allow_unsafe, select=select):
+            continue
+        assert diag.fix is not None  # guarded by `_candidate_passes_filters`
+        for edit in diag.fix.edits:
+            candidates.append((diag, edit))
+    return candidates
+
+
+def _candidate_passes_filters(diag: Diagnostic, *, allow_unsafe: bool, select: set[str] | None) -> bool:
+    if diag.fix is None:
+        return False
+    if select is not None and diag.code not in select:
+        return False
+    return allow_unsafe or diag.fix.applicability is not Applicability.UNSAFE
+
+
+def _apply_candidate_edits(
+    text: str, candidates: list[tuple[Diagnostic, TextEdit]]
+) -> tuple[str, list[Diagnostic]]:
     new_text = text
     applied: list[Diagnostic] = []
     last_kept_start: int | None = None

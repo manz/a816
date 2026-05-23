@@ -85,6 +85,24 @@ class Token:
         self.value: str = value
         self.position: Position | None = position
 
+    @property
+    def end_position(self) -> Position | None:
+        """Position one column past the last character of `value`.
+
+        Derived from `position` + the shape of `value`. Multi-line
+        tokens (docstrings, block comments) walk past every `\\n` and
+        the end column counts characters after the last newline.
+        Fluff fix builders that need a byte range use this to bound
+        the replacement without re-scanning source.
+        """
+        if self.position is None:
+            return None
+        newlines = self.value.count("\n")
+        if newlines == 0:
+            return Position(self.position.line, self.position.column + len(self.value), self.position.file)
+        last_segment = self.value.rsplit("\n", 1)[1]
+        return Position(self.position.line + newlines, len(last_segment), self.position.file)
+
     def __repr__(self) -> str:
         return f"Token({self.type}, {self.value})"
 
