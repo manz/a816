@@ -22,7 +22,7 @@ from a816.fluff.core import (
     TextEdit,
     line_col_to_offset,
 )
-from a816.parse.ast.nodes import AstNode, CodePositionAstNode
+from a816.parse.ast.nodes import AllocAstNode, AstNode, CodePositionAstNode
 
 
 class StarEqualToAllocAt(Rule):
@@ -124,12 +124,15 @@ def _build_star_eq_to_alloc_fix(
 def _next_placement_or_end(text: str, siblings: list[AstNode], idx: int) -> int:
     """End offset for the body run starting after `siblings[idx]`.
 
-    Stops at the next `CodePositionAstNode` at the same level, or at
-    end of `text` if none follows. Includes the trailing newline so
-    the run leaves no blank line behind it."""
+    Stops at the next placement directive at the same level — either
+    another `*=` (`CodePositionAstNode`) or a `.alloc … at/in …`
+    (`AllocAstNode`). Both open their own placement context, so the
+    wrap-into-`.alloc at` for the leading `*=` must end before them
+    rather than swallowing them whole. Returns end of `text` if no
+    such boundary follows."""
     for j in range(idx + 1, len(siblings)):
         next_node = siblings[j]
-        if isinstance(next_node, CodePositionAstNode):
+        if isinstance(next_node, (CodePositionAstNode, AllocAstNode)):
             next_pos = getattr(next_node.file_info, "position", None)
             if next_pos is None:
                 continue
