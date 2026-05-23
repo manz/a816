@@ -87,8 +87,11 @@ class OpcodeNode(NodeProtocol):
         """
         if self.addressing_mode is not AddressingMode.immediate:
             return
-        if self.value_node is None:
-            return
+        # Immediate-mode parser always populates value_node — no
+        # `value_node is None` guard. Forward-referenced immediates
+        # (`lda #FORWARD`) raise `SymbolNotDefined` on pass 1; skip
+        # silently so pass 2 picks up the resolved value.
+        assert self.value_node is not None
         try:
             value = self.value_node.get_value()
         except SymbolNotDefined:

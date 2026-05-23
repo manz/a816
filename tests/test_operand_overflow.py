@@ -52,6 +52,22 @@ class TestExplicitSuffixOverflow:
         assert _emit("*=0x008000\n.dl 0xFFFFFF\n") == b"\xff\xff\xff"
 
 
+class TestForwardReferencedImmediate:
+    def test_forward_ref_resolves_on_second_pass(self) -> None:
+        # `FORWARD` is bound after the `lda` line; pass 1 raises
+        # `SymbolNotDefined` inside the overflow check, the
+        # exception is swallowed, pass 2 picks up FORWARD=0x42.
+        src = "*=0x008000\n.a8\nlda.b #FORWARD\nFORWARD = 0x42\n"
+        assert _emit(src) == b"\xa9\x42"
+
+    def test_forward_ref_to_overflowing_value_still_errors(self) -> None:
+        # Pass 2 resolves FORWARD=0xDEAD — overflow check on the
+        # second pass surfaces the NodeError as expected.
+        src = "*=0x008000\n.a8\nlda.b #FORWARD\nFORWARD = 0xDEAD\n"
+        with pytest.raises((NodeError, ValueError), match="0xDEAD"):
+            _emit(src)
+
+
 class TestInferredSizeStillTruncatesByValue:
     """When the user did NOT pass an explicit suffix, the assembler
     picks width from the value itself, so overflow can't happen."""
