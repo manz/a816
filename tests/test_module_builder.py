@@ -71,6 +71,63 @@ class TestModuleGraph:
         assert order.index("a") < order.index("main")
         assert order.index("b") < order.index("main")
 
+    def test_self_loop_raises_error(self) -> None:
+        """A module that imports itself is a degenerate circular cycle."""
+        graph = ModuleGraph()
+        graph.add_module("self_ref", Path("self_ref.s"))
+        graph.add_dependency("self_ref", "self_ref")
+
+        with pytest.raises(ValueError, match="Circular dependency"):
+            graph.topological_sort()
+
+    def test_unknown_dependency_skipped(self) -> None:
+        """Dependencies on modules that aren't registered in the graph
+        are silently skipped — they're typically stdlib or extern-only
+        targets resolved separately by the linker."""
+        graph = ModuleGraph()
+        graph.add_module("main", Path("main.s"))
+        graph.add_dependency("main", "@std/snes/ppu")  # not added
+
+        order = graph.topological_sort()
+        assert order == ["main"]
+
+    def test_topological_sort_is_deterministic(self) -> None:
+        """Same inputs should produce the same order across runs so
+        incremental rebuilds key stably on the compile sequence."""
+        graph = ModuleGraph()
+        for name in ("main", "a", "b", "c"):
+            graph.add_module(name, Path(f"{name}.s"))
+        graph.add_dependency("main", "a")
+        graph.add_dependency("main", "b")
+        graph.add_dependency("a", "c")
+        graph.add_dependency("b", "c")
+
+        first = graph.topological_sort()
+        second = graph.topological_sort()
+        assert first == second
+
+    def test_disconnected_modules_all_appear(self) -> None:
+        """Modules with no dependency edges still land in the sort
+        output (else they'd silently drop from the build)."""
+        graph = ModuleGraph()
+        graph.add_module("orphan_a", Path("a.s"))
+        graph.add_module("orphan_b", Path("b.s"))
+
+        order = graph.topological_sort()
+        assert sorted(order) == ["orphan_a", "orphan_b"]
+
+    def test_indirect_circular_dependency_raises(self) -> None:
+        """Three-node cycle (a → b → c → a)."""
+        graph = ModuleGraph()
+        for name in ("a", "b", "c"):
+            graph.add_module(name, Path(f"{name}.s"))
+        graph.add_dependency("a", "b")
+        graph.add_dependency("b", "c")
+        graph.add_dependency("c", "a")
+
+        with pytest.raises(ValueError, match="Circular dependency"):
+            graph.topological_sort()
+
     def test_circular_dependency_raises_error(self) -> None:
         """Test that circular dependencies are detected."""
         graph = ModuleGraph()

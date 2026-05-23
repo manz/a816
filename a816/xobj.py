@@ -255,7 +255,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="xobj",
         description="Inspect a816 .o object files.",
     )
-    p.add_argument("files", nargs="+", type=Path, help="object file(s)")
+    p.add_argument("paths", nargs="+", type=Path, help="object file(s)")
     p.add_argument("--summary", action="store_true", help="high-level counts (default)")
     p.add_argument("--sections", action="store_true", help="section table")
     p.add_argument("--bytes", type=int, default=0, metavar="N", help="dump first N bytes of each section")
@@ -331,25 +331,25 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     out = sys.stdout
 
-    for path in args.files:
+    for path in args.paths:
         if not path.exists():
             print(f"xobj: file not found: {path}", file=sys.stderr)
             return 2
 
     if args.diff:
-        if len(args.files) != 2:
+        if len(args.paths) != 2:
             print("xobj: --diff requires exactly two files", file=sys.stderr)
             return 2
         try:
-            obj_a = _load_tolerant(args.files[0], sys.stderr)
-            obj_b = _load_tolerant(args.files[1], sys.stderr)
+            obj_a = _load_tolerant(args.paths[0], sys.stderr)
+            obj_b = _load_tolerant(args.paths[1], sys.stderr)
         except ValueError as exc:
             print(f"xobj: {exc}", file=sys.stderr)
             return 2
-        print_diff(args.files[0], args.files[1], obj_a, obj_b, out)
+        print_diff(args.paths[0], args.paths[1], obj_a, obj_b, out)
         return 0
 
-    for i, path in enumerate(args.files):
+    for i, path in enumerate(args.paths):
         try:
             obj = _load_tolerant(path, sys.stderr)
         except ValueError as exc:
