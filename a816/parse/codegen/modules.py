@@ -286,46 +286,66 @@ def generate_import(
     obj_path = resolve_module(module_name, ".o", search_paths)
     src_path = resolve_module(module_name, ".s", search_paths)
 
-    # Object mode: .o owns runtime symbols (label addresses, alloc
-    # placements, `.incbin` bytes); source owns compile-time nodes
-    # (struct defs, macros, constants, typed binds). Neither is
-    # complete on its own — the linker can't reconstruct a
-    # `.struct PPU { ... }` from an .o because struct defs never get
-    # emitted as bytes. So pair them: extern-stub from .o for the
-    # runtime side, inline-classify the source for the compile-time
-    # side. `imported_symbol_names` (set by the classifier) prevents
-    # the importer's .o from re-exporting the inline-contributed
-    # runtime symbols that overlap with the extern stubs.
     if obj_path and not direct_mode and src_path:
-        key = _canonical(src_path)
-        if key in resolver.imported_module_paths:
-            logger.info("`.import %r` deduped — already loaded from %s", module_name, key)
-            return []
-        resolver.imported_module_paths.add(key)
-        extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode) or []
-        inline_nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode) or []
-        return extern_nodes + inline_nodes
+        return _paired_object_and_source_import(module_name, obj_path, src_path, resolver, macro_definitions)
 
-    if obj_path:
-        if direct_mode and _object_has_pool_allocs(obj_path):
-            pass  # see source-path branch below
-        else:
-            nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
-            if nodes is not None:
-                return nodes
-
-    if src_path:
-        if direct_mode:
-            key = _canonical(src_path)
-            if key in resolver.imported_module_paths:
-                logger.info("`.import %r` deduped — already loaded from %s", module_name, key)
-                return []
-            resolver.imported_module_paths.add(key)
-        nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode)
+    if obj_path and not (direct_mode and _object_has_pool_allocs(obj_path)):
+        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
         if nodes is not None:
             return nodes
 
+    if src_path:
+        return _source_import(module_name, src_path, resolver, macro_definitions, direct_mode, file_info)
+
     raise NodeError(f'Module not found: "{module_name}"', file_info)
+
+
+def _paired_object_and_source_import(
+    module_name: str,
+    obj_path: Path,
+    src_path: Path,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+) -> GenNodes:
+    """Object-mode import: pair `.o` (runtime extern stubs) with source
+    (compile-time inline). Neither half is complete on its own — `.o`
+    can't carry struct defs / macros (compile-time only), source
+    re-running would duplicate the runtime symbols the `.o` owns.
+    `imported_symbol_names` (set by the inline classifier) prevents
+    the importer's `.o` from re-exporting the inline-contributed
+    runtime symbols that overlap with the extern stubs."""
+    if _already_imported(src_path, resolver, module_name):
+        return []
+    extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode=False) or []
+    inline_nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode=False) or []
+    return extern_nodes + inline_nodes
+
+
+def _source_import(
+    module_name: str,
+    src_path: Path,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    direct_mode: bool,
+    file_info: Token,
+) -> GenNodes:
+    if direct_mode and _already_imported(src_path, resolver, module_name):
+        return []
+    nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode)
+    if nodes is None:
+        raise NodeError(f'Module not found: "{module_name}"', file_info)
+    return nodes
+
+
+def _already_imported(src_path: Path, resolver: Resolver, module_name: str) -> bool:
+    """Dedup transitive imports by canonical source path. Returns True
+    iff the module has been imported before; tracks the path otherwise."""
+    key = _canonical(src_path)
+    if key in resolver.imported_module_paths:
+        logger.info("`.import %r` deduped — already loaded from %s", module_name, key)
+        return True
+    resolver.imported_module_paths.add(key)
+    return False
 
 
 def _extract_public_symbols_from_source(source_path: Path) -> list[str]:
