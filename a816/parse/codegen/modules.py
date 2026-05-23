@@ -72,14 +72,17 @@ def _import_from_object(
     # will handle final placement.
     _register_imported_object_pools(obj_file, resolver)
 
-    # Pick up both GLOBAL (real owners) and EXTERNAL (re-exports from
-    # facade modules like `preamble.s` that inline imports purely to
-    # surface them downstream). The linker resolves each extern back to
-    # its single GLOBAL definition during merge.
+    # Each `.o` owns only what it defines (GLOBAL). EXTERNAL re-export
+    # cascades quadratically across diamond imports — a module that
+    # `.import`s a facade ends up extern-stubbing every transitive
+    # symbol reachable through the facade, and the symbol table blows
+    # past the `<H>` 65535 limit within 3-4 hops. Importers must
+    # `.import` direct deps explicitly; the resolver's own dedup
+    # (`imported_module_paths`) handles the diamond.
     return [
         ExternNode(name, resolver)
         for name, _, sym_type, _ in obj_file.symbols
-        if sym_type in (SymbolType.GLOBAL, SymbolType.EXTERNAL)
+        if sym_type == SymbolType.GLOBAL
     ]
 
 
@@ -285,20 +288,36 @@ def generate_import(
     search_paths = _import_search_paths(resolver, file_info)
 
     obj_path = resolve_module(module_name, ".o", search_paths)
+    src_path = resolve_module(module_name, ".s", search_paths)
+
+    # Object mode: .o owns runtime symbols (label addresses, alloc
+    # placements, `.incbin` bytes); source owns compile-time nodes
+    # (struct defs, macros, constants, typed binds). Neither is
+    # complete on its own — the linker can't reconstruct a
+    # `.struct PPU { ... }` from an .o because struct defs never get
+    # emitted as bytes. So pair them: extern-stub from .o for the
+    # runtime side, inline-classify the source for the compile-time
+    # side. `imported_symbol_names` (set by the classifier) prevents
+    # the importer's .o from re-exporting the inline-contributed
+    # runtime symbols that overlap with the extern stubs.
+    if obj_path and not direct_mode and src_path:
+        key = _canonical(src_path)
+        if key in resolver.imported_module_paths:
+            logger.info("`.import %r` deduped — already loaded from %s", module_name, key)
+            return []
+        resolver.imported_module_paths.add(key)
+        extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode) or []
+        inline_nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode) or []
+        return extern_nodes + inline_nodes
+
     if obj_path:
-        # Direct mode + .o-with-pool-allocs would emit each alloc twice
-        # (once at the module's sandbox PC inside the .o, once at the
-        # main allocator's pick) → write-overlap auditor noise + the
-        # module bytes get clobbered. Fall through to source re-parse
-        # so the main resolver owns alloc placement.
         if direct_mode and _object_has_pool_allocs(obj_path):
-            pass
+            pass  # see source-path branch below
         else:
             nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
             if nodes is not None:
                 return nodes
 
-    src_path = resolve_module(module_name, ".s", search_paths)
     if src_path:
         if direct_mode:
             key = _canonical(src_path)

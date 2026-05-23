@@ -31,9 +31,19 @@ def resolve_module(module_name: str, extension: str, search_paths: list[Path]) -
     if stdlib_path is not None:
         return stdlib_path
 
-    module_file = module_name + extension
+    # Two name shapes per module: the raw `a/b/c` form (used for source
+    # files under nested dirs) and the sanitised `a_b_c` form (used by
+    # `ModuleBuilder._get_obj_path` so every `.o` lives flat under
+    # `build/obj/`). Try raw first, then sanitised — keeps source-file
+    # discovery untouched and lets `.o` lookups find sanitised artefacts
+    # without a second loader for the object case.
+    candidates = [module_name + extension]
+    sanitised = module_name.replace("/", "_") + extension
+    if sanitised != candidates[0]:
+        candidates.append(sanitised)
     for search_path in search_paths:
-        candidate = search_path / module_file
-        if candidate.exists():
-            return candidate
+        for candidate_name in candidates:
+            candidate = search_path / candidate_name
+            if candidate.exists():
+                return candidate
     return None

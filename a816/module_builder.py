@@ -216,6 +216,13 @@ class ModuleBuilder:
             program.resolver.current_scope.add_symbol(name, value)
         for name, value in constants.items():
             program.resolver.current_scope.add_symbol(name, value)
+            # Constants accumulated from previously-built modules are seeded
+            # into this module's resolver as raw symbols so codegen can read
+            # their values, but they're owned by the contributing module's
+            # `.o`. Mark them imported so `_export_object_symbols` doesn't
+            # re-publish them here — otherwise every downstream `.o` gains
+            # a duplicate GLOBAL and the linker rejects the build.
+            program.resolver.imported_symbol_names.add(name)
         result = program.assemble_as_object(str(source_path), obj_path, prelude=self._prelude_content)
         if result != 0:
             raise RuntimeError(f"Failed to compile module '{module_name}'")

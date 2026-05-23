@@ -57,8 +57,6 @@ def generate_pool(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    if node.pool_name in resolver.pools:
-        raise NodeError(f"pool {node.pool_name!r} already declared", file_info)
     try:
         ranges = [
             PoolRange(
@@ -79,6 +77,19 @@ def generate_pool(
             fill=fill_value,
             strategy=Strategy(node.strategy),
         )
+        if node.pool_name in resolver.pools:
+            existing = resolver.pools[node.pool_name]
+            same_shape = (
+                [(r.start, r.end) for r in existing.ranges] == [(r.start, r.end) for r in pool.ranges]
+                and existing.fill == pool.fill
+                and existing.strategy == pool.strategy
+            )
+            if not same_shape:
+                raise NodeError(f"pool {node.pool_name!r} already declared with different shape", file_info)
+            # Identical re-declaration: importer picked up the same pool
+            # via two paths (extern .o + inline source). Skip silently —
+            # the existing decl is authoritative.
+            return []
     except NodeError:
         raise
     except Exception as exc:  # PoolError, PoolInvalidRangeError, PoolOverlapError
