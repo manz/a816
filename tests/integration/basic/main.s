@@ -136,4 +136,3 @@ _idle:
 .alloc rom_pad at 0x07FFFF size 0x01 {
     .db 0
 }
-

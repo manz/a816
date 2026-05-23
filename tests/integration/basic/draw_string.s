@@ -16,7 +16,7 @@ Stamp one tilemap entry per glyph into `tilemap_buffer + X`.
 
     Caller sets:
       * X — byte offset into `tilemap_buffer` (start of destination
-        cell; advances by 2 per glyph). E.g. `0x40` lands at row 2
+        cell  ; advances by 2 per glyph). E.g. `0x40` lands at row 2
         of the 32-wide BG1 layer.
       * Y — string offset within DB (`STRINGS_BANK`).
 

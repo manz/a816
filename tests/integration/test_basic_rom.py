@@ -24,7 +24,7 @@ TILEMAP_BYTE_ADDR = 0x0000
 # main.s calls `draw_string` with X = (col * 2) + (row * 0x40).
 # Currently column 1, row 13 → byte offset 0x342.
 TILEMAP_STRING_OFFSET = (1 * 2) + (13 * 0x40)
-HELLO_STRING = "Let's display a better string"
+HELLO_STRING = "Gyshal Whistle"
 
 
 def _decode_through_table(data: bytes, tbl_path: Path) -> str:
