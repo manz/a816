@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from a816.object_file import ObjectFile, Section, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, RelocationType, Section, SymbolSection, SymbolType
 from a816.xobj import main
 
 

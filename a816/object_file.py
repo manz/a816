@@ -1,5 +1,5 @@
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import IO
 
@@ -30,7 +30,8 @@ class SymbolSection(Enum):
     ABS_LABEL = 0x03
 
 
-from a816.section import Placement, Section  # noqa: E402,F401  (re-export for back-compat)
+from a816.section import Placement as Placement  # noqa: E402  (explicit re-export)
+from a816.section import Section as Section  # noqa: E402  (explicit re-export)
 
 
 def _legacy_pinned_section(
@@ -215,7 +216,9 @@ class ObjectFile:
         f.write(struct.pack("<H", len(self.sections)))
         for section in self.sections:
             f.write(struct.pack("<II", section.base_address, len(section.code)))
-            f.write(struct.pack("<HHI", len(section.relocations), len(section.expression_relocations), len(section.lines)))
+            f.write(
+                struct.pack("<HHI", len(section.relocations), len(section.expression_relocations), len(section.lines))
+            )
             f.write(section.code)
             for offset, name, reloc_type in section.relocations:
                 name_bytes = name.encode("utf-8")

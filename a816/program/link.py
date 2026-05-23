@@ -58,7 +58,7 @@ class LinkMixin:
         all_lines: list[tuple[int, int, int, int, int]] = []
         for section in linked_obj.sections:
             for offset, file_idx, line, column, flags in section.lines:
-                all_lines.append((section.base_address + offset, file_idx, line, column, flags))
+                all_lines.append((section.placed_base + offset, file_idx, line, column, flags))
         if not linked_obj.symbols and not all_lines:
             return None
 
@@ -75,9 +75,9 @@ class LinkMixin:
             SymbolType.EXTERNAL: SymbolScope.EXTERNAL,
         }
         label_sections = (SymbolSection.CODE, SymbolSection.ABS_LABEL)
-        for name, value, sym_type, section in linked_obj.symbols:
+        for name, value, sym_type, sym_section in linked_obj.symbols:
             scope_kind = scope_by_type[sym_type]
-            kind = SymbolKind.LABEL if section in label_sections else SymbolKind.CONSTANT
+            kind = SymbolKind.LABEL if sym_section in label_sections else SymbolKind.CONSTANT
             info.symbols.append(SymbolEntry(name=name, address=value, scope=scope_kind, module_idx=0, kind=kind))
         for address, file_idx, line, column, flags in all_lines:
             info.lines.append(
@@ -120,7 +120,7 @@ class LinkMixin:
 
                 for section in linked_obj.sections:
                     if section.code:
-                        ips_emitter.write_block(section.code, self._to_physical(section.base_address))
+                        ips_emitter.write_block(section.code, self._to_physical(section.placed_base))
 
                 ips_emitter.end()
                 self._trace_linked_sections(linked_obj)
@@ -151,7 +151,7 @@ class LinkMixin:
 
                 for section in linked_obj.sections:
                     if section.code:
-                        sfc_emitter.write_block(section.code, self._to_physical(section.base_address))
+                        sfc_emitter.write_block(section.code, self._to_physical(section.placed_base))
 
                 sfc_emitter.end()
                 self._trace_linked_sections(linked_obj)

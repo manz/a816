@@ -320,9 +320,11 @@ class A816Document:
             self._record_token_position(node.file_info, self.pools, node.pool_name)
             self.pool_details[node.pool_name] = self._format_pool_details(node)
         elif isinstance(node, AllocAstNode):
-            self._record_token_position(node.file_info, self.allocs, node.name)
-            self.alloc_target_pool[node.name] = node.pool_name
-            self._record_pool_consumer(node.file_info, node.pool_name, "alloc")
+            if node.name is not None and node.pool_name is not None:
+                self._record_token_position(node.file_info, self.allocs, node.name)
+                self.alloc_target_pool[node.name] = node.pool_name
+            if node.pool_name is not None:
+                self._record_pool_consumer(node.file_info, node.pool_name, "alloc")
         elif isinstance(node, RelocateAstNode):
             self._record_token_position(node.file_info, self.allocs, node.symbol)
             self.alloc_target_pool[node.symbol] = node.pool_name

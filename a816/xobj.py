@@ -21,7 +21,9 @@ from a816.object_file import (
 )
 
 
-def _fmt_addr(addr: int) -> str:
+def _fmt_addr(addr: int | None) -> str:
+    if addr is None:
+        return "$??????"  # POOLED section pre-link, or PINNED that lost its anchor
     return f"${addr & 0xFFFFFF:06X}"
 
 

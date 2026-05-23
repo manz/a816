@@ -18,8 +18,8 @@ from tests.integration.conftest import (
     boot_emu,
 )
 
-FONT_VRAM_BYTE_ADDR = 0x2000          # word-addr $1000 → byte $2000
-FONT_SIZE_BYTES = 0x1000              # 256 tiles × 16 bytes (real FF4 8x8.bin)
+FONT_VRAM_BYTE_ADDR = 0x2000  # word-addr $1000 → byte $2000
+FONT_SIZE_BYTES = 0x1000  # 256 tiles × 16 bytes (real FF4 8x8.bin)
 TILEMAP_BYTE_ADDR = 0x0000
 # basic_rom.s draws the string offset by 64 bytes (`tilemap_buffer +
 # 0x40` = row 2 column 0 in a 32-wide tilemap).
@@ -58,9 +58,7 @@ def test_basic_rom_tilemap_holds_hello_indices(tmp_path: Path) -> None:
     through the same `.table` charset that encoded it."""
     sfc = assemble_sfc(BASIC_DIR / "main.s", tmp_path / "basic.sfc")
     emu = boot_emu(sfc, frames=60)
-    tilemap = bytes(
-        emu.vram_read_range(TILEMAP_BYTE_ADDR + TILEMAP_STRING_OFFSET, 2 * len(HELLO_STRING))
-    )
+    tilemap = bytes(emu.vram_read_range(TILEMAP_BYTE_ADDR + TILEMAP_STRING_OFFSET, 2 * len(HELLO_STRING)))
     glyph_bytes = bytes(tilemap[i] for i in range(0, len(tilemap), 2))
     attr_bytes = tuple(tilemap[i] for i in range(1, len(tilemap), 2))
     decoded = _decode_through_table(glyph_bytes, ASSETS_DIR / "ff4_charset.tbl")

@@ -102,10 +102,10 @@ class LinkedModuleNode(NodeProtocol):
 
     def _compute_delta_and_base(self, current_pc: Address) -> None:
         if self.sections:
-            self._delta = current_pc.logical_value - self.sections[0].base_address if self.relocatable else 0
+            self._delta = current_pc.logical_value - self.sections[0].placed_base if self.relocatable else 0
             # Shifted base of section 0 — used for the .sym/.adbg producer
             # to report where the module actually landed.
-            self.base_address = self.sections[0].base_address + self._delta
+            self.base_address = self.sections[0].placed_base + self._delta
         else:
             # Symbol-only module (e.g. a stubs file with only `.label`
             # declarations and no emitted code). No sections means no delta
@@ -151,7 +151,7 @@ class LinkedModuleNode(NodeProtocol):
         if self.is_loser or not self.sections or not self.relocatable:
             return current_pc
         first = self.sections[0]
-        first_end = first.base_address + self._delta + len(first.code)
+        first_end = first.placed_base + self._delta + len(first.code)
         return self.resolver.get_bus().get_address(first_end)
 
     def _resolve_symbol_address(self, address: int, section: int) -> int:
@@ -168,7 +168,7 @@ class LinkedModuleNode(NodeProtocol):
         # evaluate" warnings during the first resolve_labels pass.
         placed: list[tuple[int, bytes]] = []
         for section in self.sections:
-            base = section.base_address + self._delta
+            base = section.placed_base + self._delta
             patched = self._apply_region_relocations(section)
             placed.append((base, patched))
         self._placed = placed
@@ -188,9 +188,7 @@ class LinkedModuleNode(NodeProtocol):
         return bytes(code_array)
 
     def _reloc_context(self, offset: int, section: Section) -> str:
-        return (
-            f"module '{self.module_name}' section@0x{section.base_address:x} offset 0x{offset:x}/0x{len(section.code):x}"
-        )
+        return f"module '{self.module_name}' section@0x{section.placed_base:x} offset 0x{offset:x}/0x{len(section.code):x}"
 
     def _write_reloc(
         self, code_array: bytearray, offset: int, value: int, size: int, expr: str, section: Section

@@ -470,9 +470,7 @@ def build_with_imports_direct(
         # precompile loop and let main's direct-mode `.import` inline
         # each module's source. Single resolver, one allocator pass,
         # no cross-module extern dance.
-        modules_to_compile = (
-            [] if prelude_content else [m for m in builder.graph.topological_sort() if m != "__main__"]
-        )
+        modules_to_compile = [] if prelude_content else [m for m in builder.graph.topological_sort() if m != "__main__"]
         output_dir.mkdir(parents=True, exist_ok=True)
 
         accumulated_constants: dict[str, int] = {}

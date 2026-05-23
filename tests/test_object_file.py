@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from a816.object_file import ObjectFile, Section, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, RelocationType, Section, SymbolSection, SymbolType
 
 
 def test_write_empty_object_file(tmp_path: Path) -> None:
@@ -58,7 +58,9 @@ def test_write_object_file_with_expression_relocations(tmp_path: Path) -> None:
         (0x10, "symbol1 + 5", 2),
         (0x20, "symbol2 - 1", 3),
     ]
-    section = Section.anonymous_pinned(base_address=0, code=b"\x00" * 0x40, expression_relocations=expression_relocations)
+    section = Section.anonymous_pinned(
+        base_address=0, code=b"\x00" * 0x40, expression_relocations=expression_relocations
+    )
     obj = ObjectFile([section], [])
     obj.write(str(test_filename))
 

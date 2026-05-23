@@ -2,7 +2,7 @@ import logging
 import struct
 from typing import BinaryIO, Literal, Protocol
 
-from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, Section, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
 
 logger = logging.getLogger("a816.writers")
 

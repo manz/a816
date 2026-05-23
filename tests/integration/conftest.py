@@ -9,10 +9,11 @@ control so tests stay readable.
 from __future__ import annotations
 
 import struct
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from kintsuki import Emu
+from kintsuki import Emu  # type: ignore[import-untyped]
 
 from a816.program import Program
 
@@ -31,7 +32,7 @@ def basic_dir() -> Path:
     return BASIC_DIR
 
 
-def _run_in_source_cwd(source: Path, fn):
+def _run_in_source_cwd[T](source: Path, fn: Callable[[], T]) -> T:
     """`.incbin` / `.table` paths in source modules resolve against
     cwd (those directives don't honour `include_paths` yet). Match
     the CLI invocation: cwd = source directory."""

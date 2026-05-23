@@ -145,6 +145,21 @@ class Section:
             )
 
     @property
+    def placed_base(self) -> int:
+        """`base_address` once a placement has been resolved.
+
+        PINNED sections land at parse time, POOLED sections at link
+        time after the cross-module allocator runs. Anything consuming
+        a section's address (emit pipeline, linker delta computation,
+        xobj dump) must do so post-placement. Accessing an unplaced
+        section is a programmer error, not a runtime fallback —
+        surface it loudly.
+        """
+        if self.base_address is None:
+            raise RuntimeError(f"section {self.name!r} accessed before placement")
+        return self.base_address
+
+    @property
     def size(self) -> int:
         """Body size in bytes. Defined regardless of placement strategy."""
         return len(self.code)

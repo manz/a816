@@ -9,7 +9,7 @@ from a816.exceptions import (
     RelocationError,
     UnresolvedSymbolError,
 )
-from a816.object_file import ObjectFile, PoolDecl, Section, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
 from a816.pool import Pool
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
@@ -52,7 +52,7 @@ class Linker:
         if base_address is not None:
             self.base_address = base_address
         # Pool allocation must happen before symbol ingestion so the
-        # section.base_address values we ingest reflect allocator choices.
+        # section.placed_base values we ingest reflect allocator choices.
         self._allocate_pools_across_modules()
         self._resolve_symbols()
         self._resolve_aliases()
@@ -107,7 +107,7 @@ class Linker:
         for local_idx, section in enumerate(obj_file.sections):
             if (obj_idx, local_idx) not in self._pool_section_deltas:
                 continue
-            if section.base_address <= address < section.base_address + len(section.code):
+            if section.placed_base <= address < section.placed_base + len(section.code):
                 return self._pool_section_deltas[(obj_idx, local_idx)]
         return None
 
@@ -183,7 +183,7 @@ class Linker:
         modules keep their declared *= addresses unchanged.
         """
         if obj_file.relocatable and obj_file.sections:
-            return self.base_address + running_offset - obj_file.sections[0].base_address
+            return self.base_address + running_offset - obj_file.sections[0].placed_base
         return 0
 
     def _ingest_object(self, obj_file: ObjectFile, running_offset: int) -> None:
@@ -201,10 +201,10 @@ class Linker:
                 alloc = pool_allocs_by_section[local_section_idx]
                 final_base = alloc.addr  # type: ignore[attr-defined]
                 # Per-section symbol delta = (linker base) - (compile base).
-                section_delta = final_base - section.base_address
+                section_delta = final_base - section.placed_base
                 self._pool_section_deltas[(obj_idx, local_section_idx)] = section_delta
             else:
-                final_base = section.base_address + delta
+                final_base = section.placed_base + delta
             section_idx = len(self.linked_sections)
             new_section = Section.anonymous_pinned(
                 base_address=final_base,
@@ -327,7 +327,7 @@ class Linker:
                 raise UnresolvedSymbolError({symbol_name})
             symbol_address = self.symbol_map[symbol_name]
             section, code = self._section_view(section_idx)
-            offset = final_address - section.base_address
+            offset = final_address - section.placed_base
 
             match relocation_type:
                 case RelocationType.ABSOLUTE_16:
@@ -375,7 +375,7 @@ class Linker:
         for final_address, section_idx, expression, size_bytes in self._linked_expression_relocations:
             evaluated_value = self._evaluate_expression(expression)
             section, code = self._section_view(section_idx)
-            offset = final_address - section.base_address
+            offset = final_address - section.placed_base
             if size_bytes == 1:
                 struct.pack_into("<B", code, offset, evaluated_value & 0xFF)
             elif size_bytes == 2:

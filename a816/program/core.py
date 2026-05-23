@@ -245,7 +245,7 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         for section in linked_obj.sections:
             if not section.code:
                 continue
-            snes = section.base_address
+            snes = section.placed_base
             phys = self._to_physical(snes)
             size = len(section.code)
             if section.lines:

@@ -28,11 +28,11 @@ import logging
 import sys
 from pathlib import Path
 
+from a816.config import discover_a816_config
 from a816.exceptions import LinkerError
 from a816.linker import Linker
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
-from a816.config import discover_a816_config
 from a816.program import Program
 
 logger = logging.getLogger("x816")

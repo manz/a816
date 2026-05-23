@@ -79,14 +79,10 @@ def _import_from_object(
     # past the `<H>` 65535 limit within 3-4 hops. Importers must
     # `.import` direct deps explicitly; the resolver's own dedup
     # (`imported_module_paths`) handles the diamond.
-    return [
-        ExternNode(name, resolver)
-        for name, _, sym_type, _ in obj_file.symbols
-        if sym_type == SymbolType.GLOBAL
-    ]
+    return [ExternNode(name, resolver) for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
 
 
-def _register_imported_object_pools(obj_file: "object", resolver: Resolver) -> None:
+def _register_imported_object_pools(obj_file: object, resolver: Resolver) -> None:
     """Mirror the imported `.o`'s pool decls into the importer's
     resolver.pools so `.alloc ... in POOL` sites resolve at codegen.
     Idempotent: identical re-registrations are skipped silently."""
@@ -141,7 +137,7 @@ def _import_from_source(
 
 
 def _import_object_mode(
-    nodes: list,
+    nodes: list[AstNode],
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
 ) -> GenNodes:

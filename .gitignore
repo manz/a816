@@ -23,3 +23,12 @@ llm.txt
 # Local-only dev tooling (SonarQube compose, scan scripts with tokens, etc.).
 tools/
 .scannerwork/
+
+# Local development artefacts
+.claude/
+.overflow-agent
+a.out.adbg
+*.adbg
+tests/integration/**/test.sfc
+tests/integration/**/build/
+tests/integration/**/*.o
