@@ -20,7 +20,7 @@ from a816.object_file import SymbolSection, SymbolType
 from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import NodeError
 from a816.protocols import NodeProtocol
-from a816.writers import IPSWriter, ObjectWriter, SFCWriter, WriteAuditor, Writer
+from a816.writers import IPSWriter, ObjectWriter, OverlapError, SFCWriter, WriteAuditor, Writer
 
 if TYPE_CHECKING:
     from a816.symbols import Resolver
@@ -61,7 +61,7 @@ class AssembleMixin:
             raise AssemblyError(error)
 
         self._mark_import_winners(nodes)
-        self.logger.info("Resolving labels")
+        self.logger.debug("Resolving labels")
         self.resolve_labels(nodes)
 
         if self.dump_symbols:
@@ -75,7 +75,7 @@ class AssembleMixin:
     def _wrap_emitter_for_overlap_audit(self, emitter: Writer) -> Writer:
         """Auto-wrap SFC / IPS emitters so overlapping writes get reported.
 
-        `ObjectWriter` is left untouched — it tracks regions in a richer
+        `ObjectWriter` is left untouched — it tracks sections in a richer
         structure and the linker has its own overlap pass.
         """
         mode = self.resolver.context.overlap_mode
@@ -117,6 +117,12 @@ class AssembleMixin:
                     # surface internal bugs the user should report.
                     logger.exception("Codegen failed")
                     return 128
+                except OverlapError as e:
+                    # Section-overlap = hard error since the default flip
+                    # to `overlap_mode="error"`. Message names both
+                    # sections + bytes; no traceback needed.
+                    logger.error(str(e))  # NOSONAR python:S8572
+                    return 128
 
         except RuntimeError as e:
             self.logger.exception(_ASSEMBLY_FAILED_MSG, e)
@@ -124,7 +130,7 @@ class AssembleMixin:
         finally:
             self.resolver.context.mode = previous_mode
 
-        self.logger.info("Success !")
+        self.logger.debug("Success !")
         return 0
 
     def assemble(self, asm_file: str, sfc_file: Path, prelude: str | None = None) -> int:
@@ -187,6 +193,8 @@ class AssembleMixin:
                 continue  # already added by ExternNode
             if name in self.resolver.pool_stat_symbol_names:
                 continue  # pool stat snapshots are per-module, not linker-visible
+            if name in self.resolver.imported_symbol_names:
+                continue  # contributed by an inlined `.import`; owner's `.o` is the sole source
             sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 
@@ -212,7 +220,7 @@ class AssembleMixin:
                     return -1
 
                 self._mark_import_winners(nodes)
-                self.logger.info("Resolving labels")
+                self.logger.debug("Resolving labels")
                 self.resolve_labels(nodes)
                 self._export_object_symbols(object_writer)
 
@@ -230,7 +238,7 @@ class AssembleMixin:
             self.resolver.context.mode = previous_mode
             self.resolver.context.object_writer = previous_writer
 
-        self.logger.info("Success !")
+        self.logger.debug("Success !")
         return 0
 
     def assemble_as_patch(

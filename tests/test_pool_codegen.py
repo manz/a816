@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from a816.parse.codegen import code_gen
@@ -152,6 +154,41 @@ class TestAllocEndToEnd:
         # 0x028000 which maps to physical 0x010000 under low_rom.
         assert writer.data_addresses[idx] in (0x028000, 0x010000)
 
+    def test_alloc_with_register_size_toggle_reserves_full_body(self) -> None:
+        """`.a16` toggle inside an `.alloc` makes immediates whose value
+        fits in a byte still emit as 16-bit. Pool body sizing must walk
+        with the same A/X state emission will see — otherwise the slot
+        reserved is too small and the next alloc overwrites the tail.
+
+        Pre-fix: `lda #0x01` in `.a16` measured as 2 bytes (operand
+        guessed as `b` from value, no resolver state consulted) but
+        emitted as 3 bytes (resolver A=16). The second alloc lands one
+        byte inside the first's body."""
+        writer = StubWriter()
+        program = Program()
+        src = """
+        .pool p { range 0x028000 0x0280ff strategy order }
+        .alloc first in p {
+            rep #0x20
+            .a16
+            lda #0x01
+            rts
+        }
+        .alloc second in p {
+            nop
+        }
+        """
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        labels = program.resolver.current_scope.labels
+        first = labels["first"]
+        second = labels["second"]
+        # first body: c2 20 a9 01 00 60 = 6 bytes (lda imm is 3 bytes under A16
+        # even though 0x01 fits in a byte).
+        assert second - first == 6, (
+            f"second alloc should land 6 bytes past first; got {second - first}. "
+            f"Pool reserved too little — body sized with stale A=8 state."
+        )
+
     def test_alloc_binds_symbol(self) -> None:
         program = Program()
         resolver = program.resolver
@@ -283,10 +320,14 @@ class TestLspPoolFeatures:
         assert "reclaim" in kinds
 
     def test_undeclared_pool_diagnostic(self) -> None:
+        from a816.lsp.workspace import WorkspaceIndex
+
         doc = self._doc(
             ".alloc helper in ghost {\n    rts\n}\n",
         )
-        msgs = [d.message for d in doc.diagnostics]
+        workspace = WorkspaceIndex(Path("."))
+        workspace.replace_document(doc)
+        msgs = [d.message for d in workspace.undeclared_pool_diagnostics(doc)]
         assert any("undeclared pool 'ghost'" in m for m in msgs)
 
     def test_hover_on_pool_name_returns_summary(self) -> None:
@@ -582,11 +623,11 @@ class TestObjectMode:
 
     The module becomes pinned (allocator picks final addresses, so no
     further relocation makes sense). Each .alloc emits its body as a
-    pinned region at the allocator-chosen address; alloc's label binds
+    pinned section at the allocator-chosen address; alloc's label binds
     there and ships in the symbol table for cross-module callers.
     """
 
-    def test_alloc_object_mode_writes_region_at_allocated_addr(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    def test_alloc_object_mode_writes_section_at_allocated_addr(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         from a816.object_file import ObjectFile
 
         src = """
@@ -602,10 +643,10 @@ class TestObjectMode:
         rc = program.assemble_as_object(str(asm_file), obj_file)
         assert rc == 0
         obj = ObjectFile.from_file(str(obj_file))
-        # One pinned region landing at the allocator-picked addr (0x028000).
-        alloc_regions = [r for r in obj.regions if r.base_address == 0x028000]
-        assert len(alloc_regions) == 1
-        assert alloc_regions[0].code == b"\x60"  # rts
+        # One pinned section landing at the allocator-picked addr (0x028000).
+        alloc_sections = [r for r in obj.sections if r.base_address == 0x028000]
+        assert len(alloc_sections) == 1
+        assert alloc_sections[0].code == b"\x60"  # rts
         sym_names = [name for name, _, _, _ in obj.symbols]
         assert "fn" in sym_names
 
@@ -641,9 +682,9 @@ class TestObjectMode:
         # Linker resolves fn to 0x028000 (provider's pinned alloc addr).
         assert linker.symbol_map["fn"] == 0x028000
         # Consumer's jsr.l fn (0x22) operand patched to the alloc addr.
-        cons_region = next(r for r in linked.regions if r.base_address == 0x008000)
+        cons_section = next(r for r in linked.sections if r.base_address == 0x008000)
         # main: jsr.l fn (4 bytes: 0x22 LO MID HI) + rts (0x60) = 5 bytes
-        assert cons_region.code[:5] == b"\x22\x00\x80\x02\x60"
+        assert cons_section.code[:5] == b"\x22\x00\x80\x02\x60"
 
 
 class TestAllocImportLoserSkip:
@@ -739,7 +780,7 @@ class TestAllocImportDedupe:
                 records.append((addr, d[pos : pos + sz]))
                 pos += sz
         # Patch at $01:8798 stays 3B (the jsr.w), dialog body lands ONLY in
-        # the alloc region. Pre-fix: patch record swelled by 18B (dialog bytes).
+        # the alloc section. Pre-fix: patch record swelled by 18B (dialog bytes).
         patch_record = next(b for a, b in records if a == 0x008798)
         assert len(patch_record) == 3, (
             f"patch record should be 3 bytes (jsr.w only); got {len(patch_record)} — duplicate import emission"

@@ -9,7 +9,7 @@ from a816.exceptions import (
     RelocationError,
     UnresolvedSymbolError,
 )
-from a816.object_file import ObjectFile, PoolDecl, Region, RelocationType, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
 from a816.pool import Pool
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
@@ -18,41 +18,41 @@ SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 class Linker:
     """Links a list of ObjectFiles into one ObjectFile.
 
-    Each input object's regions are placed at their declared (absolute)
+    Each input object's sections are placed at their declared (absolute)
     base_address — relocatable modules are shifted by the linker's
-    base_address against region 0. Region offsets are then translated to
-    final logical addresses, and relocations are patched into per-region
-    bytearrays. The linked output preserves the per-region structure so
-    downstream IPS/SFC writers emit one block per region rather than one
+    base_address against section 0. Section offsets are then translated to
+    final logical addresses, and relocations are patched into per-section
+    bytearrays. The linked output preserves the per-section structure so
+    downstream IPS/SFC writers emit one block per section rather than one
     flat span.
     """
 
     def __init__(self, object_files: list[ObjectFile], base_address: int = 0) -> None:
         self.object_files = object_files
         self.base_address = base_address
-        # Linked regions, keyed by their final logical base_address.
-        self.linked_regions: list[Region] = []
+        # Linked sections, keyed by their final logical base_address.
+        self.linked_sections: list[Section] = []
         self.linked_symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
-        # (final_address, region_idx, symbol_name, RelocationType)
+        # (final_address, section_idx, symbol_name, RelocationType)
         self._linked_relocations: list[tuple[int, int, str, RelocationType]] = []
-        # (final_address, region_idx, expression, size_bytes)
+        # (final_address, section_idx, expression, size_bytes)
         self._linked_expression_relocations: list[tuple[int, int, str, int]] = []
         self.linked_aliases: list[tuple[str, str]] = []
         self.linked_files: list[str] = []
         self._file_index: dict[str, int] = {}
         self.symbol_map: dict[str, int] = {}
-        self._region_buffers: dict[int, bytearray] = {}
+        self._section_buffers: dict[int, bytearray] = {}
 
     @property
     def linked_code(self) -> bytes:
-        """Concatenated bytes of all linked regions, kept for legacy callers."""
-        return b"".join(region.code for region in self.linked_regions)
+        """Concatenated bytes of all linked sections, kept for legacy callers."""
+        return b"".join(section.code for section in self.linked_sections)
 
     def link(self, base_address: int | None = None) -> ObjectFile:
         if base_address is not None:
             self.base_address = base_address
         # Pool allocation must happen before symbol ingestion so the
-        # region.base_address values we ingest reflect allocator choices.
+        # section.placed_base values we ingest reflect allocator choices.
         self._allocate_pools_across_modules()
         self._resolve_symbols()
         self._resolve_aliases()
@@ -60,7 +60,7 @@ class Linker:
         self._apply_relocations()
         self._apply_expression_relocations()
         return ObjectFile(
-            self.linked_regions,
+            self.linked_sections,
             self.linked_symbols,
             aliases=[],
             files=self.linked_files,
@@ -69,21 +69,21 @@ class Linker:
         )
 
     def _allocate_pools_across_modules(self) -> None:
-        """Union pool decls, run allocator over merged view, patch regions.
+        """Union pool decls, run allocator over merged view, patch sections.
 
         Each .o carries `pool_decls` (declarations) + `pool_allocs`
         (deferred placement requests). The linker unions same-named
         pools (fill/strategy must agree), requests every alloc in
         declaration-then-request order, runs `Pool.allocate()`, and
-        rewrites each requesting region's `base_address` to the
-        allocator-chosen address. Body labels inside the region keep
+        rewrites each requesting section's `base_address` to the
+        allocator-chosen address. Body labels inside the section keep
         their offsets; the existing CODE-symbol delta path carries them
         to their final positions when `_resolve_symbols` ingests.
         """
         self._merge_pool_decls()
         merged: dict[str, Pool] = {p.name: self._pool_from_decl(p) for p in self._merged_pool_decls}
-        # (obj_idx, region_idx) -> Allocation, to look up alloc.addr later.
-        self._region_pool_alloc: dict[tuple[int, int], object] = {}
+        # (obj_idx, section_idx) -> Allocation, to look up alloc.addr later.
+        self._section_pool_alloc: dict[tuple[int, int], object] = {}
         # Allocation request order: stable across rebuilds = (obj input order,
         # then declaration order within each .o).
         for obj_idx, obj_file in enumerate(self.object_files):
@@ -92,23 +92,23 @@ class Linker:
                 if pool is None:
                     raise ValueError(f"pool alloc {req.symbol_name!r} references undeclared pool {req.pool_name!r}")
                 alloc_obj = pool.request(req.symbol_name, req.size)
-                self._region_pool_alloc[(obj_idx, req.region_idx)] = alloc_obj
+                self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
         for pool in merged.values():
             pool.allocate()
         self._merged_pools_after_alloc = merged
 
     def _pool_delta_for_symbol(self, obj_file: ObjectFile, obj_idx: int, address: int) -> int | None:
-        """Return the pool region delta if `address` falls inside a pool region.
+        """Return the pool section delta if `address` falls inside a pool section.
 
-        Pool regions are placed by the link-time allocator independent of
-        module delta; symbols inside them must shift by the region's
+        Pool sections are placed by the link-time allocator independent of
+        module delta; symbols inside them must shift by the section's
         own delta, not by the module's relocation.
         """
-        for local_idx, region in enumerate(obj_file.regions):
-            if (obj_idx, local_idx) not in self._pool_region_deltas:
+        for local_idx, section in enumerate(obj_file.sections):
+            if (obj_idx, local_idx) not in self._pool_section_deltas:
                 continue
-            if region.base_address <= address < region.base_address + len(region.code):
-                return self._pool_region_deltas[(obj_idx, local_idx)]
+            if section.placed_base <= address < section.placed_base + len(section.code):
+                return self._pool_section_deltas[(obj_idx, local_idx)]
         return None
 
     @staticmethod
@@ -164,56 +164,64 @@ class Linker:
                 f"pool {decl.name!r} declared with conflicting strategies: "
                 f"{existing.strategy.value!r} vs {decl.strategy!r}"
             )
+        # Dedupe identical ranges: a prelude-declared pool replicates
+        # across every module's .o, and reclaiming the same bytes twice
+        # is an error. Skip ranges already covered; only contribute
+        # genuinely new ones.
+        existing_ranges = {(r.start, r.end) for r in existing.ranges}
         for start, end in decl.ranges:
+            if (start, end) in existing_ranges:
+                continue
             existing.reclaim(PoolRange(start=start, end=end))
+            existing_ranges.add((start, end))
 
     def _delta_for(self, obj_file: ObjectFile, running_offset: int) -> int:
         """How much to shift this module's logical addresses by.
 
-        Relocatable modules anchor region 0 at the linker's base_address
+        Relocatable modules anchor section 0 at the linker's base_address
         plus the running byte offset of prior relocatable modules. Pinned
         modules keep their declared *= addresses unchanged.
         """
-        if obj_file.relocatable and obj_file.regions:
-            return self.base_address + running_offset - obj_file.regions[0].base_address
+        if obj_file.relocatable and obj_file.sections:
+            return self.base_address + running_offset - obj_file.sections[0].placed_base
         return 0
 
     def _ingest_object(self, obj_file: ObjectFile, running_offset: int) -> None:
         delta = self._delta_for(obj_file, running_offset)
         local_to_linked_file = self._merge_file_table(obj_file)
         obj_idx = self.object_files.index(obj_file)
-        pool_allocs_by_region: dict[int, object] = {
-            r_idx: alloc for (oi, r_idx), alloc in getattr(self, "_region_pool_alloc", {}).items() if oi == obj_idx
+        pool_allocs_by_section: dict[int, object] = {
+            r_idx: alloc for (oi, r_idx), alloc in getattr(self, "_section_pool_alloc", {}).items() if oi == obj_idx
         }
 
-        for local_region_idx, region in enumerate(obj_file.regions):
-            if local_region_idx in pool_allocs_by_region:
-                # Pool-allocated region: linker chose this region's
+        for local_section_idx, section in enumerate(obj_file.sections):
+            if local_section_idx in pool_allocs_by_section:
+                # Pool-allocated section: linker chose this section's
                 # base_address; ignore the .o's placeholder.
-                alloc = pool_allocs_by_region[local_region_idx]
+                alloc = pool_allocs_by_section[local_section_idx]
                 final_base = alloc.addr  # type: ignore[attr-defined]
-                # Per-region symbol delta = (linker base) - (compile base).
-                region_delta = final_base - region.base_address
-                self._pool_region_deltas[(obj_idx, local_region_idx)] = region_delta
+                # Per-section symbol delta = (linker base) - (compile base).
+                section_delta = final_base - section.placed_base
+                self._pool_section_deltas[(obj_idx, local_section_idx)] = section_delta
             else:
-                final_base = region.base_address + delta
-            region_idx = len(self.linked_regions)
-            new_region = Region(
+                final_base = section.placed_base + delta
+            section_idx = len(self.linked_sections)
+            new_section = Section.anonymous_pinned(
                 base_address=final_base,
-                code=bytes(region.code),
-                relocations=list(region.relocations),
-                expression_relocations=list(region.expression_relocations),
+                code=bytes(section.code),
+                relocations=list(section.relocations),
+                expression_relocations=list(section.expression_relocations),
                 lines=[
                     (offset, local_to_linked_file.get(file_idx, 0), line, column, flags)
-                    for offset, file_idx, line, column, flags in region.lines
+                    for offset, file_idx, line, column, flags in section.lines
                 ],
             )
-            self.linked_regions.append(new_region)
+            self.linked_sections.append(new_section)
 
-            for offset, name, reloc_type in region.relocations:
-                self._linked_relocations.append((final_base + offset, region_idx, name, reloc_type))
-            for offset, expression, size_bytes in region.expression_relocations:
-                self._linked_expression_relocations.append((final_base + offset, region_idx, expression, size_bytes))
+            for offset, name, reloc_type in section.relocations:
+                self._linked_relocations.append((final_base + offset, section_idx, name, reloc_type))
+            for offset, expression, size_bytes in section.expression_relocations:
+                self._linked_expression_relocations.append((final_base + offset, section_idx, expression, size_bytes))
 
         for sym in obj_file.symbols:
             self._ingest_symbol(sym, delta, obj_file, obj_idx)
@@ -234,7 +242,7 @@ class Linker:
         # CODE symbols ride the module's delta; DATA/BSS/ABS_LABEL are absolute.
         # ABS_LABEL is a `.label`-declared address binding — the user picked
         # the value, so it must NOT shift with the module placement.
-        # Pool-allocated regions get their own per-region delta (link-time
+        # Pool-allocated sections get their own per-section delta (link-time
         # allocator chose the address, not module relocation).
         if section == SymbolSection.CODE:
             pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, address)
@@ -266,12 +274,12 @@ class Linker:
 
     def _resolve_symbols(self) -> None:
         self._external_symbols_needed: set[str] = set()
-        self._pool_region_deltas: dict[tuple[int, int], int] = {}
+        self._pool_section_deltas: dict[tuple[int, int], int] = {}
         running_offset = 0
         for obj_file in self.object_files:
             self._ingest_object(obj_file, running_offset)
             if obj_file.relocatable:
-                running_offset += sum(len(r.code) for r in obj_file.regions)
+                running_offset += sum(len(r.code) for r in obj_file.sections)
 
     def _check_unresolved(self) -> None:
         unresolved_symbols = self._external_symbols_needed - set(self.symbol_map.keys())
@@ -299,27 +307,27 @@ class Linker:
         if remaining:
             raise UnresolvedSymbolError({name for name, _ in remaining})
 
-    def _region_view(self, region_idx: int) -> tuple[Region, bytearray]:
-        region = self.linked_regions[region_idx]
-        buf = self._region_buffers.get(region_idx)
+    def _section_view(self, section_idx: int) -> tuple[Section, bytearray]:
+        section = self.linked_sections[section_idx]
+        buf = self._section_buffers.get(section_idx)
         if buf is None:
-            buf = bytearray(region.code)
-            self._region_buffers[region_idx] = buf
-        return region, buf
+            buf = bytearray(section.code)
+            self._section_buffers[section_idx] = buf
+        return section, buf
 
-    def _flush_region_buffers(self) -> None:
-        for region_idx, buf in self._region_buffers.items():
-            self.linked_regions[region_idx].code = bytes(buf)
-        self._region_buffers.clear()
+    def _flush_section_buffers(self) -> None:
+        for section_idx, buf in self._section_buffers.items():
+            self.linked_sections[section_idx].code = bytes(buf)
+        self._section_buffers.clear()
 
     def _apply_relocations(self) -> None:
-        self._region_buffers = {}
-        for final_address, region_idx, symbol_name, relocation_type in self._linked_relocations:
+        self._section_buffers = {}
+        for final_address, section_idx, symbol_name, relocation_type in self._linked_relocations:
             if symbol_name not in self.symbol_map:
                 raise UnresolvedSymbolError({symbol_name})
             symbol_address = self.symbol_map[symbol_name]
-            region, code = self._region_view(region_idx)
-            offset = final_address - region.base_address
+            section, code = self._section_view(section_idx)
+            offset = final_address - section.placed_base
 
             match relocation_type:
                 case RelocationType.ABSOLUTE_16:
@@ -360,14 +368,14 @@ class Linker:
                 case _:
                     raise ValueError(f"Unknown relocation type: {relocation_type}")
 
-        self._flush_region_buffers()
+        self._flush_section_buffers()
 
     def _apply_expression_relocations(self) -> None:
-        self._region_buffers = {}
-        for final_address, region_idx, expression, size_bytes in self._linked_expression_relocations:
+        self._section_buffers = {}
+        for final_address, section_idx, expression, size_bytes in self._linked_expression_relocations:
             evaluated_value = self._evaluate_expression(expression)
-            region, code = self._region_view(region_idx)
-            offset = final_address - region.base_address
+            section, code = self._section_view(section_idx)
+            offset = final_address - section.placed_base
             if size_bytes == 1:
                 struct.pack_into("<B", code, offset, evaluated_value & 0xFF)
             elif size_bytes == 2:
@@ -379,7 +387,7 @@ class Linker:
             else:
                 raise ExpressionEvaluationError(expression, f"unsupported operand size: {size_bytes} bytes")
 
-        self._flush_region_buffers()
+        self._flush_section_buffers()
 
     def _evaluate_expression(self, expression: str) -> int:
         expr_to_eval = self._substitute_symbols(expression)

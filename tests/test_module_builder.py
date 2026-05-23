@@ -292,12 +292,15 @@ main_en:
     def test_build_with_module_paths(self) -> None:
         """Test building with custom module paths."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create module in a subdirectory
+            # Create module in a subdirectory. Pin the lib to a distinct
+            # address so it doesn't collide with `main`'s `*=0x8000` —
+            # default overlap mode is `error` since 2026-05.
             modules_dir = Path(tmpdir) / "modules"
             modules_dir.mkdir()
 
             lib_source = modules_dir / "mylib.s"
             lib_source.write_text("""
+*=0x8500
 lib_func:
     sta 0x2000
     rts

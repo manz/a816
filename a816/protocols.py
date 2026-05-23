@@ -69,5 +69,6 @@ class OpcodeProtocol(Protocol):
         self,
         value_node: "ValueNodeProtocol | None",
         size: ValueSize | None = None,
+        resolver: "Resolver | None" = None,
     ) -> int:
         """Return the expected byte length of this opcode."""

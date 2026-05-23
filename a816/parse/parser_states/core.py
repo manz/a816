@@ -59,7 +59,7 @@ from a816.parse.parser_states.expr import (
 from a816.parse.parser_states.opcode import parse_code_lookup, parse_opcode
 from a816.parse.tokens import Token, TokenType
 
-_KEYWORD_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
+_DIRECTIVE_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     "scope": lambda p, _kw: parse_scope(p),
     "ascii": _quoted_directive(AsciiAstNode),
     "text": _quoted_directive(TextAstNode),
@@ -91,9 +91,15 @@ _KEYWORD_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
 }
 
 
-def parse_keyword(p: Parser) -> KeywordAstNode:
+def parse_directive(p: Parser) -> KeywordAstNode:
+    """Dispatch a `.NAME` directive to its handler.
+
+    The scanner has already emitted the KEYWORD token; we look up the
+    handler in `_DIRECTIVE_HANDLERS` and let it consume the rest of
+    the directive body.
+    """
     keyword = p.next()
-    handler = _KEYWORD_HANDLERS.get(keyword.value)
+    handler = _DIRECTIVE_HANDLERS.get(keyword.value)
     if handler is None:
         raise ParserSyntaxError(
             f"unknown directive `.{keyword.value}`",
@@ -102,6 +108,11 @@ def parse_keyword(p: Parser) -> KeywordAstNode:
             hint="see https://a816.ringum.net/directives/ for the list of supported `.` directives",
         )
     return cast(KeywordAstNode, handler(p, keyword))
+
+
+# Back-compat alias for callers that imported the old name. Drop in
+# a follow-up once the rest of the codebase migrates.
+parse_keyword = parse_directive
 
 
 def parse_label(p: Parser) -> LabelAstNode:

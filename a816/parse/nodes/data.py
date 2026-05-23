@@ -28,6 +28,12 @@ class RegisterSizeNode(NodeProtocol):
         return b""
 
     def pc_after(self, current_pc: Address) -> Address:
+        # Intentionally a no-op for the resolver's top-level pc_after
+        # passes — historically those passes don't propagate `.a8`/`.a16`
+        # so callers (incl. legacy ff4-modules code) rely on `.b`/`.w`
+        # suffixes or operand value width to pick the right opcode size.
+        # `AllocNode._measure_body` mirrors emit's mutation locally so
+        # pool sizing stays accurate without leaking the change globally.
         return current_pc
 
     def __str__(self) -> str:
@@ -36,7 +42,10 @@ class RegisterSizeNode(NodeProtocol):
 
 class BinaryNode(NodeProtocol):
     def __init__(self, path: str, resolver: Resolver) -> None:
-        with open(path, "rb") as binary_file:
+        from a816.util import resolve_asset_path
+
+        resolved = resolve_asset_path(path, resolver.context.include_paths)
+        with open(resolved, "rb") as binary_file:
             self.binary_content = binary_file.read()
         self.file_path = path
         self.symbol_base = path.replace("/", "_").replace(".", "_")

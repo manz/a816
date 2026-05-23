@@ -28,6 +28,7 @@ import logging
 import sys
 from pathlib import Path
 
+from a816.config import discover_a816_config
 from a816.exceptions import LinkerError
 from a816.linker import Linker
 from a816.object_file import ObjectFile
@@ -35,6 +36,22 @@ from a816.parse.nodes import NodeError
 from a816.program import Program
 
 logger = logging.getLogger("x816")
+
+
+def _apply_a816_toml(args: argparse.Namespace) -> None:
+    """Merge `a816.toml` settings into `args` (CLI flags win over file)."""
+    if not args.input_files:
+        return
+    start = args.input_files[0]
+    config = discover_a816_config(start if start.is_file() else start.parent)
+    if config is None:
+        return
+    if config.include_paths and not args.include_paths:
+        args.include_paths = [str(p) for p in config.include_paths]
+    if config.module_paths and not args.module_paths:
+        args.module_paths = [str(p) for p in config.module_paths]
+    if config.prelude_file is not None and args.prelude_file is None:
+        args.prelude_file = config.prelude_file
 
 
 _ASM_SUFFIXES = (".s", ".asm")
@@ -91,6 +108,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Config file prepended to every module compilation (e.g., feature flags).",
     )
+    parser.add_argument(
+        "--overlap-mode",
+        choices=("error", "warn", "off"),
+        dest="overlap_mode",
+        default=None,
+        help=(
+            "How to react when two `*=` / `.alloc` sections write to "
+            "overlapping bytes. Default `error` (build fails); `warn` "
+            "logs + continues (legacy ROM compat); `off` skips the check."
+        ),
+    )
     return parser
 
 
@@ -119,6 +147,7 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         copier_header=args.copier_header,
         include_paths=[Path(p) for p in args.include_paths],
         prelude_file=args.prelude_file,
+        overlap_mode=args.overlap_mode,
     )
     return result.exit_code
 
@@ -133,7 +162,7 @@ def _run_compile_only(args: argparse.Namespace) -> int:
         obj_file = input_file.with_suffix(".o")
         if multi:
             logger.info(f"Compiling {input_file} -> {obj_file}")
-        program = Program(dump_symbols=args.dump_symbols)
+        program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
         for inc_path in args.include_paths:
             program.add_include_path(inc_path)
         for key, value in _parse_defines(args.defines).items():
@@ -151,7 +180,7 @@ def _load_or_compile_object(input_file: Path, args: argparse.Namespace) -> Objec
         logger.error(f"Unknown file type: {input_file}")
         sys.exit(-1)
 
-    program = Program(dump_symbols=args.dump_symbols)
+    program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
     for key, value in _parse_defines(args.defines).items():
         program.resolver.current_scope.add_symbol(key, value)
     temp_obj_file = input_file.with_suffix(".tmp.o")
@@ -171,7 +200,7 @@ def _run_link(args: argparse.Namespace) -> int:
         sys.exit(-1)
 
     linked_obj = Linker(object_files).link(base_address=0x8000)
-    program = Program(dump_symbols=args.dump_symbols)
+    program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
     if args.format == "ips":
         return program.link_as_patch(linked_obj, args.output_file, args.mapping, args.copier_header)
     if args.format == "sfc":
@@ -204,6 +233,7 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
 
 
 def _run_assemble(args: argparse.Namespace) -> int:
+    _apply_a816_toml(args)
     use_auto_imports = (
         not args.no_auto_imports
         and not args.compile_only

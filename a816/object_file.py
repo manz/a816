@@ -1,5 +1,5 @@
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import IO
 
@@ -30,20 +30,34 @@ class SymbolSection(Enum):
     ABS_LABEL = 0x03
 
 
-@dataclass
-class Region:
-    """A contiguous span of emitted code and its associated relocations.
+from a816.section import Placement as Placement  # noqa: E402  (explicit re-export)
+from a816.section import Section as Section  # noqa: E402  (explicit re-export)
 
-    A new region is opened on every `*=` directive during compilation. Offsets
-    in `relocations`, `expression_relocations`, and `lines` are byte offsets
-    into this region's `code`, not into the concatenated module.
+
+def _legacy_pinned_section(
+    base_address: int,
+    code: bytes,
+    relocations: list[tuple[int, str, RelocationType]] | None = None,
+    expression_relocations: list[tuple[int, str, int]] | None = None,
+    lines: list[tuple[int, int, int, int, int]] | None = None,
+    name: str | None = None,
+) -> Section:
+    """Constructor shim used by ObjectFile + tests written against the
+    pre-Section `Region(base_address, code, ...)` signature.
+
+    Wire-format `.o` files don't yet carry section name + placement
+    metadata, so anonymous PINNED is the sensible default. Future
+    format-version bumps will surface the real placement at read time.
     """
-
-    base_address: int
-    code: bytes
-    relocations: list[tuple[int, str, RelocationType]] = field(default_factory=list)
-    expression_relocations: list[tuple[int, str, int]] = field(default_factory=list)
-    lines: list[tuple[int, int, int, int, int]] = field(default_factory=list)
+    return Section(
+        name=name if name is not None else f"__legacy_pin_{base_address:06X}",
+        placement=Placement.PINNED,
+        code=code,
+        base_address=base_address,
+        relocations=list(relocations or []),
+        expression_relocations=list(expression_relocations or []),
+        lines=list(lines or []),
+    )
 
 
 @dataclass
@@ -65,14 +79,14 @@ class PoolDecl:
 class PoolAlloc:
     """A `.alloc` / `.relocate` request deferred to link time.
 
-    `region_idx` is the body region in the same ObjectFile — the linker
-    sets that region's `base_address` to the allocator-chosen address.
+    `section_idx` is the body section in the same ObjectFile — the linker
+    sets that section's `base_address` to the allocator-chosen address.
     `symbol_name` is the alloc's exported label, also patched.
     """
 
     pool_name: str
     symbol_name: str
-    region_idx: int
+    section_idx: int
     size: int
 
 
@@ -82,7 +96,7 @@ class ObjectFile:
 
     def __init__(
         self,
-        regions_or_code: list[Region] | bytes,
+        sections_or_code: list[Section] | bytes,
         symbols: list[tuple[str, int, SymbolType, SymbolSection]],
         relocations: list[tuple[int, str, RelocationType]] | None = None,
         expression_relocations: list[tuple[int, str, int]] | None = None,
@@ -94,22 +108,22 @@ class ObjectFile:
         pool_allocs: list[PoolAlloc] | None = None,
     ) -> None:
         # `relocatable` is True iff the source contained no `*=` directive,
-        # so the importer is free to place region 0 at the import site PC
+        # so the importer is free to place section 0 at the import site PC
         # and shift CODE symbols accordingly. Once `*=` is present, every
-        # region is pinned to its compile-time base_address.
-        if isinstance(regions_or_code, bytes):
-            # Legacy single-region constructor used by tests.
-            self.regions: list[Region] = [
-                Region(
+        # section is pinned to its compile-time base_address.
+        if isinstance(sections_or_code, bytes):
+            # Legacy single-section constructor used by tests.
+            self.sections: list[Section] = [
+                _legacy_pinned_section(
                     base_address=0,
-                    code=regions_or_code,
-                    relocations=list(relocations) if relocations else [],
-                    expression_relocations=list(expression_relocations) if expression_relocations else [],
-                    lines=list(lines) if lines else [],
+                    code=sections_or_code,
+                    relocations=relocations,
+                    expression_relocations=expression_relocations,
+                    lines=lines,
                 )
             ]
         else:
-            self.regions = regions_or_code
+            self.sections = sections_or_code
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = symbols
         self.aliases: list[tuple[str, str]] = aliases or []
         self.files: list[str] = files or []
@@ -117,47 +131,47 @@ class ObjectFile:
         self.pool_decls: list[PoolDecl] = pool_decls or []
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
 
-    # ----- legacy single-region accessors (tests / older callers) -----
-    def _ensure_first_region(self) -> Region:
-        if not self.regions:
-            self.regions.append(Region(base_address=0, code=b""))
-        return self.regions[0]
+    # ----- legacy single-section accessors (tests / older callers) -----
+    def _ensure_first_section(self) -> Section:
+        if not self.sections:
+            self.sections.append(_legacy_pinned_section(base_address=0, code=b""))
+        return self.sections[0]
 
     @property
     def code(self) -> bytes:
-        return self.regions[0].code if self.regions else b""
+        return self.sections[0].code if self.sections else b""
 
     @code.setter
     def code(self, value: bytes) -> None:
-        self._ensure_first_region().code = value
+        self._ensure_first_section().code = value
 
     @property
     def relocations(self) -> list[tuple[int, str, RelocationType]]:
-        return self.regions[0].relocations if self.regions else []
+        return self.sections[0].relocations if self.sections else []
 
     @relocations.setter
     def relocations(self, value: list[tuple[int, str, RelocationType]]) -> None:
-        self._ensure_first_region().relocations = list(value)
+        self._ensure_first_section().relocations = list(value)
 
     @property
     def expression_relocations(self) -> list[tuple[int, str, int]]:
-        return self.regions[0].expression_relocations if self.regions else []
+        return self.sections[0].expression_relocations if self.sections else []
 
     @expression_relocations.setter
     def expression_relocations(self, value: list[tuple[int, str, int]]) -> None:
-        self._ensure_first_region().expression_relocations = list(value)
+        self._ensure_first_section().expression_relocations = list(value)
 
     @property
     def lines(self) -> list[tuple[int, int, int, int, int]]:
         out: list[tuple[int, int, int, int, int]] = []
-        for region in self.regions:
-            out.extend(region.lines)
+        for section in self.sections:
+            out.extend(section.lines)
         return out
 
     def write(self, filename: str) -> None:
         with open(filename, "wb") as f:
             self._write_header(f)
-            self._write_regions(f)
+            self._write_sections(f)
             self._write_symbol_table(f)
             self._write_alias_table(f)
             self._write_file_table(f)
@@ -186,7 +200,7 @@ class ObjectFile:
             f.write(pool_bytes)
             f.write(struct.pack("<B", len(sym_bytes)))
             f.write(sym_bytes)
-            f.write(struct.pack("<II", alloc.region_idx, alloc.size))
+            f.write(struct.pack("<II", alloc.section_idx, alloc.size))
 
     def _write_header(self, f: IO[bytes]) -> None:
         flags = 0x01 if self.relocatable else 0x00
@@ -198,23 +212,25 @@ class ObjectFile:
         )
         f.write(header)
 
-    def _write_regions(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<H", len(self.regions)))
-        for region in self.regions:
-            f.write(struct.pack("<II", region.base_address, len(region.code)))
-            f.write(struct.pack("<HHI", len(region.relocations), len(region.expression_relocations), len(region.lines)))
-            f.write(region.code)
-            for offset, name, reloc_type in region.relocations:
+    def _write_sections(self, f: IO[bytes]) -> None:
+        f.write(struct.pack("<H", len(self.sections)))
+        for section in self.sections:
+            f.write(struct.pack("<II", section.base_address, len(section.code)))
+            f.write(
+                struct.pack("<HHI", len(section.relocations), len(section.expression_relocations), len(section.lines))
+            )
+            f.write(section.code)
+            for offset, name, reloc_type in section.relocations:
                 name_bytes = name.encode("utf-8")
                 f.write(struct.pack("<IB", offset, len(name_bytes)))
                 f.write(name_bytes)
                 f.write(struct.pack("<B", reloc_type.value))
-            for offset, expression, size_bytes in region.expression_relocations:
+            for offset, expression, size_bytes in section.expression_relocations:
                 expr_bytes = expression.encode("utf-8")
                 f.write(struct.pack("<IH", offset, len(expr_bytes)))
                 f.write(expr_bytes)
                 f.write(struct.pack("<B", size_bytes))
-            for offset, file_idx, line, column, flags in region.lines:
+            for offset, file_idx, line, column, flags in section.lines:
                 f.write(struct.pack("<IIIHB", offset, file_idx, line, column & 0xFFFF, flags & 0xFF))
 
     def _write_symbol_table(self, f: IO[bytes]) -> None:
@@ -243,9 +259,9 @@ class ObjectFile:
             f.write(encoded)
 
     @staticmethod
-    def _read_regions(f: IO[bytes]) -> list[Region]:
+    def _read_sections(f: IO[bytes]) -> list[Section]:
         (count,) = struct.unpack("<H", f.read(2))
-        regions: list[Region] = []
+        sections: list[Section] = []
         for _ in range(count):
             base_address, code_size = struct.unpack("<II", f.read(8))
             num_relocs, num_expr_relocs, num_lines = struct.unpack("<HHI", f.read(8))
@@ -266,8 +282,8 @@ class ObjectFile:
             for _ in range(num_lines):
                 offset, file_idx, line, column, flags = struct.unpack("<IIIHB", f.read(15))
                 lines.append((offset, file_idx, line, column, flags))
-            regions.append(
-                Region(
+            sections.append(
+                Section.anonymous_pinned(
                     base_address=base_address,
                     code=code,
                     relocations=relocs,
@@ -275,7 +291,7 @@ class ObjectFile:
                     lines=lines,
                 )
             )
-        return regions
+        return sections
 
     @staticmethod
     def _read_symbol_table(f: IO[bytes]) -> list[tuple[str, int, SymbolType, SymbolSection]]:
@@ -335,8 +351,8 @@ class ObjectFile:
             pool_name = f.read(pool_len).decode("utf-8")
             (sym_len,) = struct.unpack("<B", f.read(1))
             sym_name = f.read(sym_len).decode("utf-8")
-            region_idx, size = struct.unpack("<II", f.read(8))
-            out.append(PoolAlloc(pool_name=pool_name, symbol_name=sym_name, region_idx=region_idx, size=size))
+            section_idx, size = struct.unpack("<II", f.read(8))
+            out.append(PoolAlloc(pool_name=pool_name, symbol_name=sym_name, section_idx=section_idx, size=size))
         return out
 
     @staticmethod
@@ -351,14 +367,14 @@ class ObjectFile:
             if version != ObjectFile.VERSION:
                 raise ValueError(f"Unsupported version: {version} (expected {ObjectFile.VERSION})")
             relocatable = bool(flags & 0x01)
-            regions = ObjectFile._read_regions(f)
+            sections = ObjectFile._read_sections(f)
             symbols = ObjectFile._read_symbol_table(f)
             aliases = ObjectFile._read_alias_table(f)
             files = ObjectFile._read_file_table(f)
             pool_decls = ObjectFile._read_pool_decls(f)
             pool_allocs = ObjectFile._read_pool_allocs(f)
             return ObjectFile(
-                regions,
+                sections,
                 symbols,
                 aliases=aliases,
                 files=files,

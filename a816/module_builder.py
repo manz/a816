@@ -216,6 +216,13 @@ class ModuleBuilder:
             program.resolver.current_scope.add_symbol(name, value)
         for name, value in constants.items():
             program.resolver.current_scope.add_symbol(name, value)
+            # Constants accumulated from previously-built modules are seeded
+            # into this module's resolver as raw symbols so codegen can read
+            # their values, but they're owned by the contributing module's
+            # `.o`. Mark them imported so `_export_object_symbols` doesn't
+            # re-publish them here — otherwise every downstream `.o` gains
+            # a duplicate GLOBAL and the linker rejects the build.
+            program.resolver.imported_symbol_names.add(name)
         result = program.assemble_as_object(str(source_path), obj_path, prelude=self._prelude_content)
         if result != 0:
             raise RuntimeError(f"Failed to compile module '{module_name}'")
@@ -276,6 +283,7 @@ def build_with_imports(
     copier_header: bool = False,
     include_paths: list[Path] | None = None,
     prelude_file: Path | None = None,
+    overlap_mode: str | None = None,
 ) -> BuildResult:
     """Build a project with automatic import resolution.
 
@@ -324,6 +332,7 @@ def build_with_imports(
             include_paths=include_paths,
             prelude_file=prelude_file,
             parsed_main_nodes=main_nodes,
+            overlap_mode=overlap_mode,
         )
 
     try:
@@ -331,6 +340,7 @@ def build_with_imports(
             module_paths=paths,
             output_dir=output_dir,
             symbols=symbols,
+            include_paths=include_paths,
         )
 
         linked = builder.build(main_source, parsed_main_nodes=main_nodes)
@@ -338,7 +348,7 @@ def build_with_imports(
         # Output the final file
         from a816.program import Program
 
-        program = Program()
+        program = Program(overlap_mode=overlap_mode)
         if output_format == "ips":
             exit_code = program.link_as_patch(linked, output_file, copier_header=copier_header)
         elif output_format == "sfc":
@@ -399,10 +409,11 @@ def _assemble_main_direct(
     copier_header: bool,
     prelude_content: str | None,
     capture_debug: bool = False,
+    overlap_mode: str | None = None,
 ) -> "tuple[int, Program] | BuildResult":  # noqa: F821
     from a816.program import Program
 
-    program = Program()
+    program = Program(overlap_mode=overlap_mode)
     if capture_debug:
         program.enable_debug_capture()
     program.add_module_path(output_dir)
@@ -437,6 +448,7 @@ def build_with_imports_direct(
     prelude_file: Path | None = None,
     parsed_main_nodes: list[AstNode] | None = None,
     emit_debug_info: bool = True,
+    overlap_mode: str | None = None,
 ) -> BuildResult:
     """Pre-compile imported modules then assemble main directly (position-dependent ROM patches)."""
     main_source = Path(main_source)
@@ -452,7 +464,14 @@ def build_with_imports_direct(
     try:
         builder = ModuleBuilder(module_paths=paths, output_dir=output_dir, symbols=symbols)
         builder.discover_imports(main_source, parsed_main_nodes)
-        modules_to_compile = [m for m in builder.graph.topological_sort() if m != "__main__"]
+        # When a prelude declares shared pools / constants / typed
+        # binds, per-module precompile would need every symbol that the
+        # prelude introduces to flow through ExternNodes — including
+        # `.alloc` names from sibling modules. Cheapest fix: skip the
+        # precompile loop and let main's direct-mode `.import` inline
+        # each module's source. Single resolver, one allocator pass,
+        # no cross-module extern dance.
+        modules_to_compile = [] if prelude_content else [m for m in builder.graph.topological_sort() if m != "__main__"]
         output_dir.mkdir(parents=True, exist_ok=True)
 
         accumulated_constants: dict[str, int] = {}
@@ -487,6 +506,7 @@ def build_with_imports_direct(
             copier_header=copier_header,
             prelude_content=prelude_content,
             capture_debug=emit_debug_info,
+            overlap_mode=overlap_mode,
         )
         if isinstance(result, BuildResult):
             return result

@@ -48,36 +48,69 @@ class PoolAstNode(AstNode):
 
 
 class AllocAstNode(AstNode):
-    """AST node for `.alloc NAME in POOL { body }` directive.
+    """AST node for `.alloc` in three shapes:
 
-    Reserves space for `body` in the named pool. Final address is assigned
-    by the pool allocator after first-pass sizing.
+    * Pooled: `.alloc NAME in POOL { body }` — allocator picks the
+      address inside POOL's ranges.
+    * Pinned named: `.alloc NAME at ADDR [size N] { body }` — body
+      lands at ADDR; optional `size N` upper-bounds it (overflow =
+      hard error).
+    * Pinned anonymous: `.alloc at ADDR [size N] { body }` — same
+      without a NAME (3-byte hijacks shouldn't tax with names).
+
+    Pinned forms desugar to an anonymous single-range pool + an alloc
+    into it at codegen, reusing the existing pool/alloc machinery for
+    placement. `is_pinned` flips on when `at_address` is set.
+
+    NOTE: planned `..END` range syntax (`at ADDR..END`) requires a
+    scanner-level `..` token addition; for PR1 the equivalent is
+    `at ADDR size N`. `..END` lands in a follow-up.
     """
 
     def __init__(
         self,
-        name: str,
-        pool_name: str,
+        name: str | None,
+        pool_name: str | None,
         body: BlockAstNode,
         file_info: Token,
+        *,
+        at_address: ExpressionAstNode | None = None,
+        at_size: ExpressionAstNode | None = None,
     ) -> None:
         super().__init__("alloc", file_info)
         self.name = name
         self.pool_name = pool_name
         self.body = body
+        self.at_address = at_address
+        self.at_size = at_size
+
+    @property
+    def is_pinned(self) -> bool:
+        return self.at_address is not None
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.name, self.pool_name, self.body.to_representation()[0]
+        return (
+            self.kind,
+            self.name or "",
+            self.pool_name or ("__pinned" if self.is_pinned else ""),
+            self.body.to_representation()[0],
+        )
 
     def to_canonical(self) -> str:
         body = _indent_block_body(self.body)
-        return f".alloc {self.name} in {self.pool_name} {{\n{body}\n}}"
+        name = self.name or ""
+        head = f"{name} " if name else ""
+        if self.is_pinned:
+            addr = self.at_address.to_canonical() if self.at_address else "?"
+            size = f" size {self.at_size.to_canonical()}" if self.at_size else ""
+            return f".alloc {head}at {addr}{size} {{\n{body}\n}}"
+        return f".alloc {head}in {self.pool_name} {{\n{body}\n}}"
 
 
 class RelocateAstNode(AstNode):
     """AST node for `.relocate SYMBOL OLD_START OLD_END into POOL { body }`.
 
-    Moves the labelled region `SYMBOL` from `[OLD_START, OLD_END]` into the
+    Moves the labelled section `SYMBOL` from `[OLD_START, OLD_END]` into the
     named pool. The old range is reclaimed back into the pool (fill byte
     applied during emission) and `body` is placed at the allocator-chosen
     address; `SYMBOL` resolves to the new location.

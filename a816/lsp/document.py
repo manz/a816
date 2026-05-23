@@ -320,9 +320,11 @@ class A816Document:
             self._record_token_position(node.file_info, self.pools, node.pool_name)
             self.pool_details[node.pool_name] = self._format_pool_details(node)
         elif isinstance(node, AllocAstNode):
-            self._record_token_position(node.file_info, self.allocs, node.name)
-            self.alloc_target_pool[node.name] = node.pool_name
-            self._record_pool_consumer(node.file_info, node.pool_name, "alloc")
+            if node.name is not None and node.pool_name is not None:
+                self._record_token_position(node.file_info, self.allocs, node.name)
+                self.alloc_target_pool[node.name] = node.pool_name
+            if node.pool_name is not None:
+                self._record_pool_consumer(node.file_info, node.pool_name, "alloc")
         elif isinstance(node, RelocateAstNode):
             self._record_token_position(node.file_info, self.allocs, node.symbol)
             self.alloc_target_pool[node.symbol] = node.pool_name
@@ -526,26 +528,11 @@ class A816Document:
             self._add_parse_error_diagnostic()
 
         self._add_fluff_diagnostics()
-        self._add_undeclared_pool_diagnostics()
-
-    def _add_undeclared_pool_diagnostics(self) -> None:
-        """Flag .alloc / .relocate / .reclaim that reference a pool name not
-        declared anywhere in this document."""
-        for pool_name, refs in self.pool_consumers.items():
-            if pool_name in self.pools:
-                continue
-            for pos, kind in refs:
-                self.diagnostics.append(
-                    Diagnostic(
-                        range=Range(
-                            start=pos,
-                            end=Position(line=pos.line, character=pos.character + len(pool_name)),
-                        ),
-                        message=f".{kind} references undeclared pool {pool_name!r}",
-                        severity=DiagnosticSeverity.Error,
-                        source="a816 pool",
-                    )
-                )
+        # Pool-name resolution is cross-document: pools live in the
+        # workspace's preamble / shared decl files. The undeclared-pool
+        # check therefore lives in `WorkspaceIndex` (the only thing
+        # that knows the project-wide pool universe), not here. See
+        # `WorkspaceIndex.undeclared_pool_diagnostics`.
 
     def _add_fluff_diagnostics(self) -> None:
         """Surface a816 fluff lint hits as LSP warnings."""

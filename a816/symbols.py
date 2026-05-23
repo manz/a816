@@ -244,6 +244,23 @@ class Resolver:
         self.reloc = False
         self.a_size: int = 8  # Accumulator size: 8 or 16 bits
         self.i_size: int = 8  # Index register size: 8 or 16 bits
+        # Carried A/X size between `.alloc` body measurements: each
+        # alloc starts measuring with the prior alloc's exit state so
+        # `ldx #0` in a callee sees the caller's `rep #$10`. Tracked
+        # separately from live `a_size`/`i_size` so top-level resolver
+        # passes (which treat `.a8`/`.a16` as no-ops in `pc_after`)
+        # stay unaffected.
+        self.alloc_carry_a_size: int = 8
+        self.alloc_carry_i_size: int = 8
+        # Per-pool sandbox cursor for object-mode `.alloc` body labels.
+        # Each `.alloc NAME in POOL` advances this so successive allocs
+        # bind their bodies at distinct addresses inside the pool's
+        # first range. Without this, every alloc would record body
+        # labels at `pool.ranges[0].start` and the linker's
+        # `_pool_delta_for_symbol` (which looks up the owning section
+        # by address) would route every label through the first
+        # section's delta.
+        self.alloc_sandbox_cursors: dict[str, int] = {}
         self.rom_type = RomType.low_rom
         self.current_scope_index = 0
         self.last_used_scope = 0
@@ -287,6 +304,12 @@ class Resolver:
         # "inc"; without dedup the third party that imports both re-parses
         # "inc" twice and trips struct-redef and similar idempotency checks).
         self.imported_module_paths: set[str] = set()
+        # Names contributed to the root scope by inlined `.import`
+        # passes (object mode). `_export_object_symbols` skips these
+        # so the importing module's `.o` doesn't re-export symbols
+        # owned by its dependencies — the owner's `.o` is the single
+        # source of truth, downstream `.o`s carry externs.
+        self.imported_symbol_names: set[str] = set()
         self.set_position(pc)
 
     def allocate_pools(self) -> None:

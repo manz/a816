@@ -1,5 +1,5 @@
 """WriteAuditor: catches overlapping byte writes from multiple `*=`
-regions, `.alloc` blocks, etc."""
+sections, `.alloc` blocks, etc."""
 
 from __future__ import annotations
 
@@ -99,8 +99,13 @@ def test_default_mode_is_warn() -> None:
     assert auditor._mode == "warn"  # noqa: SLF001 — testing default
 
 
-def test_end_to_end_overlap_via_two_star_eq_blocks(caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
-    """Two `*=` regions writing to overlapping byte spans → warning."""
+def test_end_to_end_overlap_via_two_star_eq_blocks_errors_by_default(tmp_path: Path) -> None:
+    """Two `*=` sections writing to overlapping byte spans → build error.
+
+    Default mode is now `error` (cross-repo feedback called this out as
+    the #1 footgun); the legacy warn-and-continue path is opt-in via
+    `overlap_mode="warn"` (see the explicit-warn test below).
+    """
     from a816.program import Program
 
     src = tmp_path / "main.s"
@@ -115,7 +120,30 @@ def test_end_to_end_overlap_via_two_star_eq_blocks(caplog: pytest.LogCaptureFixt
     )
     ips = tmp_path / "out.ips"
     program = Program()
+    rc = program.assemble_as_patch(str(src), ips)
+    assert rc != 0, "default mode should fail the build on overlap"
+
+
+def test_end_to_end_overlap_via_two_star_eq_blocks_warns_in_warn_mode(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    """`overlap_mode='warn'` keeps the legacy log-and-continue behaviour."""
+    from a816.program import Program
+
+    src = tmp_path / "main.s"
+    src.write_text(
+        """
+        *=0x008000
+            .db 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
+        *=0x008004
+            .db 0xAA, 0xBB, 0xCC, 0xDD
+        """,
+        encoding="utf-8",
+    )
+    ips = tmp_path / "out.ips"
+    program = Program()
+    program.resolver.context.overlap_mode = "warn"
     with caplog.at_level(logging.WARNING):
         assert program.assemble_as_patch(str(src), ips) == 0
     warnings = [rec for rec in caplog.records if "overlap" in rec.message]
-    assert warnings, "expected overlap warning from two overlapping `*=` regions"
+    assert warnings, "expected overlap warning under explicit warn mode"

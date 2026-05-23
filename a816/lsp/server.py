@@ -188,7 +188,13 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         self.documents[params.text_document.uri] = doc
         if workspace:
             await asyncio.to_thread(workspace.replace_document, doc)
-        self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+        self._publish_diagnostics_for(doc, workspace)
+
+    def _publish_diagnostics_for(self, doc: A816Document, workspace: WorkspaceIndex | None) -> None:
+        """Push per-doc + cross-doc diagnostics. Single funnel so every
+        update path goes through the same merge."""
+        cross_doc = workspace.undeclared_pool_diagnostics(doc) if workspace else []
+        self._publish_diagnostics(doc.uri, [*doc.diagnostics, *cross_doc])
 
     def _apply_content_changes(self, doc: A816Document, changes: list[Any]) -> str:
         current_content = doc.content
@@ -211,7 +217,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         workspace = self._ensure_workspace_index()
         if workspace:
             await asyncio.to_thread(workspace.replace_document, doc)
-        self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+        self._publish_diagnostics_for(doc, workspace)
         try:
             self.server.workspace_semantic_tokens_refresh(None)
         except (AttributeError, RuntimeError, TypeError) as e:
@@ -234,7 +240,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         workspace = self._ensure_workspace_index()
         if workspace:
             await asyncio.to_thread(workspace.replace_document, doc)
-        self._publish_diagnostics(params.text_document.uri, doc.diagnostics)
+        self._publish_diagnostics_for(doc, workspace)
 
     @staticmethod
     def _doc_symbol_range(pos: Position, name_len: int) -> Range:
