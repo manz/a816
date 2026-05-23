@@ -165,6 +165,13 @@ class AllocNode(NodeProtocol):
         # Returning current_pc unchanged is by design: an .alloc block emits
         # at the allocator-chosen address (via emit_blocks), not inline,
         # so the surrounding PC must not advance past this node.
+        #
+        # The `_alloc is None` guard is load-bearing: `_request_slot`
+        # advances `resolver.alloc_sandbox_cursors[pool]` by `self._size`,
+        # and `pc_after` fires once per resolver pass. Letting it run more
+        # than once per alloc would skew every subsequent alloc's sandbox
+        # base in the same pool, which silently mis-bases the section
+        # delta in the linker.
         pool = self.resolver.pools.get(self.pool_name)
         if pool is None:
             raise NodeError(f".alloc into unknown pool {self.pool_name!r}", self.file_info)

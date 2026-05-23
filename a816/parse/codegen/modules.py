@@ -294,8 +294,9 @@ def _paired_object_and_source_import(
     `imported_symbol_names` (set by the inline classifier) prevents
     the importer's `.o` from re-exporting the inline-contributed
     runtime symbols that overlap with the extern stubs."""
-    if _already_imported(src_path, resolver, module_name):
+    if _is_imported(src_path, resolver, module_name):
         return []
+    _mark_imported(src_path, resolver)
     extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode=False) or []
     inline_nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode=False) or []
     return extern_nodes + inline_nodes
@@ -309,23 +310,31 @@ def _source_import(
     direct_mode: bool,
     file_info: Token,
 ) -> GenNodes:
-    if direct_mode and _already_imported(src_path, resolver, module_name):
-        return []
+    if direct_mode:
+        if _is_imported(src_path, resolver, module_name):
+            return []
+        _mark_imported(src_path, resolver)
     nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode)
     if nodes is None:
         raise NodeError(f'Module not found: "{module_name}"', file_info)
     return nodes
 
 
-def _already_imported(src_path: Path, resolver: Resolver, module_name: str) -> bool:
-    """Dedup transitive imports by canonical source path. Returns True
-    iff the module has been imported before; tracks the path otherwise."""
+def _is_imported(src_path: Path, resolver: Resolver, module_name: str) -> bool:
+    """Pure check: has `src_path` already been imported in this resolver?
+    Logs a dedup notice on the hit path so the build log shows why a
+    transitive `.import` resolved to nothing."""
     key = _canonical(src_path)
     if key in resolver.imported_module_paths:
         logger.debug("`.import %r` deduped — already loaded from %s", module_name, key)
         return True
-    resolver.imported_module_paths.add(key)
     return False
+
+
+def _mark_imported(src_path: Path, resolver: Resolver) -> None:
+    """Record that `src_path` has been imported. Pairs with `_is_imported`
+    so call sites can split the check from the commit."""
+    resolver.imported_module_paths.add(_canonical(src_path))
 
 
 def _extract_public_symbols_from_source(source_path: Path) -> list[str]:
