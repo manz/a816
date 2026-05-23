@@ -370,6 +370,38 @@ class Rule:
 _DOC004_MSG = "orphan docstring; convert to a `;` comment or attach to a target"
 
 
+def _build_orphan_docstring_fix(text: str, doc: DocstringAstNode) -> Fix | None:
+    """Rewrite an orphan `\"\"\"...\"\"\"` block as one or more `;` comment
+    lines. The replacement preserves the indentation of the opening
+    `\"\"\"` so the comment lines sit at the same column as their
+    surroundings.
+
+    Span comes from the docstring token: `position` anchors the
+    opening `\"\"\"`, `end_position` (derived from `len(token.value)`)
+    sits one past the closing `\"\"\"`. Safe: docstring-as-comment is
+    syntactic noise, the textual content is preserved verbatim
+    inside the `;` lines, and the surrounding semantics don't depend
+    on the docstring at all (that's the whole reason it's an orphan).
+    """
+    token = doc.file_info
+    pos = getattr(token, "position", None)
+    end_pos = token.end_position if pos is not None else None
+    if pos is None or end_pos is None:
+        return None
+    start = line_col_to_offset(text, pos.line + 1, pos.column + 1)
+    end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
+    if start >= end:
+        return None
+    indent = " " * pos.column
+    lines = doc.text.splitlines() or [""]
+    replacement = "\n".join(f"{indent}; {line}".rstrip() for line in lines)
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=replacement),),
+        applicability=Applicability.SAFE,
+        description="convert orphan docstring to `;` comment(s)",
+    )
+
+
 @dataclass
 class _PlacementState:
     comment_run: list[CommentAstNode] = field(default_factory=list)
@@ -390,6 +422,7 @@ class _PlacementWalker:
 
     def __init__(self, ctx: LintContext) -> None:
         self._path = ctx.path
+        self._text = ctx.text
         self._nodes = ctx.nodes or []
         self.out: dict[str, list[Diagnostic]] = {"DOC004": [], "DOC005": [], "DOC006": []}
 
@@ -397,13 +430,20 @@ class _PlacementWalker:
         self._walk(self._nodes, inside_body=False)
         return self.out
 
-    def _emit(self, code: str, node: AstNode, message: str) -> None:
+    def _emit(self, code: str, node: AstNode, message: str, fix: Fix | None = None) -> None:
         line, col = node_position(node)
-        self.out[code].append(Diagnostic(path=self._path, line=line, column=col, code=code, message=message))
+        self.out[code].append(
+            Diagnostic(path=self._path, line=line, column=col, code=code, message=message, fix=fix)
+        )
 
     def _flush_orphan(self, state: _PlacementState) -> None:
         if state.pending_doc is not None:
-            self._emit("DOC004", state.pending_doc, _DOC004_MSG)
+            self._emit(
+                "DOC004",
+                state.pending_doc,
+                _DOC004_MSG,
+                fix=_build_orphan_docstring_fix(self._text, state.pending_doc),
+            )
             state.pending_doc = None
 
     def _on_docstring(self, state: _PlacementState, node: DocstringAstNode, inside_body: bool) -> None:

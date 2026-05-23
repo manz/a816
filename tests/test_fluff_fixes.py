@@ -73,6 +73,28 @@ class TestApplyFixes:
         assert len(applied) == 1
 
 
+class TestOrphanDocstringFix:
+    def test_single_line_docstring_becomes_comment(self) -> None:
+        src = '"""m"""\nmain:\n    rts\n    """note"""\n    nop\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        d4 = [d for d in diagnostics if d.code == "DOC004"]
+        assert len(d4) == 1 and d4[0].fix is not None
+        new, _ = apply_fixes(src, diagnostics)
+        assert '"""note"""' not in new
+        assert "    ; note\n" in new
+
+    def test_multiline_docstring_becomes_block_of_comments(self) -> None:
+        src = '"""m"""\nmain:\n    rts\n    """line a\n    line b"""\n    nop\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        d4 = [d for d in diagnostics if d.code == "DOC004"]
+        assert len(d4) == 1 and d4[0].fix is not None
+        new, _ = apply_fixes(src, diagnostics)
+        # Only the module-level docstring remains in `"""...`""" form.
+        assert new.count('"""') == 2
+        assert "    ; line a\n" in new
+        assert "    ;     line b\n" in new
+
+
 class TestRedundantTypedCastFix:
     def test_strips_cast_and_keeps_field_access(self) -> None:
         src = '"""m"""\n.struct Pt { word x }\np := (0x100 as Pt)\nlda.w (p as Pt).x\n'
