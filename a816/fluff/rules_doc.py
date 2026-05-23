@@ -168,6 +168,61 @@ class MisplacedDocstring(Rule):
         return None
 
 
+def _build_docstring_alignment_fix(
+    text: str,
+    doc: DocstringAstNode,
+    open_col: int,
+    current_indent: int,
+) -> Fix | None:
+    """DOC007: shift every non-blank body line of `doc` so its
+    leading whitespace lands at `open_col`. Preserves relative
+    indentation between lines (a deeper line stays deeper than its
+    siblings) and leaves blank lines untouched.
+
+    Safe: only whitespace inside the docstring's content lines
+    changes; the prose and the surrounding code are byte-identical.
+    """
+    token = doc.file_info
+    pos = getattr(token, "position", None)
+    end_pos = token.end_position if pos is not None else None
+    if pos is None or end_pos is None:
+        return None
+    start = line_col_to_offset(text, pos.line + 1, pos.column + 1)
+    end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
+    snippet = text[start:end]
+    delta = open_col - current_indent
+    new_snippet = _reindent_docstring_body(snippet, delta)
+    if new_snippet == snippet:
+        return None
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=new_snippet),),
+        applicability=Applicability.SAFE,
+        description=f'align docstring body to column {open_col + 1}',
+    )
+
+
+def _reindent_docstring_body(snippet: str, delta: int) -> str:
+    """Adjust every non-blank line (except the first, which sits next
+    to the opening `\"\"\"`) by `delta` spaces. Negative `delta`
+    dedents; positive indents. Lines whose existing indent is less
+    than `abs(delta)` when dedenting clamp to column 0."""
+    if delta == 0:
+        return snippet
+    lines = snippet.split("\n")
+    if len(lines) <= 1:
+        return snippet
+    rewritten = [lines[0]]
+    for line in lines[1:]:
+        if not line.strip():
+            rewritten.append(line)
+            continue
+        stripped = line.lstrip(" ")
+        existing = len(line) - len(stripped)
+        new_indent = max(existing + delta, 0)
+        rewritten.append(" " * new_indent + stripped)
+    return "\n".join(rewritten)
+
+
 def _docstring_span(text: str, doc: DocstringAstNode) -> tuple[int, int] | None:
     """Byte range covering a docstring's `\"\"\"...\"\"\"` token plus
     the trailing newline so removing it doesn't leave a blank line."""
@@ -313,6 +368,7 @@ class DocstringAlignment(Rule):
             ctx,
             node,
             f'docstring {direction}: content starts at column {smallest + 1}, opening `"""` at column {open_col + 1}',
+            fix=_build_docstring_alignment_fix(ctx.text, node, open_col, smallest),
         )
 
     @staticmethod

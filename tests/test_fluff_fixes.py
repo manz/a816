@@ -139,6 +139,26 @@ class TestMisplacedDocstringFix:
         assert '.macro setup() {\n    """Setup the counter."""' in new
 
 
+class TestDocstringAlignmentFix:
+    def test_doc007_dedents_over_indented_body(self) -> None:
+        src = '"""m"""\nmy_label:\n    """\n        over-indented body\n    """\n    rts\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        d7 = [d for d in diagnostics if d.code == "DOC007"]
+        assert len(d7) == 1 and d7[0].fix is not None
+        new, _ = apply_fixes(src, diagnostics)
+        assert "    over-indented body\n" in new
+        assert "        over-indented body" not in new
+
+    def test_doc007_indents_under_indented_body(self) -> None:
+        src = '"""m"""\nmy_label:\n    """\nunder body\n    """\n    rts\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        d7 = [d for d in diagnostics if d.code == "DOC007"]
+        assert len(d7) == 1 and d7[0].fix is not None
+        new, _ = apply_fixes(src, diagnostics)
+        assert "    under body\n" in new
+        assert "\nunder body\n" not in new
+
+
 class TestRedundantTypedCastFix:
     def test_strips_cast_and_keeps_field_access(self) -> None:
         src = '"""m"""\n.struct Pt { word x }\np := (0x100 as Pt)\nlda.w (p as Pt).x\n'
