@@ -265,11 +265,13 @@ def _build_redundant_cast_fix(
     Safe: cast is provably a no-op (typed binding already in scope);
     inner identifier preserved verbatim; edit is a pure shrink.
     """
-    open_pos = getattr(cast.token, "position", None)
-    close_token = getattr(cast, "close_token", None)
-    close_end = close_token.end_position if close_token is not None else None
-    if open_pos is None or close_end is None:
+    open_pos = cast.token.position
+    close_token = cast.close_token
+    if open_pos is None or close_token is None:
+        # `name := expr as T` (no parens, no `)` to anchor) falls here.
         return None
+    close_end = close_token.end_position
+    assert close_end is not None
     start = line_col_to_offset(ctx.text, open_pos.line + 1, open_pos.column + 1)
     end = line_col_to_offset(ctx.text, close_end.line + 1, close_end.column + 1)
     if start >= end or start >= len(ctx.text) or ctx.text[start] != "(":

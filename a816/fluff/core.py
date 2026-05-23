@@ -373,16 +373,21 @@ def _comment_block_span(text: str, comments: list[CommentAstNode]) -> tuple[int,
     """Source byte span covering a run of leading comments + their
     terminating newline. Anchors at column 0 so leading indentation
     travels with the block; swallows the final newline so the file
-    doesn't keep a blank line where the block used to sit."""
+    doesn't keep a blank line where the block used to sit.
+
+    Returns None for an empty list (caller calls with non-empty in
+    practice; cheap guard). Tokens emitted by the scanner always
+    carry a position, so we don't defend against `position is None`
+    inside the body — an upstream regression that produced a
+    position-less token belongs as a parser bug, not a silent fix
+    skip."""
     if not comments:
         return None
     first_token = comments[0].file_info
     last_token = comments[-1].file_info
-    first_pos = getattr(first_token, "position", None)
-    last_pos = getattr(last_token, "position", None)
-    last_end = last_token.end_position if last_pos is not None else None
-    if first_pos is None or last_end is None:
-        return None
+    first_pos = first_token.position
+    last_end = last_token.end_position
+    assert first_pos is not None and last_end is not None
     start = line_col_to_offset(text, first_pos.line + 1, 1)
     end = line_col_to_offset(text, last_end.line + 1, last_end.column + 1)
     if end < len(text) and text[end] == "\n":
@@ -390,18 +395,16 @@ def _comment_block_span(text: str, comments: list[CommentAstNode]) -> tuple[int,
     return (start, end) if start < end else None
 
 
-def _block_brace_offset(text: str, node: MacroAstNode | ScopeAstNode) -> int | None:
-    """Byte offset just past the `{` that opens `node`'s body, or None
-    if the source position can't be resolved. Used to anchor inserts
-    that need to land as the first statement inside a block body."""
+def _block_brace_offset(text: str, node: MacroAstNode | ScopeAstNode) -> int:
+    """Byte offset just past the `{` that opens `node`'s body. The
+    block's `file_info` always points at `{` (parser-enforced), so
+    this is total — no None return path."""
     block = node.block if isinstance(node, MacroAstNode) else node.body
-    pos = getattr(block.file_info, "position", None)
-    if pos is None:
-        return None
+    pos = block.file_info.position
+    assert pos is not None
     open_offset = line_col_to_offset(text, pos.line + 1, pos.column + 1)
     brace_idx = text.find("{", open_offset)
-    if brace_idx == -1:
-        return None
+    assert brace_idx != -1
     return brace_idx + 1
 
 
@@ -438,12 +441,9 @@ def _build_comment_to_docstring_fix(
     span = _comment_block_span(text, comments)
     if span is None:
         return None
-    block_pos = getattr((target.block if isinstance(target, MacroAstNode) else target.body).file_info, "position", None)
-    if block_pos is None:
-        return None
+    block_pos = (target.block if isinstance(target, MacroAstNode) else target.body).file_info.position
+    assert block_pos is not None
     after_brace = _block_brace_offset(text, target)
-    if after_brace is None:
-        return None
     indent = _detect_body_indent(text, after_brace, fallback_column=block_pos.column)
     body_lines = [_strip_comment_prefix(c.comment or "") for c in comments]
     doc_lines = [f"{indent}{line}".rstrip() for line in body_lines]
@@ -506,10 +506,9 @@ def _build_orphan_docstring_fix(text: str, doc: DocstringAstNode) -> Fix | None:
     on the docstring at all (that's the whole reason it's an orphan).
     """
     token = doc.file_info
-    pos = getattr(token, "position", None)
-    end_pos = token.end_position if pos is not None else None
-    if pos is None or end_pos is None:
-        return None
+    pos = token.position
+    end_pos = token.end_position
+    assert pos is not None and end_pos is not None
     start = line_col_to_offset(text, pos.line + 1, pos.column + 1)
     end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
     if start >= end:

@@ -183,10 +183,9 @@ def _build_docstring_alignment_fix(
     changes; the prose and the surrounding code are byte-identical.
     """
     token = doc.file_info
-    pos = getattr(token, "position", None)
-    end_pos = token.end_position if pos is not None else None
-    if pos is None or end_pos is None:
-        return None
+    pos = token.position
+    end_pos = token.end_position
+    assert pos is not None and end_pos is not None
     start = line_col_to_offset(text, pos.line + 1, pos.column + 1)
     end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
     snippet = text[start:end]
@@ -225,12 +224,12 @@ def _reindent_docstring_body(snippet: str, delta: int) -> str:
 
 def _docstring_span(text: str, doc: DocstringAstNode) -> tuple[int, int] | None:
     """Byte range covering a docstring's `\"\"\"...\"\"\"` token plus
-    the trailing newline so removing it doesn't leave a blank line."""
+    the trailing newline so removing it doesn't leave a blank line.
+    Returns None only when the resulting span would be empty."""
     token = doc.file_info
-    pos = getattr(token, "position", None)
-    end_pos = token.end_position if pos is not None else None
-    if pos is None or end_pos is None:
-        return None
+    pos = token.position
+    end_pos = token.end_position
+    assert pos is not None and end_pos is not None
     start = line_col_to_offset(text, pos.line + 1, 1)
     end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
     if end < len(text) and text[end] == "\n":
@@ -254,12 +253,9 @@ def _build_move_docstring_into_body_fix(
     if span is None:
         return None
     block = target.block if isinstance(target, MacroAstNode) else target.body
-    block_pos = getattr(block.file_info, "position", None)
-    if block_pos is None:
-        return None
+    block_pos = block.file_info.position
+    assert block_pos is not None
     after_brace = _block_brace_offset(text, target)
-    if after_brace is None:
-        return None
     indent = _detect_body_indent(text, after_brace, fallback_column=block_pos.column)
     lines = doc.text.splitlines() or [""]
     if len(lines) == 1:
@@ -377,11 +373,10 @@ class DocstringAlignment(Rule):
 
         Returns None defensively when the position can't be located.
         """
-        pos = getattr(node.file_info, "position", None)
-        if pos is None:
-            return None
+        pos = node.file_info.position
+        assert pos is not None
         source_lines = text.split("\n")
-        if pos.line < 0 or pos.line >= len(source_lines):
+        if not 0 <= pos.line < len(source_lines):
             return None
         idx = source_lines[pos.line].find('"""')
         return idx if idx >= 0 else None
