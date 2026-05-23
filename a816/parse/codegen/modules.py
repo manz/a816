@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from a816.object_file import ObjectFile
 
 from a816.module_loader import resolve_module
+from a816.object_file import ObjectFile, SymbolType
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
@@ -67,8 +64,6 @@ def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
 def _object_has_pool_allocs(obj_path: Path) -> bool:
     """Cheap check: parse the .o header to see if it carries any
     `.alloc` requests. Used to gate the direct-mode `.o` shortcut."""
-    from a816.object_file import ObjectFile
-
     try:
         return bool(ObjectFile.from_file(str(obj_path)).pool_allocs)
     except (FileNotFoundError, ValueError):
@@ -81,8 +76,6 @@ def _import_from_object(
     resolver: Resolver,
     direct_mode: bool,
 ) -> GenNodes | None:
-    from a816.object_file import ObjectFile, SymbolType
-
     try:
         obj_file = ObjectFile.from_file(str(obj_path))
     except (FileNotFoundError, ValueError):
