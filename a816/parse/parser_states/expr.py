@@ -71,14 +71,14 @@ def _parse_lparen_expression(p: Parser, lparen: Token) -> list[ExprNode]:
         expect_token(type_token, TokenType.IDENTIFIER)
         type_name = type_token.value
     expect_token(p.current(), TokenType.RPAREN)
-    p.next()  # consume RPAREN
+    rparen = p.next()  # consume RPAREN
 
     field_path = _consume_dot_field_path(p)
 
     if type_name is not None and field_path:
-        return [CastAccessExprNode(lparen, inner, type_name, field_path)]
+        return [CastAccessExprNode(lparen, inner, type_name, field_path, close_token=rparen)]
     if type_name is not None:
-        return [CastValueExprNode(lparen, inner, type_name)]
+        return [CastValueExprNode(lparen, inner, type_name, close_token=rparen)]
     if field_path:
         raise ParserSyntaxError(
             "field access requires a typed cast",

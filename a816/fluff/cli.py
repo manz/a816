@@ -7,11 +7,12 @@ import difflib
 import sys
 import textwrap
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from a816.exceptions import FormattingError
-from a816.fluff.core import Rule
-from a816.fluff.runner import lint_file
+from a816.fluff.core import Diagnostic, Rule
+from a816.fluff.runner import apply_fixes, lint_file, lint_text
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
@@ -81,6 +82,37 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
         "--diff",
         action="store_true",
         help="Show unified diff per changed file and exit non-zero if any differ.",
+    )
+    fix_parser = subparsers.add_parser("fix", help="Apply fluff autofixes in place.")
+    fix_parser.add_argument(
+        "paths",
+        nargs="+",
+        type=Path,
+        help="Files or directories to fix. Directories are walked for .s / .i sources.",
+    )
+    fix_parser.add_argument(
+        "--select",
+        action="append",
+        default=None,
+        help=(
+            "Limit fixes to the given rule codes (comma-separated, or repeat the"
+            " flag). Diagnostics for other rules are still reported but not fixed."
+        ),
+    )
+    fix_parser.add_argument(
+        "--unsafe-fixes",
+        action="store_true",
+        help="Also apply fixes flagged unsafe (semantic-changing).",
+    )
+    fix_parser.add_argument(
+        "--diff",
+        action="store_true",
+        help="Preview the fix as a unified diff. Does not write changes.",
+    )
+    fix_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Do not write changes; exit non-zero if any file would be fixed.",
     )
     explain_parser = subparsers.add_parser(
         "explain",
@@ -243,6 +275,116 @@ def _run_check(args: argparse.Namespace) -> int:
     return missing_err
 
 
+def _parse_select(raw: list[str] | None) -> set[str] | None:
+    """Flatten `--select A,B --select C` into `{A, B, C}`. None means "all"."""
+    if raw is None:
+        return None
+    out: set[str] = set()
+    for chunk in raw:
+        for code in chunk.split(","):
+            code = code.strip().upper()
+            if code:
+                out.add(code)
+    return out or None
+
+
+def _config_paths_for(source: Path) -> tuple[list[Path] | None, list[Path] | None]:
+    from a816.config import discover_a816_config
+
+    config = discover_a816_config(source)
+    return (
+        config.include_paths if config is not None else None,
+        config.module_paths if config is not None else None,
+    )
+
+
+@dataclass
+class _FixOutcome:
+    """Per-file result of one `a816 fix` pass."""
+
+    changed: bool
+    unfixed_count: int
+    error_code: int = 0
+
+
+def _process_fix_target(source: Path, args: argparse.Namespace, select: set[str] | None) -> _FixOutcome:
+    """Read `source`, run lint + fix, dispatch to diff / check / write."""
+    original = source.read_text(encoding="utf-8")
+    include_paths, module_paths = _config_paths_for(source)
+    diagnostics = lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
+    new_text, applied = apply_fixes(original, diagnostics, allow_unsafe=args.unsafe_fixes, select=select)
+    unfixed = [d for d in diagnostics if d not in applied]
+    if args.diff:
+        _print_fix_diff(source, original, new_text, unfixed)
+        return _FixOutcome(changed=new_text != original, unfixed_count=len(unfixed))
+    if args.check:
+        if new_text != original:
+            print(f"Would fix {source}")
+        for diag in unfixed:
+            print(diag.format())
+        return _FixOutcome(changed=new_text != original, unfixed_count=len(unfixed))
+    return _apply_fix_writes(source, original, new_text, applied, unfixed)
+
+
+def _print_fix_diff(source: Path, original: str, new_text: str, unfixed: list[Diagnostic]) -> None:
+    if new_text != original:
+        diff_lines = difflib.unified_diff(
+            original.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=str(source),
+            tofile=str(source),
+        )
+        sys.stdout.write(_colorize_diff(diff_lines))
+    for diag in unfixed:
+        print(diag.format())
+
+
+def _apply_fix_writes(
+    source: Path, original: str, new_text: str, applied: list[Diagnostic], unfixed: list[Diagnostic]
+) -> _FixOutcome:
+    changed = new_text != original
+    if changed:
+        try:
+            source.write_text(new_text, encoding="utf-8")
+        except OSError as exc:
+            print(f"Failed to write {source}: {exc}", file=sys.stderr)
+            return _FixOutcome(changed=False, unfixed_count=len(unfixed), error_code=2)
+        for diag in applied:
+            print(f"fixed {diag.code} in {source}")
+    for diag in unfixed:
+        print(diag.format())
+    return _FixOutcome(changed=changed, unfixed_count=len(unfixed))
+
+
+def _report_fix_summary(check: bool, fixed_files: int, remaining: int, missing_err: int) -> int:
+    if check:
+        if fixed_files or remaining:
+            print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) remain.", file=sys.stderr)
+            return missing_err or 1
+        print("No fixes needed.")
+        return missing_err
+    print(f"Fixed {fixed_files} file(s), {remaining} hit(s) remain.")
+    return missing_err or (1 if remaining else 0)
+
+
+def _run_fix(args: argparse.Namespace) -> int:
+    sources, missing_err = _collect_sources(list(args.paths))
+    if not sources:
+        return missing_err
+
+    select = _parse_select(args.select)
+    fixed_files = 0
+    remaining = 0
+    for source in sources:
+        outcome = _process_fix_target(source, args, select)
+        if outcome.error_code:
+            return outcome.error_code
+        if outcome.changed:
+            fixed_files += 1
+        remaining += outcome.unfixed_count
+    return _report_fix_summary(args.check, fixed_files, remaining, missing_err)
+
+
 def _run_explain(args: argparse.Namespace) -> int:
     code = args.code.upper()
     rule = Rule.registry.get(code)
@@ -269,6 +411,8 @@ def fluff_main(argv: Sequence[str] | None = None) -> int:
         return _run_format(args, parser)
     if args.command == "check":
         return _run_check(args)
+    if args.command == "fix":
+        return _run_fix(args)
     if args.command == "explain":
         return _run_explain(args)
     parser.error("Unknown command")

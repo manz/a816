@@ -88,6 +88,36 @@ works.
 Allocator picks the address. `helper_fn` symbol resolves to that
 address. Body bytes land there.
 
+### `.alloc [NAME] at ADDR [size N] { body }`
+
+Pinned placement: `body` lands at the literal `ADDR`. `NAME` is
+optional (3-byte hijacks shouldn't tax with names); the assembler
+auto-generates a stable identifier for anonymous allocs. Optional
+`size N` upper-bounds the body — overflow past `ADDR + N - 1` is a
+hard error pointing at the offending byte. Without `size`, the body
+extends to the bank end.
+
+```ca65
+.alloc vector_table at 0x00FFE0 size 0x20 {
+    .dw 0, 0
+    .dw brk, brk, brk, nmi_handler
+    .dw 0, irq
+    .dw 0, 0, brk, 0, brk, 0, reset, brk
+}
+
+.alloc at 0x07FFFF size 0x01 {
+    .db 0  ; pad ROM to 256KB
+}
+```
+
+Pinned allocs share the overlap auditor with the rest of the
+placement system — two pinned regions whose byte ranges intersect
+raise a hard error naming both source locations.
+
+Legacy `*= ADDR` directives still work and have the same effect;
+the fluff rule `UP001` plus `a816 fix --select UP001 --unsafe-fixes`
+rewraps them mechanically when you're ready to migrate.
+
 ### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
 
 ```ca65

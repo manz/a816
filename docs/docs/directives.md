@@ -38,12 +38,11 @@ ram_routine:
 When two `*=` regions (or one `*=` block plus a `.alloc` placement,
 etc.) produce byte spans that share addresses, the assembler emits a
 diagnostic so a routine that silently grew past its expected end is
-caught early. The default mode is `warn` (logged, assembly continues);
-set it to `error` to abort on the first overlap or `off` to silence
-the check entirely.
-
-The mode lives on `Program.resolver.context.overlap_mode` and is
-intended to be wired through `a816.toml` / a CLI flag in a follow-up.
+caught early. **Default mode is `error`**: the build fails on the
+first overlap, naming both source locations. Override with
+`--overlap-mode warn` (logged, build continues) or
+`--overlap-mode off` (silent) on the CLI, or via
+`Program(overlap_mode=...)` from the Python API.
 
 ```
 WARNING write at $008004..$00800b overlaps previous write at
@@ -343,6 +342,35 @@ fill byte, and allocation strategy (`pack` | `order`).
 
 Reserves space for `body` in the named pool; the allocator picks the
 address and binds `NAME` there.
+
+### `.alloc [NAME] at ADDR [size N] { body }`
+
+Pinned placement: `body` lands at the literal `ADDR`. `NAME` is
+optional (3-byte hijacks shouldn't tax with names); the assembler
+auto-generates a stable identifier for anonymous allocs.
+
+`size N` upper-bounds the body. Overflow past `ADDR + N - 1` is a
+hard error pointing at the byte that no longer fits. Omit `size`
+for an unbounded body (stops at the bank boundary, matching the
+legacy `*=` shape).
+
+```ca65
+.alloc vector_table at 0x00FFE0 size 0x20 {
+    .dw 0, 0
+    .dw brk_handler, brk_handler, brk_handler, nmi_handler
+    .dw 0, brk_handler
+    .dw 0, 0
+    .dw brk_handler, 0, brk_handler, 0
+    .dw reset, brk_handler
+}
+
+.alloc at 0x07FFFF size 0x01 {
+    .db 0  ; pad ROM to 256KB
+}
+```
+
+Overlap with any other pinned region (legacy `*=` included) trips
+the overlap auditor with both locations named.
 
 ### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
 

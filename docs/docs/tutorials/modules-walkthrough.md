@@ -87,25 +87,33 @@ If you want to inspect the intermediates:
 
 ```
 $ a816 build --compile-only src/modules/vwf.s
-$ xobj --regions --symbols src/modules/vwf.o
+$ xobj --sections --symbols src/modules/vwf.o
 ```
 
-## Cross-module references with `.extern`
+## Cross-module references
 
-When module A defines a symbol module B needs, declare it on the
-caller side. Sub-symbols (`name.sub`) need their own declaration:
+When module A `.import`s module B, every runtime symbol B exports
+(GLOBAL labels, alloc names, `.incbin` auto-symbols) is automatically
+available as an extern in A. No explicit `.extern` needed — the
+per-node import classifier emits the extern stubs from B's `.o` and
+inlines B's compile-time content (structs, macros, typed binds,
+pool decls) for codegen.
 
 ```ca65
-.extern vwf.init
-.extern vwf.init.commands_list   ; nested name needs its own .extern
+.import "vwf"
 
 main:
-    jsr.w vwf.init
+    jsr.w vwf.init   ; resolves through the auto-extern
     rts
 ```
 
-The linker verifies every `.extern` resolves to a definition and
-fails the build (with a useful message) if any are missing.
+`.extern name` is still useful for symbols you don't want to import
+the owning module for — build-script-injected constants, third-party
+`.o` drops, or sub-symbols of a `.label`-declared name that the
+auto-classifier doesn't reach.
+
+The linker verifies every extern resolves to a definition and fails
+the build (with a useful message) if any are missing.
 
 ## Constants over externs
 

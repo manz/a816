@@ -1,8 +1,8 @@
-# Fluff — lint and format
+# Fluff — lint, format, fix
 
-`a816 check` and `a816 format` are the lint and format passes over
-`.s` / `.i` sources. Both share the parser the assembler uses, so the
-rules see real AST, not regex hits.
+`a816 check`, `a816 format`, and `a816 fix` are the lint, format, and
+autofix passes over `.s` / `.i` sources. All three share the parser
+the assembler uses, so the rules see real AST, not regex hits.
 
 ## Format
 
@@ -52,6 +52,54 @@ placement, `E***` for physical layout, `N***` for naming.
 | `S001` | `(expr as T).field` / `p := (expr as T)` references a struct type that isn't declared in the current translation unit. |
 | `S003` | Redundant cast: `(p as T).field` when `p` is already typed-bound to `T`. |
 | `S004` | The same `(expr as T)` cast appears more than once in the file — promote it to a `:=` typed bind. |
+| `UP001` | Legacy `*= ADDR` placement should be `.alloc at ADDR { ... }`. |
+
+Rules marked fixable in `a816 check` output carry `[*]` (safe) or
+`[!]` (unsafe). Today: `S003`, `DOC003`, `DOC004`, `DOC006`, `DOC007`
+ship a safe fix; `DOC005` and `UP001` ship an unsafe fix.
+
+## Autofix — `a816 fix`
+
+```
+$ a816 fix src/                       # apply safe fixes in place
+$ a816 fix --diff src/                # preview as unified diff
+$ a816 fix --check src/               # exit non-zero if any file would change
+$ a816 fix --select DOC003,DOC004 src/  # only those rules
+$ a816 fix --unsafe-fixes src/        # also apply UNSAFE fixes
+```
+
+Safe fixes are guaranteed behaviour-preserving — they don't change
+emitted bytes, drop comments, or restructure semantics. Unsafe fixes
+might change runtime behaviour, repackage author whitespace, or
+surface latent bugs as new build errors. `--unsafe-fixes` opts in;
+without it, unsafe hits stay flagged but untouched.
+
+Edits inside one file apply in reverse-offset order so an earlier
+edit's replacement length can't invalidate a later edit's offsets.
+Overlapping edits are dropped silently — re-run `a816 fix` and the
+next pass produces non-overlapping edits.
+
+### Migration recipe — `*=` → `.alloc at`
+
+```
+$ a816 fix --select UP001 --unsafe-fixes src/
+$ a816 format src/
+```
+
+UP001 wraps each `*= ADDR` and the following body run (up to the next
+placement directive) in `.alloc at ADDR { ... }`. The bank-edge
+semantic shift is real: where legacy `*=` silently let body bytes
+cross a bank boundary, the new form raises with the offending byte
+named. Surfaces real bugs; you may want to walk through the build
+errors after the fix.
+
+### Editor integration — code actions
+
+`a816-lsp-server` exposes every fluff fix as a `textDocument/codeAction`
+quickfix. The editor's lightbulb (Ctrl-., Code Action menu) lists
+each applicable fix; safe ones are marked `isPreferred=true` so most
+editors default to them, unsafe ones carry an `(unsafe)` suffix in
+the title.
 
 Names with a single leading underscore (`_loop`, `_private_macro`) are
 treated as private and skipped by `DOC002` / `DOC003` / naming rules.

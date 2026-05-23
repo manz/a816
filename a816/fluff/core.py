@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import ClassVar
 
@@ -22,6 +23,50 @@ from a816.parse.ast.nodes import (
     ScopeAstNode,
 )
 
+
+class Applicability(Enum):
+    """How safe a fix is.
+
+    SAFE — guaranteed behaviour-preserving. Applied unconditionally by
+    `a816 fix`.
+
+    UNSAFE — might change runtime semantics, drop comments / whitespace,
+    or surface latent bugs as new errors. Requires `--unsafe-fixes` to
+    apply. Reported as fixable in the listing either way.
+
+    Ruff uses the same split; mirroring keeps the mental model aligned
+    for anyone who already lints Python with ruff.
+    """
+
+    SAFE = "safe"
+    UNSAFE = "unsafe"
+
+
+@dataclass(frozen=True)
+class TextEdit:
+    """One contiguous text replacement, expressed in byte offsets so the
+    driver can apply edits in reverse order without needing to maintain
+    a running line/column shift."""
+
+    start: int  # inclusive byte offset into source text
+    end: int  # exclusive byte offset
+    replacement: str
+
+
+@dataclass(frozen=True)
+class Fix:
+    """One or more text edits that resolve a diagnostic.
+
+    Edits target the source `text` the diagnostic was produced against;
+    applying multiple fixes to the same file requires the driver to sort
+    by descending offset so earlier edits don't invalidate later ones.
+    """
+
+    edits: tuple[TextEdit, ...]
+    applicability: Applicability
+    description: str
+
+
 MAX_LINE_LENGTH = 120
 
 _SNAKE_CASE_RE = re.compile(r"^_?[a-z][a-z0-9_]*$")
@@ -33,16 +78,24 @@ _NOQA_RE = re.compile(r";[ \t]*noqa\b(.*)$", re.IGNORECASE)
 
 @dataclass(frozen=True)
 class Diagnostic:
-    """One lint hit. `path:line:col code message`, ruff-style."""
+    """One lint hit. `path:line:col code message`, ruff-style.
+
+    `fix` is the optional autofix. `None` means the rule has no
+    mechanical resolution; the user has to edit the source themselves.
+    """
 
     path: Path
     line: int  # 1-based for human output
     column: int  # 1-based
     code: str
     message: str
+    fix: Fix | None = None
 
     def format(self) -> str:
-        return f"{self.path}:{self.line}:{self.column} {self.code} {self.message}"
+        marker = ""
+        if self.fix is not None:
+            marker = " [*]" if self.fix.applicability is Applicability.SAFE else " [!]"
+        return f"{self.path}:{self.line}:{self.column} {self.code}{marker} {self.message}"
 
 
 @dataclass
@@ -137,6 +190,29 @@ def node_position(node: AstNode) -> tuple[int, int]:
     if pos is None:
         return 1, 1
     return pos.line + 1, pos.column + 1
+
+
+def line_col_to_offset(text: str, line_1based: int, column_1based: int) -> int:
+    """Convert a 1-based (line, column) pair into a 0-based byte offset
+    into `text`. Used by fix builders that need a TextEdit range from
+    a Token's position.
+
+    Columns past the end of the line clamp to the line's length —
+    diagnostics that point one past the visible content (typical
+    end-of-token marker) still produce a valid offset."""
+    line_idx = max(line_1based - 1, 0)
+    col_idx = max(column_1based - 1, 0)
+    cursor = 0
+    current_line = 0
+    while current_line < line_idx:
+        nl = text.find("\n", cursor)
+        if nl == -1:
+            return len(text)
+        cursor = nl + 1
+        current_line += 1
+    next_nl = text.find("\n", cursor)
+    line_end = len(text) if next_nl == -1 else next_nl
+    return min(cursor + col_idx, line_end)
 
 
 def kind_label(node: AstNode) -> str:
@@ -285,12 +361,166 @@ class Rule:
         """Per-node rules override this when `accepts` is non-empty."""
         return iter(())
 
-    def diagnose(self, ctx: LintContext, node: AstNode, message: str) -> Diagnostic:
+    def diagnose(self, ctx: LintContext, node: AstNode, message: str, fix: Fix | None = None) -> Diagnostic:
         line, col = node_position(node)
-        return Diagnostic(path=ctx.path, line=line, column=col, code=self.code, message=message)
+        return Diagnostic(path=ctx.path, line=line, column=col, code=self.code, message=message, fix=fix)
 
 
 _DOC004_MSG = "orphan docstring; convert to a `;` comment or attach to a target"
+
+
+def _comment_block_span(text: str, comments: list[CommentAstNode]) -> tuple[int, int] | None:
+    """Source byte span covering a run of leading comments + their
+    terminating newline. Anchors at column 0 so leading indentation
+    travels with the block; swallows the final newline so the file
+    doesn't keep a blank line where the block used to sit.
+
+    Returns None for an empty list (caller calls with non-empty in
+    practice; cheap guard). Tokens emitted by the scanner always
+    carry a position, so we don't defend against `position is None`
+    inside the body — an upstream regression that produced a
+    position-less token belongs as a parser bug, not a silent fix
+    skip."""
+    if not comments:
+        return None
+    first_token = comments[0].file_info
+    last_token = comments[-1].file_info
+    first_pos = first_token.position
+    last_end = last_token.end_position
+    assert first_pos is not None and last_end is not None
+    start = line_col_to_offset(text, first_pos.line + 1, 1)
+    end = line_col_to_offset(text, last_end.line + 1, last_end.column + 1)
+    if end < len(text) and text[end] == "\n":
+        end += 1
+    return (start, end) if start < end else None
+
+
+def _block_brace_offset(text: str, node: MacroAstNode | ScopeAstNode) -> int:
+    """Byte offset just past the `{` that opens `node`'s body. The
+    block's `file_info` always points at `{` (parser-enforced), so
+    this is total — no None return path."""
+    block = node.block if isinstance(node, MacroAstNode) else node.body
+    pos = block.file_info.position
+    assert pos is not None
+    open_offset = line_col_to_offset(text, pos.line + 1, pos.column + 1)
+    brace_idx = text.find("{", open_offset)
+    assert brace_idx != -1
+    return brace_idx + 1
+
+
+def _detect_body_indent(text: str, after_brace: int, fallback_column: int) -> str:
+    """Leading whitespace of the first non-blank line after the `{`.
+    Falls back to `fallback_column + 4` spaces when the body is empty
+    or has only blank lines (matches the typical 4-space body indent)."""
+    cursor = after_brace
+    while cursor < len(text):
+        nl = text.find("\n", cursor)
+        if nl == -1:
+            break
+        line = text[cursor:nl]
+        stripped = line.lstrip(" \t")
+        if stripped:
+            return line[: len(line) - len(stripped)]
+        cursor = nl + 1
+    return " " * (fallback_column + 4)
+
+
+def _build_comment_to_docstring_fix(
+    text: str,
+    comments: list[CommentAstNode],
+    target: MacroAstNode | ScopeAstNode,
+) -> Fix | None:
+    """DOC005: drop the leading comment block and insert an equivalent
+    docstring as the first statement inside the target's body.
+
+    Unsafe: the `;` prefix is stripped and the content gets repackaged
+    as `\"\"\"...\"\"\"`. Whitespace inside each comment is preserved
+    verbatim (the leading `; ` prefix is what gets dropped); reviewers
+    who rely on the literal `;` shape will see real visual change.
+    """
+    span = _comment_block_span(text, comments)
+    if span is None:
+        return None
+    block_pos = (target.block if isinstance(target, MacroAstNode) else target.body).file_info.position
+    assert block_pos is not None
+    after_brace = _block_brace_offset(text, target)
+    indent = _detect_body_indent(text, after_brace, fallback_column=block_pos.column)
+    body_lines = [_strip_comment_prefix(c.comment or "") for c in comments]
+    doc_lines = [f"{indent}{line}".rstrip() for line in body_lines]
+    insertion = f'\n{indent}"""\n' + "\n".join(doc_lines) + f'\n{indent}"""'
+    start, end = span
+    return Fix(
+        edits=(
+            TextEdit(start=start, end=end, replacement=""),
+            TextEdit(start=after_brace, end=after_brace, replacement=insertion),
+        ),
+        applicability=Applicability.UNSAFE,
+        description="rewrap leading `;` block as a docstring inside the body",
+    )
+
+
+def _strip_comment_prefix(comment_text: str) -> str:
+    """Remove the leading `;` + at most one space so the comment's
+    content can land cleanly inside a docstring. Block comments
+    (`/* ... */`) get their delimiters stripped too."""
+    text = comment_text
+    if text.startswith("/*"):
+        text = text[2:]
+        if text.endswith("*/"):
+            text = text[:-2]
+        return text.strip("\n")
+    if text.startswith(";"):
+        text = text[1:]
+        if text.startswith(" "):
+            text = text[1:]
+    return text
+
+
+def _build_drop_comment_block_fix(text: str, comments: list[CommentAstNode]) -> Fix | None:
+    """DOC006: drop a leading comment block whose content is already
+    duplicated by the target's inside-body docstring. Safe: removing
+    the comment doesn't change emitted bytes; the docstring keeps the
+    description."""
+    span = _comment_block_span(text, comments)
+    if span is None:
+        return None
+    start, end = span
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=""),),
+        applicability=Applicability.SAFE,
+        description="drop leading comment block (duplicated by inside-body docstring)",
+    )
+
+
+def _build_orphan_docstring_fix(text: str, doc: DocstringAstNode) -> Fix | None:
+    """Rewrite an orphan `\"\"\"...\"\"\"` block as one or more `;` comment
+    lines. The replacement preserves the indentation of the opening
+    `\"\"\"` so the comment lines sit at the same column as their
+    surroundings.
+
+    Span comes from the docstring token: `position` anchors the
+    opening `\"\"\"`, `end_position` (derived from `len(token.value)`)
+    sits one past the closing `\"\"\"`. Safe: docstring-as-comment is
+    syntactic noise, the textual content is preserved verbatim
+    inside the `;` lines, and the surrounding semantics don't depend
+    on the docstring at all (that's the whole reason it's an orphan).
+    """
+    token = doc.file_info
+    pos = token.position
+    end_pos = token.end_position
+    assert pos is not None and end_pos is not None
+    start = line_col_to_offset(text, pos.line + 1, pos.column + 1)
+    end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
+    if start >= end:
+        return None
+    indent = " " * pos.column
+    lines = doc.text.splitlines() or [""]
+    replacement = "\n".join(f"{indent}; {line}".rstrip() for line in lines)
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=replacement),),
+        applicability=Applicability.SAFE,
+        description="convert orphan docstring to `;` comment(s)",
+    )
 
 
 @dataclass
@@ -313,6 +543,7 @@ class _PlacementWalker:
 
     def __init__(self, ctx: LintContext) -> None:
         self._path = ctx.path
+        self._text = ctx.text
         self._nodes = ctx.nodes or []
         self.out: dict[str, list[Diagnostic]] = {"DOC004": [], "DOC005": [], "DOC006": []}
 
@@ -320,13 +551,18 @@ class _PlacementWalker:
         self._walk(self._nodes, inside_body=False)
         return self.out
 
-    def _emit(self, code: str, node: AstNode, message: str) -> None:
+    def _emit(self, code: str, node: AstNode, message: str, fix: Fix | None = None) -> None:
         line, col = node_position(node)
-        self.out[code].append(Diagnostic(path=self._path, line=line, column=col, code=code, message=message))
+        self.out[code].append(Diagnostic(path=self._path, line=line, column=col, code=code, message=message, fix=fix))
 
     def _flush_orphan(self, state: _PlacementState) -> None:
         if state.pending_doc is not None:
-            self._emit("DOC004", state.pending_doc, _DOC004_MSG)
+            self._emit(
+                "DOC004",
+                state.pending_doc,
+                _DOC004_MSG,
+                fix=_build_orphan_docstring_fix(self._text, state.pending_doc),
+            )
             state.pending_doc = None
 
     def _on_docstring(self, state: _PlacementState, node: DocstringAstNode, inside_body: bool) -> None:
@@ -358,12 +594,14 @@ class _PlacementWalker:
                 "DOC006",
                 node,
                 f"{kind_label(node)} '{target_name_str}' has both a leading comment block and a docstring; pick one",
+                fix=_build_drop_comment_block_fix(self._text, state.comment_run),
             )
         elif not inside_doc and not has_above_doc and comment_block:
             self._emit(
                 "DOC005",
                 state.comment_run[0],
                 f"comment block above {kind_label(node)} '{target_name_str}' should be a docstring (move inside the body)",
+                fix=_build_comment_to_docstring_fix(self._text, state.comment_run, node),
             )
         state.pending_doc = None
         state.comment_run = []

@@ -20,3 +20,4 @@ at runtime via `set_palette_color` (see `ppu_tools.s`).
     .text "Gyshal Whistle"
     .db 0
 }
+

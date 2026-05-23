@@ -6,11 +6,17 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from a816.fluff.core import (
+    Applicability,
     Diagnostic,
+    Fix,
     LintContext,
     Rule,
+    TextEdit,
+    _block_brace_offset,
+    _detect_body_indent,
     kind_label,
     label_has_below_docstring,
+    line_col_to_offset,
     public_target_name,
     target_name,
 )
@@ -151,6 +157,7 @@ class MisplacedDocstring(Rule):
                 doc,
                 f"docstring above {kind_label(target)} '{name}' should "
                 "be moved inside the body (first statement after `{`)",
+                fix=_build_move_docstring_into_body_fix(ctx.text, doc, target),
             )
         if isinstance(target, LabelAstNode):
             return self.diagnose(
@@ -159,6 +166,113 @@ class MisplacedDocstring(Rule):
                 f"docstring above label '{name}' should sit below it (first statement after the colon)",
             )
         return None
+
+
+def _build_docstring_alignment_fix(
+    text: str,
+    doc: DocstringAstNode,
+    open_col: int,
+    current_indent: int,
+) -> Fix | None:
+    """DOC007: shift every non-blank body line of `doc` so its
+    leading whitespace lands at `open_col`. Preserves relative
+    indentation between lines (a deeper line stays deeper than its
+    siblings) and leaves blank lines untouched.
+
+    Safe: only whitespace inside the docstring's content lines
+    changes; the prose and the surrounding code are byte-identical.
+    """
+    token = doc.file_info
+    pos = token.position
+    end_pos = token.end_position
+    assert pos is not None and end_pos is not None
+    start = line_col_to_offset(text, pos.line + 1, pos.column + 1)
+    end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
+    snippet = text[start:end]
+    delta = open_col - current_indent
+    new_snippet = _reindent_docstring_body(snippet, delta)
+    if new_snippet == snippet:
+        return None
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=new_snippet),),
+        applicability=Applicability.SAFE,
+        description=f"align docstring body to column {open_col + 1}",
+    )
+
+
+def _reindent_docstring_body(snippet: str, delta: int) -> str:
+    """Adjust every non-blank line (except the first, which sits next
+    to the opening `\"\"\"`) by `delta` spaces. Negative `delta`
+    dedents; positive indents. Lines whose existing indent is less
+    than `abs(delta)` when dedenting clamp to column 0."""
+    if delta == 0:
+        return snippet
+    lines = snippet.split("\n")
+    if len(lines) <= 1:
+        return snippet
+    rewritten = [lines[0]]
+    for line in lines[1:]:
+        if not line.strip():
+            rewritten.append(line)
+            continue
+        stripped = line.lstrip(" ")
+        existing = len(line) - len(stripped)
+        new_indent = max(existing + delta, 0)
+        rewritten.append(" " * new_indent + stripped)
+    return "\n".join(rewritten)
+
+
+def _docstring_span(text: str, doc: DocstringAstNode) -> tuple[int, int] | None:
+    """Byte range covering a docstring's `\"\"\"...\"\"\"` token plus
+    the trailing newline so removing it doesn't leave a blank line.
+    Returns None only when the resulting span would be empty."""
+    token = doc.file_info
+    pos = token.position
+    end_pos = token.end_position
+    assert pos is not None and end_pos is not None
+    start = line_col_to_offset(text, pos.line + 1, 1)
+    end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
+    if end < len(text) and text[end] == "\n":
+        end += 1
+    return (start, end) if start < end else None
+
+
+def _build_move_docstring_into_body_fix(
+    text: str,
+    doc: DocstringAstNode,
+    target: MacroAstNode | ScopeAstNode,
+) -> Fix | None:
+    """DOC003: move a docstring that sits above `target` into the
+    first statement of `target`'s body.
+
+    Safe: the docstring's textual content is preserved exactly; only
+    its position shifts. Tooling that walks the body for documentation
+    (LSP hover, doc generators) now finds it where it expects.
+    """
+    span = _docstring_span(text, doc)
+    if span is None:
+        return None
+    block = target.block if isinstance(target, MacroAstNode) else target.body
+    block_pos = block.file_info.position
+    assert block_pos is not None
+    after_brace = _block_brace_offset(text, target)
+    indent = _detect_body_indent(text, after_brace, fallback_column=block_pos.column)
+    lines = doc.text.splitlines() or [""]
+    if len(lines) == 1:
+        moved = f'{indent}"""{lines[0]}"""'
+    else:
+        body_lines = "\n".join(f"{indent}{line}".rstrip() for line in lines)
+        moved = f'{indent}"""\n{body_lines}\n{indent}"""'
+    insertion = f"\n{moved}"
+    start, end = span
+    return Fix(
+        edits=(
+            TextEdit(start=start, end=end, replacement=""),
+            TextEdit(start=after_brace, end=after_brace, replacement=insertion),
+        ),
+        applicability=Applicability.SAFE,
+        description=f"move docstring inside {kind_label(target)} body",
+    )
 
 
 class OrphanDocstring(Rule):
@@ -250,6 +364,7 @@ class DocstringAlignment(Rule):
             ctx,
             node,
             f'docstring {direction}: content starts at column {smallest + 1}, opening `"""` at column {open_col + 1}',
+            fix=_build_docstring_alignment_fix(ctx.text, node, open_col, smallest),
         )
 
     @staticmethod
@@ -258,11 +373,10 @@ class DocstringAlignment(Rule):
 
         Returns None defensively when the position can't be located.
         """
-        pos = getattr(node.file_info, "position", None)
-        if pos is None:
-            return None
+        pos = node.file_info.position
+        assert pos is not None
         source_lines = text.split("\n")
-        if pos.line < 0 or pos.line >= len(source_lines):
+        if not 0 <= pos.line < len(source_lines):
             return None
         idx = source_lines[pos.line].find('"""')
         return idx if idx >= 0 else None

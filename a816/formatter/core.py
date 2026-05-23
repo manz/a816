@@ -336,7 +336,12 @@ class A816Formatter:
 
     def _format_alloc(self, ast: AllocAstNode) -> list[str]:
         """Format `.alloc [NAME] at ADDR [size N] { body }` (PINNED)
-        or `.alloc NAME in POOL { body }` (POOLED)."""
+        or `.alloc NAME in POOL { body }` (POOLED).
+
+        Allocs synthesized by the `*=` desugar (`origin == "star_eq"`)
+        round-trip back to `*= ADDR` followed by the body un-wrapped,
+        so source files using legacy `*=` syntax keep that shape
+        across `a816 format` runs."""
         name_part = f" {ast.name}" if ast.name else ""
         if ast.is_pinned:
             addr = ast.at_address.to_canonical() if ast.at_address else "?"

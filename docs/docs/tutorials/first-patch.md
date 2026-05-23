@@ -54,6 +54,23 @@ The `"""docstring"""` at the top satisfies the [DOC001](../fluff.md)
 lint rule and gives the LSP something to surface in module-level
 hover.
 
+The legacy `*= ADDR` shape is shown here for continuity with older
+patches in the wild. The equivalent modern form is:
+
+```ca65
+"""Tutorial patch — overwrite a single instruction."""
+
+.alloc at 0x008000 {
+    lda.b #0x00
+    rts
+}
+```
+
+`.alloc at` makes the placement explicit and surfaces bank-edge
+overflow as a hard error instead of silently wrapping. Both shapes
+build into the same patch; `a816 fix --select UP001 --unsafe-fixes`
+converts one to the other.
+
 ## Build
 
 ```

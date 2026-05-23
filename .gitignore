@@ -32,3 +32,4 @@ a.out.adbg
 tests/integration/**/test.sfc
 tests/integration/**/build/
 tests/integration/**/*.o
+CLAUDE.md

@@ -188,7 +188,9 @@ class LinkedModuleNode(NodeProtocol):
         return bytes(code_array)
 
     def _reloc_context(self, offset: int, section: Section) -> str:
-        return f"module '{self.module_name}' section@0x{section.placed_base:x} offset 0x{offset:x}/0x{len(section.code):x}"
+        return (
+            f"module '{self.module_name}' section@0x{section.placed_base:x} offset 0x{offset:x}/0x{len(section.code):x}"
+        )
 
     def _write_reloc(
         self, code_array: bytearray, offset: int, value: int, size: int, expr: str, section: Section

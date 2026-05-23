@@ -209,7 +209,7 @@ def _run_link(args: argparse.Namespace) -> int:
     sys.exit(-1)
 
 
-_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "format", "explain")
+_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain")
 
 
 def _dispatch_subcommand(argv: list[str]) -> int | None:
@@ -225,7 +225,7 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
     if cmd == "build":
         args = _build_arg_parser().parse_args(rest)
         return _run_assemble(args)
-    if cmd in {"check", "format", "explain"}:
+    if cmd in {"check", "fix", "format", "explain"}:
         from a816.fluff import fluff_main
 
         return fluff_main([cmd, *rest])

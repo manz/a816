@@ -12,6 +12,9 @@ except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
 from lsprotocol.types import (
+    CodeAction,
+    CodeActionKind,
+    CodeActionParams,
     CompletionList,
     CompletionParams,
     Diagnostic,
@@ -164,6 +167,15 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         )
         async def semantic_tokens_full(ls: LanguageServer, params: SemanticTokensParams) -> SemanticTokens | None:
             return self._handle_semantic_tokens_full(params)
+
+        from lsprotocol.types import CodeActionOptions
+
+        @self.server.feature(
+            "textDocument/codeAction",
+            CodeActionOptions(code_action_kinds=[CodeActionKind.QuickFix, CodeActionKind.SourceFixAll]),
+        )
+        async def code_action(ls: LanguageServer, params: CodeActionParams) -> list[CodeAction] | None:
+            return self._handle_code_action(params)
 
         @self.server.feature("textDocument/formatting")
         async def format_document(ls: LanguageServer, params: DocumentFormattingParams) -> list[TextEdit] | None:
@@ -615,6 +627,51 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         )
         return SignatureHelp(signatures=[signature_info], active_signature=0, active_parameter=0)
 
+    def _handle_code_action(self, params: CodeActionParams) -> list[CodeAction] | None:
+        """Surface fluff autofixes as quickfix code actions.
+
+        Editors call `textDocument/codeAction` for the selection range
+        (lightbulb on a single line, or a multi-line selection). We
+        return one `CodeAction` per cached fluff hit whose range
+        intersects the request, with the `Fix`'s text edits packed
+        into a `WorkspaceEdit`. Unsafe fixes are still surfaced but
+        carry the `source.fixAll` kind so the editor can hide them
+        behind a deliberate user choice.
+        """
+        from a816.fluff.core import Applicability
+        from a816.fluff.core import Diagnostic as FluffDiagnostic
+
+        doc = self.documents.get(params.text_document.uri)
+        if doc is None:
+            return None
+        actions: list[CodeAction] = []
+        for lsp_diag, hit in doc.fluff_hits:
+            if not isinstance(hit, FluffDiagnostic) or hit.fix is None:
+                continue
+            if not _range_intersects(lsp_diag.range, params.range):
+                continue
+            kind = CodeActionKind.QuickFix
+            title = f"{hit.code}: {hit.fix.description}"
+            if hit.fix.applicability is Applicability.UNSAFE:
+                title = f"{title} (unsafe)"
+            edits = [
+                TextEdit(
+                    range=_lsp_range_for_edit(doc.content, edit.start, edit.end),
+                    new_text=edit.replacement,
+                )
+                for edit in hit.fix.edits
+            ]
+            actions.append(
+                CodeAction(
+                    title=title,
+                    kind=kind,
+                    diagnostics=[lsp_diag],
+                    edit=WorkspaceEdit(changes={doc.uri: edits}),
+                    is_preferred=hit.fix.applicability is Applicability.SAFE,
+                )
+            )
+        return actions or None
+
     def _handle_format_document(self, params: DocumentFormattingParams) -> list[TextEdit] | None:
         doc = self.documents.get(params.text_document.uri)
         if not doc:
@@ -848,6 +905,33 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         """Start the LSP server"""
         logger.info("Starting a816 LSP server...")
         self.server.start_io()
+
+
+def _range_intersects(a: Range, b: Range) -> bool:
+    """Line-level overlap test for two LSP `Range`s.
+
+    Editors send a wide variety of code-action request ranges: the
+    visual caret line, a multi-line selection, sometimes just the
+    diagnostic span itself. Comparing on line numbers catches every
+    case while sidestepping column off-by-ones that bite when a
+    fluff hit is on a different column than the editor caret."""
+    return not (a.end.line < b.start.line or b.end.line < a.start.line)
+
+
+def _lsp_range_for_edit(text: str, start: int, end: int) -> Range:
+    """Translate fluff's byte offsets into an LSP `Range`. Walks the
+    source once for each endpoint, counting newlines, so the line +
+    character pair matches what the editor renders."""
+    return Range(start=_offset_to_position(text, start), end=_offset_to_position(text, end))
+
+
+def _offset_to_position(text: str, offset: int) -> Position:
+    offset = max(0, min(offset, len(text)))
+    prefix = text[:offset]
+    line = prefix.count("\n")
+    last_nl = prefix.rfind("\n")
+    character = offset - (last_nl + 1) if last_nl >= 0 else offset
+    return Position(line=line, character=character)
 
 
 def lsp_main() -> None:

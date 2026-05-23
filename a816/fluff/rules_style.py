@@ -7,10 +7,14 @@ from pathlib import Path
 
 from a816.fluff.core import (
     MAX_LINE_LENGTH,
+    Applicability,
     Diagnostic,
+    Fix,
     LintContext,
     Rule,
+    TextEdit,
     flatten_nodes,
+    line_col_to_offset,
 )
 from a816.module_loader import resolve_module
 from a816.parse.ast.nodes import (
@@ -236,11 +240,47 @@ class RedundantTypedCast(Rule):
             if name is None:
                 continue
             if instances.get(name) == cast.type_name:
+                fix = _build_redundant_cast_fix(ctx, cast, name)
                 yield self.diagnose(
                     ctx,
                     parent,
                     f"redundant cast: '{name}' is already bound as '{cast.type_name}'",
+                    fix=fix,
                 )
+
+
+def _build_redundant_cast_fix(
+    ctx: LintContext,
+    cast: CastAccessExprNode | CastValueExprNode,
+    name: str,
+) -> Fix | None:
+    """Replace `(name as Type)` with just `name`.
+
+    Span comes from `cast.token` (the opening `(`) and
+    `cast.close_token` (the matching `)`); both are recorded by
+    the expression parser. Falls back to None when either anchor
+    is missing (e.g. paren-less `name := expr as T` syntactic
+    sugar where there's no `)` to point at).
+
+    Safe: cast is provably a no-op (typed binding already in scope);
+    inner identifier preserved verbatim; edit is a pure shrink.
+    """
+    open_pos = cast.token.position
+    close_token = cast.close_token
+    if open_pos is None or close_token is None:
+        # `name := expr as T` (no parens, no `)` to anchor) falls here.
+        return None
+    close_end = close_token.end_position
+    assert close_end is not None
+    start = line_col_to_offset(ctx.text, open_pos.line + 1, open_pos.column + 1)
+    end = line_col_to_offset(ctx.text, close_end.line + 1, close_end.column + 1)
+    if start >= end or start >= len(ctx.text) or ctx.text[start] != "(":
+        return None
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=name),),
+        applicability=Applicability.SAFE,
+        description=f"replace `(... as {cast.type_name})` with `{name}`",
+    )
 
 
 class RepeatedInlineCast(Rule):
