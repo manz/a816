@@ -93,6 +93,11 @@ class A816Document:
         self.module_docstring: str | None = None
         self.imports: list[str] = []  # module names from .import directives
         self.diagnostics: list[Diagnostic] = []
+        # LSP-shaped diagnostic → originating fluff hit (carries the fix).
+        # CodeAction handler reads this to translate a hit inside a request
+        # range into a `WorkspaceEdit`. Only populated for fluff hits; parse
+        # errors and pool diagnostics stay outside (no fixes today).
+        self.fluff_hits: list[tuple[Diagnostic, object]] = []
         self.ast_nodes: list[AstNode] = []
         self.parse_error: ParseError | None = None
         self.parse_errors: list[ParseError] = []
@@ -118,6 +123,7 @@ class A816Document:
         self.module_docstring = None
         self.imports.clear()
         self.diagnostics.clear()
+        self.fluff_hits.clear()
         self.ast_nodes.clear()
         self.parse_error = None
         self.analyze()
@@ -552,18 +558,18 @@ class A816Document:
             column = max(0, hit.column - 1)
             line_length = len(self.lines[line]) if 0 <= line < len(self.lines) else column + 1
             end_col = max(column + 1, line_length)
-            self.diagnostics.append(
-                Diagnostic(
-                    range=Range(
-                        start=Position(line=line, character=column),
-                        end=Position(line=line, character=end_col),
-                    ),
-                    message=hit.message,
-                    severity=DiagnosticSeverity.Warning,
-                    source="a816 fluff",
-                    code=hit.code,
-                )
+            diagnostic = Diagnostic(
+                range=Range(
+                    start=Position(line=line, character=column),
+                    end=Position(line=line, character=end_col),
+                ),
+                message=hit.message,
+                severity=DiagnosticSeverity.Warning,
+                source="a816 fluff",
+                code=hit.code,
             )
+            self.diagnostics.append(diagnostic)
+            self.fluff_hits.append((diagnostic, hit))
 
     def _clamp_error_span(self, line: int, col: int, length: int) -> tuple[int, int, int]:
         """Clamp a (line, col, length) tuple inside the current document."""
