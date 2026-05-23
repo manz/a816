@@ -213,6 +213,39 @@ Lint hooks:
 - `S003` — `(p as T).field` when `p` is already bound as `T`.
 - `S004` — same `(expr as T)` repeated more than once; promote to `:=`.
 
+### `.a8` / `.a16` / `.i8` / `.i16` — register width
+
+Tell the assembler whether the accumulator (`A`) and index (`X`/`Y`)
+registers are currently 8-bit or 16-bit. Width drives immediate-mode
+opcode sizing: under `.a16`, `lda #0x42` emits `A9 42 00` (3 bytes);
+under `.a8`, the same line emits `A9 42` (2 bytes).
+
+```ca65
+.a16
+.i16
+lda #0x1234       ; A9 34 12
+ldx #0x5678       ; A2 78 56
+```
+
+#### Inference from `rep` / `sep`
+
+`rep #N` and `sep #N` mutate the CPU's `M` / `X` flags at runtime;
+the assembler mirrors that at assembly time so source doesn't have
+to repeat itself:
+
+```ca65
+rep #0x30         ; clears M+X -> A and X are 16-bit
+lda #0x42         ; A9 42 00  (widened because M=16, not because of value)
+sep #0x20         ; sets M    -> A back to 8-bit
+lda #0x42         ; A9 42
+```
+
+Bit `0x20` controls `A`, bit `0x10` controls `X`/`Y`. `rep` clears
+(16-bit), `sep` sets (8-bit). The inference only fires for constant
+immediate operands; symbolic constants resolved at assembly time
+count, but forward references and non-immediate forms are left
+alone (and explicit `.a*` / `.i*` always wins).
+
 ## Code
 
 ### `.scope name { ... }` and `{ ... }`
