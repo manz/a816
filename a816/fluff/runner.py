@@ -30,6 +30,7 @@ from a816.fluff.rules_style import (
     RepeatedInlineCast,
     UnknownStructTypeCast,
 )
+from a816.fluff.rules_upgrade import StarEqualToAllocAt
 from a816.parse.mzparser import A816Parser
 
 RULES: list[Rule] = [
@@ -46,6 +47,7 @@ RULES: list[Rule] = [
     UnknownStructTypeCast(),
     RedundantTypedCast(),
     RepeatedInlineCast(),
+    StarEqualToAllocAt(),
 ]
 Rule.registry = {rule.code: rule for rule in RULES}
 
@@ -141,9 +143,7 @@ def _candidate_passes_filters(diag: Diagnostic, *, allow_unsafe: bool, select: s
     return allow_unsafe or diag.fix.applicability is not Applicability.UNSAFE
 
 
-def _apply_candidate_edits(
-    text: str, candidates: list[tuple[Diagnostic, TextEdit]]
-) -> tuple[str, list[Diagnostic]]:
+def _apply_candidate_edits(text: str, candidates: list[tuple[Diagnostic, TextEdit]]) -> tuple[str, list[Diagnostic]]:
     new_text = text
     applied: list[Diagnostic] = []
     last_kept_start: int | None = None

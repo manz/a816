@@ -159,6 +159,33 @@ class TestDocstringAlignmentFix:
         assert "\nunder body\n" not in new
 
 
+class TestStarEqMigrationFix:
+    def test_up001_wraps_single_star_eq_into_alloc_at(self) -> None:
+        src = '"""m"""\n*=0x008000\n.db 0xEA\n.db 0xEB\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        up1 = [d for d in diagnostics if d.code == "UP001"]
+        assert len(up1) == 1 and up1[0].fix is not None
+        # Safe-only run leaves source alone.
+        unchanged, _ = apply_fixes(src, diagnostics)
+        assert unchanged == src
+        new, _ = apply_fixes(src, diagnostics, allow_unsafe=True)
+        assert ".alloc at 0x008000 {" in new
+        assert "    .db 0xEA" in new
+        assert "    .db 0xEB" in new
+        assert "}\n" in new
+        assert "*=" not in new
+
+    def test_up001_splits_two_runs_into_two_allocs(self) -> None:
+        src = '"""m"""\n*=0x008000\n.db 0x01\n*=0x028000\n.db 0x02\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        up1 = [d for d in diagnostics if d.code == "UP001"]
+        assert len(up1) == 2
+        new, _ = apply_fixes(src, diagnostics, allow_unsafe=True)
+        assert ".alloc at 0x008000 {" in new
+        assert ".alloc at 0x028000 {" in new
+        assert "*=" not in new
+
+
 class TestRedundantTypedCastFix:
     def test_strips_cast_and_keeps_field_access(self) -> None:
         src = '"""m"""\n.struct Pt { word x }\np := (0x100 as Pt)\nlda.w (p as Pt).x\n'
