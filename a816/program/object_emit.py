@@ -76,9 +76,13 @@ class ObjectEmitMixin:
         alloc = node._alloc
         if alloc is None:
             return
-        sandbox_logical = (
-            self.resolver.get_bus().get_address(self.resolver.pools[node.pool_name].ranges[0].start).logical_value
-        )
+        # Use the per-alloc sandbox base (`pool.start + cursor`), not
+        # the pool's first range start. Two allocs in the same pool
+        # must land in distinct sections; without the cursor offset
+        # every alloc's section base collapses to the same address
+        # and the linker's `_pool_delta_for_symbol` can't tell them
+        # apart.
+        sandbox_logical = node._sandbox_base
         self._flush_object_block(object_writer, state)
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address

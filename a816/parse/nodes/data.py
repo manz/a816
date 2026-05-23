@@ -42,7 +42,10 @@ class RegisterSizeNode(NodeProtocol):
 
 class BinaryNode(NodeProtocol):
     def __init__(self, path: str, resolver: Resolver) -> None:
-        with open(path, "rb") as binary_file:
+        from a816.util import resolve_asset_path
+
+        resolved = resolve_asset_path(path, resolver.context.include_paths)
+        with open(resolved, "rb") as binary_file:
             self.binary_content = binary_file.read()
         self.file_path = path
         self.symbol_base = path.replace("/", "_").replace(".", "_")

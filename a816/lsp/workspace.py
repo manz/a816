@@ -17,7 +17,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
-from lsprotocol.types import Location, Position, Range
+from lsprotocol.types import Diagnostic, DiagnosticSeverity, Location, Position, Range
 
 from a816.lsp.document import A816Document
 from a816.stdlib import resolve_stdlib_module
@@ -98,12 +98,39 @@ class WorkspaceIndex:
         self.built = True
 
     def replace_document(self, doc: A816Document) -> None:
-        """Add or update a document inside the workspace index."""
+        """Add or update a document inside the workspace index.
+
+        Also walks the doc's `.import` chain so a file opened outside
+        the auto-detected entrypoint still pulls its dependencies'
+        symbols (pool decls in particular). Without this, an LSP
+        rooted at a multi-project repo would only know about the
+        entrypoint's project, and other projects' alloc sites would
+        all error with `undeclared pool`."""
         if not doc.uri:
             return
         self._prune_previous_entries(doc.uri)
         self._store_document(doc)
+        self._crawl_imports_from(uri_to_path(doc.uri), doc.content)
         self.built = True
+
+    def _crawl_imports_from(self, source_path: Path, content: str) -> None:
+        """Index every file transitively reachable via `.include` / `.import`
+        from `source_path`. Skips files already in the index so updates
+        from open buffers aren't clobbered by their on-disk versions."""
+        queue: list[Path] = list(self._extract_includes(source_path, content))
+        visited: set[Path] = {source_path.resolve()}
+        while queue:
+            current = queue.pop().resolve()
+            if current in visited:
+                continue
+            visited.add(current)
+            if current.as_uri() in self.documents:
+                continue
+            sub_content = self._read_or_log(current)
+            if sub_content is None:
+                continue
+            self._store_document(A816Document(current.as_uri(), sub_content, include_paths=self.include_paths))
+            queue.extend(self._extract_includes(current, sub_content))
 
     def remove_document(self, uri: str) -> None:
         """Remove a document from the index."""
@@ -329,6 +356,26 @@ class WorkspaceIndex:
         for pool in names:
             self.pools[pool] = doc.pools[pool]
         return names
+
+    def undeclared_pool_diagnostics(self, doc: A816Document) -> list[Diagnostic]:
+        """Flag `.alloc / .relocate / .reclaim` references to pool names
+        not declared anywhere in the workspace. Lives here (not on the
+        document) because pool decls cross file boundaries — the
+        preamble owns them, sub-modules consume them."""
+        return [
+            Diagnostic(
+                range=Range(
+                    start=pos,
+                    end=Position(line=pos.line, character=pos.character + len(pool_name)),
+                ),
+                message=f".{kind} references undeclared pool {pool_name!r}",
+                severity=DiagnosticSeverity.Error,
+                source="a816 pool",
+            )
+            for pool_name, refs in doc.pool_consumers.items()
+            if pool_name not in self.pools
+            for pos, kind in refs
+        ]
 
     def _index_allocs(self, doc: A816Document) -> set[str]:
         names = set(doc.allocs.keys())

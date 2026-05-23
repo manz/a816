@@ -342,7 +342,7 @@ def _already_imported(src_path: Path, resolver: Resolver, module_name: str) -> b
     iff the module has been imported before; tracks the path otherwise."""
     key = _canonical(src_path)
     if key in resolver.imported_module_paths:
-        logger.info("`.import %r` deduped — already loaded from %s", module_name, key)
+        logger.debug("`.import %r` deduped — already loaded from %s", module_name, key)
         return True
     resolver.imported_module_paths.add(key)
     return False

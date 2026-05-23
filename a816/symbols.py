@@ -252,6 +252,15 @@ class Resolver:
         # stay unaffected.
         self.alloc_carry_a_size: int = 8
         self.alloc_carry_i_size: int = 8
+        # Per-pool sandbox cursor for object-mode `.alloc` body labels.
+        # Each `.alloc NAME in POOL` advances this so successive allocs
+        # bind their bodies at distinct addresses inside the pool's
+        # first range. Without this, every alloc would record body
+        # labels at `pool.ranges[0].start` and the linker's
+        # `_pool_delta_for_symbol` (which looks up the owning section
+        # by address) would route every label through the first
+        # section's delta.
+        self.alloc_sandbox_cursors: dict[str, int] = {}
         self.rom_type = RomType.low_rom
         self.current_scope_index = 0
         self.last_used_scope = 0

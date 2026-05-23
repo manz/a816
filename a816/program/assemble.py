@@ -61,7 +61,7 @@ class AssembleMixin:
             raise AssemblyError(error)
 
         self._mark_import_winners(nodes)
-        self.logger.info("Resolving labels")
+        self.logger.debug("Resolving labels")
         self.resolve_labels(nodes)
 
         if self.dump_symbols:
@@ -130,7 +130,7 @@ class AssembleMixin:
         finally:
             self.resolver.context.mode = previous_mode
 
-        self.logger.info("Success !")
+        self.logger.debug("Success !")
         return 0
 
     def assemble(self, asm_file: str, sfc_file: Path, prelude: str | None = None) -> int:
@@ -220,7 +220,7 @@ class AssembleMixin:
                     return -1
 
                 self._mark_import_winners(nodes)
-                self.logger.info("Resolving labels")
+                self.logger.debug("Resolving labels")
                 self.resolve_labels(nodes)
                 self._export_object_symbols(object_writer)
 
@@ -238,7 +238,7 @@ class AssembleMixin:
             self.resolver.context.mode = previous_mode
             self.resolver.context.object_writer = previous_writer
 
-        self.logger.info("Success !")
+        self.logger.debug("Success !")
         return 0
 
     def assemble_as_patch(

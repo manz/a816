@@ -46,10 +46,6 @@ build-backend = "hatchling.build"
 dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
-    # Headless SNES emulator used by tests/integration to verify that
-    # assembled ROMs actually render the expected VRAM / framebuffer
-    # state. Distributed as a wheel on PyPI so CI doesn't need the
-    # native build toolchain.
     "kintsuki>=0.0.0a14",
 ]
 

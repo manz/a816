@@ -335,8 +335,16 @@ class A816Formatter:
         return [header, *body_lines, "}"]
 
     def _format_alloc(self, ast: AllocAstNode) -> list[str]:
-        """Format `.alloc NAME in POOL { body }`."""
-        lines = [f".alloc {ast.name} in {ast.pool_name} {{"]
+        """Format `.alloc [NAME] at ADDR [size N] { body }` (PINNED)
+        or `.alloc NAME in POOL { body }` (POOLED)."""
+        name_part = f" {ast.name}" if ast.name else ""
+        if ast.is_pinned:
+            addr = ast.at_address.to_canonical() if ast.at_address else "?"
+            size_part = f" size {ast.at_size.to_canonical()}" if ast.at_size is not None else ""
+            header = f".alloc{name_part} at {addr}{size_part} {{"
+        else:
+            header = f".alloc{name_part} in {ast.pool_name} {{"
+        lines = [header]
         lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
         lines.append("}")
         return lines

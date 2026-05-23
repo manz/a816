@@ -15,7 +15,9 @@ from script import Table
 
 class TableNode(NodeProtocol):
     def __init__(self, path: str, resolver: Resolver) -> None:
-        self.table_path = path
+        from a816.util import resolve_asset_path
+
+        self.table_path = resolve_asset_path(path, resolver.context.include_paths)
         self.resolver = resolver
         resolver.current_scope.table = Table(self.table_path)
 

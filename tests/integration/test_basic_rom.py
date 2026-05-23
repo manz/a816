@@ -21,9 +21,9 @@ from tests.integration.conftest import (
 FONT_VRAM_BYTE_ADDR = 0x2000  # word-addr $1000 → byte $2000
 FONT_SIZE_BYTES = 0x1000  # 256 tiles × 16 bytes (real FF4 8x8.bin)
 TILEMAP_BYTE_ADDR = 0x0000
-# basic_rom.s draws the string offset by 64 bytes (`tilemap_buffer +
-# 0x40` = row 2 column 0 in a 32-wide tilemap).
-TILEMAP_STRING_OFFSET = 0x40
+# main.s calls `draw_string` with X = (col * 2) + (row * 0x40).
+# Currently column 1, row 13 → byte offset 0x342.
+TILEMAP_STRING_OFFSET = (1 * 2) + (13 * 0x40)
 HELLO_STRING = "Let's display a better string"
 
 

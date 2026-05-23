@@ -340,6 +340,7 @@ def build_with_imports(
             module_paths=paths,
             output_dir=output_dir,
             symbols=symbols,
+            include_paths=include_paths,
         )
 
         linked = builder.build(main_source, parsed_main_nodes=main_nodes)

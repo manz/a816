@@ -35,6 +35,7 @@ class AllocNode(NodeProtocol):
         self.file_info = file_info
         self._alloc: Allocation | None = None
         self._size: int = 0
+        self._sandbox_base: int = 0
         # Snapshot of the A/X size that the body should assume on
         # entry — captured once in `_measure_body` from the running
         # `alloc_carry_*` channel, then reused by `_bind_body_labels_at`
@@ -44,8 +45,9 @@ class AllocNode(NodeProtocol):
 
     def _sandbox_pc(self) -> Address:
         pool = self.resolver.pools[self.pool_name]
-        anchor = pool.ranges[0].start if pool.ranges else 0
-        return self.resolver.get_bus().get_address(anchor)
+        base = pool.ranges[0].start if pool.ranges else 0
+        cursor = self.resolver.alloc_sandbox_cursors.get(self.pool_name, 0)
+        return self.resolver.get_bus().get_address(base + cursor)
 
     @staticmethod
     def _skip_in_pass1(node: NodeProtocol) -> bool:
@@ -107,12 +109,21 @@ class AllocNode(NodeProtocol):
         self._size = max(1, self._measure_body())
         self._alloc = pool.request(self.name, self._size)
         # Object mode defers allocator to link time. Bind the alloc's
-        # symbol + body labels at the sandbox PC (pool.ranges[0].start)
+        # symbol + body labels at the sandbox PC (pool start + cursor)
         # so they record sensible offsets; the linker rebases the body
         # section at link time and the existing CODE-symbol delta path
-        # carries every label to its final address.
+        # carries every label to its final address. Advance the
+        # per-pool cursor by this alloc's size so the next alloc in
+        # the same pool gets a distinct sandbox base — without that,
+        # `_pool_delta_for_symbol` collapses all sections onto the
+        # first one's delta and every symbol lands at the same place.
         if self.resolver.context.is_object_mode:
-            self._bind_body_labels_at(self._sandbox_pc())
+            sandbox = self._sandbox_pc()
+            self._sandbox_base = sandbox.logical_value
+            self._bind_body_labels_at(sandbox)
+            self.resolver.alloc_sandbox_cursors[self.pool_name] = (
+                self.resolver.alloc_sandbox_cursors.get(self.pool_name, 0) + self._size
+            )
 
     def _bind_body_labels_at(self, target: Address) -> None:
         # Mirror `_measure_body`: walk with the inherited A/X carry so

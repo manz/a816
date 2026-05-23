@@ -66,11 +66,20 @@ Cold-boot reset: native mode, kill NMI/DMA, init PPU, prime
     lda #0x01
     sta.l screen.BG12NBA  ; BG1 char base = $1000 (word)
 
-; Seed palette: index 1 = white (text fg). Index 0 stays $0000 (bg).
+; Seed palette: index 3 = white (text fg). Index 0, 1, 2 black.
     rep #0x30
     .a16
     .i16
+    ldx #0x0000
+    lda #COLOR_BLACK
+    jsr.l set_palette_color_l
     ldx #0x0001
+    lda #COLOR_BLACK
+    jsr.l set_palette_color_l
+    ldx #0x0002
+    lda #COLOR_BLACK
+    jsr.l set_palette_color_l
+    ldx #0x0003
     lda #COLOR_WHITE
     jsr.l set_palette_color_l
     sep #0x20
@@ -82,6 +91,7 @@ Cold-boot reset: native mode, kill NMI/DMA, init PPU, prime
     rep #0x10
     .i16
     ldy.w #hello_string
+    ldx.w #( 1 * 2 ) + ( 13 * 0x40 )
     jsr.l draw_string_l
 
     lda #1
@@ -104,22 +114,22 @@ _idle:
 ; bounds the body so a stray `.dw` past the table fails the build
 ; instead of trampling the rest of the bank.
 .alloc vector_table at 0x00FFE0 size 0x20 {
-    .dw 0                ; $FFE0 reserved
-    .dw 0                ; $FFE2 reserved
-    .dw brk_handler      ; $FFE4 native COP
-    .dw brk_handler      ; $FFE6 native BRK -> STP
-    .dw brk_handler      ; $FFE8 native ABORT
-    .dw nmi_handler      ; $FFEA native NMI
-    .dw 0                ; $FFEC native reserved
-    .dw brk_handler      ; $FFEE native IRQ
-    .dw 0                ; $FFF0 reserved
-    .dw 0                ; $FFF2 reserved
-    .dw brk_handler      ; $FFF4 emulation COP
-    .dw 0                ; $FFF6 reserved
-    .dw brk_handler      ; $FFF8 emulation ABORT
-    .dw 0                ; $FFFA emulation NMI
-    .dw reset            ; $FFFC emulation reset
-    .dw brk_handler      ; $FFFE emulation IRQ/BRK
+    .dw 0  ; $FFE0 reserved
+    .dw 0  ; $FFE2 reserved
+    .dw brk_handler  ; $FFE4 native COP
+    .dw brk_handler  ; $FFE6 native BRK -> STP
+    .dw brk_handler  ; $FFE8 native ABORT
+    .dw nmi_handler  ; $FFEA native NMI
+    .dw 0  ; $FFEC native reserved
+    .dw brk_handler  ; $FFEE native IRQ
+    .dw 0  ; $FFF0 reserved
+    .dw 0  ; $FFF2 reserved
+    .dw brk_handler  ; $FFF4 emulation COP
+    .dw 0  ; $FFF6 reserved
+    .dw brk_handler  ; $FFF8 emulation ABORT
+    .dw 0  ; $FFFA emulation NMI
+    .dw reset  ; $FFFC emulation reset
+    .dw brk_handler  ; $FFFE emulation IRQ/BRK
 }
 
 ; --- Pad ROM to 256KB (kintsuki refuses sub-power-of-two LoROM) -----------

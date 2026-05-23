@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from kintsuki import Emu  # type: ignore[import-untyped]
 
-from a816.program import Program
+from a816.module_builder import build_with_imports
 
 INTEGRATION_DIR = Path(__file__).parent
 ASSETS_DIR = INTEGRATION_DIR / "assets"
@@ -46,29 +46,37 @@ def _run_in_source_cwd[T](source: Path, fn: Callable[[], T]) -> T:
         os.chdir(prev)
 
 
-def assemble_sfc(source: Path, out: Path) -> Path:
-    """Build `source` into an SFC file at `out`. Returns `out` on success.
+def _build_via_module_pipeline(source: Path, out: Path, output_format: str) -> Path:
+    """Build `source` through the same `build_with_imports` pipeline the
+    `a816` CLI uses (per-module `.o` compile + cross-module link). This
+    is what end users actually run; the direct-mode `Program.assemble`
+    path is a different code path that we don't ship by default."""
 
-    Preamble (shared pool decls, typed binds, struct imports) lives in
-    `preamble.s` and is brought in via an explicit `.import "preamble"`
-    inside each source module. No `prelude=` text-prepend.
-    """
-    program = Program()
-    program.add_include_path(ASSETS_DIR)
-    program.add_include_path(source.parent)
-    rc = _run_in_source_cwd(source, lambda: program.assemble(str(source), out))
-    assert rc == 0, f"assemble({source.name}) returned {rc}"
+    def _do() -> int:
+        result = build_with_imports(
+            main_source=source,
+            output_file=out,
+            output_format=output_format,
+            module_paths=[source.parent],
+            include_paths=[INTEGRATION_DIR, source.parent],
+            output_dir=source.parent / "build" / "obj",
+            overlap_mode="error",
+        )
+        return result.exit_code
+
+    rc = _run_in_source_cwd(source, _do)
+    assert rc == 0, f"build_with_imports({source.name}) returned {rc}"
     return out
+
+
+def assemble_sfc(source: Path, out: Path) -> Path:
+    """Build `source` into an SFC file at `out`. Returns `out` on success."""
+    return _build_via_module_pipeline(source, out, "sfc")
 
 
 def assemble_ips(source: Path, out: Path) -> Path:
     """Build `source` into an IPS patch at `out`."""
-    program = Program()
-    program.add_include_path(ASSETS_DIR)
-    program.add_include_path(source.parent)
-    rc = _run_in_source_cwd(source, lambda: program.assemble_as_patch(str(source), out))
-    assert rc == 0, f"assemble_as_patch({source.name}) returned {rc}"
-    return out
+    return _build_via_module_pipeline(source, out, "ips")
 
 
 def apply_ips_to_sfc(base_sfc: Path, ips: Path, out: Path) -> Path:

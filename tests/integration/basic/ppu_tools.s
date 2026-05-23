@@ -1,8 +1,5 @@
-.import "@std/snes/ppu"
-.import "@std/snes/cpu"
-.import "@std/snes/dma"
-.import "preamble"
-"""PPU upload primitives + runtime palette API.
+"""
+PPU upload primitives + runtime palette API.
 
 `palette_buffer` is a full 256-entry CGRAM shadow living in WRAM —
 mutate via `set_palette_color` (sets `palette_dirty`), and the NMI
@@ -14,24 +11,34 @@ Imports `data` so per-module precompile (object mode) can resolve
 direct-mode `.import` inlines both regardless.
 """
 
+
+.import "@std/snes/ppu"
+.import "@std/snes/cpu"
+.import "@std/snes/dma"
+.import "preamble"
+
+
 .import "data"
 
 .alloc set_palette_color in engine {
-    """Write a 16-bit color into the WRAM palette shadow at index X.
+"""
+Write a 16-bit color into the WRAM palette shadow at index X.
 
     Inputs (16-bit A and X):
       A = color word (BGR555)
       X = palette index (0..255)
 
     Sets `palette_dirty` so NMI flushes the buffer this frame.
-    """
+"""
+
+
     php
     rep #0x30
     .a16
     .i16
-    pha                                 ; preserve color word
+    pha  ; preserve color word
     txa
-    asl                                 ; A = X * 2 (byte offset)
+    asl  ; A = X * 2 (byte offset)
     tax
     pla
     sta.l palette_buffer, x
@@ -44,29 +51,29 @@ direct-mode `.import` inlines both regardless.
 }
 
 .alloc upload_font in engine {
-    """DMA the fixed-font tile blob into VRAM at word-address $1000."""
+"""DMA the fixed-font tile blob into VRAM at word-address $1000."""
     lda.b #FONT_VRAM_WORD & 0xFF
     sta.l screen.VMADDL
-    lda.b #(FONT_VRAM_WORD >> 8) & 0xFF
+    lda.b #( FONT_VRAM_WORD >> 8 ) & 0xFF
     sta.l screen.VMADDH
     lda #0x80
     sta.l screen.VMAIN
 
     lda #0x01
-    sta.l 0x4300                        ; DMAP0: 2-reg auto-increment
+    sta.l 0x4300  ; DMAP0: 2-reg auto-increment
     lda #0x18
-    sta.l 0x4301                        ; BBAD0 -> $2118 (VMDATAL)
+    sta.l 0x4301  ; BBAD0 -> $2118 (VMDATAL)
 
     lda.b #font_data & 0xFF
     sta.l 0x4302
-    lda.b #(font_data >> 8) & 0xFF
+    lda.b #( font_data >> 8 ) & 0xFF
     sta.l 0x4303
-    lda.b #(font_data >> 16) & 0xFF
+    lda.b #( font_data >> 16 ) & 0xFF
     sta.l 0x4304
 
     lda.b #assets_ff4_font_fixed_bin__size & 0xFF
     sta.l 0x4305
-    lda.b #(assets_ff4_font_fixed_bin__size >> 8) & 0xFF
+    lda.b #( assets_ff4_font_fixed_bin__size >> 8 ) & 0xFF
     sta.l 0x4306
 
     lda #0x01
@@ -75,12 +82,11 @@ direct-mode `.import` inlines both regardless.
 }
 
 .alloc clear_tilemap_buffer in engine {
-    """Fill the WRAM tilemap shadow with $FF tile indices (attr bytes = 0)."""
+"""Fill the WRAM tilemap shadow with $FF tile indices (attr bytes = 0)."""
     php
-    sep #0x20
-    .a8
-    rep #0x10
+    rep #0x30
     .i16
+    .a16
     lda #0xff
     ldx #0
 _clear_tilemap_loop:

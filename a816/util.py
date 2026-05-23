@@ -10,3 +10,22 @@ def uri_to_path(uri: str) -> Path:
     if parsed.scheme == "file":
         return Path(unquote(parsed.path))
     return Path(uri)
+
+
+def resolve_asset_path(path: str, include_paths: list[Path]) -> str:
+    """Resolve a `.incbin` / `.table` path against `include_paths`.
+
+    Absolute paths and paths that exist relative to cwd are returned
+    as-is (cwd preserves legacy behaviour). Otherwise the first hit
+    across `include_paths` wins. Returns the original path unchanged
+    if nothing matches — let the caller's `open()` raise with the
+    untransformed name so the error message points at the source.
+    """
+    candidate = Path(path)
+    if candidate.is_absolute() or candidate.exists():
+        return path
+    for base in include_paths:
+        hit = base / path
+        if hit.exists():
+            return str(hit)
+    return path

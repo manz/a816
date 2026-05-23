@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from a816.parse.codegen import code_gen
@@ -318,10 +320,14 @@ class TestLspPoolFeatures:
         assert "reclaim" in kinds
 
     def test_undeclared_pool_diagnostic(self) -> None:
+        from a816.lsp.workspace import WorkspaceIndex
+
         doc = self._doc(
             ".alloc helper in ghost {\n    rts\n}\n",
         )
-        msgs = [d.message for d in doc.diagnostics]
+        workspace = WorkspaceIndex(Path("."))
+        workspace.replace_document(doc)
+        msgs = [d.message for d in workspace.undeclared_pool_diagnostics(doc)]
         assert any("undeclared pool 'ghost'" in m for m in msgs)
 
     def test_hover_on_pool_name_returns_summary(self) -> None:
