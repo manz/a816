@@ -20,6 +20,11 @@ It speaks to any LSP-capable editor (VS Code, Neovim, Helix, Emacs).
 - **Document symbols** + **workspace symbol** search.
 - **Semantic tokens** (full document).
 - **Document / range formatting** — runs the same fluff formatter.
+- **Code actions** — every fluff rule that ships a fix surfaces in the
+  editor's lightbulb / quick-fix menu. Safe fixes are marked preferred
+  so editors default to them; unsafe fixes carry an `(unsafe)` suffix
+  in the title. See [Fluff — autofix](fluff.md#autofix--a816-fix) for
+  the rule list and applicability rules.
 - **Workspace-aware module resolution** via `a816.toml`.
 
 ## Project configuration

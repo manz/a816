@@ -23,24 +23,37 @@ toolchain. Recompile from source when you upgrade.
 
 ## Sections
 
-The header is followed by four tables in this order:
+The header is followed by six tables in this order:
 
-1. **Regions** — emitted code plus per-region relocations and debug lines.
+1. **Sections** — emitted code plus per-section relocations and debug lines.
 2. **Symbol table** — names defined or referenced by the module.
 3. **Alias table** — deferred constant expressions.
 4. **File table** — source paths referenced by the line tables.
+5. **Pool declarations** — `.pool NAME { range ... }` decls so the
+   linker can re-create the pool object when merging modules.
+6. **Pool allocations** — `.alloc NAME in POOL { ... }` requests the
+   link-time allocator fulfils across the whole link, plus
+   `.alloc at ADDR { ... }` pinned synthesised pools.
 
-### Regions
+### Sections
 
-A new region is opened on every `*=` directive during compilation, so
-the layout is faithful to the author's intent (no concatenation of
-disjoint memory ranges).
+A new section is opened on every `*=` directive (legacy form) or
+`.alloc [NAME] at ADDR { ... }` / `.alloc NAME in POOL { ... }`
+directive during compilation, so the layout is faithful to the
+author's intent (no concatenation of disjoint memory ranges).
+
+Each section carries a `placement` tag: `PINNED` (base address fixed
+at parse time — `*=` and `.alloc at`) or `POOLED` (base address
+chosen by the linker's cross-module pool allocator — `.alloc … in
+POOL`). The placement tag drives whether the linker uses the
+section's recorded `base_address` verbatim or re-bases it after pool
+allocation.
 
 ```
 count : u16
 
-per region:
-    base_address          : u32   logical SNES address of the region's first byte
+per section:
+    base_address          : u32   logical SNES address of the section's first byte
     code_size             : u32
     num_relocations       : u16
     num_expression_relocs : u16
@@ -120,15 +133,55 @@ per entry:
     path     : utf-8[path_len]
 ```
 
-Indices are referenced from each region's line table.
+Indices are referenced from each section's line table.
+
+### Pool declarations
+
+```
+count : u16
+
+per entry:
+    name_len      : u8
+    name          : utf-8[name_len]
+    num_ranges    : u16
+    per range:
+        start     : u32   inclusive logical SNES address
+        end       : u32   inclusive
+    fill          : u8    byte used to back-fill the pool's slack
+    strategy_len  : u8
+    strategy      : utf-8[strategy_len]   "pack" | "order"
+```
+
+The linker keys pools by `name` and merges identical decls across
+modules. Mismatched shape (different ranges / fill / strategy under
+the same name) is a hard error during merge.
+
+### Pool allocations
+
+```
+count : u16
+
+per entry:
+    pool_name_len   : u8
+    pool_name       : utf-8[pool_name_len]
+    symbol_name_len : u8
+    symbol_name     : utf-8[symbol_name_len]
+    section_idx     : u32   index into the section table — the alloc's body
+    size            : u32   byte length the allocator must reserve
+```
+
+Each entry binds one `.alloc NAME in POOL { ... }` to the section
+holding its body bytes. The link-time cross-module pool allocator
+walks every module's pool_allocs, places each in its pool's free
+list, then rewrites the owning section's base address before emit.
 
 ## Stability
 
 The format version is bumped on every breaking change. Past versions:
 
-- v6 (current): region-aware code layout — `*=` produces a new region,
+- v6 (current): section-aware code layout — `*=` produces a new section,
   preserving disjoint address ranges across the same module.
-- v5: added per-region line tables for `.adbg` debug info.
+- v5: added per-section line tables for `.adbg` debug info.
 
 Older versions are not read by current builds. Always recompile
 sources after upgrading the toolchain.
@@ -140,4 +193,4 @@ sources after upgrading the toolchain.
   single linked object whose code can be written by `IPSWriter` or
   `SFCWriter`.
 - See [Debug info (.adbg)](adbg-format.md) for the linked-output debug
-  format that piggybacks on the per-region line tables.
+  format that piggybacks on the per-section line tables.

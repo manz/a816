@@ -22,9 +22,11 @@ disassembler).
 The `a816` CLI is subcommand-driven (`ruff` / `cargo` style):
 
 ```
-$ a816 build  <files> -o <output>     # assemble + link
-$ a816 check  <paths>                 # lint with fluff (DOC*, E501, N801, N802)
-$ a816 format <paths>                 # format .s / .i sources with fluff
+$ a816 build   <files> -o <output>    # assemble + link
+$ a816 check   <paths>                # lint with fluff (DOC*, E501, N801, N802, S00*, UP001)
+$ a816 format  <paths>                # format .s / .i sources with fluff
+$ a816 fix     <paths>                # apply fluff autofixes (--diff / --check / --select / --unsafe-fixes)
+$ a816 explain <CODE>                 # rule rationale + good/bad example pair
 ```
 
 Bare invocation (`a816 file.s -o out.ips`) still routes to `build`
@@ -66,11 +68,14 @@ See [Fluff (lint + format)](fluff.md) for the full rule set, `; noqa`
 suppression syntax, and editor integration.
 
 ```
-$ a816 check src/                 # report lint hits
-$ a816 format src/                # rewrite sources in place
-$ a816 format --check src/        # exit non-zero if reformatting needed
-$ a816 format --diff src/         # print unified diffs without writing
-$ a816 explain DOC003             # rationale + good/bad example pair
+$ a816 check src/                       # report lint hits ([*]=fixable safe, [!]=fixable unsafe)
+$ a816 format src/                      # rewrite sources in place
+$ a816 format --check src/              # exit non-zero if reformatting needed
+$ a816 format --diff src/               # print unified diffs without writing
+$ a816 fix src/                         # apply safe fixes in place
+$ a816 fix --diff src/                  # preview as unified diff
+$ a816 fix --select UP001 --unsafe-fixes src/   # opt in to one rule's unsafe fix
+$ a816 explain DOC003                   # rationale + good/bad example pair
 ```
 
 Private symbols (`_`-prefixed labels / macros / scopes) can carry
@@ -274,9 +279,9 @@ module exports.
 
 ```
 $ xobj file.o                # high-level summary
-$ xobj --regions file.o      # region table
+$ xobj --sections file.o      # section table
 $ xobj --symbols file.o      # symbol table sorted by address
 $ xobj --relocs file.o       # legacy + expression relocations
 $ xobj --lines file.o        # debug line table
-$ xobj --bytes 64 file.o     # dump the first 64 bytes of each region
+$ xobj --bytes 64 file.o     # dump the first 64 bytes of each section
 ```

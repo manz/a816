@@ -20,6 +20,30 @@ If only `.s` is available it is compiled to `.o` first, then linked.
 - Names declared inside `named_scope { ... }` export as `named_scope.name`.
 - Anonymous `{ ... }` blocks are scoped — labels declared inside never leak.
 
+## What `.import` actually brings in
+
+`.import "module"` pairs two views of the imported module:
+
+- **Compile-time content** comes from `module.s` (struct defs, macros,
+  constants, typed binds, nested `.import`, `.pool` decls, `.scope`
+  bodies). These get inlined into the importer's resolver so codegen
+  sees their effects (`(addr as Type).field` resolves, `MyMacro()`
+  expands, pool names register).
+- **Runtime symbols** come from `module.o` (label addresses, alloc
+  placements, `.incbin` byte content). These surface as `ExternNode`
+  stubs in the importer's `.o`; the linker resolves each to the
+  owner's single GLOBAL definition during merge.
+
+Neither half is complete on its own — `.o` can't carry a struct def
+(structs never get emitted as bytes); inlining the source would
+duplicate the runtime symbols the `.o` already owns. The paired flow
+lets a sub-module reach a parent's typed binds without needing
+explicit `.extern` declarations for every label.
+
+You can still write `.extern name` for symbols you want to reference
+without `.import`ing the owning module — useful for build-script
+injected constants or third-party `.o` drops.
+
 ## Cross-module references
 
 Declare symbols defined in another module with `.extern`:
@@ -67,8 +91,23 @@ $ a816 build file1.s file2.o -o output.ips
 symbol with the byte count, so callers can do bounds checks without
 tracking the length manually.
 
+## Pools across modules
+
+`.pool NAME { range ... }` declared in one module is visible to any
+module that `.import`s it. The decl serialises into both files'
+`.o`; the linker merges decls by name (identical shape required —
+mismatched ranges / fill / strategy is a hard error) so a shared
+preamble can hand out pool names like `client` and `engine` and
+sub-modules `.alloc … in client` against them without redeclaring.
+
+See [Freespace pools](freespace-pools.md) for `.alloc`, `.relocate`,
+and `.reclaim` semantics.
+
 ## Prelude
 
 `--prelude PRELUDE_FILE` prepends the file to every module compilation.
 Useful for project-wide feature flags, register-size hints, or
-`.table` configuration.
+`.table` configuration. Prefer an explicit `.import "preamble"` at
+the top of each module — the inline classifier picks up the
+preamble's structs / pools / typed binds the same way, without the
+text-prepend tax on every per-module compile.
