@@ -24,6 +24,7 @@ from a816.fluff.rules_doc import (
     RedundantCommentAndDocstring,
 )
 from a816.fluff.rules_naming import ConstantNaming, LabelNaming
+from a816.fluff.rules_opcode import RedundantOpcodeSizeSuffix
 from a816.fluff.rules_style import (
     LineTooLong,
     RedundantTypedCast,
@@ -48,6 +49,7 @@ RULES: list[Rule] = [
     RedundantTypedCast(),
     RepeatedInlineCast(),
     StarEqualToAllocAt(),
+    RedundantOpcodeSizeSuffix(),
 ]
 Rule.registry = {rule.code: rule for rule in RULES}
 

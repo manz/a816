@@ -148,6 +148,15 @@ class Opcode(OpcodeProtocol):
                     current_offset = writer.relocation_offset(pending_block_bytes=1)
                     writer.add_expression_relocation(current_offset, value_node._deferred_expression, size_bytes)
 
+        # Address-form operands keep their masks: SNES code routinely
+        # writes `jsr.w label` where `label` is a full 24-bit address
+        # but only the low 16 bits matter (PB stays in the current
+        # bank). Stripping the bank byte here is the standard idiom,
+        # not a footgun.
+        #
+        # Immediate-form overflow IS a footgun, so it's caught in
+        # `OpcodeNode.emit` (immediate addressing only) before this
+        # method runs.
         if size == "b":
             return struct.pack("B", value & 0xFF)
         elif size == "w":
