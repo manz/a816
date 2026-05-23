@@ -369,17 +369,11 @@ class Rule:
 _DOC004_MSG = "orphan docstring; convert to a `;` comment or attach to a target"
 
 
-def _build_drop_comment_block_fix(text: str, comments: list[CommentAstNode]) -> Fix | None:
-    """Drop a leading comment block that duplicates an inside-body
-    docstring (DOC006).
-
-    Span runs from the first comment's opening column on its line
-    (covering any leading indentation) through the newline that
-    terminates the last comment, so the block leaves no blank
-    placeholder behind. Safe: removing the redundant comment doesn't
-    change semantics or emitted bytes, and the inside-body docstring
-    keeps the description.
-    """
+def _comment_block_span(text: str, comments: list[CommentAstNode]) -> tuple[int, int] | None:
+    """Source byte span covering a run of leading comments + their
+    terminating newline. Anchors at column 0 so leading indentation
+    travels with the block; swallows the final newline so the file
+    doesn't keep a blank line where the block used to sit."""
     if not comments:
         return None
     first_token = comments[0].file_info
@@ -389,16 +383,110 @@ def _build_drop_comment_block_fix(text: str, comments: list[CommentAstNode]) -> 
     last_end = last_token.end_position if last_pos is not None else None
     if first_pos is None or last_end is None:
         return None
-    # Anchor at column 0 of the first comment's line so leading
-    # indentation goes with the block.
     start = line_col_to_offset(text, first_pos.line + 1, 1)
     end = line_col_to_offset(text, last_end.line + 1, last_end.column + 1)
-    # Swallow the trailing newline so the file doesn't keep a blank
-    # line where the comment block used to sit.
     if end < len(text) and text[end] == "\n":
         end += 1
-    if start >= end:
+    return (start, end) if start < end else None
+
+
+def _block_brace_offset(text: str, node: MacroAstNode | ScopeAstNode) -> int | None:
+    """Byte offset just past the `{` that opens `node`'s body, or None
+    if the source position can't be resolved. Used to anchor inserts
+    that need to land as the first statement inside a block body."""
+    block = node.block if isinstance(node, MacroAstNode) else node.body
+    pos = getattr(block.file_info, "position", None)
+    if pos is None:
         return None
+    open_offset = line_col_to_offset(text, pos.line + 1, pos.column + 1)
+    brace_idx = text.find("{", open_offset)
+    if brace_idx == -1:
+        return None
+    return brace_idx + 1
+
+
+def _detect_body_indent(text: str, after_brace: int, fallback_column: int) -> str:
+    """Leading whitespace of the first non-blank line after the `{`.
+    Falls back to `fallback_column + 4` spaces when the body is empty
+    or has only blank lines (matches the typical 4-space body indent)."""
+    cursor = after_brace
+    while cursor < len(text):
+        nl = text.find("\n", cursor)
+        if nl == -1:
+            break
+        line = text[cursor:nl]
+        stripped = line.lstrip(" \t")
+        if stripped:
+            return line[: len(line) - len(stripped)]
+        cursor = nl + 1
+    return " " * (fallback_column + 4)
+
+
+def _build_comment_to_docstring_fix(
+    text: str,
+    comments: list[CommentAstNode],
+    target: MacroAstNode | ScopeAstNode,
+) -> Fix | None:
+    """DOC005: drop the leading comment block and insert an equivalent
+    docstring as the first statement inside the target's body.
+
+    Unsafe: the `;` prefix is stripped and the content gets repackaged
+    as `\"\"\"...\"\"\"`. Whitespace inside each comment is preserved
+    verbatim (the leading `; ` prefix is what gets dropped); reviewers
+    who rely on the literal `;` shape will see real visual change.
+    """
+    span = _comment_block_span(text, comments)
+    if span is None:
+        return None
+    block_pos = getattr(
+        (target.block if isinstance(target, MacroAstNode) else target.body).file_info, "position", None
+    )
+    if block_pos is None:
+        return None
+    after_brace = _block_brace_offset(text, target)
+    if after_brace is None:
+        return None
+    indent = _detect_body_indent(text, after_brace, fallback_column=block_pos.column)
+    body_lines = [_strip_comment_prefix(c.comment or "") for c in comments]
+    doc_lines = [f"{indent}{line}".rstrip() for line in body_lines]
+    insertion = f"\n{indent}\"\"\"\n" + "\n".join(doc_lines) + f"\n{indent}\"\"\""
+    start, end = span
+    return Fix(
+        edits=(
+            TextEdit(start=start, end=end, replacement=""),
+            TextEdit(start=after_brace, end=after_brace, replacement=insertion),
+        ),
+        applicability=Applicability.UNSAFE,
+        description="rewrap leading `;` block as a docstring inside the body",
+    )
+
+
+def _strip_comment_prefix(comment_text: str) -> str:
+    """Remove the leading `;` + at most one space so the comment's
+    content can land cleanly inside a docstring. Block comments
+    (`/* ... */`) get their delimiters stripped too."""
+    text = comment_text
+    if text.startswith("/*"):
+        text = text[2:]
+        if text.endswith("*/"):
+            text = text[:-2]
+        return text.strip("\n")
+    if text.startswith(";"):
+        text = text[1:]
+        if text.startswith(" "):
+            text = text[1:]
+    return text
+
+
+def _build_drop_comment_block_fix(text: str, comments: list[CommentAstNode]) -> Fix | None:
+    """DOC006: drop a leading comment block whose content is already
+    duplicated by the target's inside-body docstring. Safe: removing
+    the comment doesn't change emitted bytes; the docstring keeps the
+    description."""
+    span = _comment_block_span(text, comments)
+    if span is None:
+        return None
+    start, end = span
     return Fix(
         edits=(TextEdit(start=start, end=end, replacement=""),),
         applicability=Applicability.SAFE,
@@ -516,6 +604,7 @@ class _PlacementWalker:
                 "DOC005",
                 state.comment_run[0],
                 f"comment block above {kind_label(node)} '{target_name_str}' should be a docstring (move inside the body)",
+                fix=_build_comment_to_docstring_fix(self._text, state.comment_run, node),
             )
         state.pending_doc = None
         state.comment_run = []

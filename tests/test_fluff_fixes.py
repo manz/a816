@@ -109,6 +109,23 @@ class TestDropCommentBlockFix:
         assert ".macro setup()" in new
 
 
+class TestCommentToDocstringFix:
+    def test_doc005_unsafe_rewraps_comment_block_into_body(self) -> None:
+        src = '"""m"""\n; banner one\n; banner two\n.macro setup() {\n    ldx.w #0\n}\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        d5 = [d for d in diagnostics if d.code == "DOC005"]
+        assert len(d5) == 1 and d5[0].fix is not None
+        # Safe-only run leaves the source untouched.
+        same, _ = apply_fixes(src, diagnostics)
+        assert same == src
+        # With unsafe allowed, the comment block migrates into the body.
+        new, applied = apply_fixes(src, diagnostics, allow_unsafe=True)
+        assert "; banner one" not in new
+        assert "; banner two" not in new
+        assert '"""\n    banner one\n    banner two\n    """' in new
+        assert ".macro setup()" in new
+
+
 class TestRedundantTypedCastFix:
     def test_strips_cast_and_keeps_field_access(self) -> None:
         src = '"""m"""\n.struct Pt { word x }\np := (0x100 as Pt)\nlda.w (p as Pt).x\n'
