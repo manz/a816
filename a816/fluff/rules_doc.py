@@ -6,11 +6,17 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from a816.fluff.core import (
+    Applicability,
     Diagnostic,
+    Fix,
     LintContext,
     Rule,
+    TextEdit,
+    _block_brace_offset,
+    _detect_body_indent,
     kind_label,
     label_has_below_docstring,
+    line_col_to_offset,
     public_target_name,
     target_name,
 )
@@ -151,6 +157,7 @@ class MisplacedDocstring(Rule):
                 doc,
                 f"docstring above {kind_label(target)} '{name}' should "
                 "be moved inside the body (first statement after `{`)",
+                fix=_build_move_docstring_into_body_fix(ctx.text, doc, target),
             )
         if isinstance(target, LabelAstNode):
             return self.diagnose(
@@ -159,6 +166,62 @@ class MisplacedDocstring(Rule):
                 f"docstring above label '{name}' should sit below it (first statement after the colon)",
             )
         return None
+
+
+def _docstring_span(text: str, doc: DocstringAstNode) -> tuple[int, int] | None:
+    """Byte range covering a docstring's `\"\"\"...\"\"\"` token plus
+    the trailing newline so removing it doesn't leave a blank line."""
+    token = doc.file_info
+    pos = getattr(token, "position", None)
+    end_pos = token.end_position if pos is not None else None
+    if pos is None or end_pos is None:
+        return None
+    start = line_col_to_offset(text, pos.line + 1, 1)
+    end = line_col_to_offset(text, end_pos.line + 1, end_pos.column + 1)
+    if end < len(text) and text[end] == "\n":
+        end += 1
+    return (start, end) if start < end else None
+
+
+def _build_move_docstring_into_body_fix(
+    text: str,
+    doc: DocstringAstNode,
+    target: MacroAstNode | ScopeAstNode,
+) -> Fix | None:
+    """DOC003: move a docstring that sits above `target` into the
+    first statement of `target`'s body.
+
+    Safe: the docstring's textual content is preserved exactly; only
+    its position shifts. Tooling that walks the body for documentation
+    (LSP hover, doc generators) now finds it where it expects.
+    """
+    span = _docstring_span(text, doc)
+    if span is None:
+        return None
+    block = target.block if isinstance(target, MacroAstNode) else target.body
+    block_pos = getattr(block.file_info, "position", None)
+    if block_pos is None:
+        return None
+    after_brace = _block_brace_offset(text, target)
+    if after_brace is None:
+        return None
+    indent = _detect_body_indent(text, after_brace, fallback_column=block_pos.column)
+    lines = doc.text.splitlines() or [""]
+    if len(lines) == 1:
+        moved = f'{indent}"""{lines[0]}"""'
+    else:
+        body_lines = "\n".join(f"{indent}{line}".rstrip() for line in lines)
+        moved = f'{indent}"""\n{body_lines}\n{indent}"""'
+    insertion = f"\n{moved}"
+    start, end = span
+    return Fix(
+        edits=(
+            TextEdit(start=start, end=end, replacement=""),
+            TextEdit(start=after_brace, end=after_brace, replacement=insertion),
+        ),
+        applicability=Applicability.SAFE,
+        description=f"move docstring inside {kind_label(target)} body",
+    )
 
 
 class OrphanDocstring(Rule):

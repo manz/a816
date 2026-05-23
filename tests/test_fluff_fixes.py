@@ -126,6 +126,19 @@ class TestCommentToDocstringFix:
         assert ".macro setup()" in new
 
 
+class TestMisplacedDocstringFix:
+    def test_doc003_moves_docstring_inside_macro_body(self) -> None:
+        src = '"""m"""\n"""Setup the counter."""\n.macro setup() {\n    ldx.w #0\n}\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        d3 = [d for d in diagnostics if d.code == "DOC003"]
+        assert len(d3) == 1 and d3[0].fix is not None
+        new, _ = apply_fixes(src, diagnostics)
+        # Original above-target docstring is gone.
+        assert new.count('"""Setup the counter."""') == 1
+        # It now sits as the body's first statement, indented.
+        assert '.macro setup() {\n    """Setup the counter."""' in new
+
+
 class TestRedundantTypedCastFix:
     def test_strips_cast_and_keeps_field_access(self) -> None:
         src = '"""m"""\n.struct Pt { word x }\np := (0x100 as Pt)\nlda.w (p as Pt).x\n'
