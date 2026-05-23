@@ -51,6 +51,16 @@ class TestExplicitDirectiveStillWins:
         assert _emitted_bytes(writer) == b"\xe2\x20\xa9\xef\xbe"
 
 
+class TestForwardReferenceImmediate:
+    def test_rep_with_forward_referenced_constant_still_resolves(self) -> None:
+        # Pass 1 hits `rep #FLAGS` before `FLAGS = 0x30` is bound.
+        # SymbolNotDefined is swallowed; pass 2 picks up the value
+        # and widens `lda #imm`.
+        src = "*=0x008000\nrep #FLAGS\nlda #0xbeef\nFLAGS = 0x30\n"
+        writer = _assemble(src)
+        assert _emitted_bytes(writer) == b"\xc2\x30\xa9\xef\xbe"
+
+
 class TestSymbolicImmediateStillUpdatesSize:
     def test_rep_with_assemble_time_constant_propagates(self) -> None:
         # `rep #FLAGS` resolves the immediate at assembly-time the same

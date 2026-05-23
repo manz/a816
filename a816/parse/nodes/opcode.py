@@ -97,13 +97,15 @@ class OpcodeNode(NodeProtocol):
         """
         if self.opcode not in ("rep", "sep") or self.addressing_mode is not AddressingMode.immediate:
             return
-        if self.value_node is None:
-            return
+        # Immediate-mode parser always populates value_node — no
+        # `value_node is None` guard. Forward-referencing the
+        # immediate (e.g. `rep #FORWARD_FLAGS`) raises
+        # `SymbolNotDefined` until pass 2; skip silently on pass 1
+        # so the second pass picks up the resolved value.
+        assert self.value_node is not None
         try:
             value = self.value_node.get_value()
-        except Exception:  # noqa: BLE001 — expression may reference an unresolved forward symbol
-            return
-        if not isinstance(value, int):
+        except SymbolNotDefined:
             return
         # `rep #N` clears the named flag bits → 16-bit register.
         # `sep #N` sets them → 8-bit register.
