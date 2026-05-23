@@ -237,17 +237,14 @@ class TestStarEqMigrationContainers:
         assert len(up1) == 1
 
     def test_up001_stops_wrap_at_following_alloc(self) -> None:
-        # `.alloc NAME in POOL { ... }` and `.alloc NAME at ADDR { ... }`
-        # are placement directives too — the `*=` body run must end
-        # there, not swallow the alloc whole.
+        """`.alloc NAME in POOL { ... }` and `.alloc NAME at ADDR { ... }`
+        are placement directives too — the `*=` body run must end
+        there, not swallow the alloc whole."""
         src = '"""m"""\n.pool client { range 0x008100 0x008200 }\n*=0x008000\n.db 0\n.alloc reset in client {\n    .db 1\n}\n'
         diagnostics = lint_text(src, Path("<mem>"))
         new, _ = apply_fixes(src, diagnostics, allow_unsafe=True)
-        # The `.alloc reset in client` block must stay outside the
-        # generated `.alloc at 0x008000` wrap.
         assert ".alloc at 0x008000 {\n    .db 0\n}" in new
         assert "\n.alloc reset in client {" in new
-        # Sanity: the alloc body wasn't dragged inside the wrap.
         assert "    .alloc reset in client" not in new
 
 
