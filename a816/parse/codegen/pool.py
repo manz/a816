@@ -201,10 +201,16 @@ def _synthesize_pinned_pool(
     line = getattr(getattr(file_info, "position", None), "line", 0)
     pool_name = f"__pinned_at_{addr:06X}_L{line}"
     if pool_name in resolver.pools:
-        raise NodeError(
-            f"pinned alloc at ${addr:06X} (line {line}) collides with a prior pinned alloc at the same site",
-            file_info,
-        )
+        # Idempotent: paired-import inlines the same source into every
+        # consumer, so the same `.alloc at ADDR { ... }` site gets
+        # synthesized once per importer. Pool name encodes (addr, line)
+        # — a true second declaration at the same address+line in the
+        # same source can't happen, so reusing the existing pool is
+        # safe. The AllocNode that owns this site requests its slot
+        # against the existing pool; linker dedup
+        # (_allocate_pools_across_modules) collapses duplicate alloc
+        # requests by (pool, symbol) so the body bytes land once.
+        return pool_name
     # Unbounded form opts out of the per-range bank-boundary guard so
     # `.incbin` payloads that span multiple banks place contiguously.
     # Bounded `at ADDR size N` keeps the strict bank-local check.

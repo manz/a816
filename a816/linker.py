@@ -84,14 +84,24 @@ class Linker:
         merged: dict[str, Pool] = {p.name: self._pool_from_decl(p) for p in self._merged_pool_decls}
         # (obj_idx, section_idx) -> Allocation, to look up alloc.addr later.
         self._section_pool_alloc: dict[tuple[int, int], object] = {}
-        # Allocation request order: stable across rebuilds = (obj input order,
-        # then declaration order within each .o).
+        # Dedupe by (pool_name, symbol_name): a `.import`ed module's
+        # alloc request gets re-emitted in every consumer's `.o`
+        # because paired-import inlines the source side. Without
+        # dedup the pool gets N copies of the same `_intro_tilemap`
+        # request and exhausts its ranges N-fold. Keep the FIRST
+        # placement; subsequent duplicates inherit the same Allocation
+        # so all importers see the same final address.
+        first_placed: dict[tuple[str, str], object] = {}
         for obj_idx, obj_file in enumerate(self.object_files):
             for req in obj_file.pool_allocs:
                 pool = merged.get(req.pool_name)
                 if pool is None:
                     raise ValueError(f"pool alloc {req.symbol_name!r} references undeclared pool {req.pool_name!r}")
-                alloc_obj = pool.request(req.symbol_name, req.size)
+                key = (req.pool_name, req.symbol_name)
+                alloc_obj = first_placed.get(key)
+                if alloc_obj is None:
+                    alloc_obj = pool.request(req.symbol_name, req.size)
+                    first_placed[key] = alloc_obj
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
         for pool in merged.values():
             pool.allocate()
@@ -254,16 +264,25 @@ class Linker:
             final_address = address
         if symbol_type == SymbolType.GLOBAL:
             # Only treat as duplicate when an existing GLOBAL claims the
-            # same name. A name first seen as LOCAL (compatibility
-            # bare-name shim for NamedScope members) gets UPGRADED to
-            # the GLOBAL definition — the user picked this name as the
-            # public anchor, the bare LOCAL was just a fallback.
-            existing_global = any(
-                lname == name and lst == SymbolType.GLOBAL
-                for lname, _, lst, _ in self.linked_symbols
-            )
-            if existing_global:
-                raise DuplicateSymbolError(name)
+            # same name AND resolves to a DIFFERENT address. Two .o's
+            # exporting the same name at the same final address happens
+            # legitimately when paired-import inlines an imported
+            # module's source into every consumer's .o — each consumer
+            # re-publishes the import's alloc-body auto-symbols
+            # (`.incbin` filenames, label decls). The dedup in
+            # `_allocate_pools_across_modules` makes them all resolve
+            # to the same address, so collapsing them is safe.
+            # A name first seen as LOCAL (compatibility bare-name shim
+            # for NamedScope members) gets UPGRADED to GLOBAL.
+            existing_global_addr = None
+            for lname, laddr, lst, _ in self.linked_symbols:
+                if lname == name and lst == SymbolType.GLOBAL:
+                    existing_global_addr = laddr
+                    break
+            if existing_global_addr is not None:
+                if existing_global_addr != final_address:
+                    raise DuplicateSymbolError(name)
+                return  # same name, same address → already linked
             self.symbol_map[name] = final_address
             self.linked_symbols.append((name, final_address, symbol_type, section))
             return
