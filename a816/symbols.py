@@ -150,9 +150,22 @@ class Scope:
         return None
 
     def is_external_symbol(self, symbol: str) -> bool:
-        """Check if a symbol is marked as external"""
+        """Check if a symbol is marked as external.
+
+        `.extern Foo` captures the whole `Foo` namespace: any reference
+        to `Foo.bar`, `Foo.baz.qux`, etc. resolves as external too.
+        The full dotted name then flows through the relocation / alias
+        pipeline and the linker matches it against the provider's
+        `Foo.bar` GLOBAL export (NamedScope members already export with
+        the dotted prefix per `Resolver._export_name`). Avoids forcing
+        consumers to `.extern Foo.x` per member.
+        """
         if symbol in self.external_symbols:
             return True
+        if "." in symbol:
+            head = symbol.split(".", 1)[0]
+            if head in self.external_symbols:
+                return True
         if self.parent:
             return self.parent.is_external_symbol(symbol)
         return False
@@ -414,15 +427,17 @@ class Resolver:
 
         When ``mangle_nested`` is true, labels in nested anonymous scopes are
         prefixed with ``__sc<idx>__`` to mirror the export naming used by
-        :meth:`get_all_symbols`.
+        :meth:`get_all_symbols`. Labels in NAMED scopes are prefixed with
+        the scope's name (`shops.gils`) so two `.scope` blocks with the
+        same internal label don't collide as bare names in the linker's
+        global symbol table.
         """
         labels: list[tuple[str, int]] = []
         for idx, scope in enumerate(self.scopes):
             if isinstance(scope, InternalScope):
                 continue
-            mangle = mangle_nested and idx > 0 and not isinstance(scope, NamedScope)
             for name, value in scope.get_labels():
-                exported = f"__sc{idx}__{name}" if mangle else name
+                exported = self._export_name(name, scope, idx, mangle_nested)
                 labels.append((exported, value))
         return labels
 
@@ -432,11 +447,27 @@ class Resolver:
         for idx, scope in enumerate(self.scopes):
             if isinstance(scope, InternalScope):
                 continue
-            mangle = mangle_nested and idx > 0 and not isinstance(scope, NamedScope)
             for name, value in scope.absolute_labels.items():
-                exported = f"__sc{idx}__{name}" if mangle else name
+                exported = self._export_name(name, scope, idx, mangle_nested)
                 labels.append((exported, value))
         return labels
+
+    @staticmethod
+    def _export_name(name: str, scope: "Scope", idx: int, mangle_nested: bool) -> str:
+        """Compute the exported name for a label/symbol in `scope`.
+
+        Already-dotted names (e.g. `shops.gils` re-published by
+        `_publish_named_dotted`) pass through unchanged so we don't
+        double-prefix. Bare names inside a NamedScope get the scope's
+        name as a prefix to avoid bare-name collisions across modules.
+        Anonymous nested scopes opt into the `__sc<idx>__` mangle when
+        `mangle_nested` is set.
+        """
+        if isinstance(scope, NamedScope) and "." not in name:
+            return f"{scope.name}.{name}"
+        if mangle_nested and idx > 0 and not isinstance(scope, NamedScope):
+            return f"__sc{idx}__{name}"
+        return name
 
     @staticmethod
     def _mangle(name: str, idx: int, mangle: bool) -> str:
@@ -450,16 +481,21 @@ class Resolver:
         return [(name, value) for name, value in scope.symbols.items() if isinstance(value, int)]
 
     def get_all_symbols(self) -> list[tuple[str, int]]:
-        """All labels + int-valued assignments, mangled with __sc<idx>__ in nested anon scopes."""
+        """All labels + int-valued assignments. NamedScope members get
+        the scope-name prefix (`items_description.source`); anon nested
+        scopes get the `__sc<idx>__` mangle. Bare names from a nested
+        scope never leak into the export so two `.scope` blocks with
+        the same inner label (or two macro invocations whose args
+        bubble up into different scopes) don't collide as bare globals
+        in the linker."""
         symbols: list[tuple[str, int]] = []
         seen: set[str] = set()
         for idx, scope in enumerate(self.scopes):
             if isinstance(scope, InternalScope):
                 continue
-            mangle = idx > 0 and not isinstance(scope, NamedScope)
             for source in (scope.get_labels(), self._scope_int_symbols(scope)):
                 for name, value in source:
-                    exported = self._mangle(name, idx, mangle)
+                    exported = self._export_name(name, scope, idx, mangle_nested=True)
                     if exported not in seen:
                         symbols.append((exported, value))
                         seen.add(exported)

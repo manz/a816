@@ -162,8 +162,8 @@ def generate_struct(
         resolver.current_scope.add_symbol(f"{field_name}.mask", mask)
         resolver.current_scope.add_symbol(f"{field_name}.shift", shift)
     resolver.current_scope.add_symbol("__size", total_size)
-    code.append(PopScopeNode(resolver))
     # exports=True promotes Name.field and Name.__size to the parent scope.
+    code.append(PopScopeNode(resolver, exports=True))
     resolver.restore_scope(exports=True)
     return code
 

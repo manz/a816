@@ -54,6 +54,16 @@ class OpcodeNode(NodeProtocol):
         return opcode_emitter
 
     def emit(self, current_pc: Address) -> bytes:
+        # `pc_after` mutates `a_size`/`i_size` for `rep`/`sep` so size
+        # inference picks the right encoding for the NEXT opcode. Direct
+        # mode runs `pc_after` as part of PC tracking, so the mutation
+        # has happened by the time `emit` runs the next opcode. Alloc
+        # body emit walks measure-then-emit in separate passes (the
+        # measure pass saves+restores the size around the walk), so the
+        # emit pass starts fresh and a downstream `lda #imm` reads the
+        # stale 8-bit value. Mirror the mutation here so the inference
+        # survives the desugar of legacy `*=` into `.alloc at`.
+        self._maybe_update_register_sizes()
         opcode_emitter = self._get_emitter()
         try:
             return opcode_emitter.emit(self.value_node, self.resolver, self.size)

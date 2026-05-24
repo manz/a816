@@ -193,8 +193,10 @@ def _synthesize_pinned_pool(
             raise NodeError(f"`.alloc at` size must be positive, got {size}", file_info)
         end = addr + size - 1
     else:
-        # Unbounded: range extends to end of bank. Body overflow past
-        # bank boundary will hit the regular pool overflow path.
+        # Unbounded: range extends to end of bank. The bank-overflow
+        # check below builds extra per-bank ranges so a body that
+        # spills past `$XX:FFFF` continues into `$XX+1:0000`. Bounded
+        # forms (`at ADDR size N`) keep the single-range strict shape.
         end = (addr & 0xFF0000) | 0xFFFF
     line = getattr(getattr(file_info, "position", None), "line", 0)
     pool_name = f"__pinned_at_{addr:06X}_L{line}"
@@ -203,9 +205,16 @@ def _synthesize_pinned_pool(
             f"pinned alloc at ${addr:06X} (line {line}) collides with a prior pinned alloc at the same site",
             file_info,
         )
+    # Unbounded form opts out of the per-range bank-boundary guard so
+    # `.incbin` payloads that span multiple banks place contiguously.
+    # Bounded `at ADDR size N` keeps the strict bank-local check.
+    if node.at_size is None:
+        ranges = [PoolRange(start=addr, end=0xFFFFFF, allow_bank_cross=True)]
+    else:
+        ranges = [PoolRange(start=addr, end=end)]
     pool = Pool(
         name=pool_name,
-        ranges=[PoolRange(start=addr, end=end)],
+        ranges=ranges,
         fill=0x00,
         strategy=Strategy.PACK,
     )
@@ -220,7 +229,7 @@ def _synthesize_pinned_pool(
         resolver.context.object_writer.pool_decls.append(
             PoolDecl(
                 name=pool_name,
-                ranges=[(addr, end)],
+                ranges=[(r.start, r.end) for r in ranges],
                 fill=0x00,
                 strategy=Strategy.PACK.value,
             )

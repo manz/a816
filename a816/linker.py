@@ -117,7 +117,10 @@ class Linker:
 
         return Pool(
             name=decl.name,
-            ranges=[PoolRange(start=s, end=e) for s, e in decl.ranges],
+            ranges=[
+                PoolRange(start=s, end=e, allow_bank_cross=(s >> 16) != (e >> 16))
+                for s, e in decl.ranges
+            ],
             fill=decl.fill,
             strategy=Strategy(decl.strategy),
         )
@@ -257,6 +260,13 @@ class Linker:
             return
         if symbol_type == SymbolType.LOCAL:
             self.linked_symbols.append((name, final_address, symbol_type, section))
+            # LOCAL symbols feed the alias resolver too: aliases inside
+            # `.o` files can reference nested-scope labels by their
+            # mangled name (e.g. `jump_table = __sc<N>__jt_label`).
+            # `_resolve_aliases` evaluates the RHS via `_substitute_symbols`,
+            # which only sees `symbol_map`. Without this, mangled LOCAL
+            # names stay unresolved and the alias fails to fold.
+            self.symbol_map.setdefault(name, final_address)
             return
         raise ValueError(f"Unknown symbol type: {symbol_type}")
 
@@ -283,6 +293,18 @@ class Linker:
 
     def _check_unresolved(self) -> None:
         unresolved_symbols = self._external_symbols_needed - set(self.symbol_map.keys())
+        # `.extern Foo` (scope capture) registers `Foo` as needed but the
+        # provider only exports the dotted members (`Foo.bar`, `Foo.baz`).
+        # Accept the scope extern as resolved when any symbol in the map
+        # lives under that prefix — the dotted refs that prompted the
+        # `.extern` already resolve via the relocation pipeline.
+        if unresolved_symbols:
+            satisfied_by_scope = {
+                name
+                for name in unresolved_symbols
+                if any(key.startswith(f"{name}.") for key in self.symbol_map)
+            }
+            unresolved_symbols -= satisfied_by_scope
         if unresolved_symbols:
             raise UnresolvedSymbolError(unresolved_symbols)
 

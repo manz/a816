@@ -22,7 +22,8 @@ from a816.fluff.core import (
     TextEdit,
     line_col_to_offset,
 )
-from a816.parse.ast.nodes import AllocAstNode, AstNode, CodePositionAstNode
+from a816.parse.ast.nodes import AstNode, CodePositionAstNode, IfAstNode
+from a816.parse.ast.placement import is_placement_boundary
 
 
 class StarEqualToAllocAt(Rule):
@@ -42,18 +43,24 @@ class StarEqualToAllocAt(Rule):
 
     def check(self, ctx: LintContext) -> Iterable[Diagnostic]:
         nodes = ctx.nodes or []
-        yield from _scan_for_star_eq(self, ctx, nodes)
+        yield from _scan_for_star_eq(self, ctx, nodes, body_end=len(ctx.text))
 
 
-def _scan_for_star_eq(rule: Rule, ctx: LintContext, nodes: list[AstNode]) -> Iterable[Diagnostic]:
+def _scan_for_star_eq(
+    rule: Rule, ctx: LintContext, nodes: list[AstNode], *, body_end: int
+) -> Iterable[Diagnostic]:
     """Walk a flat node sequence, emitting UP001 for each `*=`.
 
     Recurses into containers that hold their own placement runs
-    (`.scope`, `.macro`, `.if`, `.for`) so a `*=` nested inside is
-    flagged too. Each emitted diagnostic carries a fix that wraps
-    `*=ADDR` plus its body run in `.alloc at ADDR { ... }`.
+    (`.scope`, `.macro`, `.if`, `.for`, bare `{}`, `.alloc`, `.include`)
+    so a `*=` nested inside is flagged too. `body_end` is the offset
+    where the parent body's closing `}` sits — the autofix clamps the
+    `*=`-body span to that offset so it never swallows the brace and
+    bricks the enclosing block.
     """
     from a816.parse.ast.nodes import (
+        AllocAstNode,
+        CompoundAstNode,
         ForAstNode,
         IfAstNode,
         MacroAstNode,
@@ -62,20 +69,96 @@ def _scan_for_star_eq(rule: Rule, ctx: LintContext, nodes: list[AstNode]) -> Ite
 
     for idx, node in enumerate(nodes):
         if isinstance(node, CodePositionAstNode):
-            yield _emit_up001(rule, ctx, nodes, idx)
-        elif isinstance(node, ScopeAstNode):
-            yield from _scan_for_star_eq(rule, ctx, list(node.body.body))
-        elif isinstance(node, MacroAstNode):
-            yield from _scan_for_star_eq(rule, ctx, list(node.block.body))
-        elif isinstance(node, IfAstNode):
-            yield from _scan_for_star_eq(rule, ctx, list(node.block.body))
+            yield _emit_up001(rule, ctx, nodes, idx, body_end=body_end)
+            continue
+        if isinstance(node, IfAstNode):
+            # IfAstNode has TWO brace pairs (true + else); compute each
+            # branch's end independently rather than via the generic
+            # single-brace helper.
+            if_end, else_end = _if_branch_ends(ctx.text, node, body_end)
+            yield from _scan_for_star_eq(rule, ctx, list(node.block.body), body_end=if_end)
             if node.else_block is not None:
-                yield from _scan_for_star_eq(rule, ctx, list(node.else_block.body))
+                yield from _scan_for_star_eq(
+                    rule, ctx, list(node.else_block.body), body_end=else_end
+                )
+            continue
+        child_body_end = _container_body_end(ctx.text, node, body_end)
+        if isinstance(node, ScopeAstNode):
+            yield from _scan_for_star_eq(rule, ctx, list(node.body.body), body_end=child_body_end)
+        elif isinstance(node, MacroAstNode):
+            yield from _scan_for_star_eq(rule, ctx, list(node.block.body), body_end=child_body_end)
         elif isinstance(node, ForAstNode):
-            yield from _scan_for_star_eq(rule, ctx, list(node.body.body))
+            yield from _scan_for_star_eq(rule, ctx, list(node.body.body), body_end=child_body_end)
+        elif isinstance(node, CompoundAstNode):
+            yield from _scan_for_star_eq(rule, ctx, list(node.body), body_end=child_body_end)
+        elif isinstance(node, AllocAstNode):
+            yield from _scan_for_star_eq(rule, ctx, list(node.body.body), body_end=child_body_end)
+        # Skip `.include`d AST: `included_nodes` carries positions from
+        # the included file, but `_build_star_eq_to_alloc_fix` rewrites
+        # `ctx.text` (the importer's text) at those offsets — garbage.
+        # The included file is linted on its own pass when fluff walks
+        # the directory; rewrites land in the correct file there.
 
 
-def _emit_up001(rule: Rule, ctx: LintContext, siblings: list[AstNode], idx: int) -> Diagnostic:
+def _match_brace(text: str, start: int, limit: int) -> int:
+    """Starting at or before a `{`, advance to the matching `}` and
+    return its offset. Returns `limit` when unmatched."""
+    cursor = start
+    depth = 0
+    started = False
+    while cursor < limit:
+        ch = text[cursor]
+        if ch == "{":
+            depth += 1
+            started = True
+        elif ch == "}" and started:
+            depth -= 1
+            if depth == 0:
+                return cursor
+        cursor += 1
+    return limit
+
+
+def _if_branch_ends(text: str, node: IfAstNode, fallback: int) -> tuple[int, int]:
+    """Brace-match the `.if` body and optional `else` body separately
+    so each branch's `*=` autofix clamps to its own closing `}`."""
+    pos = getattr(node.file_info, "position", None)
+    if pos is None:
+        return fallback, fallback
+    cursor = line_col_to_offset(text, pos.line + 1, 1)
+    if_end = _match_brace(text, cursor, fallback)
+    else_end = fallback
+    if node.else_block is not None and if_end < fallback:
+        else_end = _match_brace(text, if_end + 1, fallback)
+    return if_end, else_end
+
+
+def _container_body_end(text: str, node: AstNode, fallback: int) -> int:
+    """Brace-match forward from the container's start to find its
+    closing `}` offset. Returns `fallback` when the container isn't
+    brace-delimited (`.include`, root) or matching fails."""
+    pos = getattr(node.file_info, "position", None)
+    if pos is None:
+        return fallback
+    cursor = line_col_to_offset(text, pos.line + 1, 1)
+    depth = 0
+    started = False
+    while cursor < fallback:
+        ch = text[cursor]
+        if ch == "{":
+            depth += 1
+            started = True
+        elif ch == "}" and started:
+            depth -= 1
+            if depth == 0:
+                return cursor
+        cursor += 1
+    return fallback
+
+
+def _emit_up001(
+    rule: Rule, ctx: LintContext, siblings: list[AstNode], idx: int, *, body_end: int
+) -> Diagnostic:
     star_eq = siblings[idx]
     assert isinstance(star_eq, CodePositionAstNode)
     addr_text = star_eq.expression.to_canonical()
@@ -83,7 +166,7 @@ def _emit_up001(rule: Rule, ctx: LintContext, siblings: list[AstNode], idx: int)
         ctx,
         star_eq,
         f"replace `*= {addr_text}` with `.alloc at {addr_text} {{ ... }}`",
-        fix=_build_star_eq_to_alloc_fix(ctx.text, siblings, idx, addr_text),
+        fix=_build_star_eq_to_alloc_fix(ctx.text, siblings, idx, addr_text, body_end),
     )
 
 
@@ -92,6 +175,7 @@ def _build_star_eq_to_alloc_fix(
     siblings: list[AstNode],
     idx: int,
     addr_text: str,
+    body_end: int,
 ) -> Fix | None:
     """Wrap `*=ADDR` and its body run in `.alloc at ADDR { ... }`.
 
@@ -107,7 +191,7 @@ def _build_star_eq_to_alloc_fix(
     if pos is None:
         return None
     start = line_col_to_offset(text, pos.line + 1, 1)
-    end = _next_placement_or_end(text, siblings, idx)
+    end = min(_next_placement_or_end(text, siblings, idx), body_end)
     if end <= start:
         return None
     snippet = text[start:end]
@@ -132,7 +216,7 @@ def _next_placement_or_end(text: str, siblings: list[AstNode], idx: int) -> int:
     such boundary follows."""
     for j in range(idx + 1, len(siblings)):
         next_node = siblings[j]
-        if isinstance(next_node, (CodePositionAstNode, AllocAstNode)):
+        if is_placement_boundary(next_node):
             next_pos = getattr(next_node.file_info, "position", None)
             if next_pos is None:
                 continue

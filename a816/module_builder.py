@@ -359,6 +359,7 @@ def build_with_imports(
             output_dir=output_dir,
             symbols=symbols,
             include_paths=include_paths,
+            prelude_file=prelude_file,
         )
 
         linked = builder.build(main_source, parsed_main_nodes=main_nodes)
@@ -368,6 +369,7 @@ def build_with_imports(
 
         program = Program(overlap_mode=overlap_mode)
         _apply_experimental_flags(program, experimental)
+        program.enable_debug_capture()
         if output_format == "ips":
             exit_code = program.link_as_patch(linked, output_file, copier_header=copier_header)
         elif output_format == "sfc":
@@ -380,7 +382,18 @@ def build_with_imports(
         # `.label`-declared names are absolute addresses that should appear in
         # the exported symbol map alongside real labels.
         symbol_map.update(program.resolver.get_all_absolute_labels())
-        return BuildResult(exit_code=exit_code, symbol_map=symbol_map, program=program)
+        debug_path: Path | None = None
+        if exit_code == 0:
+            from a816.debug_info import write as write_debug_info
+
+            debug_path = output_file.with_suffix(output_file.suffix + ".adbg")
+            write_debug_info(program.build_debug_info(str(main_source)), debug_path)
+        return BuildResult(
+            exit_code=exit_code,
+            symbol_map=symbol_map,
+            program=program,
+            debug_info_path=debug_path,
+        )
 
     except Exception as e:
         logger.error(f"Build failed: {e}")  # NOSONAR python:S8572

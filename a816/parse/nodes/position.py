@@ -79,27 +79,67 @@ class IncludeIpsNode(NodeProtocol):
 
 
 class ScopeNode(NodeProtocol):
+    """Enter the scope this node was created in.
+
+    Captures `resolver.current_scope` at codegen time (when the scope
+    is freshly pushed) so `pc_after` / `emit` can re-enter that exact
+    scope by direct assignment instead of advancing a global cursor.
+    Idempotent: callers can walk the same body any number of times
+    (alloc body measure + bind, repeated resolve passes) without the
+    cursor running off the end of `resolver.scopes`.
+    """
+
     def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
-        self.parent_scope = self.resolver.current_scope
+        self.parent_scope = self.resolver.current_scope.parent
+        self.target_scope = self.resolver.current_scope
 
     def pc_after(self, current_pc: Address) -> Address:
-        self.resolver.use_next_scope()
+        self.resolver.current_scope = self.target_scope
         return current_pc
 
     def emit(self, current_addr: Address) -> bytes:
-        self.resolver.use_next_scope()
+        self.resolver.current_scope = self.target_scope
         return b""
 
 
 class PopScopeNode(NodeProtocol):
-    def __init__(self, resolver: Resolver) -> None:
+    """Restore the parent scope captured at codegen time.
+
+    Idempotent for the same reason as `ScopeNode`: direct assignment
+    of a captured reference, not a parent-chain walk that errors when
+    the chain is already at root. Also republishes / bubbles the
+    leaving scope's exportable names into the parent on each call —
+    bubble + publish are both `if name not in parent` / dict-union
+    idempotent, so repeated walks (alloc body measure + bind, multi-
+    pass resolve) don't multi-write, but late-bound labels (e.g. ones
+    that only resolve at `pc_after` time inside an alloc body) still
+    surface in the parent's dotted view.
+    """
+
+    def __init__(self, resolver: Resolver, *, exports: bool = False) -> None:
         self.resolver = resolver
+        self.exports = exports
+        self.leaving_scope = self.resolver.current_scope
+        self.parent_scope = self.resolver.current_scope.parent
+
+    def _apply(self) -> None:
+        from a816.symbols import NamedScope, _bubble_anon_into_named, _publish_named_dotted
+
+        parent = self.parent_scope
+        if parent is None:
+            return
+        scope = self.leaving_scope
+        if not isinstance(scope, NamedScope) and isinstance(parent, NamedScope):
+            _bubble_anon_into_named(scope, parent)
+        if self.exports and isinstance(scope, NamedScope):
+            _publish_named_dotted(scope, parent)
+        self.resolver.current_scope = parent
 
     def pc_after(self, current_pc: Address) -> Address:
-        self.resolver.restore_scope(exports=True)
+        self._apply()
         return current_pc
 
     def emit(self, current_addr: Address) -> bytes:
-        self.resolver.restore_scope()
+        self._apply()
         return b""

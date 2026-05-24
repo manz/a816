@@ -37,8 +37,14 @@ class ExpressionNode(ValueNodeProtocol):
         self.file_info = file_info
 
     def _compute_local_label_renames(self) -> tuple[dict[str, str], bool]:
-        """Return (rename map, touches_any_label). Nested-scope label refs get mangled."""
+        """Return (rename map, touches_any_label). Nested-scope label refs
+        get rewritten to their EXPORTED form so the linker resolves them
+        against `symbol_map` (which holds the exported names, not the
+        source-level bare names). Mirrors `Resolver._export_name`:
+        NamedScope members become `Name.label`; anon nested scopes get
+        the `__sc<idx>__` mangle."""
         from a816.parse.tokens import TokenType
+        from a816.symbols import NamedScope
 
         rename: dict[str, str] = {}
         touches_label = False
@@ -51,9 +57,12 @@ class ExpressionNode(ValueNodeProtocol):
                 continue
             touches_label = True
             if owner is self.resolver.scopes[0]:
-                continue  # root labels keep their plain name; only nested-scope refs need mangling
-            scope_idx = self.resolver.scopes.index(owner)
-            rename[tok.value] = f"__sc{scope_idx}__{tok.value}"
+                continue  # root labels keep their plain name
+            if isinstance(owner, NamedScope) and "." not in tok.value:
+                rename[tok.value] = f"{owner.name}.{tok.value}"
+            else:
+                scope_idx = self.resolver.scopes.index(owner)
+                rename[tok.value] = f"__sc{scope_idx}__{tok.value}"
         return rename, touches_label
 
     def _record_local_label_relocation(self) -> None:
@@ -84,7 +93,19 @@ class ExpressionNode(ValueNodeProtocol):
             raise NodeError(f"Expression contains external symbols: {e.expression_str}", self.file_info) from e
         except ExternalSymbolReference as e:
             if self.resolver.context.is_object_mode:
-                self._deferred_expression = self.expression.to_representation()[0]
+                # Inline-substitute any aliases so macro-arg names
+                # (`jump_table`, `count`, etc.) bound by
+                # `add_external_alias` get replaced with their underlying
+                # extern expression. Without this, the relocation
+                # serialises the raw macro-arg name and the linker
+                # reports it as an unresolved external — which it is,
+                # because nobody outside the macro invocation knows that
+                # name.
+                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+
+                self._deferred_expression = _inline_aliases(
+                    reconstruct_expression(self.expression), self.resolver
+                )
                 return 0
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
         except SymbolNotDefined as e:

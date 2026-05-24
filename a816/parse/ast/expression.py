@@ -225,6 +225,32 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 
 
+def canonicalize_local_label_refs(expression_str: str, resolver: Resolver) -> str:
+    """Rewrite local-label identifiers in `expression_str` to their
+    EXPORTED form so an alias written into an `.o` (or a relocation
+    expression) survives the linker's symbol-map lookup. Mirrors
+    `ExpressionNode._compute_local_label_renames`: NamedScope members
+    become `Name.label`; anon nested scopes get `__sc<idx>__name`.
+
+    Use this anywhere an alias RHS is constructed from source text —
+    `_register_alias`, macro-arg extern bindings, etc. — so the bare
+    label name (`jt_label`) never reaches the object file with no
+    matching export."""
+    from a816.symbols import NamedScope
+
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        owner = resolver.current_scope.find_label_scope(token)
+        if owner is None or owner is resolver.scopes[0]:
+            return token
+        if isinstance(owner, NamedScope) and "." not in token:
+            return f"{owner.name}.{token}"
+        scope_idx = resolver.scopes.index(owner)
+        return f"__sc{scope_idx}__{token}"
+
+    return _IDENT_RE.sub(replace, expression_str)
+
+
 def _inline_aliases(expression_str: str, resolver: Resolver, depth: int = 0) -> str:
     """Replace alias names in ``expression_str`` with their underlying expressions.
 

@@ -134,9 +134,14 @@ def generate_macro_application(
                 # Bake it as an alias (text expression) so eval at emit time goes
                 # through the relocation pipeline and the value reflects the
                 # module's final placement, not the compile-time base.
-                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+                from a816.parse.ast.expression import (
+                    _inline_aliases,
+                    canonicalize_local_label_refs,
+                    reconstruct_expression,
+                )
 
                 expr_str = _inline_aliases(reconstruct_expression(value), resolver)
+                expr_str = canonicalize_local_label_refs(expr_str, resolver)
                 resolver.current_scope.add_external_alias(arg, expr_str)
             else:
                 resolver.current_scope.add_symbol(arg, eval_expression(value, resolver))
