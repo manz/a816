@@ -253,19 +253,30 @@ class Linker:
         else:
             final_address = address
         if symbol_type == SymbolType.GLOBAL:
-            if name in self.symbol_map:
+            # Only treat as duplicate when an existing GLOBAL claims the
+            # same name. A name first seen as LOCAL (compatibility
+            # bare-name shim for NamedScope members) gets UPGRADED to
+            # the GLOBAL definition — the user picked this name as the
+            # public anchor, the bare LOCAL was just a fallback.
+            existing_global = any(
+                lname == name and lst == SymbolType.GLOBAL
+                for lname, _, lst, _ in self.linked_symbols
+            )
+            if existing_global:
                 raise DuplicateSymbolError(name)
             self.symbol_map[name] = final_address
             self.linked_symbols.append((name, final_address, symbol_type, section))
             return
         if symbol_type == SymbolType.LOCAL:
             self.linked_symbols.append((name, final_address, symbol_type, section))
-            # LOCAL symbols feed the alias resolver too: aliases inside
-            # `.o` files can reference nested-scope labels by their
-            # mangled name (e.g. `jump_table = __sc<N>__jt_label`).
-            # `_resolve_aliases` evaluates the RHS via `_substitute_symbols`,
-            # which only sees `symbol_map`. Without this, mangled LOCAL
-            # names stay unresolved and the alias fails to fold.
+            # LOCAL names feed `_resolve_aliases` so an alias RHS like
+            # `count = _endwinmap - _winmap` (macro arg bound to a
+            # module-local label inside an alloc body) folds at link
+            # time. `setdefault` keeps the FIRST module's binding when
+            # two modules happen to share a LOCAL name — underscore
+            # privacy is a source-side convention, not a hard linker
+            # guarantee. Modules that need durable cross-module refs
+            # must drop the underscore (export as GLOBAL).
             self.symbol_map.setdefault(name, final_address)
             return
         raise ValueError(f"Unknown symbol type: {symbol_type}")

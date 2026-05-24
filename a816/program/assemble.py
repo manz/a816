@@ -190,9 +190,35 @@ class AssembleMixin:
     def _export_object_symbols(self, object_writer: ObjectWriter) -> None:
         label_names = {n for n, _ in self.resolver.get_all_labels(mangle_nested=True)}
         absolute_label_names = {n for n, _ in self.resolver.get_all_absolute_labels(mangle_nested=True)}
+        # Also emit NamedScope members under their BARE name as LOCAL
+        # alongside the dotted GLOBAL. The dotted form (`render.foo`)
+        # is what the linker globally dedupes / resolves; the bare
+        # form (`foo`) keeps kintsuki's `lookup_symbol_addr("foo")`
+        # working for legacy adbg consumers that expect bare names.
+        # LOCAL across modules collides first-write-wins via
+        # `setdefault` in the linker — matches the underscore-private
+        # convention.
+        from a816.object_file import SymbolSection, SymbolType
+        from a816.symbols import NamedScope
+
+        for idx, scope in enumerate(self.resolver.scopes):
+            if not isinstance(scope, NamedScope):
+                continue
+            for bare_name, addr in scope.get_labels():
+                if "." in bare_name:
+                    continue  # already-dotted via _publish_named_dotted
+                object_writer.add_symbol(bare_name, addr, SymbolType.LOCAL, SymbolSection.CODE)
         for name, value in self.resolver.get_all_symbols():
-            if self.resolver.current_scope.is_external_symbol(name):
-                continue  # already added by ExternNode
+            # Symbols declared `.extern` AND also defined locally in
+            # this compile unit (e.g. main `.include`s both the
+            # `.extern foo` declaration and the `foo:` definition):
+            # prefer the local definition — emit it as GLOBAL/LOCAL so
+            # the linker's local resolution wins. Otherwise the .o
+            # would double-publish (EXTERNAL stub from ExternNode +
+            # nothing for the real definition), and the linker reports
+            # `unresolved external` for a symbol it actually owns.
+            if self.resolver.current_scope.is_external_symbol(name) and name not in label_names:
+                continue  # purely external, owner provides it
             if name in self.resolver.pool_stat_symbol_names:
                 continue  # pool stat snapshots are per-module, not linker-visible
             if name in self.resolver.imported_symbol_names:
