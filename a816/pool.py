@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
+
+logger = logging.getLogger("a816.pool")
 
 
 class Strategy(Enum):
@@ -104,8 +107,33 @@ class Pool:
             return
         order = _sort_allocations(self.allocations, self.strategy)
         free = list(self.ranges)
+        total = sum(r.size for r in self.ranges)
+        logger.info(
+            "pool %s: %d alloc(s) into %d range(s) totaling %d bytes",
+            self.name,
+            len(order),
+            len(self.ranges),
+            total,
+        )
         for alloc in order:
             free = _place(alloc, free)
+            free_total = sum(r.size for r in free)
+            logger.info(
+                "  placed %s size %d at 0x%06x  (free: %d bytes across %d range(s))",
+                alloc.name,
+                alloc.size,
+                alloc.addr,
+                free_total,
+                len(free),
+            )
+        for r in free:
+            logger.info(
+                "  pool %s leftover 0x%06x..0x%06x (%d bytes)",
+                self.name,
+                r.start,
+                r.end,
+                r.size,
+            )
         self._allocated = True
 
     @property
