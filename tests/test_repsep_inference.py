@@ -10,6 +10,10 @@ from tests import StubWriter
 
 def _assemble(src: str) -> StubWriter:
     program = Program()
+    # rep/sep -> a_size/i_size inference is opt-in (experimental); the
+    # whole suite exercises that behavior so flip the resolver flag
+    # before assembling.
+    program.resolver.track_register_size = True
     writer = StubWriter()
     program.assemble_string_with_emitter(src, "test_repsep.s", writer)
     return writer

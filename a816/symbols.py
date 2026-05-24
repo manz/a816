@@ -252,6 +252,15 @@ class Resolver:
         # stay unaffected.
         self.alloc_carry_a_size: int = 8
         self.alloc_carry_i_size: int = 8
+        # Opt-in rep/sep -> a_size/i_size inference. Off by default
+        # because pre-existing sources (ff4 master, similar) were
+        # written assuming value-driven width inference only — a
+        # `lda #$01` after some earlier `rep #$20` was always meant
+        # as 2 bytes (value forces .b). Enabling globally breaks
+        # those. Block-scoped opt-in via `.track_register_size`
+        # (or via the original `.a16` / `rep #$30` flow within a
+        # tight routine) is the path forward.
+        self.track_register_size: bool = False
         # Per-pool sandbox cursor for object-mode `.alloc` body labels.
         # Each `.alloc NAME in POOL` advances this so successive allocs
         # bind their bodies at distinct addresses inside the pool's

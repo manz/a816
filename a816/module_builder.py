@@ -274,6 +274,22 @@ def _has_position_directives(nodes: list[AstNode]) -> bool:
     return any(isinstance(node, CodePositionAstNode | CodeRelocationAstNode) for node in walk(nodes))
 
 
+def _apply_experimental_flags(program: "Program", flags: list[str] | None) -> None:
+    """Set experimental feature flags on `program.resolver`.
+
+    Known flags:
+      - `track_register_size` — let `rep`/`sep` with constant
+        immediate operands mutate `resolver.a_size` / `i_size`.
+        Off by default; legacy sources rely on value-driven width
+        inference only.
+    """
+    for flag in flags or []:
+        if flag == "track_register_size":
+            program.resolver.track_register_size = True
+        else:
+            logger.warning(f"unknown experimental flag: {flag}")
+
+
 def build_with_imports(
     main_source: str | Path,
     output_file: str | Path,
@@ -285,6 +301,7 @@ def build_with_imports(
     include_paths: list[Path] | None = None,
     prelude_file: Path | None = None,
     overlap_mode: str | None = None,
+    experimental: list[str] | None = None,
 ) -> BuildResult:
     """Build a project with automatic import resolution.
 
@@ -350,6 +367,7 @@ def build_with_imports(
         from a816.program import Program
 
         program = Program(overlap_mode=overlap_mode)
+        _apply_experimental_flags(program, experimental)
         if output_format == "ips":
             exit_code = program.link_as_patch(linked, output_file, copier_header=copier_header)
         elif output_format == "sfc":
@@ -452,7 +470,27 @@ def build_with_imports_direct(
     emit_debug_info: bool = True,
     overlap_mode: str | None = None,
 ) -> BuildResult:
-    """Pre-compile imported modules then assemble main directly (position-dependent ROM patches)."""
+    """**DEPRECATED.** Direct mode (per-module precompile + main `.assemble`
+    against the merged resolver) is scheduled for removal. New code MUST
+    route through `build_with_imports` — modules own placement via
+    `.alloc … in pool` / `.alloc at`, no `*=` chain. Direct mode keeps
+    the door open for the legacy `*=`-only shape during the migration
+    window, but every code path that branches on it (the prelude-skip,
+    `_object_has_pool_allocs` gate, `_register_imported_pools` shim)
+    is debt we can't carry indefinitely.
+
+    See `idea_import_chain_dies.md` + ff4 migration PR for the target
+    shape. No new features land in this function — they go in
+    `build_with_imports`.
+    """
+    import warnings
+
+    warnings.warn(
+        "build_with_imports_direct is deprecated; migrate to build_with_imports "
+        "(modules own placement via `.alloc in pool` / `.alloc at`).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     main_source = Path(main_source)
     output_file = Path(output_file)
     output_dir = output_dir or Path("build/obj")

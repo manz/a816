@@ -95,6 +95,8 @@ class OpcodeNode(NodeProtocol):
         sets the size directly; running after a `rep`/`sep` just
         re-asserts what the inference already chose.
         """
+        if not getattr(self.resolver, "track_register_size", False):
+            return
         if self.opcode not in ("rep", "sep") or self.addressing_mode is not AddressingMode.immediate:
             return
         # Immediate-mode parser always populates value_node — no
