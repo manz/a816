@@ -22,7 +22,55 @@ from a816.fluff.core import (
     TextEdit,
     line_col_to_offset,
 )
-from a816.parse.ast.nodes import AllocAstNode, AstNode, CodePositionAstNode, CompoundAstNode
+from a816.parse.ast.nodes import (
+    AsciiAstNode,
+    AssignAstNode,
+    AstNode,
+    CodePositionAstNode,
+    CommentAstNode,
+    DataNode,
+    DocstringAstNode,
+    ImportAstNode,
+    IncludeAstNode,
+    IncludeBinaryAstNode,
+    LabelAstNode,
+    LabelDeclAstNode,
+    MacroApplyAstNode,
+    OpcodeAstNode,
+    RegisterSizeAstNode,
+    SymbolAffectationAstNode,
+    TextAstNode,
+)
+
+# Nodes safe to lift into a `.alloc at ADDR { ... }` body. Pure
+# emit-style directives only. Anything else (containers, control
+# flow, imports, includes, incbins, new placement directives)
+# terminates the wrap. The autofix only handles the simple
+# `*= ADDR / a few instructions / data bytes` case mechanically.
+_WRAP_BODY_CONTENT: tuple[type[AstNode], ...] = (
+    OpcodeAstNode,
+    DataNode,
+    TextAstNode,
+    AsciiAstNode,
+    LabelAstNode,
+    LabelDeclAstNode,
+    SymbolAffectationAstNode,
+    AssignAstNode,
+    RegisterSizeAstNode,
+    MacroApplyAstNode,
+    CommentAstNode,
+    DocstringAstNode,
+)
+
+# Nodes that, if present in a `*= ADDR` body run, signal the user
+# is relying on direct-mode chain semantics (`.import` / `.include`
+# inlines source; `.incbin` may overflow bank boundaries). UP001
+# skips the conversion entirely so the user migrates these by hand.
+_BODY_SKIP_TRIGGERS: tuple[type[AstNode], ...] = (
+    IncludeBinaryAstNode,
+    ImportAstNode,
+    IncludeAstNode,
+)
 
 
 class StarEqualToAllocAt(Rule):
@@ -62,6 +110,8 @@ def _scan_for_star_eq(rule: Rule, ctx: LintContext, nodes: list[AstNode]) -> Ite
 
     for idx, node in enumerate(nodes):
         if isinstance(node, CodePositionAstNode):
+            if _body_has_skip_trigger(nodes, idx):
+                continue
             yield _emit_up001(rule, ctx, nodes, idx)
         elif isinstance(node, ScopeAstNode):
             yield from _scan_for_star_eq(rule, ctx, list(node.body.body))
@@ -121,44 +171,47 @@ def _build_star_eq_to_alloc_fix(
     )
 
 
+def _body_has_skip_trigger(siblings: list[AstNode], idx: int) -> bool:
+    """Body run after `siblings[idx]` contains `.incbin` / `.import`
+    / `.include`? Those rely on direct-mode chain semantics that
+    don't translate mechanically to `.alloc at`. UP001 leaves the
+    `*=` alone so the user migrates manually."""
+    for j in range(idx + 1, len(siblings)):
+        next_node = siblings[j]
+        if isinstance(next_node, _BODY_SKIP_TRIGGERS):
+            return True
+        if not isinstance(next_node, _WRAP_BODY_CONTENT):
+            return False
+    return False
+
+
 def _next_placement_or_end(text: str, siblings: list[AstNode], idx: int) -> int:
     """End offset for the body run starting after `siblings[idx]`.
 
-    Stops at the next placement directive at the same level —
-    `*=` (`CodePositionAstNode`), `.alloc` (`AllocAstNode`), OR a
-    bare `{ ... }` scope (`CompoundAstNode`) that contains a nested
-    `*=` / `.alloc`. The bare-scope case matters because a nested
-    `*=` inside the scope unconditionally resets the cursor; the
-    outer wrap can't legitimately span past it. ff4 #31: without
-    this check, UP001 produced a 672657-byte alloc by swallowing
-    a `.table` carrier scope. Returns end of `text` if no such
-    boundary follows."""
+    Walks forward node-by-node from `siblings[idx + 1]`. The body
+    extends only across `_WRAP_BODY_CONTENT` types — opcodes, data,
+    text, ascii, incbin, labels, constants, register-size hints,
+    macro applications, comments, docstrings. The first node that
+    falls outside this set terminates the wrap.
+
+    Why allow-list instead of stop-list: the wrap means "pin these
+    bytes here." Any container (`.if`, `.for`, `.scope`, `{}`),
+    placement directive (`*=`, `.alloc`), import/include, pool
+    decl, or other build-shaping directive belongs OUTSIDE the
+    wrap. ff4 #31 + #32: a stop-list missed `.import` / `.include` /
+    `.if`-containing-nested-`*=`, producing a wrap that engulfed
+    the entire trailing source from `*=0x208100` through to the
+    next outer `*=` thousands of lines later. The allow-list is
+    bounded by what's safe to put inside a pinned section."""
     for j in range(idx + 1, len(siblings)):
         next_node = siblings[j]
-        if isinstance(next_node, (CodePositionAstNode, AllocAstNode)):
-            next_pos = getattr(next_node.file_info, "position", None)
-            if next_pos is None:
-                continue
-            return line_col_to_offset(text, next_pos.line + 1, 1)
-        if isinstance(next_node, CompoundAstNode) and _contains_placement(next_node.body):
-            next_pos = getattr(next_node.file_info, "position", None)
-            if next_pos is None:
-                continue
-            return line_col_to_offset(text, next_pos.line + 1, 1)
+        if isinstance(next_node, _WRAP_BODY_CONTENT):
+            continue
+        next_pos = getattr(next_node.file_info, "position", None)
+        if next_pos is None:
+            continue
+        return line_col_to_offset(text, next_pos.line + 1, 1)
     return len(text)
-
-
-def _contains_placement(nodes: list[AstNode]) -> bool:
-    """Any `*=` or `.alloc` reachable inside `nodes` (recursing into
-    further bare scopes). Used to gate the bare-scope boundary in
-    `_next_placement_or_end` so unrelated `{ ... }` blocks without
-    placement directives don't false-terminate the wrap."""
-    for node in nodes:
-        if isinstance(node, (CodePositionAstNode, AllocAstNode)):
-            return True
-        if isinstance(node, CompoundAstNode) and _contains_placement(node.body):
-            return True
-    return False
 
 
 def _extract_body_source(snippet: str) -> str:
