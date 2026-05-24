@@ -22,7 +22,7 @@ from a816.fluff.core import (
     TextEdit,
     line_col_to_offset,
 )
-from a816.parse.ast.nodes import AllocAstNode, AstNode, CodePositionAstNode
+from a816.parse.ast.nodes import AllocAstNode, AstNode, CodePositionAstNode, CompoundAstNode
 
 
 class StarEqualToAllocAt(Rule):
@@ -124,12 +124,15 @@ def _build_star_eq_to_alloc_fix(
 def _next_placement_or_end(text: str, siblings: list[AstNode], idx: int) -> int:
     """End offset for the body run starting after `siblings[idx]`.
 
-    Stops at the next placement directive at the same level — either
-    another `*=` (`CodePositionAstNode`) or a `.alloc … at/in …`
-    (`AllocAstNode`). Both open their own placement context, so the
-    wrap-into-`.alloc at` for the leading `*=` must end before them
-    rather than swallowing them whole. Returns end of `text` if no
-    such boundary follows."""
+    Stops at the next placement directive at the same level —
+    `*=` (`CodePositionAstNode`), `.alloc` (`AllocAstNode`), OR a
+    bare `{ ... }` scope (`CompoundAstNode`) that contains a nested
+    `*=` / `.alloc`. The bare-scope case matters because a nested
+    `*=` inside the scope unconditionally resets the cursor; the
+    outer wrap can't legitimately span past it. ff4 #31: without
+    this check, UP001 produced a 672657-byte alloc by swallowing
+    a `.table` carrier scope. Returns end of `text` if no such
+    boundary follows."""
     for j in range(idx + 1, len(siblings)):
         next_node = siblings[j]
         if isinstance(next_node, (CodePositionAstNode, AllocAstNode)):
@@ -137,7 +140,25 @@ def _next_placement_or_end(text: str, siblings: list[AstNode], idx: int) -> int:
             if next_pos is None:
                 continue
             return line_col_to_offset(text, next_pos.line + 1, 1)
+        if isinstance(next_node, CompoundAstNode) and _contains_placement(next_node.body):
+            next_pos = getattr(next_node.file_info, "position", None)
+            if next_pos is None:
+                continue
+            return line_col_to_offset(text, next_pos.line + 1, 1)
     return len(text)
+
+
+def _contains_placement(nodes: list[AstNode]) -> bool:
+    """Any `*=` or `.alloc` reachable inside `nodes` (recursing into
+    further bare scopes). Used to gate the bare-scope boundary in
+    `_next_placement_or_end` so unrelated `{ ... }` blocks without
+    placement directives don't false-terminate the wrap."""
+    for node in nodes:
+        if isinstance(node, (CodePositionAstNode, AllocAstNode)):
+            return True
+        if isinstance(node, CompoundAstNode) and _contains_placement(node.body):
+            return True
+    return False
 
 
 def _extract_body_source(snippet: str) -> str:

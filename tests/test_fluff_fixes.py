@@ -247,6 +247,24 @@ class TestStarEqMigrationContainers:
         assert "\n.alloc reset in client {" in new
         assert "    .alloc reset in client" not in new
 
+    def test_up001_stops_wrap_at_following_bare_scope_with_inner_star_eq(self) -> None:
+        """A bare `{ ... }` scope at the same level that contains a
+        nested `*=` is itself a placement reset — the inner `*=` will
+        reset the cursor regardless of what the outer `*=` body says.
+
+        ff4 #31 friction: UP001 was over-extending through the scope,
+        producing an alloc spanning $00:B335..$14:F6XX (672657 bytes,
+        bigger than ROM). Wrap must close before the bare brace."""
+        src = '"""m"""\n*=0x00B335\n    jmp.w _animation_wait_route\n\n{\n    *=0x14F656\n    .dw 0x2016\n}\n'
+        diagnostics = lint_text(src, Path("<mem>"))
+        new, _ = apply_fixes(src, diagnostics, allow_unsafe=True)
+        # Wrap closes before the bare brace, not after it.
+        assert ".alloc at 0x00B335 {\n        jmp.w _animation_wait_route\n}" in new
+        # Bare scope stays at column 0, untouched (UP001 doesn't recurse
+        # into bare scopes yet — separate follow-up if we want the inner
+        # `*=` rewritten too).
+        assert "}\n{\n    *=0x14F656" in new
+
 
 class TestStarEqMigrationFix:
     def test_up001_wraps_single_star_eq_into_alloc_at(self) -> None:
