@@ -6,9 +6,8 @@ through every subsequent sibling that is NOT a boundary — i.e.
 opcodes, data, labels, includes, declarations, etc. — and stops
 at the next boundary (or end of the enclosing block).
 
-Both the parse-time `desugar_star_eq` pass and the fluff UP001
-autofix consume this classifier so they agree on where one `*=`
-body ends and the next placement begins.
+The fluff UP001 autofix consumes this classifier to agree on
+where one `*=` body ends and the next placement begins.
 
 Boundary set:
 - `CodePositionAstNode` (`*= ADDR`) — opens a pinned section.
