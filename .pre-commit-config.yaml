@@ -1,0 +1,18 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check + format check
+        entry: hatch run tests:check
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: diff-cover
+        name: diff-cover (>=80% on changed lines vs origin/master)
+        entry: hatch run tests:diffcov
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]

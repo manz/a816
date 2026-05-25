@@ -118,6 +118,19 @@ class TestAllocDirective:
         opcodes = [n for n in node.body.body if isinstance(n, OpcodeAstNode)]
         assert len(opcodes) == 1
 
+    def test_anonymous_in_pool(self) -> None:
+        node = _first_of(
+            """
+            .alloc in asset_blobs {
+                .db 0x01, 0x02, 0x03
+            }
+            """,
+            AllocAstNode,
+        )
+        assert node.name is None
+        assert node.pool_name == "asset_blobs"
+        assert isinstance(node.body, BlockAstNode)
+
     def test_missing_in_keyword_is_error(self) -> None:
         result = A816Parser.parse_as_ast(
             ".alloc helper bank20 { rts }",
