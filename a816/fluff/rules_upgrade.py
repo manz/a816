@@ -46,9 +46,7 @@ class StarEqualToAllocAt(Rule):
         yield from _scan_for_star_eq(self, ctx, nodes, body_end=len(ctx.text))
 
 
-def _scan_for_star_eq(
-    rule: Rule, ctx: LintContext, nodes: list[AstNode], *, body_end: int
-) -> Iterable[Diagnostic]:
+def _scan_for_star_eq(rule: Rule, ctx: LintContext, nodes: list[AstNode], *, body_end: int) -> Iterable[Diagnostic]:
     """Walk a flat node sequence, emitting UP001 for each `*=`.
 
     Recurses into containers that hold their own placement runs
@@ -78,9 +76,7 @@ def _scan_for_star_eq(
             if_end, else_end = _if_branch_ends(ctx.text, node, body_end)
             yield from _scan_for_star_eq(rule, ctx, list(node.block.body), body_end=if_end)
             if node.else_block is not None:
-                yield from _scan_for_star_eq(
-                    rule, ctx, list(node.else_block.body), body_end=else_end
-                )
+                yield from _scan_for_star_eq(rule, ctx, list(node.else_block.body), body_end=else_end)
             continue
         child_body_end = _container_body_end(ctx.text, node, body_end)
         if isinstance(node, ScopeAstNode):
@@ -156,9 +152,7 @@ def _container_body_end(text: str, node: AstNode, fallback: int) -> int:
     return fallback
 
 
-def _emit_up001(
-    rule: Rule, ctx: LintContext, siblings: list[AstNode], idx: int, *, body_end: int
-) -> Diagnostic:
+def _emit_up001(rule: Rule, ctx: LintContext, siblings: list[AstNode], idx: int, *, body_end: int) -> Diagnostic:
     star_eq = siblings[idx]
     assert isinstance(star_eq, CodePositionAstNode)
     addr_text = star_eq.expression.to_canonical()

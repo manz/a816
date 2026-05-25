@@ -36,7 +36,10 @@ from a816.parse.ast.nodes import (
     AllocAstNode,
     AstNode,
     CodePositionAstNode,
+    CompoundAstNode,
+    IfAstNode,
     RelocateAstNode,
+    ScopeAstNode,
 )
 
 _BOUNDARY_TYPES: tuple[type[AstNode], ...] = (
@@ -46,5 +49,46 @@ _BOUNDARY_TYPES: tuple[type[AstNode], ...] = (
 )
 
 
+def _block_contains_placement(body: list[AstNode]) -> bool:
+    for child in body:
+        if isinstance(child, _BOUNDARY_TYPES):
+            return True
+        if isinstance(child, CompoundAstNode) and _block_contains_placement(child.body):
+            return True
+        if isinstance(child, ScopeAstNode) and _block_contains_placement(list(child.body.body)):
+            return True
+        if isinstance(child, IfAstNode):
+            if _block_contains_placement(list(child.block.body)):
+                return True
+            if child.else_block is not None and _block_contains_placement(list(child.else_block.body)):
+                return True
+    return False
+
+
 def is_placement_boundary(node: AstNode) -> bool:
-    return isinstance(node, _BOUNDARY_TYPES)
+    """Direct placement directives end an in-progress `*=` body run.
+
+    Container nodes (bare `{ ... }`, `.if`, `.scope`, `.for`, `.macro`)
+    that themselves contain a placement directive ALSO count as
+    boundaries: the container opens its own address-flow context with
+    `*= INNER_ADDR { ... }` siblings, so swallowing it into the outer
+    `*=`'s body would nest the inner allocs inside the outer alloc —
+    they then emit at the wrong physical address. The container must
+    remain a sibling of the outer `*=` so its inner allocs route
+    through their own placement.
+
+    Containers with no inner placement (label scopes, data tables,
+    conditional opcode blocks) keep grouping with the outer `*=` body.
+    """
+    if isinstance(node, _BOUNDARY_TYPES):
+        return True
+    if isinstance(node, CompoundAstNode) and _block_contains_placement(node.body):
+        return True
+    if isinstance(node, ScopeAstNode) and _block_contains_placement(list(node.body.body)):
+        return True
+    if isinstance(node, IfAstNode):
+        if _block_contains_placement(list(node.block.body)):
+            return True
+        if node.else_block is not None and _block_contains_placement(list(node.else_block.body)):
+            return True
+    return False
