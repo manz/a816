@@ -40,23 +40,8 @@ class NestedPlacementInAlloc(Rule):
         "the inner directive out as a sibling of the outer `.alloc` "
         "so each region carries its own placement."
     )
-    bad = (
-        '"""Module."""\n'
-        ".alloc outer at 0x008000 {\n"
-        "    .db 0xEA\n"
-        "    *= 0x009000\n"
-        "    .db 0x01\n"
-        "}\n"
-    )
-    good = (
-        '"""Module."""\n'
-        ".alloc outer at 0x008000 {\n"
-        "    .db 0xEA\n"
-        "}\n"
-        ".alloc at 0x009000 {\n"
-        "    .db 0x01\n"
-        "}\n"
-    )
+    bad = '"""Module."""\n.alloc outer at 0x008000 {\n    .db 0xEA\n    *= 0x009000\n    .db 0x01\n}\n'
+    good = '"""Module."""\n.alloc outer at 0x008000 {\n    .db 0xEA\n}\n.alloc at 0x009000 {\n    .db 0x01\n}\n'
     accepts = (AllocAstNode,)
 
     def visit(self, ctx: LintContext, node: AstNode) -> Iterable[Diagnostic]:
@@ -69,6 +54,5 @@ class NestedPlacementInAlloc(Rule):
             yield self.diagnose(
                 ctx,
                 child,
-                f"nested placement {kind} inside `.alloc {outer}`; "
-                f"hoist it out as a sibling of the alloc",
+                f"nested placement {kind} inside `.alloc {outer}`; hoist it out as a sibling of the alloc",
             )

@@ -11,7 +11,7 @@ export VERSION
 all: | tests wheels  ## Runs the tests and builds the wheel
 
 .PHONY: format
-format: ## Runs black to format the python code
+format: ## Runs ruff to format the python code
 	$(Q) hatch run tests:format
 
 # Standard targets
