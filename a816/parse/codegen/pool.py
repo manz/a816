@@ -10,11 +10,13 @@ from a816.exceptions import (
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    CodePositionAstNode,
     ExpressionAstNode,
     PoolAstNode,
     ReclaimAstNode,
     RelocateAstNode,
 )
+from a816.parse.ast.visitor import walk
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators
 from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
@@ -163,8 +165,37 @@ def generate_alloc(
         pool_name = node.pool_name
         alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
 
+    _reject_nested_placement(node, file_info)
     body_nodes = _code_gen(node.body.body, resolver, macro_definitions)
     return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info)]
+
+
+_NESTED_PLACEMENT_KINDS = {
+    AllocAstNode: ".alloc",
+    RelocateAstNode: ".relocate",
+    CodePositionAstNode: "`*=` (CodePosition)",
+}
+
+
+def _reject_nested_placement(node: AllocAstNode, file_info: Token) -> None:
+    """Forbid placement directives inside an `.alloc` body.
+
+    Nested placement has no well-defined semantics: the inner directive
+    would re-anchor the PC inside a region the outer `.alloc` already
+    owns, silently corrupting layout. Fail loudly with both source
+    locations so the author can hoist the inner block out.
+    """
+    outer = node.name or "<anonymous>"
+    for child in walk(node.body.body):
+        kind = _NESTED_PLACEMENT_KINDS.get(type(child))
+        if kind is None:
+            continue
+        inner_pos = getattr(getattr(child.file_info, "position", None), "line", "?")
+        raise NodeError(
+            f"nested placement directive {kind} inside `.alloc {outer}` "
+            f"(at line {inner_pos}) is not allowed; hoist it outside the alloc body",
+            child.file_info,
+        )
 
 
 def _anonymous_alloc_name(file_info: Token, pool_name: str) -> str:

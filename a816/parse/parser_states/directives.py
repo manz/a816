@@ -445,9 +445,11 @@ def _expect_contextual_keyword(p: Parser, expected: str) -> Token:
 
 
 def parse_alloc(p: Parser) -> AllocAstNode:
-    """Parse `.alloc` in three shapes:
+    """Parse `.alloc` in four shapes:
 
-    * `.alloc NAME in POOL { body }` — pooled.
+    * `.alloc NAME in POOL { body }` — pooled, named.
+    * `.alloc in POOL { body }` — pooled, anonymous (asset bins
+      dumped into a pool without a per-blob name).
     * `.alloc NAME at ADDR [size N] { body }` — pinned, named.
     * `.alloc at ADDR [size N] { body }` — pinned, anonymous (3-byte
       hijacks shouldn't tax with names).
@@ -461,6 +463,13 @@ def parse_alloc(p: Parser) -> AllocAstNode:
     # `.alloc at ADDR ...` — anonymous pinned.
     if first.value == "at":
         return _parse_pinned_alloc_tail(p, parse_block, keyword, name=None)
+
+    # `.alloc in POOL ...` — anonymous pooled.
+    if first.value == "in":
+        pool_token = p.next()
+        expect_token(pool_token, TokenType.IDENTIFIER)
+        body = _parse_alloc_body(p, parse_block)
+        return AllocAstNode(None, pool_token.value, body, keyword)
 
     # `.alloc NAME ...` — pooled or named-pinned.
     name = first.value
