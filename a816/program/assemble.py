@@ -83,7 +83,7 @@ class AssembleMixin:
             return emitter
         return WriteAuditor(emitter, mode=mode)  # type: ignore[arg-type]
 
-    def assemble_with_emitter(self, asm_file: str, emitter: Writer, prelude: str | None = None) -> int:
+    def assemble_with_emitter(self, asm_file: str, emitter: Writer) -> int:
         """CLI-facing wrapper around `assemble_string_with_emitter`.
 
         Always returns an exit code; never calls `sys.exit`. Embedders that
@@ -101,8 +101,6 @@ class AssembleMixin:
 
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
-                if prelude:
-                    input_program = prelude + "\n" + input_program
                 try:
                     self.assemble_string_with_emitter(input_program, asm_file, emitter)
                 except AssemblyError as e:
@@ -135,33 +133,31 @@ class AssembleMixin:
         self.logger.debug("Success !")
         return 0
 
-    def assemble(self, asm_file: str, sfc_file: Path, prelude: str | None = None) -> int:
+    def assemble(self, asm_file: str, sfc_file: Path) -> int:
         """
-        Compile asmfile.
+        Compile asmfile to a SFC ROM.
         :param asm_file:
         :param sfc_file:
-        :param prelude: Optional prelude content to prepend to the source.
         :return: error code
         """
         with open(sfc_file, "wb") as f:
             sfc_emitter = SFCWriter(f)
-            exit_code = self.assemble_with_emitter(asm_file, sfc_emitter, prelude=prelude)
+            exit_code = self.assemble_with_emitter(asm_file, sfc_emitter)
         self._flush_emit_trace(sfc_file)
         return exit_code
 
-    def assemble_as_object(self, asm_file: str, output_file: Path, prelude: str | None = None) -> int:
+    def assemble_as_object(self, asm_file: str, output_file: Path) -> int:
         """
         Compile assembly file to object file for later linking.
         :param asm_file: Input assembly file
         :param output_file: Output object file path
-        :param prelude: Optional prelude content to prepend to the source
         :return: error code
         """
         object_writer = ObjectWriter(str(output_file))
         object_writer.begin()
 
         try:
-            exit_code = self.assemble_with_object_emitter(asm_file, object_writer, prelude=prelude)
+            exit_code = self.assemble_with_object_emitter(asm_file, object_writer)
             object_writer.end()
             return exit_code
         except RuntimeError as e:
@@ -201,7 +197,7 @@ class AssembleMixin:
         from a816.object_file import SymbolSection, SymbolType
         from a816.symbols import NamedScope
 
-        for idx, scope in enumerate(self.resolver.scopes):
+        for scope in self.resolver.scopes:
             if not isinstance(scope, NamedScope):
                 continue
             for bare_name, addr in scope.get_labels():
@@ -226,9 +222,7 @@ class AssembleMixin:
             sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 
-    def assemble_with_object_emitter(
-        self, asm_file: str, object_writer: ObjectWriter, prelude: str | None = None
-    ) -> int:
+    def assemble_with_object_emitter(self, asm_file: str, object_writer: ObjectWriter) -> int:
         """Assemble with object file emission, collecting symbols and relocations."""
         previous_mode = self.resolver.context.mode
         previous_writer = self.resolver.context.object_writer
@@ -238,8 +232,6 @@ class AssembleMixin:
 
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
-            if prelude:
-                input_program = prelude + "\n" + input_program
 
             try:
                 error, nodes = self.parser.parse(input_program, asm_file)
@@ -276,7 +268,6 @@ class AssembleMixin:
         ips_file: Path,
         mapping: str | None = None,
         copier_header: bool = False,
-        prelude: str | None = None,
     ) -> int:
         if mapping is not None:
             address_mapping = {
@@ -291,7 +282,7 @@ class AssembleMixin:
         with open(ips_file, "wb") as f:
             ips_emitter = IPSWriter(f, copier_header)
             ips_emitter.begin()
-            exit_code = self.assemble_with_emitter(asm_file, ips_emitter, prelude=prelude)
+            exit_code = self.assemble_with_emitter(asm_file, ips_emitter)
             ips_emitter.end()
         self._flush_emit_trace(ips_file)
         return exit_code

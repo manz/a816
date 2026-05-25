@@ -16,7 +16,6 @@ from pathlib import Path
 from a816.module_builder import build_with_imports
 from a816.program import Program
 
-
 _PROVIDER = """
 .alloc payload_block at 0x208000 {
     .scope payload {
@@ -53,8 +52,7 @@ def test_extern_scope_resolves_all_dotted_members() -> None:
         assert prog0.assemble_as_object(str(tmp / "provider.s"), tmp / "provider.o") == 0
         # Consumer object compile + link via main.
         (tmp / "main.s").write_text(
-            '.import "provider"\n'
-            '.import "consumer"\n',
+            '.import "provider"\n.import "consumer"\n',
             encoding="utf-8",
         )
         result = build_with_imports(

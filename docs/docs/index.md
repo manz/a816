@@ -48,7 +48,6 @@ for backwards compatibility — existing scripts keep working.
 --obj-dir DIR            Directory for compiled object files (default
                          build/obj).
 --include-path PATH      Add directory to include search path for `.include`.
---prelude PRELUDE_FILE   Config file prepended to every module compilation.
 ```
 
 #### Separate compilation

@@ -96,8 +96,7 @@ class LinkedModuleNode(NodeProtocol):
             self.resolver.pools[decl.name] = Pool(
                 name=decl.name,
                 ranges=[
-                    PoolRange(start=lo, end=hi, allow_bank_cross=(lo >> 16) != (hi >> 16))
-                    for lo, hi in decl.ranges
+                    PoolRange(start=lo, end=hi, allow_bank_cross=(lo >> 16) != (hi >> 16)) for lo, hi in decl.ranges
                 ],
                 fill=decl.fill,
                 strategy=Strategy(decl.strategy),

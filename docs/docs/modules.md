@@ -103,11 +103,11 @@ sub-modules `.alloc … in client` against them without redeclaring.
 See [Freespace pools](freespace-pools.md) for `.alloc`, `.relocate`,
 and `.reclaim` semantics.
 
-## Prelude
+## Preamble
 
-`--prelude PRELUDE_FILE` prepends the file to every module compilation.
-Useful for project-wide feature flags, register-size hints, or
-`.table` configuration. Prefer an explicit `.import "preamble"` at
-the top of each module — the inline classifier picks up the
-preamble's structs / pools / typed binds the same way, without the
-text-prepend tax on every per-module compile.
+Shared compile-time material (feature flags, register-size hints,
+`.table` configuration, pool decls, typed binds) lives in a `.s`
+file imported explicitly from each entry point: `.import "preamble"`
+at the top of `main.s`. The inline classifier picks up the
+preamble's structs / pools / constants; runtime symbols become
+externs the linker resolves.

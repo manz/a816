@@ -21,7 +21,6 @@ from pathlib import Path
 
 from a816.program import Program
 
-
 _PREAMBLE = """
 ENABLE_INTRO := 1
 DEBUG := 0

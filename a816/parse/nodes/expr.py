@@ -103,9 +103,7 @@ class ExpressionNode(ValueNodeProtocol):
                 # name.
                 from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
 
-                self._deferred_expression = _inline_aliases(
-                    reconstruct_expression(self.expression), self.resolver
-                )
+                self._deferred_expression = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
                 return 0
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
         except SymbolNotDefined as e:

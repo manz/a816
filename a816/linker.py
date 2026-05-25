@@ -127,10 +127,7 @@ class Linker:
 
         return Pool(
             name=decl.name,
-            ranges=[
-                PoolRange(start=s, end=e, allow_bank_cross=(s >> 16) != (e >> 16))
-                for s, e in decl.ranges
-            ],
+            ranges=[PoolRange(start=s, end=e, allow_bank_cross=(s >> 16) != (e >> 16)) for s, e in decl.ranges],
             fill=decl.fill,
             strategy=Strategy(decl.strategy),
         )
@@ -330,9 +327,7 @@ class Linker:
         # `.extern` already resolve via the relocation pipeline.
         if unresolved_symbols:
             satisfied_by_scope = {
-                name
-                for name in unresolved_symbols
-                if any(key.startswith(f"{name}.") for key in self.symbol_map)
+                name for name in unresolved_symbols if any(key.startswith(f"{name}.") for key in self.symbol_map)
             }
             unresolved_symbols -= satisfied_by_scope
         if unresolved_symbols:

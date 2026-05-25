@@ -18,11 +18,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from a816.object_file import ObjectFile, SymbolType
 from a816.program import Program
-
 
 _POOL = ".pool p { range 0x208000 0x20FFFF\n    strategy order\n}\n"
 
@@ -33,24 +30,15 @@ def test_public_label_in_alloc_body_visible_to_extern_in_same_module() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         (tmp / "provider.s").write_text(
-            _POOL
-            + ".alloc helpers in p {\n"
-            "foo:\n"
-            "    rts\n"
-            "}\n",
+            _POOL + ".alloc helpers in p {\nfoo:\n    rts\n}\n",
             encoding="utf-8",
         )
         (tmp / "consumer.s").write_text(
-            ".extern foo\n"
-            ".alloc client in p {\n"
-            "    jsr.l foo\n"
-            "    rts\n"
-            "}\n",
+            ".extern foo\n.alloc client in p {\n    jsr.l foo\n    rts\n}\n",
             encoding="utf-8",
         )
         (tmp / "main.s").write_text(
-            '.include "provider.s"\n'
-            '.include "consumer.s"\n',
+            '.include "provider.s"\n.include "consumer.s"\n',
             encoding="utf-8",
         )
         program = Program()
@@ -74,11 +62,7 @@ def test_underscore_label_export_classification_stays_local() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         (tmp / "mod.s").write_text(
-            _POOL
-            + ".alloc helpers in p {\n"
-            "_foo:\n"
-            "    rts\n"
-            "}\n",
+            _POOL + ".alloc helpers in p {\n_foo:\n    rts\n}\n",
             encoding="utf-8",
         )
         program = Program()

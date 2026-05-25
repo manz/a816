@@ -25,7 +25,6 @@ class AssemblyContext:
     object_writer: "ObjectWriter | None" = None
     module_paths: list[Path] = field(default_factory=list)
     include_paths: list[Path] = field(default_factory=list)
-    prelude_file: Path | None = None
     # How the WriteAuditor reacts to overlapping byte writes from
     # different `*=` / `.alloc` / `.relocate` sections. Default is
     # `"error"` since 2026-05: silent last-write-wins on `*=` overlap

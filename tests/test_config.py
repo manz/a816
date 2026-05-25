@@ -24,10 +24,7 @@ def test_find_returns_none_when_missing(tmp_path: Path) -> None:
 def test_load_resolves_paths(tmp_path: Path) -> None:
     cfg = tmp_path / "a816.toml"
     cfg.write_text(
-        'entrypoint = "src/main.s"\n'
-        'include-paths = ["src/include"]\n'
-        'module-paths  = ["src/modules"]\n'
-        'prelude       = "src/prelude.s"\n',
+        'entrypoint = "src/main.s"\ninclude-paths = ["src/include"]\nmodule-paths  = ["src/modules"]\n',
         encoding="utf-8",
     )
     loaded = load_a816_toml(cfg)
@@ -36,7 +33,6 @@ def test_load_resolves_paths(tmp_path: Path) -> None:
     assert loaded.entrypoint == (tmp_path / "src" / "main.s").resolve()
     assert loaded.include_paths == [(tmp_path / "src" / "include").resolve()]
     assert loaded.module_paths == [(tmp_path / "src" / "modules").resolve()]
-    assert loaded.prelude_file == (tmp_path / "src" / "prelude.s").resolve()
 
 
 def test_load_returns_none_on_decode_error(tmp_path: Path) -> None:

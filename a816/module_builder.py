@@ -18,8 +18,6 @@ from a816.module_loader import resolve_module
 from a816.object_file import ObjectFile
 from a816.parse.ast.nodes import (
     AstNode,
-    CodePositionAstNode,
-    CodeRelocationAstNode,
     ImportAstNode,
 )
 from a816.parse.mzparser import A816Parser
@@ -95,7 +93,6 @@ class ModuleBuilder:
         output_dir: Path | None = None,
         symbols: dict[str, int | str] | None = None,
         include_paths: list[Path] | None = None,
-        prelude_file: Path | None = None,
     ) -> None:
         """Initialize the module builder.
 
@@ -104,16 +101,11 @@ class ModuleBuilder:
             output_dir: Directory to write compiled .o files.
             symbols: Predefined symbols (e.g., LANG=1) for conditional compilation.
             include_paths: Directories to search for .include files.
-            prelude_file: Config file prepended to every module compilation.
         """
         self.module_paths = module_paths or []
         self.output_dir = output_dir or Path("build/obj")
         self.symbols: dict[str, int | str] = symbols or {}
         self.include_paths: list[Path] = include_paths or []
-        self.prelude_file = prelude_file
-        self._prelude_content: str | None = None
-        if prelude_file:
-            self._prelude_content = prelude_file.read_text(encoding="utf-8")
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
 
@@ -224,7 +216,7 @@ class ModuleBuilder:
             # re-publish them here — otherwise every downstream `.o` gains
             # a duplicate GLOBAL and the linker rejects the build.
             program.resolver.imported_symbol_names.add(name)
-        result = program.assemble_as_object(str(source_path), obj_path, prelude=self._prelude_content)
+        result = program.assemble_as_object(str(source_path), obj_path)
         if result != 0:
             raise RuntimeError(f"Failed to compile module '{module_name}'")
 
@@ -267,13 +259,6 @@ class ModuleBuilder:
         return Linker(object_files).link(base_address=0x8000)
 
 
-def _has_position_directives(nodes: list[AstNode]) -> bool:
-    """Check if AST contains *= or @= directives (position-dependent code)."""
-    from a816.parse.ast.visitor import walk
-
-    return any(isinstance(node, CodePositionAstNode | CodeRelocationAstNode) for node in walk(nodes))
-
-
 def _apply_experimental_flags(program: "Program", flags: list[str] | None) -> None:
     """Set experimental feature flags on `program.resolver`.
 
@@ -299,17 +284,10 @@ def build_with_imports(
     symbols: dict[str, int | str] | None = None,
     copier_header: bool = False,
     include_paths: list[Path] | None = None,
-    prelude_file: Path | None = None,
     overlap_mode: str | None = None,
     experimental: list[str] | None = None,
 ) -> BuildResult:
-    """Build a project with automatic import resolution.
-
-    This is the main entry point for building projects that use .import directives.
-
-    For projects with *=directives (position-dependent code like ROM patches),
-    use build_with_imports_direct() which assembles the main file directly
-    while resolving imported module symbols.
+    """Build a project: compile every `.import`ed module to `.o`, link.
 
     Args:
         main_source: Path to the main source file.
@@ -317,10 +295,12 @@ def build_with_imports(
         output_format: Output format ("ips" or "sfc").
         module_paths: Additional directories to search for modules.
         output_dir: Directory for compiled object files.
-        symbols: Predefined symbols for conditional compilation.
+        symbols: Predefined symbols (-D-style) seeded into every
+            module's resolver before codegen.
         copier_header: Whether to add copier header offset for IPS.
         include_paths: Additional directories to search for .include files.
-        prelude_file: Config file prepended to every module compilation.
+        overlap_mode: How to handle overlapping writes (error/warn/off).
+        experimental: List of experimental feature flags to enable.
 
     Returns:
         BuildResult with exit_code, symbol_map, diagnostics, and program.
@@ -328,30 +308,12 @@ def build_with_imports(
     main_source = Path(main_source)
     output_file = Path(output_file)
 
-    # Set up module paths
     paths = module_paths or []
     if main_source.parent not in paths:
         paths = [main_source.parent] + paths
 
-    # Check if the main file uses *= or @= directives (position-dependent code)
-    # If so, use the direct assembly approach instead of full object linking
     parse_result = A816Parser.parse_as_ast(main_source.read_text(encoding="utf-8"), str(main_source))
     main_nodes = parse_result.nodes
-    if _has_position_directives(main_nodes):
-        logger.info("Detected position-dependent code (*=), using direct assembly mode")
-        return build_with_imports_direct(
-            main_source=main_source,
-            output_file=output_file,
-            output_format=output_format,
-            module_paths=paths,
-            output_dir=output_dir,
-            symbols=symbols,
-            copier_header=copier_header,
-            include_paths=include_paths,
-            prelude_file=prelude_file,
-            parsed_main_nodes=main_nodes,
-            overlap_mode=overlap_mode,
-        )
 
     try:
         builder = ModuleBuilder(
@@ -359,7 +321,6 @@ def build_with_imports(
             output_dir=output_dir,
             symbols=symbols,
             include_paths=include_paths,
-            prelude_file=prelude_file,
         )
 
         linked = builder.build(main_source, parsed_main_nodes=main_nodes)
@@ -384,197 +345,9 @@ def build_with_imports(
         symbol_map.update(program.resolver.get_all_absolute_labels())
         debug_path: Path | None = None
         if exit_code == 0:
-            from a816.debug_info import write as write_debug_info
-
-            debug_path = output_file.with_suffix(output_file.suffix + ".adbg")
-            write_debug_info(program.build_debug_info(str(main_source)), debug_path)
-        return BuildResult(
-            exit_code=exit_code,
-            symbol_map=symbol_map,
-            program=program,
-            debug_info_path=debug_path,
-        )
-
-    except Exception as e:
-        logger.error(f"Build failed: {e}")  # NOSONAR python:S8572
-        logger.debug("Build traceback", exc_info=True)
-        return BuildResult(exit_code=1, diagnostics=[str(e)])
-
-
-def _compile_one_module_direct(
-    module_name: str,
-    source_path: Path,
-    obj_path: Path,
-    *,
-    output_dir: Path,
-    paths: list[Path],
-    include_paths: list[Path] | None,
-    symbols: dict[str, int | str] | None,
-    accumulated: dict[str, int],
-    prelude_content: str | None,
-) -> None:
-    from a816.program import Program
-
-    logger.info(f"Compiling module {module_name}: {source_path} -> {obj_path}")
-    program = Program()
-    program.add_module_path(output_dir)
-    for path in paths:
-        program.add_module_path(path)
-    for inc_path in include_paths or []:
-        program.add_include_path(inc_path)
-    for name, value in (symbols or {}).items():
-        program.resolver.current_scope.add_symbol(name, value)
-    for name, value in accumulated.items():
-        program.resolver.current_scope.add_symbol(name, value)
-    if program.assemble_as_object(str(source_path), obj_path, prelude=prelude_content) != 0:
-        raise RuntimeError(f"Failed to compile module '{module_name}'")
-
-
-def _assemble_main_direct(
-    main_source: Path,
-    output_file: Path,
-    output_format: str,
-    *,
-    output_dir: Path,
-    paths: list[Path],
-    include_paths: list[Path] | None,
-    symbols: dict[str, int | str] | None,
-    copier_header: bool,
-    prelude_content: str | None,
-    capture_debug: bool = False,
-    overlap_mode: str | None = None,
-) -> "tuple[int, Program] | BuildResult":  # noqa: F821
-    from a816.program import Program
-
-    program = Program(overlap_mode=overlap_mode)
-    if capture_debug:
-        program.enable_debug_capture()
-    program.add_module_path(output_dir)
-    for path in paths:
-        program.add_module_path(path)
-    for inc_path in include_paths or []:
-        program.add_include_path(inc_path)
-    for name, value in (symbols or {}).items():
-        program.resolver.current_scope.add_symbol(name, value)
-
-    if output_format == "ips":
-        exit_code = program.assemble_as_patch(
-            str(main_source), output_file, copier_header=copier_header, prelude=prelude_content
-        )
-    elif output_format == "sfc":
-        exit_code = program.assemble(str(main_source), output_file, prelude=prelude_content)
-    else:
-        logger.error(f"Unknown output format: {output_format}")
-        return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
-    return exit_code, program
-
-
-def build_with_imports_direct(
-    main_source: str | Path,
-    output_file: str | Path,
-    output_format: str = "ips",
-    module_paths: list[Path] | None = None,
-    output_dir: Path | None = None,
-    symbols: dict[str, int | str] | None = None,
-    copier_header: bool = False,
-    include_paths: list[Path] | None = None,
-    prelude_file: Path | None = None,
-    parsed_main_nodes: list[AstNode] | None = None,
-    emit_debug_info: bool = True,
-    overlap_mode: str | None = None,
-) -> BuildResult:
-    """**DEPRECATED.** Direct mode (per-module precompile + main `.assemble`
-    against the merged resolver) is scheduled for removal. New code MUST
-    route through `build_with_imports` — modules own placement via
-    `.alloc … in pool` / `.alloc at`, no `*=` chain. Direct mode keeps
-    the door open for the legacy `*=`-only shape during the migration
-    window, but every code path that branches on it (the prelude-skip,
-    `_object_has_pool_allocs` gate, `_register_imported_pools` shim)
-    is debt we can't carry indefinitely.
-
-    See `idea_import_chain_dies.md` + ff4 migration PR for the target
-    shape. No new features land in this function — they go in
-    `build_with_imports`.
-    """
-    import warnings
-
-    warnings.warn(
-        "build_with_imports_direct is deprecated; migrate to build_with_imports "
-        "(modules own placement via `.alloc in pool` / `.alloc at`).",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    main_source = Path(main_source)
-    output_file = Path(output_file)
-    output_dir = output_dir or Path("build/obj")
-
-    paths = module_paths or []
-    if main_source.parent not in paths:
-        paths = [main_source.parent] + paths
-
-    prelude_content: str | None = prelude_file.read_text(encoding="utf-8") if prelude_file else None
-
-    try:
-        builder = ModuleBuilder(module_paths=paths, output_dir=output_dir, symbols=symbols)
-        builder.discover_imports(main_source, parsed_main_nodes)
-        # When a prelude declares shared pools / constants / typed
-        # binds, per-module precompile would need every symbol that the
-        # prelude introduces to flow through ExternNodes — including
-        # `.alloc` names from sibling modules. Cheapest fix: skip the
-        # precompile loop and let main's direct-mode `.import` inline
-        # each module's source. Single resolver, one allocator pass,
-        # no cross-module extern dance.
-        modules_to_compile = [] if prelude_content else [m for m in builder.graph.topological_sort() if m != "__main__"]
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        accumulated_constants: dict[str, int] = {}
-        for module_name in modules_to_compile:
-            source_path = builder.graph.modules[module_name]
-            obj_path = builder._get_obj_path(module_name)
-            if builder._needs_recompilation(module_name):
-                _compile_one_module_direct(
-                    module_name,
-                    source_path,
-                    obj_path,
-                    output_dir=output_dir,
-                    paths=paths,
-                    include_paths=include_paths,
-                    symbols=symbols,
-                    accumulated=accumulated_constants,
-                    prelude_content=prelude_content,
-                )
-            else:
-                logger.info(f"Module {module_name} is up to date")
-            ModuleBuilder._accumulate_constants(ObjectFile.from_file(str(obj_path)), accumulated_constants)
-
-        logger.info(f"Assembling main file: {main_source}")
-        result = _assemble_main_direct(
-            main_source,
-            output_file,
-            output_format,
-            output_dir=output_dir,
-            paths=paths,
-            include_paths=include_paths,
-            symbols=symbols,
-            copier_header=copier_header,
-            prelude_content=prelude_content,
-            capture_debug=emit_debug_info,
-            overlap_mode=overlap_mode,
-        )
-        if isinstance(result, BuildResult):
-            return result
-        exit_code, program = result
-        symbol_map = dict(program.resolver.get_all_labels())
-        # `.label`-declared names are absolute addresses that should appear in
-        # the exported symbol map alongside real labels.
-        symbol_map.update(program.resolver.get_all_absolute_labels())
-
-        debug_path: Path | None = None
-        if emit_debug_info and exit_code == 0:
-            from a816.debug_info import write as write_debug_info
-
-            debug_path = output_file.with_suffix(output_file.suffix + ".adbg")
-            write_debug_info(program.build_debug_info(main_source), debug_path)
+            candidate = output_file.with_suffix(output_file.suffix + ".adbg")
+            if candidate.exists():
+                debug_path = candidate
         return BuildResult(
             exit_code=exit_code,
             symbol_map=symbol_map,

@@ -23,10 +23,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from a816.program import Program
-
 
 _MACRO_DEF = """
 .macro store_word(source) {
@@ -65,8 +62,7 @@ def test_macro_in_alloc_body_direct_mode_resolves() -> None:
         # Provide `external_addr` in main so direct mode has it bound
         # before the alloc body's macro app evaluates.
         main.write_text(
-            "external_addr := 0x208100\n"
-            '.include "mod.s"\n',
+            'external_addr := 0x208100\n.include "mod.s"\n',
             encoding="utf-8",
         )
         program = Program()
@@ -185,10 +181,7 @@ def test_macro_arg_from_imported_module_alloc_body_object_mode() -> None:
         )
         # Provider: exports `payload` as a GLOBAL alloc-body label.
         (tmp / "provider.s").write_text(
-            '.include "bank.i"\n'
-            ".alloc payload in b {\n"
-            "    .db 0xAA, 0xBB, 0xCC, 0xDD\n"
-            "}\n",
+            '.include "bank.i"\n.alloc payload in b {\n    .db 0xAA, 0xBB, 0xCC, 0xDD\n}\n',
             encoding="utf-8",
         )
         # Pre-build provider.o so the consumer's import resolves.
@@ -234,10 +227,7 @@ def test_macro_arg_is_anon_block_label_link_resolves() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         (tmp / "macros.i").write_text(
-            ".macro use_table(jump_table) {\n"
-            "    lda.l jump_table\n"
-            "    sta 0x00\n"
-            "}\n",
+            ".macro use_table(jump_table) {\n    lda.l jump_table\n    sta 0x00\n}\n",
             encoding="utf-8",
         )
         (tmp / "bank.i").write_text(
@@ -283,10 +273,7 @@ def test_macro_arg_from_imported_extern_inside_if_object_mode() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         (tmp / "macros.i").write_text(
-            ".macro store_low(source) {\n"
-            "    pea.w source & 0xFFFF\n"
-            "    pea.w 0x00FF & ( source >> 16 )\n"
-            "}\n",
+            ".macro store_low(source) {\n    pea.w source & 0xFFFF\n    pea.w 0x00FF & ( source >> 16 )\n}\n",
             encoding="utf-8",
         )
         (tmp / "bank.i").write_text(
@@ -294,10 +281,7 @@ def test_macro_arg_from_imported_extern_inside_if_object_mode() -> None:
             encoding="utf-8",
         )
         (tmp / "assets.s").write_text(
-            '.include "bank.i"\n'
-            ".alloc payload in b {\n"
-            "    .db 0xAA, 0xBB\n"
-            "}\n",
+            '.include "bank.i"\n.alloc payload in b {\n    .db 0xAA, 0xBB\n}\n',
             encoding="utf-8",
         )
         # Pre-build assets.o

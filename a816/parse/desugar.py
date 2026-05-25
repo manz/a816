@@ -6,9 +6,8 @@ Today: `*= ADDR / body...` runs collapse into anonymous
 `CodePositionAstNode`, which the codegen still handles via
 `CodePositionNode` (pc-mutation). After this pass, no
 `CodePositionAstNode` survives at any nesting level a codegen
-walker visits, so `_has_position_directives` returns False and
-`build_with_imports` routes through the standard module pipeline
-instead of `build_with_imports_direct`.
+walker visits, so the standard module pipeline handles every
+source uniformly.
 
 `@=` (`CodeRelocationAstNode`) is intentionally left alone: it has
 different semantics (emit at A, bind labels as if at B) and there

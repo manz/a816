@@ -50,8 +50,6 @@ def _apply_a816_toml(args: argparse.Namespace) -> None:
         args.include_paths = [str(p) for p in config.include_paths]
     if config.module_paths and not args.module_paths:
         args.module_paths = [str(p) for p in config.module_paths]
-    if config.prelude_file is not None and args.prelude_file is None:
-        args.prelude_file = config.prelude_file
     # Mirror [experimental] from a816.toml. CLI --experimental wins
     # on overlap (already in args.experimental as a list of flag names).
     cli_flags = set(args.experimental or [])
@@ -108,13 +106,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Add directory to include search path for .include directives.",
     )
     parser.add_argument(
-        "--prelude",
-        type=Path,
-        dest="prelude_file",
-        default=None,
-        help="Config file prepended to every module compilation (e.g., feature flags).",
-    )
-    parser.add_argument(
         "--overlap-mode",
         choices=("error", "warn", "off"),
         dest="overlap_mode",
@@ -164,7 +155,6 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         symbols=_parse_defines(args.defines),
         copier_header=args.copier_header,
         include_paths=[Path(p) for p in args.include_paths],
-        prelude_file=args.prelude_file,
         overlap_mode=args.overlap_mode,
         experimental=list(args.experimental or []),
     )
