@@ -48,20 +48,37 @@ _BOUNDARY_TYPES: tuple[type[AstNode], ...] = (
 )
 
 
+def _child_bodies(node: AstNode) -> list[list[AstNode]]:
+    """All inner bodies a container exposes to placement-recursion.
+
+    `.if` returns the then-block plus the else-block (when present),
+    `.scope` and bare `{ }` return their single body, and anything
+    else returns no bodies. Centralising the shape match here keeps
+    the recursion in `_node_holds_placement` linear instead of
+    branching per container kind.
+    """
+    match node:
+        case CompoundAstNode():
+            return [list(node.body)]
+        case ScopeAstNode():
+            return [list(node.body.body)]
+        case IfAstNode():
+            bodies = [list(node.block.body)]
+            if node.else_block is not None:
+                bodies.append(list(node.else_block.body))
+            return bodies
+        case _:
+            return []
+
+
+def _node_holds_placement(node: AstNode) -> bool:
+    if isinstance(node, _BOUNDARY_TYPES):
+        return True
+    return any(_block_contains_placement(body) for body in _child_bodies(node))
+
+
 def _block_contains_placement(body: list[AstNode]) -> bool:
-    for child in body:
-        if isinstance(child, _BOUNDARY_TYPES):
-            return True
-        if isinstance(child, CompoundAstNode) and _block_contains_placement(child.body):
-            return True
-        if isinstance(child, ScopeAstNode) and _block_contains_placement(list(child.body.body)):
-            return True
-        if isinstance(child, IfAstNode):
-            if _block_contains_placement(list(child.block.body)):
-                return True
-            if child.else_block is not None and _block_contains_placement(list(child.else_block.body)):
-                return True
-    return False
+    return any(_node_holds_placement(child) for child in body)
 
 
 def is_placement_boundary(node: AstNode) -> bool:
@@ -79,15 +96,4 @@ def is_placement_boundary(node: AstNode) -> bool:
     Containers with no inner placement (label scopes, data tables,
     conditional opcode blocks) keep grouping with the outer `*=` body.
     """
-    if isinstance(node, _BOUNDARY_TYPES):
-        return True
-    if isinstance(node, CompoundAstNode) and _block_contains_placement(node.body):
-        return True
-    if isinstance(node, ScopeAstNode) and _block_contains_placement(list(node.body.body)):
-        return True
-    if isinstance(node, IfAstNode):
-        if _block_contains_placement(list(node.block.body)):
-            return True
-        if node.else_block is not None and _block_contains_placement(list(node.else_block.body)):
-            return True
-    return False
+    return _node_holds_placement(node)

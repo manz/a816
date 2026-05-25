@@ -186,7 +186,15 @@ class AssembleMixin:
     def _export_object_symbols(self, object_writer: ObjectWriter) -> None:
         label_names = {n for n, _ in self.resolver.get_all_labels(mangle_nested=True)}
         absolute_label_names = {n for n, _ in self.resolver.get_all_absolute_labels(mangle_nested=True)}
-        # Also emit NamedScope members under their BARE name as LOCAL
+        self._publish_named_scope_bare_names(object_writer)
+        for name, value in self.resolver.get_all_symbols():
+            if self._should_skip_symbol_export(name, label_names):
+                continue
+            sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
+            object_writer.add_symbol(name, sym_value, sym_type, section)
+
+    def _publish_named_scope_bare_names(self, object_writer: ObjectWriter) -> None:
+        # Mirror NamedScope members under their BARE name as LOCAL
         # alongside the dotted GLOBAL. The dotted form (`render.foo`)
         # is what the linker globally dedupes / resolves; the bare
         # form (`foo`) keeps kintsuki's `lookup_symbol_addr("foo")`
@@ -204,23 +212,23 @@ class AssembleMixin:
                 if "." in bare_name:
                     continue  # already-dotted via _publish_named_dotted
                 object_writer.add_symbol(bare_name, addr, SymbolType.LOCAL, SymbolSection.CODE)
-        for name, value in self.resolver.get_all_symbols():
-            # Symbols declared `.extern` AND also defined locally in
-            # this compile unit (e.g. main `.include`s both the
-            # `.extern foo` declaration and the `foo:` definition):
-            # prefer the local definition — emit it as GLOBAL/LOCAL so
-            # the linker's local resolution wins. Otherwise the .o
-            # would double-publish (EXTERNAL stub from ExternNode +
-            # nothing for the real definition), and the linker reports
-            # `unresolved external` for a symbol it actually owns.
-            if self.resolver.current_scope.is_external_symbol(name) and name not in label_names:
-                continue  # purely external, owner provides it
-            if name in self.resolver.pool_stat_symbol_names:
-                continue  # pool stat snapshots are per-module, not linker-visible
-            if name in self.resolver.imported_symbol_names:
-                continue  # contributed by an inlined `.import`; owner's `.o` is the sole source
-            sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
-            object_writer.add_symbol(name, sym_value, sym_type, section)
+
+    def _should_skip_symbol_export(self, name: str, label_names: set[str]) -> bool:
+        # Symbols declared `.extern` AND also defined locally in this
+        # compile unit (e.g. main `.include`s both the `.extern foo`
+        # declaration and the `foo:` definition): prefer the local
+        # definition — emit it as GLOBAL/LOCAL so the linker's local
+        # resolution wins. Otherwise the .o would double-publish
+        # (EXTERNAL stub from ExternNode + nothing for the real
+        # definition), and the linker reports `unresolved external`
+        # for a symbol it actually owns.
+        if self.resolver.current_scope.is_external_symbol(name) and name not in label_names:
+            return True  # purely external, owner provides it
+        if name in self.resolver.pool_stat_symbol_names:
+            return True  # pool stat snapshots are per-module, not linker-visible
+        if name in self.resolver.imported_symbol_names:
+            return True  # contributed by an inlined `.import`; owner's `.o` is the sole source
+        return False
 
     def assemble_with_object_emitter(self, asm_file: str, object_writer: ObjectWriter) -> int:
         """Assemble with object file emission, collecting symbols and relocations."""

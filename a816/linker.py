@@ -249,53 +249,70 @@ class Linker:
         if symbol_type == SymbolType.EXTERNAL:
             self._external_symbols_needed.add(name)
             return
+        final_address = self._final_address(section, address, delta, obj_file, obj_idx)
+        if symbol_type == SymbolType.GLOBAL:
+            self._register_global_symbol(name, final_address, section)
+            return
+        if symbol_type == SymbolType.LOCAL:
+            self._register_local_symbol(name, final_address, section)
+            return
+        raise ValueError(f"Unknown symbol type: {symbol_type}")
+
+    def _final_address(
+        self,
+        section: SymbolSection,
+        address: int,
+        delta: int,
+        obj_file: ObjectFile,
+        obj_idx: int,
+    ) -> int:
         # CODE symbols ride the module's delta; DATA/BSS/ABS_LABEL are absolute.
         # ABS_LABEL is a `.label`-declared address binding — the user picked
         # the value, so it must NOT shift with the module placement.
         # Pool-allocated sections get their own per-section delta (link-time
         # allocator chose the address, not module relocation).
-        if section == SymbolSection.CODE:
-            pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, address)
-            final_address = address + (pool_delta if pool_delta is not None else delta)
-        else:
-            final_address = address
-        if symbol_type == SymbolType.GLOBAL:
-            # Only treat as duplicate when an existing GLOBAL claims the
-            # same name AND resolves to a DIFFERENT address. Two .o's
-            # exporting the same name at the same final address happens
-            # legitimately when paired-import inlines an imported
-            # module's source into every consumer's .o — each consumer
-            # re-publishes the import's alloc-body auto-symbols
-            # (`.incbin` filenames, label decls). The dedup in
-            # `_allocate_pools_across_modules` makes them all resolve
-            # to the same address, so collapsing them is safe.
-            # A name first seen as LOCAL (compatibility bare-name shim
-            # for NamedScope members) gets UPGRADED to GLOBAL.
-            existing_global_addr = None
-            for lname, laddr, lst, _ in self.linked_symbols:
-                if lname == name and lst == SymbolType.GLOBAL:
-                    existing_global_addr = laddr
-                    break
-            if existing_global_addr is not None:
-                if existing_global_addr != final_address:
-                    raise DuplicateSymbolError(name)
-                return  # same name, same address → already linked
-            self.symbol_map[name] = final_address
-            self.linked_symbols.append((name, final_address, symbol_type, section))
+        if section != SymbolSection.CODE:
+            return address
+        pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, address)
+        return address + (pool_delta if pool_delta is not None else delta)
+
+    def _register_global_symbol(self, name: str, final_address: int, section: SymbolSection) -> None:
+        # Only treat as duplicate when an existing GLOBAL claims the
+        # same name AND resolves to a DIFFERENT address. Two .o's
+        # exporting the same name at the same final address happens
+        # legitimately when paired-import inlines an imported module's
+        # source into every consumer's .o — each consumer re-publishes
+        # the import's alloc-body auto-symbols (`.incbin` filenames,
+        # label decls). The dedup in `_allocate_pools_across_modules`
+        # makes them all resolve to the same address, so collapsing
+        # them is safe. A name first seen as LOCAL (compatibility
+        # bare-name shim for NamedScope members) gets UPGRADED to
+        # GLOBAL.
+        existing = self._existing_global_address(name)
+        if existing is not None:
+            if existing != final_address:
+                raise DuplicateSymbolError(name)
             return
-        if symbol_type == SymbolType.LOCAL:
-            self.linked_symbols.append((name, final_address, symbol_type, section))
-            # LOCAL names feed `_resolve_aliases` so an alias RHS like
-            # `count = _endwinmap - _winmap` (macro arg bound to a
-            # module-local label inside an alloc body) folds at link
-            # time. `setdefault` keeps the FIRST module's binding when
-            # two modules happen to share a LOCAL name — underscore
-            # privacy is a source-side convention, not a hard linker
-            # guarantee. Modules that need durable cross-module refs
-            # must drop the underscore (export as GLOBAL).
-            self.symbol_map.setdefault(name, final_address)
-            return
-        raise ValueError(f"Unknown symbol type: {symbol_type}")
+        self.symbol_map[name] = final_address
+        self.linked_symbols.append((name, final_address, SymbolType.GLOBAL, section))
+
+    def _existing_global_address(self, name: str) -> int | None:
+        for lname, laddr, lst, _ in self.linked_symbols:
+            if lname == name and lst == SymbolType.GLOBAL:
+                return laddr
+        return None
+
+    def _register_local_symbol(self, name: str, final_address: int, section: SymbolSection) -> None:
+        self.linked_symbols.append((name, final_address, SymbolType.LOCAL, section))
+        # LOCAL names feed `_resolve_aliases` so an alias RHS like
+        # `count = _endwinmap - _winmap` (macro arg bound to a
+        # module-local label inside an alloc body) folds at link time.
+        # `setdefault` keeps the FIRST module's binding when two
+        # modules happen to share a LOCAL name — underscore privacy is
+        # a source-side convention, not a hard linker guarantee.
+        # Modules that need durable cross-module refs must drop the
+        # underscore (export as GLOBAL).
+        self.symbol_map.setdefault(name, final_address)
 
     def _merge_file_table(self, obj_file: ObjectFile) -> dict[int, int]:
         local_to_linked: dict[int, int] = {}

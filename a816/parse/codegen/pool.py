@@ -165,7 +165,7 @@ def generate_alloc(
         pool_name = node.pool_name
         alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
 
-    _reject_nested_placement(node, file_info)
+    _reject_nested_placement(node)
     body_nodes = _code_gen(node.body.body, resolver, macro_definitions)
     return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info)]
 
@@ -177,7 +177,7 @@ _NESTED_PLACEMENT_KINDS = {
 }
 
 
-def _reject_nested_placement(node: AllocAstNode, file_info: Token) -> None:
+def _reject_nested_placement(node: AllocAstNode) -> None:
     """Forbid placement directives inside an `.alloc` body.
 
     Nested placement has no well-defined semantics: the inner directive
