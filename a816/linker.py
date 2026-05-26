@@ -54,6 +54,7 @@ class Linker:
         # Pool allocation must happen before symbol ingestion so the
         # section.placed_base values we ingest reflect allocator choices.
         self._allocate_pools_across_modules()
+        self._merge_bus_mappings()
         self._resolve_symbols()
         self._resolve_aliases()
         self._check_unresolved()
@@ -66,6 +67,7 @@ class Linker:
             files=self.linked_files,
             relocatable=False,
             pool_decls=self._merged_pool_decls,
+            bus_mappings=self._merged_bus_mappings,
         )
 
     def _allocate_pools_across_modules(self) -> None:
@@ -131,6 +133,34 @@ class Linker:
             fill=decl.fill,
             strategy=Strategy(decl.strategy),
         )
+
+    def _merge_bus_mappings(self) -> None:
+        """Collect `.map` declarations across input modules.
+
+        Cartridge mapping is project-scoped — one ROM, one map — but
+        paired-import re-emits the same `.map` in every consumer's
+        `.o`. Dedupe identical declarations on `identifier`; raise
+        when two `.o`s ship the SAME identifier with different bank
+        range / addr range / mask / mirror.
+        """
+        from a816.object_file import BusMapping
+
+        merged: dict[str, BusMapping] = {}
+        for obj_file in self.object_files:
+            for mapping in obj_file.bus_mappings:
+                existing = merged.get(mapping.identifier)
+                if existing is None:
+                    merged[mapping.identifier] = mapping
+                    continue
+                if (
+                    existing.bank_range != mapping.bank_range
+                    or existing.addr_range != mapping.addr_range
+                    or existing.mask != mapping.mask
+                    or existing.writeable != mapping.writeable
+                    or existing.mirror_bank_range != mapping.mirror_bank_range
+                ):
+                    raise ValueError(f"conflicting `.map {mapping.identifier!r}` declarations across modules")
+        self._merged_bus_mappings = list(merged.values())
 
     def _merge_pool_decls(self) -> None:
         """Union same-named `.pool` declarations across input modules.

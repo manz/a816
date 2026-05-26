@@ -76,6 +76,25 @@ class PoolDecl:
 
 
 @dataclass
+class BusMapping:
+    """A `.map` directive serialized into a module.
+
+    Replays at link time onto the linker's resolver bus so the linked
+    program sees the same bank/address mapping the author declared at
+    compile time. Without this, custom mappers (SA-1, ExHiROM, any
+    non-default cartridge layout) silently fall back to whatever the
+    linker's default bus is.
+    """
+
+    identifier: str
+    bank_range: tuple[int, int]
+    addr_range: tuple[int, int]
+    mask: int
+    writeable: bool = False
+    mirror_bank_range: tuple[int, int] | None = None
+
+
+@dataclass
 class PoolAlloc:
     """A `.alloc` / `.relocate` request deferred to link time.
 
@@ -92,7 +111,7 @@ class PoolAlloc:
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x0008  # Version 8: pool decls + alloc requests for cross-TU pool merging.
+    VERSION = 0x0009  # Version 9: bus mappings serialized for cross-TU bus replay.
 
     def __init__(
         self,
@@ -106,6 +125,7 @@ class ObjectFile:
         relocatable: bool = True,
         pool_decls: list[PoolDecl] | None = None,
         pool_allocs: list[PoolAlloc] | None = None,
+        bus_mappings: list[BusMapping] | None = None,
     ) -> None:
         # `relocatable` is True iff the source contained no `*=` directive,
         # so the importer is free to place section 0 at the import site PC
@@ -130,6 +150,7 @@ class ObjectFile:
         self.relocatable: bool = relocatable
         self.pool_decls: list[PoolDecl] = pool_decls or []
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
+        self.bus_mappings: list[BusMapping] = bus_mappings or []
 
     # ----- legacy single-section accessors (tests / older callers) -----
     def _ensure_first_section(self) -> Section:
@@ -177,6 +198,7 @@ class ObjectFile:
             self._write_file_table(f)
             self._write_pool_decls(f)
             self._write_pool_allocs(f)
+            self._write_bus_mappings(f)
 
     def _write_pool_decls(self, f: IO[bytes]) -> None:
         f.write(struct.pack("<H", len(self.pool_decls)))
@@ -201,6 +223,28 @@ class ObjectFile:
             f.write(struct.pack("<B", len(sym_bytes)))
             f.write(sym_bytes)
             f.write(struct.pack("<II", alloc.section_idx, alloc.size))
+
+    def _write_bus_mappings(self, f: IO[bytes]) -> None:
+        f.write(struct.pack("<H", len(self.bus_mappings)))
+        for mapping in self.bus_mappings:
+            ident_bytes = mapping.identifier.encode("utf-8")
+            f.write(struct.pack("<B", len(ident_bytes)))
+            f.write(ident_bytes)
+            f.write(
+                struct.pack(
+                    "<HHIIIB",
+                    mapping.bank_range[0],
+                    mapping.bank_range[1],
+                    mapping.addr_range[0],
+                    mapping.addr_range[1],
+                    mapping.mask,
+                    1 if mapping.writeable else 0,
+                )
+            )
+            if mapping.mirror_bank_range is None:
+                f.write(struct.pack("<B", 0))
+            else:
+                f.write(struct.pack("<BHH", 1, mapping.mirror_bank_range[0], mapping.mirror_bank_range[1]))
 
     def _write_header(self, f: IO[bytes]) -> None:
         flags = 0x01 if self.relocatable else 0x00
@@ -343,6 +387,31 @@ class ObjectFile:
         return out
 
     @staticmethod
+    def _read_bus_mappings(f: IO[bytes]) -> list[BusMapping]:
+        (count,) = struct.unpack("<H", f.read(2))
+        out: list[BusMapping] = []
+        for _ in range(count):
+            (ident_len,) = struct.unpack("<B", f.read(1))
+            identifier = f.read(ident_len).decode("utf-8")
+            bank_lo, bank_hi, addr_lo, addr_hi, mask, writeable_byte = struct.unpack("<HHIIIB", f.read(17))
+            (has_mirror,) = struct.unpack("<B", f.read(1))
+            mirror: tuple[int, int] | None = None
+            if has_mirror:
+                m_lo, m_hi = struct.unpack("<HH", f.read(4))
+                mirror = (m_lo, m_hi)
+            out.append(
+                BusMapping(
+                    identifier=identifier,
+                    bank_range=(bank_lo, bank_hi),
+                    addr_range=(addr_lo, addr_hi),
+                    mask=mask,
+                    writeable=bool(writeable_byte),
+                    mirror_bank_range=mirror,
+                )
+            )
+        return out
+
+    @staticmethod
     def _read_pool_allocs(f: IO[bytes]) -> list[PoolAlloc]:
         (count,) = struct.unpack("<H", f.read(2))
         out: list[PoolAlloc] = []
@@ -373,6 +442,7 @@ class ObjectFile:
             files = ObjectFile._read_file_table(f)
             pool_decls = ObjectFile._read_pool_decls(f)
             pool_allocs = ObjectFile._read_pool_allocs(f)
+            bus_mappings = ObjectFile._read_bus_mappings(f)
             return ObjectFile(
                 sections,
                 symbols,
@@ -381,4 +451,5 @@ class ObjectFile:
                 relocatable=relocatable,
                 pool_decls=pool_decls,
                 pool_allocs=pool_allocs,
+                bus_mappings=bus_mappings,
             )

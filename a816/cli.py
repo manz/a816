@@ -157,6 +157,7 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         include_paths=[Path(p) for p in args.include_paths],
         overlap_mode=args.overlap_mode,
         experimental=list(args.experimental or []),
+        mapping=args.mapping,
     )
     return result.exit_code
 
@@ -233,7 +234,7 @@ def _run_link(args: argparse.Namespace) -> int:
     if args.format == "ips":
         return program.link_as_patch(linked_obj, args.output_file, args.mapping, args.copier_header)
     if args.format == "sfc":
-        return program.link_as_sfc(linked_obj, args.output_file)
+        return program.link_as_sfc(linked_obj, args.output_file, args.mapping)
     logger.error(f"Unknown output format: {args.format}")
     sys.exit(-1)
 

@@ -2,7 +2,16 @@ import logging
 import struct
 from typing import BinaryIO, Literal, Protocol
 
-from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
+from a816.object_file import (
+    BusMapping,
+    ObjectFile,
+    PoolAlloc,
+    PoolDecl,
+    RelocationType,
+    Section,
+    SymbolSection,
+    SymbolType,
+)
 
 logger = logging.getLogger("a816.writers")
 
@@ -154,6 +163,7 @@ class ObjectWriter(Writer):
         self._file_index: dict[str, int] = {}
         self.pool_decls: list[PoolDecl] = []  # populated by generate_pool
         self.pool_allocs: list[PoolAlloc] = []  # populated by AllocNode object-mode emit
+        self.bus_mappings: list[BusMapping] = []  # populated by generate_map
         self._current_section: Section | None = None
         self._pending_base_address: int = 0
         self._section_bytes_emitted: int = 0
@@ -177,6 +187,7 @@ class ObjectWriter(Writer):
         self._has_explicit_position = False
         self.pool_decls = []
         self.pool_allocs = []
+        self.bus_mappings = []
 
     def mark_emitted(self, count: int) -> None:
         """Advance the per-section emit cursor by ``count`` bytes.
@@ -259,6 +270,7 @@ class ObjectWriter(Writer):
             relocatable=relocatable,
             pool_decls=list(self.pool_decls),
             pool_allocs=list(self.pool_allocs),
+            bus_mappings=list(self.bus_mappings),
         )
         obj_file.write(self.output_file)
 

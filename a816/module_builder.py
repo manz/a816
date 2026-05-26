@@ -20,6 +20,8 @@ from a816.parse.ast.nodes import (
     AstNode,
     ImportAstNode,
 )
+from a816.parse.ast.nodes.directives import MapAstNode
+from a816.parse.ast.visitor import walk
 from a816.parse.mzparser import A816Parser
 
 logger = logging.getLogger("a816.module_builder")
@@ -108,6 +110,11 @@ class ModuleBuilder:
         self.include_paths: list[Path] = include_paths or []
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
+        # `.map` directives collected during the discovery walk. Bus
+        # mappings are a build-wide property; the link-pass resolver
+        # replays them from here so the user's intent isn't lost when
+        # the compile-pass resolvers go out of scope.
+        self.map_nodes: list[MapAstNode] = []
 
     def discover_imports(self, source_file: Path, parsed_nodes: list[AstNode] | None = None) -> None:
         """Recursively discover all imports starting from a source file.
@@ -134,6 +141,12 @@ class ModuleBuilder:
             else:
                 content = source_path.read_text(encoding="utf-8")
                 nodes = A816Parser.parse_as_ast(content, str(source_path)).nodes
+
+            # Same walk as `_collect_imports` — pick up `.map` directives
+            # too so the link pass can replay them without re-parsing.
+            for node in walk(nodes):
+                if isinstance(node, MapAstNode):
+                    self.map_nodes.append(node)
 
             imports = self._collect_imports(nodes)
 
@@ -286,6 +299,7 @@ def build_with_imports(
     include_paths: list[Path] | None = None,
     overlap_mode: str | None = None,
     experimental: list[str] | None = None,
+    mapping: str | None = None,
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
@@ -331,10 +345,14 @@ def build_with_imports(
         program = Program(overlap_mode=overlap_mode)
         _apply_experimental_flags(program, experimental)
         program.enable_debug_capture()
+
+        # Replay the `.map` directives the builder collected during the
+        # discovery walk so physical placement matches user intent.
+        _apply_map_directives(program, builder)
         if output_format == "ips":
-            exit_code = program.link_as_patch(linked, output_file, copier_header=copier_header)
+            exit_code = program.link_as_patch(linked, output_file, mapping=mapping, copier_header=copier_header)
         elif output_format == "sfc":
-            exit_code = program.link_as_sfc(linked, output_file)
+            exit_code = program.link_as_sfc(linked, output_file, mapping=mapping)
         else:
             logger.error(f"Unknown output format: {output_format}")
             return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
@@ -359,3 +377,21 @@ def build_with_imports(
         logger.error(f"Build failed: {e}")  # NOSONAR python:S8572
         logger.debug("Build traceback", exc_info=True)
         return BuildResult(exit_code=1, diagnostics=[str(e)])
+
+
+def _apply_map_directives(program: "Program", builder: ModuleBuilder) -> None:
+    """Replay every `.map` directive collected during discovery onto the
+    link-pass resolver's bus. Bus mappings are a build-wide property;
+    without this, `.map` would silently lose to `BUS_MAPPING[rom_type]`
+    at link time because the compile-pass resolvers are already gone.
+    """
+    for node in builder.map_nodes:
+        a = node.args
+        program.resolver.bus.map(
+            str(a["identifier"]),
+            a["bank_range"],
+            a["addr_range"],
+            a["mask"],
+            writeable=bool(a.get("writable", False)),
+            mirror_bank_range=a.get("mirror_bank_range"),
+        )
