@@ -124,7 +124,12 @@ class PopScopeNode(NodeProtocol):
         self.parent_scope = self.resolver.current_scope.parent
 
     def _apply(self) -> None:
-        from a816.symbols import NamedScope, _bubble_anon_into_named, _publish_named_dotted
+        from a816.symbols import (
+            NamedScope,
+            _bubble_anon_exportables,
+            _bubble_anon_into_named,
+            _publish_named_dotted,
+        )
 
         parent = self.parent_scope
         if parent is None:
@@ -132,6 +137,8 @@ class PopScopeNode(NodeProtocol):
         scope = self.leaving_scope
         if not isinstance(scope, NamedScope) and isinstance(parent, NamedScope):
             _bubble_anon_into_named(scope, parent)
+        elif self.exports and not isinstance(scope, NamedScope):
+            _bubble_anon_exportables(scope, parent)
         if self.exports and isinstance(scope, NamedScope):
             _publish_named_dotted(scope, parent)
         self.resolver.current_scope = parent

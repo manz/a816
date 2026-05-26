@@ -21,6 +21,7 @@ from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, gener
 from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
 from a816.pool import Pool, PoolRange, Strategy
+from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
 
 
@@ -154,7 +155,7 @@ def generate_alloc(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    from a816.parse.nodes import AllocNode
+    from a816.parse.nodes import AllocNode, PopScopeNode, ScopeNode
 
     if node.is_pinned:
         pool_name = _synthesize_pinned_pool(node, resolver, file_info)
@@ -166,7 +167,18 @@ def generate_alloc(
         alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
 
     _reject_nested_placement(node)
-    body_nodes = _code_gen(node.body.body, resolver, macro_definitions)
+    # Open an AllocBodyScope around the body so per-block underscore
+    # labels (`_skip`, `_end`) stay private to this alloc; otherwise
+    # two sibling allocs declaring `_skip:` silently overwrite each
+    # other in the module's flat label namespace and `bne _skip` lands
+    # in the wrong block. Non-underscore body labels bubble back to the
+    # parent on PopScope so cross-alloc public refs still resolve.
+    resolver.append_alloc_body_scope()
+    resolver.use_next_scope()
+    body_nodes: list[NodeProtocol] = [ScopeNode(resolver)]
+    body_nodes += _code_gen(node.body.body, resolver, macro_definitions)
+    body_nodes.append(PopScopeNode(resolver, exports=True))
+    resolver.restore_scope(exports=True)
     return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info)]
 
 

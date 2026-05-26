@@ -26,6 +26,22 @@ def _is_exportable(name: str) -> bool:
     return not name.startswith("_") or name.startswith("__")
 
 
+def _bubble_anon_exportables(scope: "Scope", parent: "Scope") -> None:
+    """Promote exportable labels/symbols from an anonymous scope to its parent.
+
+    Used when an `.alloc` body closes: per-block underscore labels
+    (`_skip`, `_end`) stay private to the body, but non-underscore
+    body labels must surface so sibling allocs and `.extern`
+    declarations in the same module can reach them.
+    """
+    for label_name, label_value in scope.labels.items():
+        if _is_exportable(label_name) and label_name not in parent.labels:
+            parent.labels[label_name] = label_value
+    for sym_name, sym_value in scope.symbols.items():
+        if _is_exportable(sym_name) and sym_name not in parent.symbols:
+            parent.symbols[sym_name] = sym_value
+
+
 def _bubble_anon_into_named(scope: "Scope", parent: "NamedScope") -> None:
     """Surface labels/symbols from an anonymous scope into its NamedScope parent.
 
@@ -211,6 +227,19 @@ class InternalScope(Scope):
     pass
 
 
+class AllocBodyScope(Scope):
+    """Scope spanning an `.alloc` body. Isolates underscore-private
+    labels from sibling allocs in the same module without forcing the
+    `__sc<idx>__` export mangle that ordinary anonymous scopes get.
+
+    Branch / jump resolution walks the scope chain and finds local
+    `_skip` / `_end` first — sibling allocs no longer collide. Public
+    body labels still bubble to the parent on restore so cross-alloc
+    calls keep working; underscore labels stay in this scope and are
+    invisible from sibling alloc bodies.
+    """
+
+
 class NamedScope(Scope):
     def __init__(self, name: str, resolver: "Resolver", parent: Scope | None = None):
         super().__init__(resolver, parent)
@@ -380,6 +409,10 @@ class Resolver:
         scope = Scope(self, self.current_scope)
         self.scopes.append(scope)
 
+    def append_alloc_body_scope(self) -> None:
+        scope = AllocBodyScope(self, self.current_scope)
+        self.scopes.append(scope)
+
     def append_internal_scope(self) -> None:
         scope = InternalScope(self, self.current_scope)
         self.scopes.append(scope)
@@ -396,6 +429,8 @@ class Resolver:
 
         if not isinstance(scope, NamedScope) and isinstance(parent, NamedScope):
             _bubble_anon_into_named(scope, parent)
+        elif exports and not isinstance(scope, NamedScope):
+            _bubble_anon_exportables(scope, parent)
         if exports and isinstance(scope, NamedScope):
             _publish_named_dotted(scope, parent)
 
@@ -465,6 +500,13 @@ class Resolver:
         """
         if isinstance(scope, NamedScope) and "." not in name:
             return f"{scope.name}.{name}"
+        # AllocBodyScope opts out of the `__sc<idx>__` mangle: cross-alloc
+        # public refs and `.extern` declarations in the same module need
+        # to see bare names. Underscore privacy is enforced by the
+        # `_bubble_anon_exportables` filter (which keeps them in the body
+        # scope) plus the object-mode LOCAL classifier downstream.
+        if isinstance(scope, AllocBodyScope):
+            return name
         if mangle_nested and idx > 0 and not isinstance(scope, NamedScope):
             return f"__sc{idx}__{name}"
         return name
