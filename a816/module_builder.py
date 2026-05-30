@@ -213,7 +213,7 @@ class ModuleBuilder:
             # into this module's resolver as raw symbols so codegen can read
             # their values, but they're owned by the contributing module's
             # `.o`. Mark them imported so `_export_object_symbols` doesn't
-            # re-publish them here — otherwise every downstream `.o` gains
+            # re-publish them here - otherwise every downstream `.o` gains
             # a duplicate GLOBAL and the linker rejects the build.
             program.resolver.imported_symbol_names.add(name)
         result = program.assemble_as_object(str(source_path), obj_path)
@@ -225,7 +225,7 @@ class ModuleBuilder:
         from a816.object_file import SymbolSection as ObjSymbolSection
         from a816.object_file import SymbolType as ObjSymbolType
 
-        # ABS_LABEL is a `.label`-declared address — propagate it like a
+        # ABS_LABEL is a `.label`-declared address - propagate it like a
         # DATA constant so dependent modules see the binding without needing
         # an explicit `.extern`.
         constant_sections = (ObjSymbolSection.DATA, ObjSymbolSection.ABS_LABEL)
@@ -253,17 +253,34 @@ class ModuleBuilder:
             self._accumulate_constants(obj, accumulated_constants)
             object_files.append(obj)
 
-        if len(object_files) == 1:
+        if len(object_files) == 1 and not _object_needs_linking(object_files[0]):
             return object_files[0]
-        logger.info(f"Linking {len(object_files)} modules")
+        logger.info(f"Linking {len(object_files)} module(s)")
         return Linker(object_files).link(base_address=0x8000)
+
+
+def _object_needs_linking(obj: ObjectFile) -> bool:
+    """Whether a lone object still has link-time work to resolve.
+
+    A single fully-resolved pinned module can be emitted as-is, but pool
+    placement, symbol/expression relocations, and aliases are only applied
+    by `Linker.link()`. A relocatable module, or one carrying any of those,
+    must go through the linker - otherwise placeholder operands (e.g. a
+    `.dw OFF` where `OFF = lbl - base`) ship unresolved as 0.
+    """
+    return bool(
+        obj.relocatable
+        or obj.aliases
+        or obj.pool_allocs
+        or any(s.relocations or s.expression_relocations for s in obj.sections)
+    )
 
 
 def _apply_experimental_flags(program: "Program", flags: list[str] | None) -> None:
     """Set experimental feature flags on `program.resolver`.
 
     Known flags:
-      - `track_register_size` — let `rep`/`sep` with constant
+      - `track_register_size` - let `rep`/`sep` with constant
         immediate operands mutate `resolver.a_size` / `i_size`.
         Off by default; legacy sources rely on value-driven width
         inference only.

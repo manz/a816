@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from a816.cpu.mapping import Address
+from a816.cpu.mapping import Address, LinearAddress
 from a816.exceptions import SymbolNotDefined
 from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.symbols import SymbolNode
@@ -42,7 +42,7 @@ class AllocNode(NodeProtocol):
         # any other path is a bug, so keep the optional shape loud.
         self._sandbox_base: int | None = None
         # Snapshot of the A/X size that the body should assume on
-        # entry — captured once in `_measure_body` from the running
+        # entry - captured once in `_measure_body` from the running
         # `alloc_carry_*` channel, then reused by `_bind_body_labels_at`
         # so label placement matches the measured-size pass.
         self._entry_a_size: int = 8
@@ -52,7 +52,18 @@ class AllocNode(NodeProtocol):
         pool = self.resolver.pools[self.pool_name]
         base = pool.ranges[0].start if pool.ranges else 0
         cursor = self.resolver.alloc_sandbox_cursors.get(self.pool_name, 0)
-        return self.resolver.get_bus().get_address(base + cursor)
+        return self._sandbox_address(base + cursor)
+
+    def _sandbox_address(self, value: int) -> Address:
+        # Object mode defers `.map` to link, so a label's final logical address
+        # is the linker's job (it rebases the whole section). Binding only needs
+        # placement- and bus-independent byte offsets, so walk a LinearAddress:
+        # `+ n` advances exactly n bytes. Routing through the real bus here
+        # would fold a mirror-region bank stride into the walk and land forward
+        # labels a bank-size too high. Non-object builds resolve the real bus.
+        if self.resolver.context.is_object_mode:
+            return LinearAddress(value)
+        return self.resolver.get_bus().get_address(value)
 
     @staticmethod
     def _skip_in_pass1(node: NodeProtocol) -> bool:
@@ -70,7 +81,7 @@ class AllocNode(NodeProtocol):
         # so `OpcodeNode.pc_after` sees the A/X size that emission will
         # see. Inherit the size state from whichever alloc was measured
         # immediately before this one (stashed on the resolver under
-        # `_alloc_carry_a_size`/`_alloc_carry_i_size`) — matches runtime,
+        # `_alloc_carry_a_size`/`_alloc_carry_i_size`) - matches runtime,
         # where the CPU's M/X flags carry across `jsr` calls. Restore
         # the live resolver state on exit so top-level passes (which
         # historically treat `.a8`/`.a16` as no-ops) stay unaffected.
@@ -119,7 +130,7 @@ class AllocNode(NodeProtocol):
         # section at link time and the existing CODE-symbol delta path
         # carries every label to its final address. Advance the
         # per-pool cursor by this alloc's size so the next alloc in
-        # the same pool gets a distinct sandbox base — without that,
+        # the same pool gets a distinct sandbox base - without that,
         # `_pool_delta_for_symbol` collapses all sections onto the
         # first one's delta and every symbol lands at the same place.
         if self.resolver.context.is_object_mode:
@@ -204,7 +215,7 @@ class AllocNode(NodeProtocol):
             # `=` RHS) never see the resolved value. Re-enter the
             # sandbox base captured at `_request_slot` time so the
             # second walk binds with the now-resolved forward refs.
-            self._bind_body_labels_at(self.resolver.get_bus().get_address(self._sandbox_base))
+            self._bind_body_labels_at(self._sandbox_address(self._sandbox_base))
         return current_pc
 
     def emit(self, current_addr: Address) -> bytes:
@@ -239,7 +250,7 @@ class AllocNode(NodeProtocol):
             self.resolver.set_position(alloc.addr)
             cur = self.resolver.reloc_address
             for node in self.body:
-                # Skip loser `.import` duplicates inside the body — their
+                # Skip loser `.import` duplicates inside the body - their
                 # pc_after returned unchanged so subsequent siblings are
                 # already laid out at the right offsets, and emitting the
                 # loser bytes would both double-emit and overlap the
