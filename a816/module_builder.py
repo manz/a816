@@ -210,7 +210,11 @@ class ModuleBuilder:
         obj_mtime = obj_path.stat().st_mtime
         for dep in deps:
             dep_file = Path(dep)
-            if not dep_file.exists() or dep_file.stat().st_mtime > obj_mtime:
+            # NOSONAR python:S6776: `dep` is a816's own cache metadata that this
+            # process wrote to build/obj, not untrusted input, and the CLI runs
+            # with the invoking developer's own filesystem rights. There is no
+            # trust boundary to oracle across, so the path-from-data flow is safe.
+            if not dep_file.exists() or dep_file.stat().st_mtime > obj_mtime:  # NOSONAR
                 return True
         return False
 
