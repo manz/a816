@@ -189,3 +189,29 @@ def test_jmpw_to_local_label_resolves_per_module() -> None:
         assert b.placed_base == 0xC10009
         # nop, jmp _end ($C10010 -> $0010), jmp _loop ($C10009 -> $0009), rts.
         assert b.code == b"\xea\x4c\x10\x00\x4c\x09\x00\x60"
+
+
+def test_jmpw_to_local_label_resolves_per_alloc_in_one_module() -> None:
+    """`jmp.w <local>` must target ITS OWN alloc's label, not a same-named
+    private label in a sibling alloc of the SAME module.
+
+    Eight allocs each declaring `_done`/`_scan` collided in one flat symbol
+    table, so `jmp.w _scan` bound to whichever duplicate the linker placed
+    last (the reported wild branch). Underscore-private alloc-body labels now
+    export per-alloc-mangled (`__sc<idx>__`), keeping each distinct.
+    """
+    src = (
+        ".pool engine { range 0xc10000 0xc1ffff strategy order }\n"
+        ".alloc a in engine {\n_loop:\n    nop\n    jmp.w _loop\n_done:\n    rts\n}\n"
+        ".alloc b in engine {\n_loop:\n    nop\n    nop\n    jmp.w _loop\n_done:\n    rts\n}\n"
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        (tmp / "m.s").write_text(src)
+        linked = Linker([_compile(tmp / "m.s")]).link(base_address=0x8000)
+        a = next(s for s in linked.sections if s.code == b"\xea\x4c\x00\x00\x60")
+        b = next(s for s in linked.sections if s.code.startswith(b"\xea\xea\x4c"))
+        # a placed at $C10000: jmp _loop -> $0000. b at $C10005: jmp _loop -> $0005.
+        assert a.placed_base == 0xC10000
+        assert b.placed_base == 0xC10005
+        assert b.code == b"\xea\xea\x4c\x05\x00\x60"
