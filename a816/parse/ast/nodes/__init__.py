@@ -41,6 +41,7 @@ from a816.parse.ast.nodes.directives import (
     MapArgs,
     MapAstNode,
     RegisterSizeAstNode,
+    ReserveAstNode,
     TableAstNode,
     TextAstNode,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "ReclaimAstNode",
     "RegisterSizeAstNode",
     "RelocateAstNode",
+    "ReserveAstNode",
     "ScopeAstNode",
     "StructAstNode",
     "SymbolAffectationAstNode",

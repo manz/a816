@@ -374,6 +374,7 @@ class _PoolAttrs:
     ranges: list[tuple[ExpressionAstNode, ExpressionAstNode]]
     fill: ExpressionAstNode
     strategy: str
+    bss: bool = False
 
 
 def _parse_pool_attr(p: Parser, key_token: Token, attrs: _PoolAttrs) -> None:
@@ -386,12 +387,14 @@ def _parse_pool_attr(p: Parser, key_token: Token, attrs: _PoolAttrs) -> None:
         attrs.fill = parse_expression(p)
     elif key == "strategy":
         attrs.strategy = _parse_pool_strategy(p)
+    elif key == "bss":
+        attrs.bss = True  # bare flag: byte-less (WRAM/SRAM/custom-RAM) pool
     else:
         raise ParserSyntaxError(
             f"unknown `.pool` attribute `{key}`",
             key_token,
             code=str(E_PARSER_UNKNOWN_DIRECTIVE_ATTR),
-            hint="expected one of: range, fill, strategy",
+            hint="expected one of: range, fill, strategy, bss",
         )
 
 
@@ -429,6 +432,7 @@ def parse_pool(p: Parser) -> PoolAstNode:
         attrs.fill,
         attrs.strategy,
         keyword,
+        bss=attrs.bss,
     )
 
 

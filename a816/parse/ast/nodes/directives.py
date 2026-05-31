@@ -184,6 +184,22 @@ class DataNode(AstNode):
         return f".{self.kind} {', '.join(values)}"
 
 
+class ReserveAstNode(AstNode):
+    """`.res N`: reserve N bytes of address space without emitting any."""
+
+    size: ExpressionAstNode
+
+    def __init__(self, size: ExpressionAstNode, file_info: Token):
+        super().__init__("res", file_info)
+        self.size = size
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.size.to_representation()[0]
+
+    def to_canonical(self) -> str:
+        return f".res {self.size.to_canonical()}"
+
+
 class TableAstNode(AstNode):
     file_path: str
 

@@ -18,6 +18,7 @@ from a816.parse.ast.nodes import (
     IncludeBinaryAstNode,
     KeywordAstNode,
     LabelAstNode,
+    ReserveAstNode,
     TableAstNode,
     TextAstNode,
 )
@@ -88,6 +89,7 @@ _DIRECTIVE_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     "alloc": lambda p, _kw: parse_alloc(p),
     "relocate": lambda p, _kw: parse_relocate(p),
     "reclaim": lambda p, _kw: parse_reclaim(p),
+    "res": lambda p, kw: ReserveAstNode(parse_expression(p), kw),
     "a8": _register_size("a", 8),
     "a16": _register_size("a", 16),
     "i8": _register_size("i", 8),

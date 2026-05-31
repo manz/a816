@@ -10,6 +10,7 @@ writer.
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -95,6 +96,13 @@ class AssembleMixin:
           128 on `A816Error` (covers both `AssemblyError` and `NodeError`)
           -1  on `RuntimeError` (mapping / bus failures bubbling up)
         """
+        warnings.warn(
+            "Direct assembly mode is deprecated; the build path is object "
+            "compilation + linking (`assemble_as_object` / `build_with_imports`). "
+            "New features land in object mode only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         previous_mode = self.resolver.context.mode
         try:
             self.resolver.context.mode = AssemblyMode.DIRECT

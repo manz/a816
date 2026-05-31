@@ -20,6 +20,7 @@ from a816.parse.ast.nodes import (
     LabelAstNode,
     LabelDeclAstNode,
     RegisterSizeAstNode,
+    ReserveAstNode,
     TableAstNode,
     TextAstNode,
 )
@@ -37,6 +38,7 @@ from a816.parse.nodes import (
     LongNode,
     RegisterSizeNode,
     RelocationAddressNode,
+    ReserveNode,
     TableNode,
     TextNode,
     WordNode,
@@ -143,6 +145,15 @@ def generate_register_size(
     return [RegisterSizeNode(node.register, node.size, resolver)]
 
 
+def generate_reserve(
+    node: ReserveAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    return [ReserveNode(ExpressionNode(node.size, resolver, file_info), resolver, file_info)]
+
+
 def generate_label(
     node: LabelAstNode,
     resolver: Resolver,
@@ -228,6 +239,7 @@ generators["dw"] = generate_dw
 generators["dl"] = generate_dl
 generators["pointer"] = generate_dl
 generators["register_size"] = generate_register_size
+generators["res"] = generate_reserve
 generators["label"] = generate_label
 generators["label_decl"] = generate_label_decl
 generators["text"] = generate_text

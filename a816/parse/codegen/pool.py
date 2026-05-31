@@ -79,6 +79,7 @@ def generate_pool(
             ranges=ranges,
             fill=fill_value,
             strategy=Strategy(node.strategy),
+            bss=node.bss,
         )
         if node.pool_name in resolver.pools:
             existing = resolver.pools[node.pool_name]
@@ -86,6 +87,7 @@ def generate_pool(
                 [(r.start, r.end) for r in existing.ranges] == [(r.start, r.end) for r in pool.ranges]
                 and existing.fill == pool.fill
                 and existing.strategy == pool.strategy
+                and existing.bss == pool.bss
             )
             if not same_shape:
                 raise NodeError(f"pool {node.pool_name!r} already declared with different shape", file_info)

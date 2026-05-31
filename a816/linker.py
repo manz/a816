@@ -265,6 +265,7 @@ class Linker:
                     for offset, file_idx, line, column, flags in section.lines
                 ],
             )
+            new_section.bss = section.bss
             self.linked_sections.append(new_section)
             self._section_obj[section_idx] = obj_idx
 

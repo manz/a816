@@ -7,7 +7,9 @@ import re
 
 from a816.cpu.mapping import Address
 from a816.parse.ast.expression import eval_expression_str
+from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.expr import ExpressionNode
+from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol, ValueNodeProtocol
 from a816.symbols import Resolver
 
@@ -39,6 +41,35 @@ class RegisterSizeNode(NodeProtocol):
 
     def __str__(self) -> str:
         return f"RegisterSizeNode({self.register}{self.size})"
+
+
+class ReserveNode(NodeProtocol):
+    """`.res N`: reserve N bytes of address space, emitting none.
+
+    Advances the PC by N so surrounding labels bind to real addresses, but
+    produces no output bytes. This is the building block for BSS-style
+    layout: `.alloc NAME in <wram-pool> { foo: .res 2  bar: .res 1 }` lets
+    the pool allocator assign collision-free WRAM addresses and publish them
+    as symbols without writing anything into the ROM image.
+    """
+
+    def __init__(self, size_node: ValueNodeProtocol, resolver: Resolver, file_info: Token) -> None:
+        self.size_node = size_node
+        self.resolver = resolver
+        self.file_info = file_info
+
+    def _size(self) -> int:
+        size = self.size_node.get_value()
+        if not isinstance(size, int) or size < 0:
+            raise NodeError(f".res size must be a non-negative integer, got {size!r}", self.file_info)
+        return size
+
+    def pc_after(self, current_pc: Address) -> Address:
+        return current_pc + self._size()
+
+    def emit(self, current_addr: Address) -> bytes:
+        del current_addr
+        return b""
 
 
 class BinaryNode(NodeProtocol):

@@ -88,12 +88,22 @@ class ObjectEmitMixin:
         self._flush_object_block(object_writer, state)
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
+        pool = self.resolver.pools.get(node.pool_name)
+        is_bss = bool(pool and pool.bss)
         try:
             self.resolver.set_position(sandbox_logical)
-            object_writer.start_section(sandbox_logical, explicit=True)
+            object_writer.start_section(sandbox_logical, explicit=True, bss=is_bss)
             for child in node.body:
                 self._object_emit_one(child, object_writer, state)
             self._flush_object_block(object_writer, state)
+            if is_bss and object_writer.sections and object_writer.sections[-1].code:
+                from a816.parse.nodes import NodeError
+
+                raise NodeError(
+                    f".alloc in bss pool {node.pool_name!r} cannot emit bytes; "
+                    f"reserve space with `.res` instead",
+                    node.file_info,
+                )
         finally:
             self.resolver.pc = saved_pc
             self.resolver.reloc_address = saved_reloc

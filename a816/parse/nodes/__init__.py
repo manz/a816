@@ -16,6 +16,7 @@ from a816.parse.nodes.data import (
     DebugNode,
     LongNode,
     RegisterSizeNode,
+    ReserveNode,
     WordNode,
     _SizedValueNode,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "PointerNode",
     "PopScopeNode",
     "RegisterSizeNode",
+    "ReserveNode",
     "RelocateNode",
     "RelocationAddressNode",
     "ScopeNode",
