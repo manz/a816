@@ -56,6 +56,27 @@ class OpcodeWithoutOperand(OpcodeProtocol):
 
 
 class RelativeJumpOpcode(OpcodeWithoutOperand):
+    # Offset width of the PC-relative displacement. 1 byte for the 8-bit
+    # branches (`bra`, `bcc`, …); `RelativeLongJumpOpcode` overrides to 2
+    # for `brl`. The displacement is measured from the instruction *after*
+    # the branch, i.e. `dest - pc - (1 + OFFSET_BYTES)`.
+    OFFSET_BYTES = 1
+    _PACK = "b"
+    _RANGE = "signed 8-bit range (-128 to 127)"
+
+    def _relative_delta(self, value_node: "ValueNodeProtocol", resolver: "Resolver") -> int:
+        value = value_node.get_value()
+        # Use duck typing: ExpressionNode has 'expression' attribute, ValueNode does not
+        if hasattr(value_node, "expression"):
+            physical_destination = resolver.get_bus().get_address(value).physical
+            if physical_destination is None:
+                raise RuntimeError(
+                    f"Cannot compute relative jump: target address {value:#x} "
+                    "has no physical mapping (RAM addresses not supported)"
+                )
+            return physical_destination - resolver.pc - (1 + self.OFFSET_BYTES)
+        return value
+
     def emit(
         self,
         value_node: "ValueNodeProtocol | None",
@@ -64,29 +85,11 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
     ) -> bytes:
         if value_node is None:
             raise MissingOperandError("branch")
-        value = value_node.get_value()
-
-        # Use duck typing: ExpressionNode has 'expression' attribute, ValueNode does not
-        if hasattr(value_node, "expression"):
-            pc = resolver.pc
-            physical_destination = resolver.get_bus().get_address(value).physical
-
-            if physical_destination is None:
-                raise RuntimeError(
-                    f"Cannot compute relative jump: target address {value:#x} "
-                    "has no physical mapping (RAM addresses not supported)"
-                )
-
-            delta = physical_destination - pc
-            delta -= 2
-        else:
-            delta = value
+        delta = self._relative_delta(value_node, resolver)
         try:
-            return super().emit(value_node, resolver, size) + struct.pack("b", delta)
+            return super().emit(value_node, resolver, size) + struct.pack(self._PACK, delta)
         except struct.error as e:
-            raise RuntimeError(
-                f"Branch target out of range: offset {delta} exceeds signed 8-bit range (-128 to 127)"
-            ) from e
+            raise RuntimeError(f"Branch target out of range: offset {delta} exceeds {self._RANGE}") from e
 
     def supposed_length(
         self,
@@ -94,7 +97,17 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         size: ValueSize | None = None,
         resolver: "Resolver | None" = None,
     ) -> int:
-        return 2
+        return 1 + self.OFFSET_BYTES
+
+
+class RelativeLongJumpOpcode(RelativeJumpOpcode):
+    """`brl` ($82): unconditional PC-relative branch with a 16-bit signed
+    displacement (±32 KB). The link-invariant long-jump primitive: unlike
+    `jmp.w`, it stays relative and never consults the symbol table."""
+
+    OFFSET_BYTES = 2
+    _PACK = "<h"
+    _RANGE = "signed 16-bit range (-32768 to 32767)"
 
 
 def guess_value_size(
@@ -337,6 +350,7 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "bne": {AddressingMode.direct: RelativeJumpOpcode(0xD0)},
     "bpl": {AddressingMode.direct: RelativeJumpOpcode(0x10)},
     "bra": {AddressingMode.direct: RelativeJumpOpcode(0x80)},
+    "brl": {AddressingMode.direct: RelativeLongJumpOpcode(0x82)},
     # BRK / COP / WDM are 2-byte instructions on 65816: opcode + a
     # signature byte the handler reads off the stack (PC pushed is the
     # instruction + 2). Force callers to supply the signature so the

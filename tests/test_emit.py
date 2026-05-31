@@ -44,6 +44,40 @@ class EmitTest(unittest.TestCase):
 
         self.assertEqual(unpacked, (128, -5))
 
+    def test_long_branch_brl(self) -> None:
+        """`brl` ($82) encodes a 16-bit signed PC-relative displacement."""
+        program = Program()
+        _, nodes = program.parser.parse("my_label:\n    nop\n    brl my_label\n")
+        program.resolve_labels(nodes)
+
+        program.resolver.pc = 1  # `nop` consumed one byte before the branch
+        machine_code = nodes[-1].emit(program.resolver.reloc_address)
+        opcode, offset = struct.unpack("<Bh", machine_code)
+        # my_label at 0, branch at pc=1; offset = 0 - 1 - 3 = -4.
+        self.assertEqual((opcode, offset), (0x82, -4))
+
+    def test_long_branch_out_of_range(self) -> None:
+        program = Program()
+        _, nodes = program.parser.parse("    brl 0x40000\n")
+        program.resolve_labels(nodes)
+        program.resolver.pc = 0
+        with self.assertRaisesRegex(RuntimeError, "signed 16-bit range"):
+            nodes[-1].emit(program.resolver.reloc_address)
+
+    def test_long_branch_literal_offset_and_missing_operand(self) -> None:
+        from a816.cpu.cpu_65c816 import RelativeLongJumpOpcode
+        from a816.exceptions import MissingOperandError
+        from a816.parse.nodes import ValueNode
+
+        program = Program()
+        opcode = RelativeLongJumpOpcode(0x82)
+        # A plain ValueNode is taken as a literal displacement (no PC math).
+        emitted = opcode.emit(ValueNode("0x10"), program.resolver)
+        self.assertEqual(emitted, b"\x82\x10\x00")
+        # A branch with no operand is rejected.
+        with self.assertRaises(MissingOperandError):
+            opcode.emit(None, program.resolver)
+
     def test_long_data_node(self) -> None:
         input_program = """
         .dl 0xf01ac5
