@@ -42,6 +42,15 @@ class Linker:
         self._file_index: dict[str, int] = {}
         self.symbol_map: dict[str, int] = {}
         self._section_buffers: dict[int, bytearray] = {}
+        # Per-object LOCAL symbols (underscore-private labels, alloc-body
+        # locals). Bare LOCAL names collide across modules in the flat
+        # `symbol_map`, so a relocation must resolve its LOCAL operands
+        # against the object that emitted it, otherwise `jmp.w _loop` in
+        # one module silently targets another module's `_loop`.
+        self._local_by_obj: dict[int, dict[str, int]] = {}
+        # Linked section index -> owning object index, so a relocation can
+        # find its object's LOCAL overlay.
+        self._section_obj: dict[int, int] = {}
 
     @property
     def linked_code(self) -> bytes:
@@ -257,6 +266,7 @@ class Linker:
                 ],
             )
             self.linked_sections.append(new_section)
+            self._section_obj[section_idx] = obj_idx
 
             for offset, name, reloc_type in section.relocations:
                 self._linked_relocations.append((final_base + offset, section_idx, name, reloc_type))
@@ -285,6 +295,7 @@ class Linker:
             return
         if symbol_type == SymbolType.LOCAL:
             self._register_local_symbol(name, final_address, section)
+            self._local_by_obj.setdefault(obj_idx, {})[name] = final_address
             return
         raise ValueError(f"Unknown symbol type: {symbol_type}")
 
@@ -417,9 +428,15 @@ class Linker:
     def _apply_relocations(self) -> None:
         self._section_buffers = {}
         for final_address, section_idx, symbol_name, relocation_type in self._linked_relocations:
-            if symbol_name not in self.symbol_map:
+            # Prefer the emitting object's LOCAL symbol over the global map so
+            # a bare LOCAL name can't bind to a same-named symbol elsewhere.
+            local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1)) or {}
+            if symbol_name in local_overlay:
+                symbol_address = local_overlay[symbol_name]
+            elif symbol_name in self.symbol_map:
+                symbol_address = self.symbol_map[symbol_name]
+            else:
                 raise UnresolvedSymbolError({symbol_name})
-            symbol_address = self.symbol_map[symbol_name]
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
 
@@ -467,7 +484,8 @@ class Linker:
     def _apply_expression_relocations(self) -> None:
         self._section_buffers = {}
         for final_address, section_idx, expression, size_bytes in self._linked_expression_relocations:
-            evaluated_value = self._evaluate_expression(expression)
+            local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1))
+            evaluated_value = self._evaluate_expression(expression, local_overlay)
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
             if size_bytes == 1:
@@ -483,16 +501,21 @@ class Linker:
 
         self._flush_section_buffers()
 
-    def _evaluate_expression(self, expression: str) -> int:
-        expr_to_eval = self._substitute_symbols(expression)
+    def _evaluate_expression(self, expression: str, local_overlay: dict[str, int] | None = None) -> int:
+        expr_to_eval = self._substitute_symbols(expression, local_overlay)
         try:
             return cast(int, eval(expr_to_eval, {"__builtins__": {}}, {}))
         except (SyntaxError, NameError, TypeError, ValueError) as e:
             raise ExpressionEvaluationError(expression, str(e)) from e
 
-    def _substitute_symbols(self, expression: str) -> str:
+    def _substitute_symbols(self, expression: str, local_overlay: dict[str, int] | None = None) -> str:
         def replace(match: Match[str]) -> str:
             token = match.group(0)
+            # Object-local symbols win over the global map: a relocation's
+            # bare LOCAL operand must resolve to the emitting module's label,
+            # not another module that happens to export the same name.
+            if local_overlay is not None and token in local_overlay:
+                return str(local_overlay[token])
             if token in self.symbol_map:
                 return str(self.symbol_map[token])
             return token

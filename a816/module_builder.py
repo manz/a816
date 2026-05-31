@@ -175,7 +175,9 @@ class ModuleBuilder:
         """Whether a module's own files changed since its `.o` was built.
 
         Dirty when the object is missing, its dependency sidecar is missing
-        (so a pre-feature `.o` rebuilds once), or any recorded dependency
+        (so a pre-feature `.o` rebuilds once), the cached object was built from
+        a different source path (object names like `__main__` collide across
+        unrelated builds sharing one `--obj-dir`), or any recorded dependency
         (the source, an `.include`d file, or an `.incbin`/`.table` asset) is
         missing or newer than the object. Import-graph propagation (a
         dependency *module* recompiling) is handled by the caller in `build`,
@@ -198,10 +200,15 @@ class ModuleBuilder:
         if not deps_path.exists():
             return True
 
+        deps = [dep for dep in deps_path.read_text(encoding="utf-8").splitlines() if dep]
+        # The source that built this object is recorded in its sidecar; if the
+        # current source path isn't there, the object belongs to a different
+        # file that mapped to the same module name, so rebuild.
+        if os.path.abspath(str(self.graph.modules[module_name])) not in deps:
+            return True
+
         obj_mtime = obj_path.stat().st_mtime
-        for dep in deps_path.read_text(encoding="utf-8").splitlines():
-            if not dep:
-                continue
+        for dep in deps:
             dep_file = Path(dep)
             if not dep_file.exists() or dep_file.stat().st_mtime > obj_mtime:
                 return True

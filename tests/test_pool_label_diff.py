@@ -156,3 +156,36 @@ def test_pool_forward_label_diff_under_hirom_map() -> None:
         rom = out.read_bytes()
         # Pool bank $C1 -> file offset $10000 under HiROM.
         assert rom[0x10000:0x10006] == _HIROM_EXPECTED
+
+
+def _compile(path: Path) -> ObjectFile:
+    obj = path.with_suffix(".o")
+    assert Program().assemble_as_object(str(path), obj) == 0
+    return ObjectFile.from_file(str(obj))
+
+
+def test_jmpw_to_local_label_resolves_per_module() -> None:
+    """`jmp.w <local>` must target the emitting module's label, not a same-named
+    local in another module.
+
+    Underscore-private labels export as bare LOCAL names that collide in the
+    linker's flat symbol map. A module-local relocation must resolve against
+    its own object, otherwise `jmp.w _loop` in the second-placed module silently
+    jumps into the first module's `_loop` (a layout-dependent wild branch).
+    """
+    pool = ".pool engine { range 0xc10000 0xc1ffff strategy order }\n"
+    # First-placed module owns `_loop`/`_end` at the pool start.
+    a_src = pool + ".alloc a_routine in engine {\n_loop:\n    .db 1,2,3,4,5,6,7,8\n_end:\n    rts\n}\n"
+    # Second module reuses the same local names and jumps to its OWN copies.
+    b_src = pool + ".alloc b_routine in engine {\n_loop:\n    nop\n    jmp.w _end\n    jmp.w _loop\n_end:\n    rts\n}\n"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        (tmp / "a.s").write_text(a_src)
+        (tmp / "b.s").write_text(b_src)
+        linked = Linker([_compile(tmp / "a.s"), _compile(tmp / "b.s")]).link(base_address=0x8000)
+
+        # b_routine is placed right after a_routine's 9 bytes: base $C10009.
+        b = next(s for s in linked.sections if s.code.startswith(b"\xea\x4c"))
+        assert b.placed_base == 0xC10009
+        # nop, jmp _end ($C10010 -> $0010), jmp _loop ($C10009 -> $0009), rts.
+        assert b.code == b"\xea\x4c\x10\x00\x4c\x09\x00\x60"
