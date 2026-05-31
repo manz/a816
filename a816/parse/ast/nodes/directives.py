@@ -201,12 +201,26 @@ class TableAstNode(AstNode):
 class IncludeAstNode(AstNode):
     file_path: str
     included_nodes: list[AstNode]
+    resolved_path: str | None
 
-    def __init__(self, file_path: str, included_nodes: list[AstNode], file_info: Token):
-        """Represents a source-level .include directive while preserving the nested AST."""
+    def __init__(
+        self,
+        file_path: str,
+        included_nodes: list[AstNode],
+        file_info: Token,
+        resolved_path: str | None = None,
+    ):
+        """Represents a source-level .include directive while preserving the nested AST.
+
+        `resolved_path` is the located file (parent-relative or via an include
+        path); codegen records it as a build dependency so an incremental
+        rebuild re-stats it even when the include holds only constants and
+        emits no attributable line.
+        """
         super().__init__("include", file_info)
         self.file_path = file_path
         self.included_nodes = included_nodes
+        self.resolved_path = resolved_path
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path, [node.to_representation() for node in self.included_nodes]

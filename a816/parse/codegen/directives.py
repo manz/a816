@@ -62,6 +62,12 @@ def generate_include(
     file_info: Token,
 ) -> GenNodes:
     """Inline the AST captured from an .include directive while honouring original scoping."""
+    if node.resolved_path:
+        import os
+
+        # Track the include as a build dependency even when it only defines
+        # constants (no emitted line reaches the object's file table).
+        resolver.dependency_files.add(os.path.abspath(node.resolved_path))
     code: GenNodes = []
     if node.included_nodes:
         code.extend(_code_gen(node.included_nodes, resolver, macro_definitions))

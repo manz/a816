@@ -5,6 +5,7 @@ modules referenced via .import directives.
 """
 
 import logging
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,7 +70,12 @@ class ModuleGraph:
 
             temp_visited.add(module)
 
-            for dep in self.dependencies.get(module, set()):
+            # Sort dependencies so the visit order (and thus the
+            # compilation/placement order) is stable regardless of
+            # PYTHONHASHSEED. `dependencies` is a set, whose iteration
+            # order Python randomizes per process; leaving it unsorted
+            # makes the emitted ROM non-deterministic across builds.
+            for dep in sorted(self.dependencies.get(module, set())):
                 if dep in self.modules:  # Only visit if it's in our graph
                     visit(dep)
 
@@ -166,7 +172,14 @@ class ModuleBuilder:
         return resolve_module(module_name, ".s", [base_dir, *self.module_paths])
 
     def _needs_recompilation(self, module_name: str) -> bool:
-        """Check if a module needs to be recompiled.
+        """Whether a module's own files changed since its `.o` was built.
+
+        Dirty when the object is missing, its dependency sidecar is missing
+        (so a pre-feature `.o` rebuilds once), or any recorded dependency
+        (the source, an `.include`d file, or an `.incbin`/`.table` asset) is
+        missing or newer than the object. Import-graph propagation (a
+        dependency *module* recompiling) is handled by the caller in `build`,
+        which walks modules dependencies-first.
 
         Args:
             module_name: The module name
@@ -177,17 +190,22 @@ class ModuleBuilder:
         if module_name not in self.graph.modules:
             return True
 
-        source_path = self.graph.modules[module_name]
         obj_path = self._get_obj_path(module_name)
-
         if not obj_path.exists():
             return True
 
-        # Check if source is newer than object
-        source_mtime = source_path.stat().st_mtime
-        obj_mtime = obj_path.stat().st_mtime
+        deps_path = self._deps_path(module_name)
+        if not deps_path.exists():
+            return True
 
-        return source_mtime > obj_mtime
+        obj_mtime = obj_path.stat().st_mtime
+        for dep in deps_path.read_text(encoding="utf-8").splitlines():
+            if not dep:
+                continue
+            dep_file = Path(dep)
+            if not dep_file.exists() or dep_file.stat().st_mtime > obj_mtime:
+                return True
+        return False
 
     def _get_obj_path(self, module_name: str) -> Path:
         """Get the object file path for a module."""
@@ -195,7 +213,32 @@ class ModuleBuilder:
         obj_name = module_name.replace("/", "_") + ".o"
         return self.output_dir / obj_name
 
-    def _compile_module(self, module_name: str, source_path: Path, obj_path: Path, constants: dict[str, int]) -> None:
+    def _deps_path(self, module_name: str) -> Path:
+        """Sidecar listing every file a module's `.o` was built from."""
+        return self._get_obj_path(module_name).with_suffix(".deps")
+
+    def _write_deps(self, module_name: str, source_path: Path, obj: ObjectFile, asset_files: set[str]) -> None:
+        """Record the module's dependency set next to its `.o`.
+
+        The set unions the source, every file in the object's source-file
+        table (the module plus its `.include`s), and the asset paths the
+        resolver collected (`.incbin` / `.table`). Stored as absolute paths,
+        one per line, so the next build can stat them directly.
+        """
+        deps = {os.path.abspath(str(source_path))}
+        deps.update(os.path.abspath(f) for f in obj.files)
+        deps.update(asset_files)
+        self._deps_path(module_name).write_text("\n".join(sorted(deps)) + "\n", encoding="utf-8")
+
+    def _compile_module(
+        self, module_name: str, source_path: Path, obj_path: Path, constants: dict[str, int]
+    ) -> set[str]:
+        """Compile one module to its `.o`; return the asset paths it read.
+
+        The returned set (absolute `.incbin` / `.table` paths) is folded into
+        the dependency sidecar by the caller so editing an asset invalidates
+        the cache.
+        """
         from a816.program import Program
 
         logger.info(f"Compiling {module_name}: {source_path} -> {obj_path}")
@@ -219,6 +262,7 @@ class ModuleBuilder:
         result = program.assemble_as_object(str(source_path), obj_path)
         if result != 0:
             raise RuntimeError(f"Failed to compile module '{module_name}'")
+        return set(program.resolver.dependency_files)
 
     @staticmethod
     def _accumulate_constants(obj: ObjectFile, accumulated: dict[str, int]) -> None:
@@ -242,14 +286,24 @@ class ModuleBuilder:
 
         object_files: list[ObjectFile] = []
         accumulated_constants: dict[str, int] = {}
+        recompiled: set[str] = set()
         for module_name in compilation_order:
             source_path = self.graph.modules[module_name]
             obj_path = self._get_obj_path(module_name)
-            if self._needs_recompilation(module_name):
-                self._compile_module(module_name, source_path, obj_path, accumulated_constants)
+            # A module must rebuild when its own files changed OR when any
+            # module it imports recompiled, since its `.o` bakes in the importee's
+            # exported constants, so a stale `.o` would carry old values.
+            # Compilation order is dependencies-first, so a direct check
+            # against `recompiled` is transitive.
+            dep_recompiled = any(dep in recompiled for dep in self.graph.dependencies.get(module_name, set()))
+            if dep_recompiled or self._needs_recompilation(module_name):
+                asset_files = self._compile_module(module_name, source_path, obj_path, accumulated_constants)
+                recompiled.add(module_name)
+                obj = ObjectFile.from_file(str(obj_path))
+                self._write_deps(module_name, source_path, obj, asset_files)
             else:
                 logger.info(f"Module {module_name} is up to date")
-            obj = ObjectFile.from_file(str(obj_path))
+                obj = ObjectFile.from_file(str(obj_path))
             self._accumulate_constants(obj, accumulated_constants)
             object_files.append(obj)
 

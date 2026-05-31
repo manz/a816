@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 from a816.cpu.mapping import Address
@@ -47,6 +48,7 @@ class BinaryNode(NodeProtocol):
         resolved = resolve_asset_path(path, resolver.context.include_paths)
         with open(resolved, "rb") as binary_file:
             self.binary_content = binary_file.read()
+        resolver.dependency_files.add(os.path.abspath(resolved))
         self.file_path = path
         self.symbol_base = path.replace("/", "_").replace(".", "_")
         self.resolver = resolver

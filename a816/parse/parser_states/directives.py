@@ -323,7 +323,7 @@ def parse_include(p: Parser, keyword: Token) -> IncludeAstNode:
     tokens = scanner.scan(resolved_path, source)
     parser = Parser(tokens, cast(StateFunc, parse_initial), include_paths=p.include_paths)
     sub_ast = parser.parse()
-    return IncludeAstNode(include_path, sub_ast, keyword)
+    return IncludeAstNode(include_path, sub_ast, keyword, resolved_path=resolved_path)
 
 
 def _data_node(kind: str) -> Callable[[Parser, Token], DataNode]:

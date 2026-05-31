@@ -1,8 +1,9 @@
 # Modules
 
 `.import` brings symbols from another module into the current translation
-unit. The build driver discovers dependencies, topologically sorts them,
-and recompiles by mtime.
+unit. The build driver discovers dependencies, topologically sorts them in a
+stable order, and recompiles only the modules whose inputs changed (see
+[Incremental builds](#incremental-builds)).
 
 ## Resolving a name
 
@@ -84,6 +85,29 @@ Mixed source + object inputs work too:
 ```
 $ a816 build file1.s file2.o -o output.ips
 ```
+
+## Incremental builds
+
+Compiled objects are cached in `--obj-dir` (default `build/obj`) next to a
+`<module>.deps` sidecar listing every file the object was built from. A module
+recompiles when:
+
+- its object or `.deps` sidecar is missing, or
+- any recorded dependency (the module source, an `.include`d file, or an
+  `.incbin` / `.table` asset) is newer than the object, or
+- a module it `.import`s recompiled (the importer bakes in the importee's
+  exported constants, so a stale object would carry old values).
+
+Editing a constant in an `.include`d file therefore invalidates every module
+that pulls it in; no `rm -rf build/obj` needed.
+
+## Reproducible output
+
+Builds are deterministic: identical source produces an identical ROM,
+independent of `PYTHONHASHSEED`. Module discovery, compilation, and pool
+placement order are stable (dependencies are sorted, not iterated from a set),
+so an address-sensitive bug surfaces the same way on every rebuild instead of
+flickering with the interpreter's hash seed.
 
 ## Auto-generated symbols
 

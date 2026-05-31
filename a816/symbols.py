@@ -361,6 +361,12 @@ class Resolver:
         # owned by its dependencies - the owner's `.o` is the single
         # source of truth, downstream `.o`s carry externs.
         self.imported_symbol_names: set[str] = set()
+        # Absolute paths of non-source assets pulled in during assembly
+        # (`.incbin` blobs, `.table` files). The module builder records
+        # these alongside the `.o`'s source-file table so an incremental
+        # rebuild re-stats them: editing an asset must invalidate the
+        # cached object the same way editing the `.s` does.
+        self.dependency_files: set[str] = set()
         self.set_position(pc)
 
     def allocate_pools(self) -> None:
