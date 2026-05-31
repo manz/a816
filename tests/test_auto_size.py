@@ -98,36 +98,31 @@ def test_explicit_size_still_wins() -> None:
     assert b"\xad\x08\x00" in data
 
 
-def test_register_width_mismatch_warns_when_a8_loads_word(caplog: pytest.LogCaptureFixture) -> None:
+def test_memory_mode_typed_field_access_emits_no_register_width_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # `sta p.field` / `lda p.field` write or read A to/from memory;
+    # field width is the address encoding, not the data the register
+    # transfers. Partial reads/writes into a wider field are a
+    # legitimate idiom (split long writes across two stores + bank
+    # byte). Codegen must not emit a register-width advisory warning
+    # for these accesses; the previous heuristic was a false-positive
+    # spam source and was removed.
     src = (
         _OAM_DEF
         + """
         .a8
         *=0x008000
         p := (0x7e0000 as OAM)
+            sta p.x
             lda p.x
         """
     )
     with caplog.at_level(logging.WARNING):
         _assemble_ips(src)
-    assert any("field width" in r.message and "A register" in r.message for r in caplog.records), (
-        f"expected an A-width warning, got {[r.message for r in caplog.records]}"
+    assert not any("field width" in r.message for r in caplog.records), (
+        f"memory-mode access should not warn, got {[r.message for r in caplog.records]}"
     )
-
-
-def test_no_warning_when_field_matches_register(caplog: pytest.LogCaptureFixture) -> None:
-    src = (
-        _OAM_DEF
-        + """
-        .a8
-        *=0x008000
-        p := (0x7e0000 as OAM)
-            lda p.tile
-        """
-    )
-    with caplog.at_level(logging.WARNING):
-        _assemble_ips(src)
-    assert not any("field width" in r.message for r in caplog.records)
 
 
 def test_non_typed_operand_keeps_string_heuristic() -> None:

@@ -83,7 +83,7 @@ class AssembleMixin:
             return emitter
         return WriteAuditor(emitter, mode=mode)  # type: ignore[arg-type]
 
-    def assemble_with_emitter(self, asm_file: str, emitter: Writer, prelude: str | None = None) -> int:
+    def assemble_with_emitter(self, asm_file: str, emitter: Writer) -> int:
         """CLI-facing wrapper around `assemble_string_with_emitter`.
 
         Always returns an exit code; never calls `sys.exit`. Embedders that
@@ -101,8 +101,6 @@ class AssembleMixin:
 
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
-                if prelude:
-                    input_program = prelude + "\n" + input_program
                 try:
                     self.assemble_string_with_emitter(input_program, asm_file, emitter)
                 except AssemblyError as e:
@@ -135,33 +133,31 @@ class AssembleMixin:
         self.logger.debug("Success !")
         return 0
 
-    def assemble(self, asm_file: str, sfc_file: Path, prelude: str | None = None) -> int:
+    def assemble(self, asm_file: str, sfc_file: Path) -> int:
         """
-        Compile asmfile.
+        Compile asmfile to a SFC ROM.
         :param asm_file:
         :param sfc_file:
-        :param prelude: Optional prelude content to prepend to the source.
         :return: error code
         """
         with open(sfc_file, "wb") as f:
             sfc_emitter = SFCWriter(f)
-            exit_code = self.assemble_with_emitter(asm_file, sfc_emitter, prelude=prelude)
+            exit_code = self.assemble_with_emitter(asm_file, sfc_emitter)
         self._flush_emit_trace(sfc_file)
         return exit_code
 
-    def assemble_as_object(self, asm_file: str, output_file: Path, prelude: str | None = None) -> int:
+    def assemble_as_object(self, asm_file: str, output_file: Path) -> int:
         """
         Compile assembly file to object file for later linking.
         :param asm_file: Input assembly file
         :param output_file: Output object file path
-        :param prelude: Optional prelude content to prepend to the source
         :return: error code
         """
         object_writer = ObjectWriter(str(output_file))
         object_writer.begin()
 
         try:
-            exit_code = self.assemble_with_object_emitter(asm_file, object_writer, prelude=prelude)
+            exit_code = self.assemble_with_object_emitter(asm_file, object_writer)
             object_writer.end()
             return exit_code
         except RuntimeError as e:
@@ -190,19 +186,51 @@ class AssembleMixin:
     def _export_object_symbols(self, object_writer: ObjectWriter) -> None:
         label_names = {n for n, _ in self.resolver.get_all_labels(mangle_nested=True)}
         absolute_label_names = {n for n, _ in self.resolver.get_all_absolute_labels(mangle_nested=True)}
+        self._publish_named_scope_bare_names(object_writer)
         for name, value in self.resolver.get_all_symbols():
-            if self.resolver.current_scope.is_external_symbol(name):
-                continue  # already added by ExternNode
-            if name in self.resolver.pool_stat_symbol_names:
-                continue  # pool stat snapshots are per-module, not linker-visible
-            if name in self.resolver.imported_symbol_names:
-                continue  # contributed by an inlined `.import`; owner's `.o` is the sole source
+            if self._should_skip_symbol_export(name, label_names):
+                continue
             sym_type, section, sym_value = self._classify_object_symbol(name, value, label_names, absolute_label_names)
             object_writer.add_symbol(name, sym_value, sym_type, section)
 
-    def assemble_with_object_emitter(
-        self, asm_file: str, object_writer: ObjectWriter, prelude: str | None = None
-    ) -> int:
+    def _publish_named_scope_bare_names(self, object_writer: ObjectWriter) -> None:
+        # Mirror NamedScope members under their BARE name as LOCAL
+        # alongside the dotted GLOBAL. The dotted form (`render.foo`)
+        # is what the linker globally dedupes / resolves; the bare
+        # form (`foo`) keeps kintsuki's `lookup_symbol_addr("foo")`
+        # working for legacy adbg consumers that expect bare names.
+        # LOCAL across modules collides first-write-wins via
+        # `setdefault` in the linker — matches the underscore-private
+        # convention.
+        from a816.object_file import SymbolSection, SymbolType
+        from a816.symbols import NamedScope
+
+        for scope in self.resolver.scopes:
+            if not isinstance(scope, NamedScope):
+                continue
+            for bare_name, addr in scope.get_labels():
+                if "." in bare_name:
+                    continue  # already-dotted via _publish_named_dotted
+                object_writer.add_symbol(bare_name, addr, SymbolType.LOCAL, SymbolSection.CODE)
+
+    def _should_skip_symbol_export(self, name: str, label_names: set[str]) -> bool:
+        # Symbols declared `.extern` AND also defined locally in this
+        # compile unit (e.g. main `.include`s both the `.extern foo`
+        # declaration and the `foo:` definition): prefer the local
+        # definition — emit it as GLOBAL/LOCAL so the linker's local
+        # resolution wins. Otherwise the .o would double-publish
+        # (EXTERNAL stub from ExternNode + nothing for the real
+        # definition), and the linker reports `unresolved external`
+        # for a symbol it actually owns.
+        if self.resolver.current_scope.is_external_symbol(name) and name not in label_names:
+            return True  # purely external, owner provides it
+        if name in self.resolver.pool_stat_symbol_names:
+            return True  # pool stat snapshots are per-module, not linker-visible
+        if name in self.resolver.imported_symbol_names:
+            return True  # contributed by an inlined `.import`; owner's `.o` is the sole source
+        return False
+
+    def assemble_with_object_emitter(self, asm_file: str, object_writer: ObjectWriter) -> int:
         """Assemble with object file emission, collecting symbols and relocations."""
         previous_mode = self.resolver.context.mode
         previous_writer = self.resolver.context.object_writer
@@ -212,8 +240,6 @@ class AssembleMixin:
 
             with open(asm_file, encoding="utf-8") as f:
                 input_program = f.read()
-            if prelude:
-                input_program = prelude + "\n" + input_program
 
             try:
                 error, nodes = self.parser.parse(input_program, asm_file)
@@ -250,7 +276,6 @@ class AssembleMixin:
         ips_file: Path,
         mapping: str | None = None,
         copier_header: bool = False,
-        prelude: str | None = None,
     ) -> int:
         if mapping is not None:
             address_mapping = {
@@ -265,7 +290,7 @@ class AssembleMixin:
         with open(ips_file, "wb") as f:
             ips_emitter = IPSWriter(f, copier_header)
             ips_emitter.begin()
-            exit_code = self.assemble_with_emitter(asm_file, ips_emitter, prelude=prelude)
+            exit_code = self.assemble_with_emitter(asm_file, ips_emitter)
             ips_emitter.end()
         self._flush_emit_trace(ips_file)
         return exit_code

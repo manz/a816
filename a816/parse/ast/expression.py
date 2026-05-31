@@ -206,7 +206,12 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
         if external_symbols:
             # Reconstruct + inline aliases so the relocation references real
             # externs (macro-arg bindings otherwise leak into the object file).
+            # Inlining an alias like `OFF = lbl - base` surfaces the bare local
+            # labels; canonicalize them to their exported `__sc<idx>__` form so
+            # the relocation matches the linker's symbol map instead of folding
+            # to 0 against unknown bare names.
             expression_str = _inline_aliases(reconstruct_expression(expression), resolver)
+            expression_str = canonicalize_local_label_refs(expression_str, resolver)
             raise ExternalExpressionReference(expression_str, external_symbols)
 
     values_stack: list[int | str] = []
@@ -223,6 +228,24 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
 
 
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+
+
+def canonicalize_local_label_refs(expression_str: str, resolver: Resolver) -> str:
+    """Rewrite local-label identifiers in `expression_str` to their
+    EXPORTED form so an alias written into an `.o` (or a relocation
+    expression) survives the linker's symbol-map lookup. Mirrors
+    `ExpressionNode._compute_local_label_renames`: NamedScope members
+    become `Name.label`; anon nested scopes get `__sc<idx>__name`.
+
+    Use this anywhere an alias RHS is constructed from source text -
+    `_register_alias`, macro-arg extern bindings, etc. - so the bare
+    label name (`jt_label`) never reaches the object file with no
+    matching export."""
+
+    def replace(match: re.Match[str]) -> str:
+        return resolver.exported_label_name(match.group(0))
+
+    return _IDENT_RE.sub(replace, expression_str)
 
 
 def _inline_aliases(expression_str: str, resolver: Resolver, depth: int = 0) -> str:

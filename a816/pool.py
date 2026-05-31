@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
+
+logger = logging.getLogger("a816.pool")
 
 
 class Strategy(Enum):
@@ -29,11 +32,18 @@ class PoolInvalidRangeError(PoolError):
 class PoolRange:
     start: int
     end: int
+    allow_bank_cross: bool = False
 
     def __post_init__(self) -> None:
         if self.end < self.start:
             raise PoolInvalidRangeError(f"range start 0x{self.start:06x} > end 0x{self.end:06x}")
-        if (self.start >> 16) != (self.end >> 16):
+        # `allow_bank_cross=True` opts out of the bank-boundary check.
+        # Used by synthesised pools for unbounded `.alloc at ADDR { ... }`
+        # (the `*= ADDR` desugar shape) so a huge `.incbin` payload that
+        # legitimately spans `$XX:FFFF → $XX+1:0000` doesn't get rejected
+        # before the allocator even sees it. User-declared `.pool` ranges
+        # keep the strict bank-local guard.
+        if not self.allow_bank_cross and (self.start >> 16) != (self.end >> 16):
             raise PoolInvalidRangeError(f"range 0x{self.start:06x}..0x{self.end:06x} crosses bank boundary")
 
     @property
@@ -97,8 +107,33 @@ class Pool:
             return
         order = _sort_allocations(self.allocations, self.strategy)
         free = list(self.ranges)
+        total = sum(r.size for r in self.ranges)
+        logger.info(
+            "pool %s: %d alloc(s) into %d range(s) totaling %d bytes",
+            self.name,
+            len(order),
+            len(self.ranges),
+            total,
+        )
         for alloc in order:
             free = _place(alloc, free)
+            free_total = sum(r.size for r in free)
+            logger.info(
+                "  placed %s size %d at 0x%06x  (free: %d bytes across %d range(s))",
+                alloc.name,
+                alloc.size,
+                alloc.addr,
+                free_total,
+                len(free),
+            )
+        for r in free:
+            logger.info(
+                "  pool %s leftover 0x%06x..0x%06x (%d bytes)",
+                self.name,
+                r.start,
+                r.end,
+                r.size,
+            )
         self._allocated = True
 
     @property
@@ -144,7 +179,11 @@ def _normalize_ranges(ranges: list[PoolRange]) -> list[PoolRange]:
                 f"ranges 0x{last.start:06x}..0x{last.end:06x} and 0x{r.start:06x}..0x{r.end:06x} overlap"
             )
         if last.adjacent(r) and (last.start >> 16) == (r.start >> 16):
-            merged[-1] = PoolRange(start=last.start, end=max(last.end, r.end))
+            merged[-1] = PoolRange(
+                start=last.start,
+                end=max(last.end, r.end),
+                allow_bank_cross=last.allow_bank_cross or r.allow_bank_cross,
+            )
         else:
             merged.append(r)
     return merged
@@ -169,7 +208,7 @@ def _shrink_chunk(free: list[PoolRange], idx: int, used: int) -> list[PoolRange]
     remaining_start = chunk.start + used
     tail: list[PoolRange] = []
     if remaining_start <= chunk.end:
-        tail.append(PoolRange(start=remaining_start, end=chunk.end))
+        tail.append(PoolRange(start=remaining_start, end=chunk.end, allow_bank_cross=chunk.allow_bank_cross))
     return [*free[:idx], *tail, *free[idx + 1 :]]
 
 
@@ -187,8 +226,8 @@ def _subtract_one(r: PoolRange, placed: list[tuple[int, int]]) -> list[PoolRange
         if p_end < r.start or p_start > r.end:
             continue
         if p_start > cursor:
-            out.append(PoolRange(start=cursor, end=p_start - 1))
+            out.append(PoolRange(start=cursor, end=p_start - 1, allow_bank_cross=r.allow_bank_cross))
         cursor = max(cursor, p_end + 1)
     if cursor <= r.end:
-        out.append(PoolRange(start=cursor, end=r.end))
+        out.append(PoolRange(start=cursor, end=r.end, allow_bank_cross=r.allow_bank_cross))
     return out

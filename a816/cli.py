@@ -50,8 +50,12 @@ def _apply_a816_toml(args: argparse.Namespace) -> None:
         args.include_paths = [str(p) for p in config.include_paths]
     if config.module_paths and not args.module_paths:
         args.module_paths = [str(p) for p in config.module_paths]
-    if config.prelude_file is not None and args.prelude_file is None:
-        args.prelude_file = config.prelude_file
+    # Mirror [experimental] from a816.toml. CLI --experimental wins
+    # on overlap (already in args.experimental as a list of flag names).
+    cli_flags = set(args.experimental or [])
+    for flag, enabled in config.experimental.items():
+        if enabled and flag not in cli_flags:
+            args.experimental = (args.experimental or []) + [flag]
 
 
 _ASM_SUFFIXES = (".s", ".asm")
@@ -102,13 +106,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Add directory to include search path for .include directives.",
     )
     parser.add_argument(
-        "--prelude",
-        type=Path,
-        dest="prelude_file",
-        default=None,
-        help="Config file prepended to every module compilation (e.g., feature flags).",
-    )
-    parser.add_argument(
         "--overlap-mode",
         choices=("error", "warn", "off"),
         dest="overlap_mode",
@@ -117,6 +114,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "How to react when two `*=` / `.alloc` sections write to "
             "overlapping bytes. Default `error` (build fails); `warn` "
             "logs + continues (legacy ROM compat); `off` skips the check."
+        ),
+    )
+    parser.add_argument(
+        "--experimental",
+        metavar="FLAG",
+        action="append",
+        dest="experimental",
+        default=[],
+        help=(
+            "Enable an experimental feature (repeatable). Known flags: "
+            "`track_register_size` (rep/sep -> a_size/i_size inference). "
+            "Mirrors the [experimental] table in `a816.toml`. CLI wins."
         ),
     )
     return parser
@@ -146,10 +155,28 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         symbols=_parse_defines(args.defines),
         copier_header=args.copier_header,
         include_paths=[Path(p) for p in args.include_paths],
-        prelude_file=args.prelude_file,
         overlap_mode=args.overlap_mode,
+        experimental=list(args.experimental or []),
+        mapping=args.mapping,
     )
     return result.exit_code
+
+
+def _apply_experimental(program: "Program", flags: list[str] | None) -> None:
+    """Set experimental feature flags on the program's resolver.
+
+    Currently recognized:
+      - `track_register_size` — let `rep`/`sep` with constant
+        immediate operands update `resolver.a_size` /
+        `i_size` so subsequent opcode-width inference picks
+        the right form. Off by default because legacy sources
+        relied on value-driven width inference only.
+    """
+    for flag in flags or []:
+        if flag == "track_register_size":
+            program.resolver.track_register_size = True
+        else:
+            logger.warning(f"unknown --experimental flag: {flag}")
 
 
 def _run_compile_only(args: argparse.Namespace) -> int:
@@ -163,6 +190,7 @@ def _run_compile_only(args: argparse.Namespace) -> int:
         if multi:
             logger.info(f"Compiling {input_file} -> {obj_file}")
         program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
+        _apply_experimental(program, args.experimental)
         for inc_path in args.include_paths:
             program.add_include_path(inc_path)
         for key, value in _parse_defines(args.defines).items():
@@ -181,6 +209,7 @@ def _load_or_compile_object(input_file: Path, args: argparse.Namespace) -> Objec
         sys.exit(-1)
 
     program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
+    _apply_experimental(program, args.experimental)
     for key, value in _parse_defines(args.defines).items():
         program.resolver.current_scope.add_symbol(key, value)
     temp_obj_file = input_file.with_suffix(".tmp.o")
@@ -201,10 +230,11 @@ def _run_link(args: argparse.Namespace) -> int:
 
     linked_obj = Linker(object_files).link(base_address=0x8000)
     program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
+    _apply_experimental(program, args.experimental)
     if args.format == "ips":
         return program.link_as_patch(linked_obj, args.output_file, args.mapping, args.copier_header)
     if args.format == "sfc":
-        return program.link_as_sfc(linked_obj, args.output_file)
+        return program.link_as_sfc(linked_obj, args.output_file, args.mapping)
     logger.error(f"Unknown output format: {args.format}")
     sys.exit(-1)
 

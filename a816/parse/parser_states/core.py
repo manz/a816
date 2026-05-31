@@ -69,8 +69,12 @@ _DIRECTIVE_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     "pointer": _data_node("pointer"),
     "include": parse_include,
     "include_ips": lambda p, _kw: parse_include_ips(p),
-    "incbin": lambda p, _kw: IncludeBinaryAstNode(parse_directive_with_quoted_string(p), p.current()),
-    "table": lambda p, _kw: TableAstNode(parse_directive_with_quoted_string(p), p.current()),
+    # file_info must be the directive keyword, not `p.current()`: after the
+    # quoted string is consumed, `p.current()` is the NEXT token (often a
+    # trailing comment on the following line), which mis-attributes the node's
+    # source line and makes the formatter fold that comment onto the directive.
+    "incbin": lambda p, kw: IncludeBinaryAstNode(parse_directive_with_quoted_string(p), kw),
+    "table": lambda p, kw: TableAstNode(parse_directive_with_quoted_string(p), kw),
     "macro": lambda p, _kw: parse_macro(p),
     "map": lambda p, _kw: parse_map(p),
     "if": lambda p, _kw: parse_if(p),

@@ -259,6 +259,22 @@ end:
         self.assertIn("; inline", lines[1])
         self.assertEqual(lines[2], "    ; standalone")
 
+    def test_standalone_comment_after_table_stays_standalone(self) -> None:
+        """A comment on the line after `.table` must not fold onto it.
+
+        `.table`/`.incbin` once recorded the *next* token as their source
+        location, so the formatter saw the following comment as same-line and
+        merged it, producing `.table "x"  ; comment`, which the assembler then
+        folds into the table-path argument.
+        """
+        input_code = '.table "font.tbl"\n; standalone comment\nnop\n'
+        formatted = self.formatter.format_text(input_code)
+        lines = [line for line in formatted.splitlines() if line.strip()]
+        self.assertEqual(lines[0].strip(), '.table "font.tbl"')
+        self.assertEqual(lines[1].strip(), "; standalone comment")
+        # Idempotent: re-formatting must not start merging either.
+        self.assertEqual(self.formatter.format_text(formatted), formatted)
+
     def test_align_inline_comments_within_block(self) -> None:
         """When comment_alignment > 0, inline comments in the same block align."""
         input_code = """start:

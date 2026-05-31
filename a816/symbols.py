@@ -18,12 +18,28 @@ def _is_exportable(name: str) -> bool:
     promotes, and dunder names like `__size` (struct size symbol) keep
     promoting because they're system-injected, not user-private.
     The `__sc<idx>__` prefix is the codegen's internal scope-isolation
-    mangling — purely scaffolding and must stay private even though it
+    mangling - purely scaffolding and must stay private even though it
     starts with double underscore.
     """
     if name.startswith("__sc"):
         return False
     return not name.startswith("_") or name.startswith("__")
+
+
+def _bubble_anon_exportables(scope: "Scope", parent: "Scope") -> None:
+    """Promote exportable labels/symbols from an anonymous scope to its parent.
+
+    Used when an `.alloc` body closes: per-block underscore labels
+    (`_skip`, `_end`) stay private to the body, but non-underscore
+    body labels must surface so sibling allocs and `.extern`
+    declarations in the same module can reach them.
+    """
+    for label_name, label_value in scope.labels.items():
+        if _is_exportable(label_name) and label_name not in parent.labels:
+            parent.labels[label_name] = label_value
+    for sym_name, sym_value in scope.symbols.items():
+        if _is_exportable(sym_name) and sym_name not in parent.symbols:
+            parent.symbols[sym_name] = sym_value
 
 
 def _bubble_anon_into_named(scope: "Scope", parent: "NamedScope") -> None:
@@ -87,7 +103,7 @@ class Scope:
         self.resolver: Resolver = resolver
         self.table: Table | None = None
         self.labels: dict[str, int] = {}
-        # Names declared via `.label NAME = ADDR` — kept separate from
+        # Names declared via `.label NAME = ADDR` - kept separate from
         # `labels` because the value is an absolute address the user picked
         # (not the current PC). The linker must NOT add the relocation
         # delta to these; treat them as DATA at object-file level but as
@@ -104,8 +120,8 @@ class Scope:
     def add_symbol(self, symbol: str, value: int | BlockAstNode | str) -> None:
         """Bind `symbol` to `value`. Idempotent upsert.
 
-        Multi-pass resolution re-runs `add_symbol` on every pass — first
-        with a guessed address, later with the refined one — so the
+        Multi-pass resolution re-runs `add_symbol` on every pass - first
+        with a guessed address, later with the refined one - so the
         value legitimately changes between calls. Distinguishing
         "expected refinement" from "real duplicate declaration" needs
         per-call source attribution we don't currently track; the parser
@@ -150,9 +166,22 @@ class Scope:
         return None
 
     def is_external_symbol(self, symbol: str) -> bool:
-        """Check if a symbol is marked as external"""
+        """Check if a symbol is marked as external.
+
+        `.extern Foo` captures the whole `Foo` namespace: any reference
+        to `Foo.bar`, `Foo.baz.qux`, etc. resolves as external too.
+        The full dotted name then flows through the relocation / alias
+        pipeline and the linker matches it against the provider's
+        `Foo.bar` GLOBAL export (NamedScope members already export with
+        the dotted prefix per `Resolver._export_name`). Avoids forcing
+        consumers to `.extern Foo.x` per member.
+        """
         if symbol in self.external_symbols:
             return True
+        if "." in symbol:
+            head = symbol.split(".", 1)[0]
+            if head in self.external_symbols:
+                return True
         if self.parent:
             return self.parent.is_external_symbol(symbol)
         return False
@@ -196,6 +225,19 @@ class Scope:
 
 class InternalScope(Scope):
     pass
+
+
+class AllocBodyScope(Scope):
+    """Scope spanning an `.alloc` body. Isolates underscore-private
+    labels from sibling allocs in the same module without forcing the
+    `__sc<idx>__` export mangle that ordinary anonymous scopes get.
+
+    Branch / jump resolution walks the scope chain and finds local
+    `_skip` / `_end` first - sibling allocs no longer collide. Public
+    body labels still bubble to the parent on restore so cross-alloc
+    calls keep working; underscore labels stay in this scope and are
+    invisible from sibling alloc bodies.
+    """
 
 
 class NamedScope(Scope):
@@ -252,6 +294,15 @@ class Resolver:
         # stay unaffected.
         self.alloc_carry_a_size: int = 8
         self.alloc_carry_i_size: int = 8
+        # Opt-in rep/sep -> a_size/i_size inference. Off by default
+        # because pre-existing sources (ff4 master, similar) were
+        # written assuming value-driven width inference only - a
+        # `lda #$01` after some earlier `rep #$20` was always meant
+        # as 2 bytes (value forces .b). Enabling globally breaks
+        # those. Block-scoped opt-in via `.track_register_size`
+        # (or via the original `.a16` / `rep #$30` flow within a
+        # tight routine) is the path forward.
+        self.track_register_size: bool = False
         # Per-pool sandbox cursor for object-mode `.alloc` body labels.
         # Each `.alloc NAME in POOL` advances this so successive allocs
         # bind their bodies at distinct addresses inside the pool's
@@ -271,7 +322,7 @@ class Resolver:
         self.reloc_address: Address
         self.context = AssemblyContext()
         self.pools: dict[str, Pool] = {}
-        # Names registered by `_publish_pool_stats` — kept out of object-mode
+        # Names registered by `_publish_pool_stats` - kept out of object-mode
         # symbol export so two `.o` files declaring the same pool don't
         # collide on `<pool>.capacity` etc. at link time.
         self.pool_stat_symbol_names: set[str] = set()
@@ -294,7 +345,7 @@ class Resolver:
         # Typed-bind registry: instance name → struct type name. Lets the
         # linter spot redundant casts and field access on non-typed bindings.
         self.typed_instances: dict[str, str] = {}
-        # Address width per typed instance — "b" (DP), "w" (abs 16-bit),
+        # Address width per typed instance - "b" (DP), "w" (abs 16-bit),
         # or "l" (long 24-bit). Derived from the base value's bank at
         # bind time so opcode emission can pick `lda` / `lda.w` / `lda.l`
         # without re-parsing the operand string.
@@ -307,9 +358,15 @@ class Resolver:
         # Names contributed to the root scope by inlined `.import`
         # passes (object mode). `_export_object_symbols` skips these
         # so the importing module's `.o` doesn't re-export symbols
-        # owned by its dependencies — the owner's `.o` is the single
+        # owned by its dependencies - the owner's `.o` is the single
         # source of truth, downstream `.o`s carry externs.
         self.imported_symbol_names: set[str] = set()
+        # Absolute paths of non-source assets pulled in during assembly
+        # (`.incbin` blobs, `.table` files). The module builder records
+        # these alongside the `.o`'s source-file table so an incremental
+        # rebuild re-stats them: editing an asset must invalidate the
+        # cached object the same way editing the `.s` does.
+        self.dependency_files: set[str] = set()
         self.set_position(pc)
 
     def allocate_pools(self) -> None:
@@ -317,7 +374,7 @@ class Resolver:
 
         Called between resolver passes by Program.resolve_labels so that
         `.alloc` and `.relocate` blocks see their final addresses on the
-        pass that binds labels. Pool.allocate is idempotent — safe to call
+        pass that binds labels. Pool.allocate is idempotent - safe to call
         multiple times.
 
         Skipped in object mode: the linker collects pool decls + alloc
@@ -358,6 +415,10 @@ class Resolver:
         scope = Scope(self, self.current_scope)
         self.scopes.append(scope)
 
+    def append_alloc_body_scope(self) -> None:
+        scope = AllocBodyScope(self, self.current_scope)
+        self.scopes.append(scope)
+
     def append_internal_scope(self) -> None:
         scope = InternalScope(self, self.current_scope)
         self.scopes.append(scope)
@@ -374,6 +435,8 @@ class Resolver:
 
         if not isinstance(scope, NamedScope) and isinstance(parent, NamedScope):
             _bubble_anon_into_named(scope, parent)
+        elif exports and not isinstance(scope, NamedScope):
+            _bubble_anon_exportables(scope, parent)
         if exports and isinstance(scope, NamedScope):
             _publish_named_dotted(scope, parent)
 
@@ -405,15 +468,17 @@ class Resolver:
 
         When ``mangle_nested`` is true, labels in nested anonymous scopes are
         prefixed with ``__sc<idx>__`` to mirror the export naming used by
-        :meth:`get_all_symbols`.
+        :meth:`get_all_symbols`. Labels in NAMED scopes are prefixed with
+        the scope's name (`shops.gils`) so two `.scope` blocks with the
+        same internal label don't collide as bare names in the linker's
+        global symbol table.
         """
         labels: list[tuple[str, int]] = []
         for idx, scope in enumerate(self.scopes):
             if isinstance(scope, InternalScope):
                 continue
-            mangle = mangle_nested and idx > 0 and not isinstance(scope, NamedScope)
             for name, value in scope.get_labels():
-                exported = f"__sc{idx}__{name}" if mangle else name
+                exported = self._export_name(name, scope, idx, mangle_nested)
                 labels.append((exported, value))
         return labels
 
@@ -423,16 +488,53 @@ class Resolver:
         for idx, scope in enumerate(self.scopes):
             if isinstance(scope, InternalScope):
                 continue
-            mangle = mangle_nested and idx > 0 and not isinstance(scope, NamedScope)
             for name, value in scope.absolute_labels.items():
-                exported = f"__sc{idx}__{name}" if mangle else name
+                exported = self._export_name(name, scope, idx, mangle_nested)
                 labels.append((exported, value))
         return labels
 
     @staticmethod
+    def _export_name(name: str, scope: "Scope", idx: int, mangle_nested: bool) -> str:
+        """Compute the exported name for a label/symbol in `scope`.
+
+        Already-dotted names (e.g. `shops.gils` re-published by
+        `_publish_named_dotted`) pass through unchanged so we don't
+        double-prefix. Bare names inside a NamedScope get the scope's
+        name as a prefix to avoid bare-name collisions across modules.
+        Anonymous nested scopes opt into the `__sc<idx>__` mangle when
+        `mangle_nested` is set.
+        """
+        if isinstance(scope, NamedScope) and "." not in name:
+            return f"{scope.name}.{name}"
+        # AllocBodyScope opts out of the `__sc<idx>__` mangle: cross-alloc
+        # public refs and `.extern` declarations in the same module need
+        # to see bare names. Underscore privacy is enforced by the
+        # `_bubble_anon_exportables` filter (which keeps them in the body
+        # scope) plus the object-mode LOCAL classifier downstream.
+        if isinstance(scope, AllocBodyScope):
+            return name
+        if mangle_nested and idx > 0 and not isinstance(scope, NamedScope):
+            return f"__sc{idx}__{name}"
+        return name
+
+    def exported_label_name(self, name: str) -> str:
+        """Exported name for a label *reference* as seen from the current scope.
+
+        Mirrors :meth:`_export_name` so a relocation or alias expression names
+        a label exactly as :meth:`get_all_symbols` exports it: bare for root and
+        ``AllocBodyScope`` labels, ``Scope.label`` for ``NamedScope`` members,
+        ``__sc<idx>__label`` for anonymous nested scopes. Unknown or root-owned
+        names pass through unchanged so externs and root labels are untouched.
+        """
+        owner = self.current_scope.find_label_scope(name)
+        if owner is None or owner is self.scopes[0]:
+            return name
+        return self._export_name(name, owner, self.scopes.index(owner), mangle_nested=True)
+
+    @staticmethod
     def _mangle(name: str, idx: int, mangle: bool) -> str:
         # Every nested anonymous scope's labels get a unique prefix so
-        # repeated macro invocations don't collide on the same name —
+        # repeated macro invocations don't collide on the same name -
         # underscore-prefixed names included (they are private to the
         # *invocation*, which still needs distinct addresses across calls).
         return f"__sc{idx}__{name}" if mangle else name
@@ -441,16 +543,21 @@ class Resolver:
         return [(name, value) for name, value in scope.symbols.items() if isinstance(value, int)]
 
     def get_all_symbols(self) -> list[tuple[str, int]]:
-        """All labels + int-valued assignments, mangled with __sc<idx>__ in nested anon scopes."""
+        """All labels + int-valued assignments. NamedScope members get
+        the scope-name prefix (`items_description.source`); anon nested
+        scopes get the `__sc<idx>__` mangle. Bare names from a nested
+        scope never leak into the export so two `.scope` blocks with
+        the same inner label (or two macro invocations whose args
+        bubble up into different scopes) don't collide as bare globals
+        in the linker."""
         symbols: list[tuple[str, int]] = []
         seen: set[str] = set()
         for idx, scope in enumerate(self.scopes):
             if isinstance(scope, InternalScope):
                 continue
-            mangle = idx > 0 and not isinstance(scope, NamedScope)
             for source in (scope.get_labels(), self._scope_int_symbols(scope)):
                 for name, value in source:
-                    exported = self._mangle(name, idx, mangle)
+                    exported = self._export_name(name, scope, idx, mangle_nested=True)
                     if exported not in seen:
                         symbols.append((exported, value))
                         seen.add(exported)

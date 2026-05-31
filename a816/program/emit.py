@@ -95,12 +95,35 @@ class EmitMixin:
         state.current_block_logical = self.resolver.reloc_address.logical_value
 
     def _emit_alloc(self, node: AllocNode, writer: Writer, state: EmitState) -> None:
-        """Write an `.alloc` block at its allocator-chosen address."""
+        """Write an `.alloc` block at its allocator-chosen address.
+
+        Walks the attributed body so per-sub-node debug-line entries
+        (`_record_debug_line`) and emit-trace records (`_trace_block`)
+        match the granularity the direct-mode path produces for `*=`
+        bodies. Without per-sub-node attribution, debug consumers see
+        a single line entry for the whole alloc and lose source ↔
+        address mapping for opcodes inside it.
+        """
         self._flush_pending(writer, state)
-        blocks = node.emit_blocks(self.resolver.reloc_address)
-        for base, block in blocks:
-            if block:
-                writer.write_block(block, self._to_physical(base))
+        attributed = node.emit_attributed_blocks(self.resolver.reloc_address)
+        # Per-sub-node debug-line entries so consumers can resolve a
+        # source position for each opcode in the body.
+        consolidated = b""
+        first_addr: int | None = None
+        for sub_node, snes_addr, chunk in attributed:
+            if not chunk:
+                continue
+            if first_addr is None:
+                first_addr = snes_addr
+            self._record_debug_line(sub_node, snes_addr)
+            consolidated += chunk
+        # One consolidated trace + one writer call per alloc so trace
+        # records + writer block records stay alloc-granular (matches
+        # what the direct-mode `*=` path produced before the desugar).
+        if consolidated and first_addr is not None:
+            phys = self._to_physical(first_addr)
+            writer.write_block(consolidated, phys)
+            self._trace_block(first_addr, phys, len(consolidated))
         state.current_block_addr = self.resolver.pc
         state.current_block_logical = self.resolver.reloc_address.logical_value
 

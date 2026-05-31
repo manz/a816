@@ -1,7 +1,7 @@
 """Shared loader for `a816.toml` project configuration.
 
 Both the LSP and `a816 fluff` need to find the project root, the
-include search paths, and the prelude file. Centralised here so the
+include search paths, and the entrypoint. Centralised here so the
 schema lives in one place.
 """
 
@@ -22,7 +22,11 @@ class A816Config:
     entrypoint: Path | None = None
     include_paths: list[Path] = field(default_factory=list)
     module_paths: list[Path] = field(default_factory=list)
-    prelude_file: Path | None = None
+    # Opt-in experimental feature flags. Each entry maps a flag name
+    # to its boolean value; the CLI surfaces these via
+    # `--experimental NAME` (and `--no-experimental NAME` for explicit
+    # off). Mirrors the [experimental] table in `a816.toml`.
+    experimental: dict[str, bool] = field(default_factory=dict)
 
     @property
     def root(self) -> Path:
@@ -57,14 +61,14 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
     root = config_path.parent
     entry = data.get("entrypoint")
     entry_path = (root / entry).resolve() if isinstance(entry, str) else None
-    prelude = data.get("prelude")
-    prelude_path = (root / prelude).resolve() if isinstance(prelude, str) else None
+    raw_experimental = data.get("experimental", {}) or {}
+    experimental = {str(k): bool(v) for k, v in raw_experimental.items() if isinstance(v, bool)}
     return A816Config(
         config_path=config_path,
         entrypoint=entry_path,
         include_paths=_resolve_paths(root, data.get("include-paths", []) or []),
         module_paths=_resolve_paths(root, data.get("module-paths", []) or []),
-        prelude_file=prelude_path,
+        experimental=experimental,
     )
 
 

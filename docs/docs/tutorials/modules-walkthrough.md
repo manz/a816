@@ -134,15 +134,18 @@ work; constant assignments that the assembler tries to fold into a
 single literal during compile (e.g., `font_ptr := assets_menu_font_dat`)
 don't, so use the external symbol directly in the instruction.
 
-## Prelude
+## Preamble
 
-A `--prelude path.s` argument prepends the file to every module
-compilation. Useful for project-wide feature flags or `.table`
-defaults so each module doesn't have to repeat them.
+Put shared compile-time material (feature flags, `.table` defaults,
+pool decls, typed binds, structs) in a `.s` file and import it
+explicitly from each entry point:
 
+```ca65
+.import "preamble"
 ```
-$ a816 build src/main.s --prelude src/prelude.s -o build/patch.ips
-```
+
+The inline classifier picks up the preamble's compile-time
+symbols; runtime symbols become externs the linker resolves.
 
 ## Lint as you go
 

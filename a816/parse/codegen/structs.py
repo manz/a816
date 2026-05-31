@@ -162,8 +162,8 @@ def generate_struct(
         resolver.current_scope.add_symbol(f"{field_name}.mask", mask)
         resolver.current_scope.add_symbol(f"{field_name}.shift", shift)
     resolver.current_scope.add_symbol("__size", total_size)
-    code.append(PopScopeNode(resolver))
     # exports=True promotes Name.field and Name.__size to the parent scope.
+    code.append(PopScopeNode(resolver, exports=True))
     resolver.restore_scope(exports=True)
     return code
 
@@ -176,14 +176,38 @@ def generate_map(
 ) -> GenNodes:
     attributes = node.args
 
+    identifier = str(attributes["identifier"])
+    bank_range = attributes["bank_range"]
+    addr_range = attributes["addr_range"]
+    mask = attributes["mask"]
+    writeable = attributes.get("writable", False)
+    mirror_bank_range = attributes.get("mirror_bank_range")
+
     resolver.bus.map(
-        str(attributes["identifier"]),
-        attributes["bank_range"],
-        attributes["addr_range"],
-        attributes["mask"],
-        writeable=attributes.get("writable", False),
-        mirror_bank_range=attributes.get("mirror_bank_range"),
+        identifier,
+        bank_range,
+        addr_range,
+        mask,
+        writeable=writeable,
+        mirror_bank_range=mirror_bank_range,
     )
+    # OBJECT mode: serialize so the linker replays the mapping on its
+    # own resolver bus. Without this, custom cartridge mappings
+    # (SA-1, ExHiROM, anything beyond the default low_rom) silently
+    # vanish at link time and downstream addresses resolve wrong.
+    if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+        from a816.object_file import BusMapping
+
+        resolver.context.object_writer.bus_mappings.append(
+            BusMapping(
+                identifier=identifier,
+                bank_range=bank_range,
+                addr_range=addr_range,
+                mask=mask,
+                writeable=writeable,
+                mirror_bank_range=mirror_bank_range,
+            )
+        )
     return []
 
 

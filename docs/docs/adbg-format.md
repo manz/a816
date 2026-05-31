@@ -115,5 +115,4 @@ the empty string.
 - The CLI link path (`a816 build file1.o file2.o -o out.ips`) propagates
   line tables from each `.o` through the linker. Object files carry a
   `LINES` section themselves (object-file format v5+), so debug info
-  survives the compile/link split. Direct-mode builds
-  (`build_with_imports_direct`) emit full line info too.
+  survives the compile/link split.

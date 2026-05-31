@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from a816.cpu.mapping import Address
+from a816.cpu.mapping import Address, LinearAddress
+from a816.exceptions import SymbolNotDefined
 from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.symbols import SymbolNode
 from a816.parse.tokens import Token
@@ -41,7 +42,7 @@ class AllocNode(NodeProtocol):
         # any other path is a bug, so keep the optional shape loud.
         self._sandbox_base: int | None = None
         # Snapshot of the A/X size that the body should assume on
-        # entry — captured once in `_measure_body` from the running
+        # entry - captured once in `_measure_body` from the running
         # `alloc_carry_*` channel, then reused by `_bind_body_labels_at`
         # so label placement matches the measured-size pass.
         self._entry_a_size: int = 8
@@ -51,7 +52,18 @@ class AllocNode(NodeProtocol):
         pool = self.resolver.pools[self.pool_name]
         base = pool.ranges[0].start if pool.ranges else 0
         cursor = self.resolver.alloc_sandbox_cursors.get(self.pool_name, 0)
-        return self.resolver.get_bus().get_address(base + cursor)
+        return self._sandbox_address(base + cursor)
+
+    def _sandbox_address(self, value: int) -> Address:
+        # Object mode defers `.map` to link, so a label's final logical address
+        # is the linker's job (it rebases the whole section). Binding only needs
+        # placement- and bus-independent byte offsets, so walk a LinearAddress:
+        # `+ n` advances exactly n bytes. Routing through the real bus here
+        # would fold a mirror-region bank stride into the walk and land forward
+        # labels a bank-size too high. Non-object builds resolve the real bus.
+        if self.resolver.context.is_object_mode:
+            return LinearAddress(value)
+        return self.resolver.get_bus().get_address(value)
 
     @staticmethod
     def _skip_in_pass1(node: NodeProtocol) -> bool:
@@ -69,7 +81,7 @@ class AllocNode(NodeProtocol):
         # so `OpcodeNode.pc_after` sees the A/X size that emission will
         # see. Inherit the size state from whichever alloc was measured
         # immediately before this one (stashed on the resolver under
-        # `_alloc_carry_a_size`/`_alloc_carry_i_size`) — matches runtime,
+        # `_alloc_carry_a_size`/`_alloc_carry_i_size`) - matches runtime,
         # where the CPU's M/X flags carry across `jsr` calls. Restore
         # the live resolver state on exit so top-level passes (which
         # historically treat `.a8`/`.a16` as no-ops) stay unaffected.
@@ -118,7 +130,7 @@ class AllocNode(NodeProtocol):
         # section at link time and the existing CODE-symbol delta path
         # carries every label to its final address. Advance the
         # per-pool cursor by this alloc's size so the next alloc in
-        # the same pool gets a distinct sandbox base — without that,
+        # the same pool gets a distinct sandbox base - without that,
         # `_pool_delta_for_symbol` collapses all sections onto the
         # first one's delta and every symbol lands at the same place.
         if self.resolver.context.is_object_mode:
@@ -141,6 +153,7 @@ class AllocNode(NodeProtocol):
         pc = target
         saved_a = self.resolver.a_size
         saved_i = self.resolver.i_size
+        saved_current_scope = self.resolver.current_scope
         self.resolver.a_size = self._entry_a_size
         self.resolver.i_size = self._entry_i_size
         try:
@@ -150,10 +163,24 @@ class AllocNode(NodeProtocol):
                         self.resolver.a_size = node.size
                     else:
                         self.resolver.i_size = node.size
-                pc = node.pc_after(pc)
+                try:
+                    pc = node.pc_after(pc)
+                except (NodeError, SymbolNotDefined):
+                    # Forward refs inside the alloc body (e.g. an `=`
+                    # RHS that uses an `.incbin` auto-symbol bound by a
+                    # later sibling) raise on the first bind walk. The
+                    # outer `resolve_labels` runs another pass after
+                    # the allocator places sections, and `_bind_body_labels`
+                    # re-enters this loop with the now-bound symbol in
+                    # scope. Swallowing the per-node error here lets
+                    # later body nodes still bind their own labels in
+                    # this pass; PASS 2's repeat bind walk catches up
+                    # once forward refs resolve.
+                    pass
         finally:
             self.resolver.a_size = saved_a
             self.resolver.i_size = saved_i
+            self.resolver.current_scope = saved_current_scope
 
     def _bind_body_labels(self) -> None:
         alloc = self._alloc
@@ -179,6 +206,16 @@ class AllocNode(NodeProtocol):
             self._request_slot()
         elif self._alloc.placed:
             self._bind_body_labels()
+        elif self.resolver.context.is_object_mode and self._sandbox_base is not None:
+            # Object mode skips `allocate_pools` (the linker runs the
+            # allocator across modules later), so `_alloc.placed` stays
+            # False after PASS 1. Without a PASS 2 rebind here, body
+            # `SymbolNode`s that forward-ref a symbol bound by a later
+            # `BinaryNode` (e.g. an `.incbin` auto-symbol used in an
+            # `=` RHS) never see the resolved value. Re-enter the
+            # sandbox base captured at `_request_slot` time so the
+            # second walk binds with the now-resolved forward refs.
+            self._bind_body_labels_at(self._sandbox_address(self._sandbox_base))
         return current_pc
 
     def emit(self, current_addr: Address) -> bytes:
@@ -186,6 +223,19 @@ class AllocNode(NodeProtocol):
         return b""
 
     def emit_blocks(self, current_addr: Address) -> list[tuple[int, bytes]]:
+        attributed = self.emit_attributed_blocks(current_addr)
+        alloc = self._alloc
+        if alloc is None or not alloc.placed or not attributed:
+            return [] if alloc is None or not alloc.placed else [(alloc.addr, b"")]
+        out = b"".join(chunk for _, _, chunk in attributed)
+        return [(alloc.addr, out)]
+
+    def emit_attributed_blocks(self, current_addr: Address) -> list[tuple[NodeProtocol, int, bytes]]:
+        """Per-body-node emit. Yields `(node, snes_addr, bytes)` tuples
+        so callers can record per-line debug info / emit traces at
+        each body opcode rather than the alloc as a whole. Empty list
+        when the alloc is unplaced; emits empty bytes for nodes that
+        produce none (callers can filter)."""
         del current_addr
         alloc = self._alloc
         if alloc is None or not alloc.placed:
@@ -193,14 +243,14 @@ class AllocNode(NodeProtocol):
         # Lazy import to avoid the import cycle through codegen.
         from a816.parse.nodes.module import LinkedModuleNode
 
+        attributed: list[tuple[NodeProtocol, int, bytes]] = []
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
         try:
             self.resolver.set_position(alloc.addr)
-            out = b""
             cur = self.resolver.reloc_address
             for node in self.body:
-                # Skip loser `.import` duplicates inside the body — their
+                # Skip loser `.import` duplicates inside the body - their
                 # pc_after returned unchanged so subsequent siblings are
                 # already laid out at the right offsets, and emitting the
                 # loser bytes would both double-emit and overlap the
@@ -208,13 +258,14 @@ class AllocNode(NodeProtocol):
                 # `_emit_linked_module` is_loser guard.
                 if isinstance(node, LinkedModuleNode) and node.is_loser:
                     continue
+                pre_emit_addr = cur.logical_value
                 emitted = node.emit(cur)
                 if emitted:
-                    out += emitted
+                    attributed.append((node, pre_emit_addr, emitted))
                     cur = cur + len(emitted)
                     self.resolver.pc += len(emitted)
                     self.resolver.reloc_address = cur
-            return [(alloc.addr, out)]
+            return attributed
         finally:
             self.resolver.pc = saved_pc
             self.resolver.reloc_address = saved_reloc

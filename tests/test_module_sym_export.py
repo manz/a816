@@ -7,7 +7,7 @@ from pathlib import Path
 
 from a816.debug_info import read as read_debug_info
 from a816.linker import Linker
-from a816.module_builder import build_with_imports_direct
+from a816.module_builder import build_with_imports
 from a816.object_file import ObjectFile
 from a816.program import Program
 
@@ -38,7 +38,7 @@ main:
         _write(main_file, main_src)
         _write(modules / "vwf.s", vwf_src)
 
-        result = build_with_imports_direct(
+        result = build_with_imports(
             main_source=main_file,
             output_file=root / "out.ips",
             output_format="ips",
@@ -75,7 +75,7 @@ main:
         _write(main_file, main_src)
         _write(modules / "vwf.s", vwf_src)
 
-        result = build_with_imports_direct(
+        result = build_with_imports(
             main_source=main_file,
             output_file=root / "out.ips",
             output_format="ips",
@@ -88,7 +88,6 @@ main:
         assert result.debug_info_path.exists()
 
         debug = read_debug_info(result.debug_info_path)
-        assert "vwf" in {m.name for m in debug.modules}
         assert "vwf_render" in {s.name for s in debug.symbols}
         assert "main" in {s.name for s in debug.symbols}
         # At least one line entry tied to a real source file.

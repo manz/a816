@@ -71,6 +71,21 @@ class TestModuleGraph:
         assert order.index("a") < order.index("main")
         assert order.index("b") < order.index("main")
 
+    def test_topological_sort_orders_siblings_deterministically(self) -> None:
+        """Independent dependencies of one module are visited in sorted order.
+
+        `dependencies` is a set, whose iteration order Python randomizes per
+        process; the sort keeps the compilation/placement order (and thus the
+        emitted ROM) stable regardless of PYTHONHASHSEED.
+        """
+        graph = ModuleGraph()
+        graph.add_module("main", Path("main.s"))
+        for dep in ("z", "a", "m"):
+            graph.add_module(dep, Path(f"{dep}.s"))
+            graph.add_dependency("main", dep)
+
+        assert graph.topological_sort() == ["a", "m", "z", "main"]
+
     def test_self_loop_raises_error(self) -> None:
         """A module that imports itself is a degenerate circular cycle."""
         graph = ModuleGraph()

@@ -113,3 +113,36 @@ class Address:
             return Address(self.bus, logical_address)
         else:
             raise ValueError("Address can only be added with ints.")
+
+
+class LinearAddress(Address):
+    """A placement-independent PC for object-mode `.alloc` body binding.
+
+    An `Address` subtype (so it flows through every node's `pc_after`) that
+    deliberately carries no bus mapping: `+ n` advances by exactly n bytes, so
+    two labels in the same section always differ by their true byte distance.
+    Object mode never needs a label's final logical address - the linker
+    assigns it by rebasing the whole section (its `.map` is replayed at link) -
+    only consistent intra-section offsets. Walking a real bus here would fold a
+    mirror-region bank stride into the PC and land a forward label a bank-size
+    too high. `physical` mirrors `logical_value` so byte-count measurement
+    (`pc.physical - start.physical`) stays exact.
+    """
+
+    def __init__(self, logical_value: int) -> None:
+        # No bus/mapping: object-mode binding is pure offset arithmetic.
+        self.bus = None  # type: ignore[assignment]
+        self.logical_value = logical_value
+        self.mapping = None  # type: ignore[assignment]
+
+    @property
+    def physical(self) -> int:
+        return self.logical_value
+
+    def __add__(self, other: Any) -> "LinearAddress":
+        if isinstance(other, int):
+            return LinearAddress(self.logical_value + other)
+        raise ValueError("LinearAddress can only be added with ints.")
+
+    def __repr__(self) -> str:
+        return f"LinearAddress({self.logical_value:#06x})"

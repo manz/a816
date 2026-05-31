@@ -42,6 +42,15 @@ class Linker:
         self._file_index: dict[str, int] = {}
         self.symbol_map: dict[str, int] = {}
         self._section_buffers: dict[int, bytearray] = {}
+        # Per-object LOCAL symbols (underscore-private labels, alloc-body
+        # locals). Bare LOCAL names collide across modules in the flat
+        # `symbol_map`, so a relocation must resolve its LOCAL operands
+        # against the object that emitted it, otherwise `jmp.w _loop` in
+        # one module silently targets another module's `_loop`.
+        self._local_by_obj: dict[int, dict[str, int]] = {}
+        # Linked section index -> owning object index, so a relocation can
+        # find its object's LOCAL overlay.
+        self._section_obj: dict[int, int] = {}
 
     @property
     def linked_code(self) -> bytes:
@@ -54,6 +63,7 @@ class Linker:
         # Pool allocation must happen before symbol ingestion so the
         # section.placed_base values we ingest reflect allocator choices.
         self._allocate_pools_across_modules()
+        self._merge_bus_mappings()
         self._resolve_symbols()
         self._resolve_aliases()
         self._check_unresolved()
@@ -66,6 +76,7 @@ class Linker:
             files=self.linked_files,
             relocatable=False,
             pool_decls=self._merged_pool_decls,
+            bus_mappings=self._merged_bus_mappings,
         )
 
     def _allocate_pools_across_modules(self) -> None:
@@ -84,14 +95,24 @@ class Linker:
         merged: dict[str, Pool] = {p.name: self._pool_from_decl(p) for p in self._merged_pool_decls}
         # (obj_idx, section_idx) -> Allocation, to look up alloc.addr later.
         self._section_pool_alloc: dict[tuple[int, int], object] = {}
-        # Allocation request order: stable across rebuilds = (obj input order,
-        # then declaration order within each .o).
+        # Dedupe by (pool_name, symbol_name): a `.import`ed module's
+        # alloc request gets re-emitted in every consumer's `.o`
+        # because paired-import inlines the source side. Without
+        # dedup the pool gets N copies of the same `_intro_tilemap`
+        # request and exhausts its ranges N-fold. Keep the FIRST
+        # placement; subsequent duplicates inherit the same Allocation
+        # so all importers see the same final address.
+        first_placed: dict[tuple[str, str], object] = {}
         for obj_idx, obj_file in enumerate(self.object_files):
             for req in obj_file.pool_allocs:
                 pool = merged.get(req.pool_name)
                 if pool is None:
                     raise ValueError(f"pool alloc {req.symbol_name!r} references undeclared pool {req.pool_name!r}")
-                alloc_obj = pool.request(req.symbol_name, req.size)
+                key = (req.pool_name, req.symbol_name)
+                alloc_obj = first_placed.get(key)
+                if alloc_obj is None:
+                    alloc_obj = pool.request(req.symbol_name, req.size)
+                    first_placed[key] = alloc_obj
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
         for pool in merged.values():
             pool.allocate()
@@ -117,10 +138,38 @@ class Linker:
 
         return Pool(
             name=decl.name,
-            ranges=[PoolRange(start=s, end=e) for s, e in decl.ranges],
+            ranges=[PoolRange(start=s, end=e, allow_bank_cross=(s >> 16) != (e >> 16)) for s, e in decl.ranges],
             fill=decl.fill,
             strategy=Strategy(decl.strategy),
         )
+
+    def _merge_bus_mappings(self) -> None:
+        """Collect `.map` declarations across input modules.
+
+        Cartridge mapping is project-scoped — one ROM, one map — but
+        paired-import re-emits the same `.map` in every consumer's
+        `.o`. Dedupe identical declarations on `identifier`; raise
+        when two `.o`s ship the SAME identifier with different bank
+        range / addr range / mask / mirror.
+        """
+        from a816.object_file import BusMapping
+
+        merged: dict[str, BusMapping] = {}
+        for obj_file in self.object_files:
+            for mapping in obj_file.bus_mappings:
+                existing = merged.get(mapping.identifier)
+                if existing is None:
+                    merged[mapping.identifier] = mapping
+                    continue
+                if (
+                    existing.bank_range != mapping.bank_range
+                    or existing.addr_range != mapping.addr_range
+                    or existing.mask != mapping.mask
+                    or existing.writeable != mapping.writeable
+                    or existing.mirror_bank_range != mapping.mirror_bank_range
+                ):
+                    raise ValueError(f"conflicting `.map {mapping.identifier!r}` declarations across modules")
+        self._merged_bus_mappings = list(merged.values())
 
     def _merge_pool_decls(self) -> None:
         """Union same-named `.pool` declarations across input modules.
@@ -217,6 +266,7 @@ class Linker:
                 ],
             )
             self.linked_sections.append(new_section)
+            self._section_obj[section_idx] = obj_idx
 
             for offset, name, reloc_type in section.relocations:
                 self._linked_relocations.append((final_base + offset, section_idx, name, reloc_type))
@@ -239,26 +289,71 @@ class Linker:
         if symbol_type == SymbolType.EXTERNAL:
             self._external_symbols_needed.add(name)
             return
+        final_address = self._final_address(section, address, delta, obj_file, obj_idx)
+        if symbol_type == SymbolType.GLOBAL:
+            self._register_global_symbol(name, final_address, section)
+            return
+        if symbol_type == SymbolType.LOCAL:
+            self._register_local_symbol(name, final_address, section)
+            self._local_by_obj.setdefault(obj_idx, {})[name] = final_address
+            return
+        raise ValueError(f"Unknown symbol type: {symbol_type}")
+
+    def _final_address(
+        self,
+        section: SymbolSection,
+        address: int,
+        delta: int,
+        obj_file: ObjectFile,
+        obj_idx: int,
+    ) -> int:
         # CODE symbols ride the module's delta; DATA/BSS/ABS_LABEL are absolute.
         # ABS_LABEL is a `.label`-declared address binding — the user picked
         # the value, so it must NOT shift with the module placement.
         # Pool-allocated sections get their own per-section delta (link-time
         # allocator chose the address, not module relocation).
-        if section == SymbolSection.CODE:
-            pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, address)
-            final_address = address + (pool_delta if pool_delta is not None else delta)
-        else:
-            final_address = address
-        if symbol_type == SymbolType.GLOBAL:
-            if name in self.symbol_map:
+        if section != SymbolSection.CODE:
+            return address
+        pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, address)
+        return address + (pool_delta if pool_delta is not None else delta)
+
+    def _register_global_symbol(self, name: str, final_address: int, section: SymbolSection) -> None:
+        # Only treat as duplicate when an existing GLOBAL claims the
+        # same name AND resolves to a DIFFERENT address. Two .o's
+        # exporting the same name at the same final address happens
+        # legitimately when paired-import inlines an imported module's
+        # source into every consumer's .o — each consumer re-publishes
+        # the import's alloc-body auto-symbols (`.incbin` filenames,
+        # label decls). The dedup in `_allocate_pools_across_modules`
+        # makes them all resolve to the same address, so collapsing
+        # them is safe. A name first seen as LOCAL (compatibility
+        # bare-name shim for NamedScope members) gets UPGRADED to
+        # GLOBAL.
+        existing = self._existing_global_address(name)
+        if existing is not None:
+            if existing != final_address:
                 raise DuplicateSymbolError(name)
-            self.symbol_map[name] = final_address
-            self.linked_symbols.append((name, final_address, symbol_type, section))
             return
-        if symbol_type == SymbolType.LOCAL:
-            self.linked_symbols.append((name, final_address, symbol_type, section))
-            return
-        raise ValueError(f"Unknown symbol type: {symbol_type}")
+        self.symbol_map[name] = final_address
+        self.linked_symbols.append((name, final_address, SymbolType.GLOBAL, section))
+
+    def _existing_global_address(self, name: str) -> int | None:
+        for lname, laddr, lst, _ in self.linked_symbols:
+            if lname == name and lst == SymbolType.GLOBAL:
+                return laddr
+        return None
+
+    def _register_local_symbol(self, name: str, final_address: int, section: SymbolSection) -> None:
+        self.linked_symbols.append((name, final_address, SymbolType.LOCAL, section))
+        # LOCAL names feed `_resolve_aliases` so an alias RHS like
+        # `count = _endwinmap - _winmap` (macro arg bound to a
+        # module-local label inside an alloc body) folds at link time.
+        # `setdefault` keeps the FIRST module's binding when two
+        # modules happen to share a LOCAL name — underscore privacy is
+        # a source-side convention, not a hard linker guarantee.
+        # Modules that need durable cross-module refs must drop the
+        # underscore (export as GLOBAL).
+        self.symbol_map.setdefault(name, final_address)
 
     def _merge_file_table(self, obj_file: ObjectFile) -> dict[int, int]:
         local_to_linked: dict[int, int] = {}
@@ -283,6 +378,16 @@ class Linker:
 
     def _check_unresolved(self) -> None:
         unresolved_symbols = self._external_symbols_needed - set(self.symbol_map.keys())
+        # `.extern Foo` (scope capture) registers `Foo` as needed but the
+        # provider only exports the dotted members (`Foo.bar`, `Foo.baz`).
+        # Accept the scope extern as resolved when any symbol in the map
+        # lives under that prefix — the dotted refs that prompted the
+        # `.extern` already resolve via the relocation pipeline.
+        if unresolved_symbols:
+            satisfied_by_scope = {
+                name for name in unresolved_symbols if any(key.startswith(f"{name}.") for key in self.symbol_map)
+            }
+            unresolved_symbols -= satisfied_by_scope
         if unresolved_symbols:
             raise UnresolvedSymbolError(unresolved_symbols)
 
@@ -320,60 +425,57 @@ class Linker:
             self.linked_sections[section_idx].code = bytes(buf)
         self._section_buffers.clear()
 
+    def _relocation_symbol_address(self, section_idx: int, symbol_name: str) -> int:
+        """Resolve a relocation's target, preferring the emitting object's LOCAL
+        symbol over the global map so a bare LOCAL name can't bind to a
+        same-named symbol elsewhere."""
+        local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1)) or {}
+        if symbol_name in local_overlay:
+            return local_overlay[symbol_name]
+        if symbol_name in self.symbol_map:
+            return self.symbol_map[symbol_name]
+        raise UnresolvedSymbolError({symbol_name})
+
+    @staticmethod
+    def _check_range(symbol_name: str, kind: str, value: int, low: int, high: int) -> None:
+        if not low <= value <= high:
+            raise RelocationError(symbol_name, kind, value, f"is out of range (must be {low:#x} to {high:#x})")
+
+    def _patch_relocation(
+        self, code: bytearray, offset: int, final_address: int, symbol_name: str, address: int, reloc_type: RelocationType
+    ) -> None:
+        match reloc_type:
+            case RelocationType.ABSOLUTE_16:
+                self._check_range(symbol_name, "16-bit absolute", address, 0, 0xFFFF)
+                struct.pack_into("<H", code, offset, address)
+            case RelocationType.ABSOLUTE_24:
+                self._check_range(symbol_name, "24-bit absolute", address, 0, 0xFFFFFF)
+                self._write_le24(code, offset, address)
+            case RelocationType.RELATIVE_16:
+                target = address - (final_address + 2)
+                self._check_range(symbol_name, "16-bit relative", target, -0x8000, 0x7FFF)
+                struct.pack_into("<h", code, offset, target)
+            case RelocationType.RELATIVE_24:
+                target = address - (final_address + 3)
+                self._check_range(symbol_name, "24-bit relative", target, -0x800000, 0x7FFFFF)
+                self._write_le24(code, offset, target & 0xFFFFFF)
+            case _:
+                raise ValueError(f"Unknown relocation type: {reloc_type}")
+
     def _apply_relocations(self) -> None:
         self._section_buffers = {}
         for final_address, section_idx, symbol_name, relocation_type in self._linked_relocations:
-            if symbol_name not in self.symbol_map:
-                raise UnresolvedSymbolError({symbol_name})
-            symbol_address = self.symbol_map[symbol_name]
+            symbol_address = self._relocation_symbol_address(section_idx, symbol_name)
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
-
-            match relocation_type:
-                case RelocationType.ABSOLUTE_16:
-                    if not 0 <= symbol_address <= 0xFFFF:
-                        raise RelocationError(
-                            symbol_name, "16-bit absolute", symbol_address, "is out of range (must be 0x0000-0xFFFF)"
-                        )
-                    struct.pack_into("<H", code, offset, symbol_address)
-                case RelocationType.ABSOLUTE_24:
-                    if not 0 <= symbol_address <= 0xFFFFFF:
-                        raise RelocationError(
-                            symbol_name,
-                            "24-bit absolute",
-                            symbol_address,
-                            "is out of range (must be 0x000000-0xFFFFFF)",
-                        )
-                    self._write_le24(code, offset, symbol_address)
-                case RelocationType.RELATIVE_16:
-                    target_address = symbol_address - (final_address + 2)
-                    if not -0x8000 <= target_address <= 0x7FFF:
-                        raise RelocationError(
-                            symbol_name,
-                            "16-bit relative",
-                            target_address,
-                            "is out of range (must be -0x8000 to 0x7FFF)",
-                        )
-                    struct.pack_into("<h", code, offset, target_address)
-                case RelocationType.RELATIVE_24:
-                    target_address = symbol_address - (final_address + 3)
-                    if not -0x800000 <= target_address <= 0x7FFFFF:
-                        raise RelocationError(
-                            symbol_name,
-                            "24-bit relative",
-                            target_address,
-                            "is out of range (must be -0x800000 to 0x7FFFFF)",
-                        )
-                    self._write_le24(code, offset, target_address & 0xFFFFFF)
-                case _:
-                    raise ValueError(f"Unknown relocation type: {relocation_type}")
-
+            self._patch_relocation(code, offset, final_address, symbol_name, symbol_address, relocation_type)
         self._flush_section_buffers()
 
     def _apply_expression_relocations(self) -> None:
         self._section_buffers = {}
         for final_address, section_idx, expression, size_bytes in self._linked_expression_relocations:
-            evaluated_value = self._evaluate_expression(expression)
+            local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1))
+            evaluated_value = self._evaluate_expression(expression, local_overlay)
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
             if size_bytes == 1:
@@ -389,16 +491,21 @@ class Linker:
 
         self._flush_section_buffers()
 
-    def _evaluate_expression(self, expression: str) -> int:
-        expr_to_eval = self._substitute_symbols(expression)
+    def _evaluate_expression(self, expression: str, local_overlay: dict[str, int] | None = None) -> int:
+        expr_to_eval = self._substitute_symbols(expression, local_overlay)
         try:
             return cast(int, eval(expr_to_eval, {"__builtins__": {}}, {}))
         except (SyntaxError, NameError, TypeError, ValueError) as e:
             raise ExpressionEvaluationError(expression, str(e)) from e
 
-    def _substitute_symbols(self, expression: str) -> str:
+    def _substitute_symbols(self, expression: str, local_overlay: dict[str, int] | None = None) -> str:
         def replace(match: Match[str]) -> str:
             token = match.group(0)
+            # Object-local symbols win over the global map: a relocation's
+            # bare LOCAL operand must resolve to the emitting module's label,
+            # not another module that happens to export the same name.
+            if local_overlay is not None and token in local_overlay:
+                return str(local_overlay[token])
             if token in self.symbol_map:
                 return str(self.symbol_map[token])
             return token

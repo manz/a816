@@ -183,8 +183,11 @@ def test_incbin_auto_symbol_points_at_directive_line() -> None:
         doc = A816Document(src.as_uri(), src.read_text(), include_paths=[root])
         server.documents[doc.uri] = doc
         pos, _uri = doc.symbols["assets_intro_bin"]
-        # Position uses 1-based line indexing in LSP; line 3 == `.incbin`.
-        assert pos.line == 3
+        # Lines are 0-based; index 2 is the third line, the `.incbin` directive.
+        # (Previously this resolved to the token *after* the path string, which
+        # spilled onto the next line, the same off-by-one that made the
+        # formatter fold a trailing comment onto the directive.)
+        assert pos.line == 2
 
 
 def test_dotted_word_span_extracts_full_path_around_cursor() -> None:

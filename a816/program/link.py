@@ -42,6 +42,28 @@ class LinkMixin:
             elif section == SymbolSection.ABS_LABEL:
                 scope.absolute_labels[name] = value
             scope.symbols[name] = value
+        self._replay_bus_mappings(linked_obj)
+
+    def _replay_bus_mappings(self, linked_obj: ObjectFile) -> None:
+        """Apply each module's `.map` directives onto this program's bus.
+
+        Linker dedupes paired-import re-emissions and errors on
+        conflicting same-identifier declarations, so by the time we
+        get here the mapping list is canonical. Skip identifiers
+        already present (a previous link_as_* call on the same Program
+        instance) to keep replay idempotent.
+        """
+        for mapping in linked_obj.bus_mappings:
+            if mapping.identifier in self.resolver.bus.mappings:
+                continue
+            self.resolver.bus.map(
+                mapping.identifier,
+                mapping.bank_range,
+                mapping.addr_range,
+                mapping.mask,
+                writeable=mapping.writeable,
+                mirror_bank_range=mapping.mirror_bank_range,
+            )
 
     def write_debug_info_for_linked(self, linked_obj: ObjectFile, output_path: Path) -> Path | None:
         """Write a `.adbg` next to a linked output. Returns the written path."""
@@ -133,16 +155,28 @@ class LinkMixin:
             self.logger.exception("Failed to create IPS patch")
             return -1
 
-    def link_as_sfc(self, linked_obj: ObjectFile, sfc_file: Path) -> int:
+    def link_as_sfc(self, linked_obj: ObjectFile, sfc_file: Path, mapping: str | None = None) -> int:
         """Create SFC file from linked object file.
 
         Args:
             linked_obj: The linked object file containing code and symbols.
             sfc_file: Output path for the SFC ROM file.
+            mapping: ROM mapping type ('low', 'low2', 'high'). When set, the
+                linker's resolver uses the matching default bus to translate
+                logical section bases to physical file offsets, mirroring
+                the behavior of `link_as_patch`.
 
         Returns:
             0 on success, -1 on failure.
         """
+        if mapping is not None:
+            address_mapping = {
+                "low": RomType.low_rom,
+                "low2": RomType.low_rom_2,
+                "high": RomType.high_rom,
+            }
+            self.resolver.rom_type = address_mapping[mapping]
+
         self.import_linked_symbols(linked_obj)
         try:
             with open(sfc_file, "wb") as f:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
-from a816.parse.ast.expression import eval_expression
+from a816.parse.ast.expression import canonicalize_local_label_refs, eval_expression
 from a816.parse.ast.nodes import (
     AssignAstNode,
     CastValueExprNode,
@@ -29,10 +29,11 @@ def _try_eager_register_alias(node: SymbolAffectationAstNode, resolver: Resolver
         eval_expression(node.value, resolver)
     except (ExternalExpressionReference, ExternalSymbolReference) as e:
         expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
-        resolver.current_scope.add_external_alias(node.symbol, expr_str)
+        canonical = canonicalize_local_label_refs(expr_str, resolver)
+        resolver.current_scope.add_external_alias(node.symbol, canonical)
         object_writer = resolver.context.object_writer
         if object_writer is not None:
-            object_writer.add_alias(node.symbol, expr_str)
+            object_writer.add_alias(node.symbol, canonical)
 
 
 def _try_eager_constant_bind(node: SymbolAffectationAstNode, resolver: Resolver) -> bool:
@@ -159,10 +160,11 @@ def generate_assign(
                 file_info,
             ) from e
         expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
-        resolver.current_scope.add_external_alias(node.symbol, expr_str)
+        canonical = canonicalize_local_label_refs(expr_str, resolver)
+        resolver.current_scope.add_external_alias(node.symbol, canonical)
         object_writer = resolver.context.object_writer
         if object_writer is not None:
-            object_writer.add_alias(node.symbol, expr_str)
+            object_writer.add_alias(node.symbol, canonical)
 
     return []
 

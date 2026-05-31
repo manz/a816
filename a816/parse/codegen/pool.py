@@ -10,15 +10,18 @@ from a816.exceptions import (
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    CodePositionAstNode,
     ExpressionAstNode,
     PoolAstNode,
     ReclaimAstNode,
     RelocateAstNode,
 )
+from a816.parse.ast.visitor import walk
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators
 from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
 from a816.pool import Pool, PoolRange, Strategy
+from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
 
 
@@ -152,7 +155,7 @@ def generate_alloc(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    from a816.parse.nodes import AllocNode
+    from a816.parse.nodes import AllocNode, PopScopeNode, ScopeNode
 
     if node.is_pinned:
         pool_name = _synthesize_pinned_pool(node, resolver, file_info)
@@ -163,8 +166,48 @@ def generate_alloc(
         pool_name = node.pool_name
         alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
 
-    body_nodes = _code_gen(node.body.body, resolver, macro_definitions)
+    _reject_nested_placement(node)
+    # Open an AllocBodyScope around the body so per-block underscore
+    # labels (`_skip`, `_end`) stay private to this alloc; otherwise
+    # two sibling allocs declaring `_skip:` silently overwrite each
+    # other in the module's flat label namespace and `bne _skip` lands
+    # in the wrong block. Non-underscore body labels bubble back to the
+    # parent on PopScope so cross-alloc public refs still resolve.
+    resolver.append_alloc_body_scope()
+    resolver.use_next_scope()
+    body_nodes: list[NodeProtocol] = [ScopeNode(resolver)]
+    body_nodes += _code_gen(node.body.body, resolver, macro_definitions)
+    body_nodes.append(PopScopeNode(resolver, exports=True))
+    resolver.restore_scope(exports=True)
     return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info)]
+
+
+_NESTED_PLACEMENT_KINDS = {
+    AllocAstNode: ".alloc",
+    RelocateAstNode: ".relocate",
+    CodePositionAstNode: "`*=` (CodePosition)",
+}
+
+
+def _reject_nested_placement(node: AllocAstNode) -> None:
+    """Forbid placement directives inside an `.alloc` body.
+
+    Nested placement has no well-defined semantics: the inner directive
+    would re-anchor the PC inside a region the outer `.alloc` already
+    owns, silently corrupting layout. Fail loudly with both source
+    locations so the author can hoist the inner block out.
+    """
+    outer = node.name or "<anonymous>"
+    for child in walk(node.body.body):
+        kind = _NESTED_PLACEMENT_KINDS.get(type(child))
+        if kind is None:
+            continue
+        inner_pos = getattr(getattr(child.file_info, "position", None), "line", "?")
+        raise NodeError(
+            f"nested placement directive {kind} inside `.alloc {outer}` "
+            f"(at line {inner_pos}) is not allowed; hoist it outside the alloc body",
+            child.file_info,
+        )
 
 
 def _anonymous_alloc_name(file_info: Token, pool_name: str) -> str:
@@ -193,19 +236,34 @@ def _synthesize_pinned_pool(
             raise NodeError(f"`.alloc at` size must be positive, got {size}", file_info)
         end = addr + size - 1
     else:
-        # Unbounded: range extends to end of bank. Body overflow past
-        # bank boundary will hit the regular pool overflow path.
+        # Unbounded: range extends to end of bank. The bank-overflow
+        # check below builds extra per-bank ranges so a body that
+        # spills past `$XX:FFFF` continues into `$XX+1:0000`. Bounded
+        # forms (`at ADDR size N`) keep the single-range strict shape.
         end = (addr & 0xFF0000) | 0xFFFF
     line = getattr(getattr(file_info, "position", None), "line", 0)
     pool_name = f"__pinned_at_{addr:06X}_L{line}"
     if pool_name in resolver.pools:
-        raise NodeError(
-            f"pinned alloc at ${addr:06X} (line {line}) collides with a prior pinned alloc at the same site",
-            file_info,
-        )
+        # Idempotent: paired-import inlines the same source into every
+        # consumer, so the same `.alloc at ADDR { ... }` site gets
+        # synthesized once per importer. Pool name encodes (addr, line)
+        # — a true second declaration at the same address+line in the
+        # same source can't happen, so reusing the existing pool is
+        # safe. The AllocNode that owns this site requests its slot
+        # against the existing pool; linker dedup
+        # (_allocate_pools_across_modules) collapses duplicate alloc
+        # requests by (pool, symbol) so the body bytes land once.
+        return pool_name
+    # Unbounded form opts out of the per-range bank-boundary guard so
+    # `.incbin` payloads that span multiple banks place contiguously.
+    # Bounded `at ADDR size N` keeps the strict bank-local check.
+    if node.at_size is None:
+        ranges = [PoolRange(start=addr, end=0xFFFFFF, allow_bank_cross=True)]
+    else:
+        ranges = [PoolRange(start=addr, end=end)]
     pool = Pool(
         name=pool_name,
-        ranges=[PoolRange(start=addr, end=end)],
+        ranges=ranges,
         fill=0x00,
         strategy=Strategy.PACK,
     )
@@ -220,7 +278,7 @@ def _synthesize_pinned_pool(
         resolver.context.object_writer.pool_decls.append(
             PoolDecl(
                 name=pool_name,
-                ranges=[(addr, end)],
+                ranges=[(r.start, r.end) for r in ranges],
                 fill=0x00,
                 strategy=Strategy.PACK.value,
             )

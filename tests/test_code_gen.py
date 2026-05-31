@@ -53,6 +53,33 @@ class CodeGenTest(unittest.TestCase):
         assert isinstance(node, OpcodeNode)
         self.assertEqual(node.emit(program.resolver.reloc_address), b"\x42\xab")
 
+    def test_cmp_stack_relative_under_a16(self) -> None:
+        """`cmp <n>,s` ($C3) takes a single byte stack offset regardless of M.
+
+        Stack-relative width does not follow the accumulator, so the byte
+        offset must not be rejected as an illegal data size under `.a16`.
+        """
+        program = Program()
+        _, nodes = program.parser.parse("cmp 0x03, s")
+        program.resolve_labels(nodes)
+        program.resolver.a_size = 16
+        node = nodes[-1]
+        assert isinstance(node, OpcodeNode)
+        self.assertEqual(node.emit(program.resolver.reloc_address), b"\xc3\x03")
+
+    def test_alu_stack_relative_offsets_are_single_byte(self) -> None:
+        """The `,s` ALU family encodes one byte offset, not an acc-sized operand."""
+        cases = {"ora": b"\x03\x03", "eor": b"\x43\x03", "adc": b"\x63\x03", "sbc": b"\xe3\x03"}
+        for opcode, expected in cases.items():
+            with self.subTest(opcode=opcode):
+                program = Program()
+                _, nodes = program.parser.parse(f"{opcode} 0x03, s")
+                program.resolve_labels(nodes)
+                program.resolver.a_size = 16
+                node = nodes[-1]
+                assert isinstance(node, OpcodeNode)
+                self.assertEqual(node.emit(program.resolver.reloc_address), expected)
+
     def test_ateq_reslove(self) -> None:
         program = Program()
         program.resolve_labels(
