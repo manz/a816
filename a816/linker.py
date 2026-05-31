@@ -425,60 +425,50 @@ class Linker:
             self.linked_sections[section_idx].code = bytes(buf)
         self._section_buffers.clear()
 
+    def _relocation_symbol_address(self, section_idx: int, symbol_name: str) -> int:
+        """Resolve a relocation's target, preferring the emitting object's LOCAL
+        symbol over the global map so a bare LOCAL name can't bind to a
+        same-named symbol elsewhere."""
+        local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1)) or {}
+        if symbol_name in local_overlay:
+            return local_overlay[symbol_name]
+        if symbol_name in self.symbol_map:
+            return self.symbol_map[symbol_name]
+        raise UnresolvedSymbolError({symbol_name})
+
+    @staticmethod
+    def _check_range(symbol_name: str, kind: str, value: int, low: int, high: int) -> None:
+        if not low <= value <= high:
+            raise RelocationError(symbol_name, kind, value, f"is out of range (must be {low:#x} to {high:#x})")
+
+    def _patch_relocation(
+        self, code: bytearray, offset: int, final_address: int, symbol_name: str, address: int, reloc_type: RelocationType
+    ) -> None:
+        match reloc_type:
+            case RelocationType.ABSOLUTE_16:
+                self._check_range(symbol_name, "16-bit absolute", address, 0, 0xFFFF)
+                struct.pack_into("<H", code, offset, address)
+            case RelocationType.ABSOLUTE_24:
+                self._check_range(symbol_name, "24-bit absolute", address, 0, 0xFFFFFF)
+                self._write_le24(code, offset, address)
+            case RelocationType.RELATIVE_16:
+                target = address - (final_address + 2)
+                self._check_range(symbol_name, "16-bit relative", target, -0x8000, 0x7FFF)
+                struct.pack_into("<h", code, offset, target)
+            case RelocationType.RELATIVE_24:
+                target = address - (final_address + 3)
+                self._check_range(symbol_name, "24-bit relative", target, -0x800000, 0x7FFFFF)
+                self._write_le24(code, offset, target & 0xFFFFFF)
+            case _:
+                raise ValueError(f"Unknown relocation type: {reloc_type}")
+
     def _apply_relocations(self) -> None:
         self._section_buffers = {}
         for final_address, section_idx, symbol_name, relocation_type in self._linked_relocations:
-            # Prefer the emitting object's LOCAL symbol over the global map so
-            # a bare LOCAL name can't bind to a same-named symbol elsewhere.
-            local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1)) or {}
-            if symbol_name in local_overlay:
-                symbol_address = local_overlay[symbol_name]
-            elif symbol_name in self.symbol_map:
-                symbol_address = self.symbol_map[symbol_name]
-            else:
-                raise UnresolvedSymbolError({symbol_name})
+            symbol_address = self._relocation_symbol_address(section_idx, symbol_name)
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
-
-            match relocation_type:
-                case RelocationType.ABSOLUTE_16:
-                    if not 0 <= symbol_address <= 0xFFFF:
-                        raise RelocationError(
-                            symbol_name, "16-bit absolute", symbol_address, "is out of range (must be 0x0000-0xFFFF)"
-                        )
-                    struct.pack_into("<H", code, offset, symbol_address)
-                case RelocationType.ABSOLUTE_24:
-                    if not 0 <= symbol_address <= 0xFFFFFF:
-                        raise RelocationError(
-                            symbol_name,
-                            "24-bit absolute",
-                            symbol_address,
-                            "is out of range (must be 0x000000-0xFFFFFF)",
-                        )
-                    self._write_le24(code, offset, symbol_address)
-                case RelocationType.RELATIVE_16:
-                    target_address = symbol_address - (final_address + 2)
-                    if not -0x8000 <= target_address <= 0x7FFF:
-                        raise RelocationError(
-                            symbol_name,
-                            "16-bit relative",
-                            target_address,
-                            "is out of range (must be -0x8000 to 0x7FFF)",
-                        )
-                    struct.pack_into("<h", code, offset, target_address)
-                case RelocationType.RELATIVE_24:
-                    target_address = symbol_address - (final_address + 3)
-                    if not -0x800000 <= target_address <= 0x7FFFFF:
-                        raise RelocationError(
-                            symbol_name,
-                            "24-bit relative",
-                            target_address,
-                            "is out of range (must be -0x800000 to 0x7FFFFF)",
-                        )
-                    self._write_le24(code, offset, target_address & 0xFFFFFF)
-                case _:
-                    raise ValueError(f"Unknown relocation type: {relocation_type}")
-
+            self._patch_relocation(code, offset, final_address, symbol_name, symbol_address, relocation_type)
         self._flush_section_buffers()
 
     def _apply_expression_relocations(self) -> None:
