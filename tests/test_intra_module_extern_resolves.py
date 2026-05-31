@@ -53,12 +53,11 @@ def test_public_label_in_alloc_body_visible_to_extern_in_same_module() -> None:
 
 def test_underscore_label_export_classification_stays_local() -> None:
     """Underscore-prefixed labels classify as LOCAL on export — that's
-    the privacy convention's actual teeth. The linker still permits
-    cross-module references at link time (`_resolve_aliases` finds
-    LOCALs in `symbol_map`), but the `.o` advertises `_foo` as LOCAL
-    rather than GLOBAL so callers can't introspect a "public api"
-    that includes private names. Modules wanting durable
-    cross-module references must drop the underscore."""
+    the privacy convention's actual teeth. They also export under a
+    per-alloc-mangled name (`__sc<idx>___foo`) so two sibling allocs both
+    declaring `_foo` stay distinct; the bare private name never leaks as a
+    GLOBAL. Modules wanting durable cross-module references must drop the
+    underscore."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         (tmp / "mod.s").write_text(
@@ -72,4 +71,6 @@ def test_underscore_label_export_classification_stays_local() -> None:
         assert program.assemble_as_object(str(tmp / "mod.s"), obj_path) == 0
         obj = ObjectFile.from_file(str(obj_path))
         kinds = {n: st for n, _, st, _ in obj.symbols}
-        assert kinds.get("_foo") == SymbolType.LOCAL, kinds
+        # Exported per-alloc-mangled and LOCAL; no bare `_foo` GLOBAL leaks.
+        private = {n: st for n, st in kinds.items() if n.endswith("_foo")}
+        assert private == {"__sc1___foo": SymbolType.LOCAL}, kinds

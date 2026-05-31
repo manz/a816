@@ -506,12 +506,18 @@ class Resolver:
         """
         if isinstance(scope, NamedScope) and "." not in name:
             return f"{scope.name}.{name}"
-        # AllocBodyScope opts out of the `__sc<idx>__` mangle: cross-alloc
-        # public refs and `.extern` declarations in the same module need
-        # to see bare names. Underscore privacy is enforced by the
-        # `_bubble_anon_exportables` filter (which keeps them in the body
-        # scope) plus the object-mode LOCAL classifier downstream.
+        # AllocBodyScope keeps PUBLIC (non-underscore) labels bare so
+        # cross-alloc refs + `.extern` resolve them by their source name.
+        # But underscore-PRIVATE labels are local to THIS alloc body and must
+        # be unique per alloc: two sibling allocs both declaring `_loop`/`_done`
+        # otherwise collide in the flat symbol table, and a `jmp.w _loop`
+        # relocation binds to whichever duplicate the linker placed last (a
+        # wild, layout-dependent branch). Mangle them with the body's scope
+        # index so each alloc's private label exports (and relocates)
+        # under a distinct name.
         if isinstance(scope, AllocBodyScope):
+            if name.startswith("_") and mangle_nested and idx > 0:
+                return f"__sc{idx}__{name}"
             return name
         if mangle_nested and idx > 0 and not isinstance(scope, NamedScope):
             return f"__sc{idx}__{name}"
