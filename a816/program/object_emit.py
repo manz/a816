@@ -92,28 +92,28 @@ class ObjectEmitMixin:
         is_bss = bool(pool and pool.bss)
         try:
             self.resolver.set_position(sandbox_logical)
-            object_writer.start_section(sandbox_logical, explicit=True, bss=is_bss)
+            # Always force-create the body section (`bss=True` here means
+            # "byte-less-capable": survives the writer's drop-empty pass and
+            # gets a stable index for the PoolAlloc). A label-only `.alloc at`
+            # (entry-point marker) and a `.reserve` both legitimately emit no
+            # bytes; both must survive. Sections that DO emit bytes get their
+            # bss flag cleared below so the final SFC/IPS emit still writes them.
+            object_writer.start_section(sandbox_logical, explicit=True, bss=True)
             for child in node.body:
                 self._object_emit_one(child, object_writer, state)
             self._flush_object_block(object_writer, state)
-            if is_bss and object_writer.sections and object_writer.sections[-1].code:
-                from a816.parse.nodes import NodeError
+            section = object_writer.sections[-1] if object_writer.sections else None
+            if section is not None and section.code:
+                if is_bss:
+                    from a816.parse.nodes import NodeError
 
-                raise NodeError(
-                    f".alloc in bss pool {node.pool_name!r} cannot emit bytes; reserve space with `.res` instead",
-                    node.file_info,
-                )
-            if not is_bss and object_writer._current_section is None:
-                # A byte-less body (only `.res` / `.reserve`) into a non-bss
-                # pool: there is nothing to place, and the section bookkeeping
-                # would mis-index. Reservations belong in a `bss` pool.
-                from a816.parse.nodes import NodeError
-
-                raise NodeError(
-                    f"reservation into non-bss pool {node.pool_name!r} emits no bytes; "
-                    f"declare the pool `bss` to reserve RAM",
-                    node.file_info,
-                )
+                    raise NodeError(
+                        f".alloc in bss pool {node.pool_name!r} cannot emit bytes; "
+                        f"reserve space with `.res` instead",
+                        node.file_info,
+                    )
+                # Real bytes: not a byte-less section, so don't skip it at emit.
+                section.bss = False
         finally:
             self.resolver.pc = saved_pc
             self.resolver.reloc_address = saved_reloc

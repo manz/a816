@@ -115,6 +115,7 @@ def generate_pool(
                 ranges=[(r.start, r.end) for r in pool.ranges],
                 fill=pool.fill,
                 strategy=pool.strategy.value,
+                bss=pool.bss,
             )
         )
     return []
@@ -325,6 +326,7 @@ def _synthesize_pinned_pool(
                 ranges=[(r.start, r.end) for r in ranges],
                 fill=0x00,
                 strategy=Strategy.PACK.value,
+                bss=False,  # pinned allocs emit bytes; never byte-less
             )
         )
     return pool_name

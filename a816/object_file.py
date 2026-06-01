@@ -73,6 +73,10 @@ class PoolDecl:
     ranges: list[tuple[int, int]]
     fill: int
     strategy: str
+    bss: bool = False
+    """Byte-less pool: reservations emit nothing into the image. Must round-trip
+    through the object format, else an imported bss pool deserializes as bss=False
+    and `generate_pool`'s shape-check rejects the inline (bss=True) re-declaration."""
 
 
 @dataclass
@@ -111,7 +115,7 @@ class PoolAlloc:
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x000A  # Version 10: per-section flags byte (bss reservation sections).
+    VERSION = 0x000B  # Version 11: PoolDecl carries the bss flag (round-trips through import).
 
     def __init__(
         self,
@@ -209,6 +213,7 @@ class ObjectFile:
             f.write(name_bytes)
             f.write(struct.pack("<B", len(strategy_bytes)))
             f.write(strategy_bytes)
+            f.write(struct.pack("<B", 1 if decl.bss else 0))
             f.write(struct.pack("<BH", decl.fill, len(decl.ranges)))
             for start, end in decl.ranges:
                 f.write(struct.pack("<II", start, end))
@@ -381,12 +386,13 @@ class ObjectFile:
             name = f.read(name_len).decode("utf-8")
             (strategy_len,) = struct.unpack("<B", f.read(1))
             strategy = f.read(strategy_len).decode("utf-8")
+            (bss_flag,) = struct.unpack("<B", f.read(1))
             fill, range_count = struct.unpack("<BH", f.read(3))
             ranges: list[tuple[int, int]] = []
             for _ in range(range_count):
                 start, end = struct.unpack("<II", f.read(8))
                 ranges.append((start, end))
-            out.append(PoolDecl(name=name, ranges=ranges, fill=fill, strategy=strategy))
+            out.append(PoolDecl(name=name, ranges=ranges, fill=fill, strategy=strategy, bss=bool(bss_flag)))
         return out
 
     @staticmethod

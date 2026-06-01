@@ -141,12 +141,24 @@ def test_typed_reserve_unknown_struct_errors() -> None:
         assert Program().assemble_as_object(str(asm), Path(tmp) / "m.o") != 0
 
 
-def test_flat_reserve_into_non_bss_pool_errors() -> None:
-    """Reserving in a non-bss (ROM) pool is a clear error, not a struct crash."""
+def test_byte_less_alloc_survives_in_any_pool() -> None:
+    """A byte-less body (a `.reserve`, or a label-only `.alloc at` entry marker)
+    must place + bind + emit nothing, without crashing the object serializer,
+    in a bss pool OR a plain pool. Byte-less sections survive universally; only
+    the bss flag adds the reject-emitted-bytes guard."""
     with tempfile.TemporaryDirectory() as tmp:
         asm = Path(tmp) / "m.s"
-        asm.write_text(".pool rom { range 0xc10000 0xc1ffff }\n.reserve x 0x10 in rom\n")
-        assert Program().assemble_as_object(str(asm), Path(tmp) / "m.o") != 0
+        # reserve into a NON-bss pool (reserves a gap) + a label-only pinned alloc.
+        asm.write_text(
+            ".pool rom { range 0xc10000 0xc1ffff }\n"
+            ".reserve gap 0x10 in rom\n"
+            ".alloc at 0xc18000 { entry_marker: }\n"
+        )
+        obj = Path(tmp) / "m.o"
+        assert Program().assemble_as_object(str(asm), obj) == 0
+        names = {n for n, *_ in ObjectFile.from_file(str(obj)).symbols}
+        assert "gap" in names
+        assert "entry_marker" in names
 
 
 def test_bss_pool_rejects_emitted_bytes() -> None:

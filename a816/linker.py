@@ -141,6 +141,7 @@ class Linker:
             ranges=[PoolRange(start=s, end=e, allow_bank_cross=(s >> 16) != (e >> 16)) for s, e in decl.ranges],
             fill=decl.fill,
             strategy=Strategy(decl.strategy),
+            bss=decl.bss,
         )
 
     def _merge_bus_mappings(self) -> None:
@@ -192,6 +193,7 @@ class Linker:
                 ranges=[(r.start, r.end) for r in p.ranges],
                 fill=p.fill,
                 strategy=p.strategy.value,
+                bss=p.bss,
             )
             for p in merged.values()
         ]
@@ -212,6 +214,10 @@ class Linker:
             raise ValueError(
                 f"pool {decl.name!r} declared with conflicting strategies: "
                 f"{existing.strategy.value!r} vs {decl.strategy!r}"
+            )
+        if existing.bss != decl.bss:
+            raise ValueError(
+                f"pool {decl.name!r} declared with conflicting bss flags: {existing.bss} vs {decl.bss}"
             )
         # Dedupe identical ranges: a prelude-declared pool replicates
         # across every module's .o, and reclaiming the same bytes twice
