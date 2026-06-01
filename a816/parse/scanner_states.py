@@ -283,6 +283,7 @@ DIRECTIVE_NAMES = {
     "relocate",
     "reclaim",
     "res",
+    "reserve",
     "a8",
     "a16",
     "i8",

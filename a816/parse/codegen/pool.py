@@ -7,14 +7,19 @@ from a816.exceptions import (
     ExternalSymbolReference,
     SymbolNotDefined,
 )
-from a816.parse.ast.expression import eval_expression
+from a816.parse.ast.expression import eval_expression, expr_to_ast
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    AstNode,
+    BlockAstNode,
     CodePositionAstNode,
     ExpressionAstNode,
+    LabelAstNode,
     PoolAstNode,
     ReclaimAstNode,
     RelocateAstNode,
+    ReserveAstNode,
+    ReserveTypedAstNode,
 )
 from a816.parse.ast.visitor import walk
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators
@@ -184,6 +189,43 @@ def generate_alloc(
     return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info)]
 
 
+def generate_reserve_typed(
+    node: ReserveTypedAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Expand `.reserve NAME as TYPE in POOL` against TYPE's layout.
+
+    Builds an `.alloc NAME in POOL { ... }` whose body lays out a label
+    `NAME.<field>` at each struct offset (padding the gaps with `.res`) and
+    reserves the struct's full size. The field labels bind as alloc-body
+    labels, so the linker rebases them with NAME to the allocator-chosen
+    address: the byte-less equivalent of a typed bind over fixed memory.
+    """
+    if node.type_name not in resolver.struct_sizes:
+        raise NodeError(
+            f".reserve {node.name!r} as unknown struct type {node.type_name!r}",
+            file_info,
+        )
+    size = resolver.struct_sizes[node.type_name]
+    layout = sorted(resolver.struct_layouts[node.type_name], key=lambda field: field[1])
+
+    body: list[AstNode] = []
+    cursor = 0
+    for field_path, offset, _width in layout:
+        if offset > cursor:
+            body.append(ReserveAstNode(expr_to_ast(hex(offset - cursor)), file_info))
+            cursor = offset
+        body.append(LabelAstNode(f"{node.name}.{field_path}", file_info))
+    if size > cursor:
+        body.append(ReserveAstNode(expr_to_ast(hex(size - cursor)), file_info))
+
+    resolver.typed_instances[node.name] = node.type_name
+    alloc = AllocAstNode(node.name, node.pool_name, BlockAstNode(body, file_info), file_info)
+    return generate_alloc(alloc, resolver, macro_definitions, file_info)
+
+
 _NESTED_PLACEMENT_KINDS = {
     AllocAstNode: ".alloc",
     RelocateAstNode: ".relocate",
@@ -316,5 +358,6 @@ def generate_relocate(
 
 generators["pool"] = generate_pool
 generators["alloc"] = generate_alloc
+generators["reserve_typed"] = generate_reserve_typed
 generators["relocate"] = generate_relocate
 generators["reclaim"] = generate_reclaim

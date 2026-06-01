@@ -200,6 +200,27 @@ class ReserveAstNode(AstNode):
         return f".res {self.size.to_canonical()}"
 
 
+class ReserveTypedAstNode(AstNode):
+    """`.reserve NAME as TYPE in POOL`: reserve sizeof(TYPE) in a bss pool and
+    publish NAME plus NAME.<field> at the allocator-assigned address."""
+
+    name: str
+    type_name: str
+    pool_name: str
+
+    def __init__(self, name: str, type_name: str, pool_name: str, file_info: Token):
+        super().__init__("reserve_typed", file_info)
+        self.name = name
+        self.type_name = type_name
+        self.pool_name = pool_name
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.name, self.type_name, self.pool_name
+
+    def to_canonical(self) -> str:
+        return f".reserve {self.name} as {self.type_name} in {self.pool_name}"
+
+
 class TableAstNode(AstNode):
     file_path: str
 

@@ -443,7 +443,13 @@ class Linker:
             raise RelocationError(symbol_name, kind, value, f"is out of range (must be {low:#x} to {high:#x})")
 
     def _patch_relocation(
-        self, code: bytearray, offset: int, final_address: int, symbol_name: str, address: int, reloc_type: RelocationType
+        self,
+        code: bytearray,
+        offset: int,
+        final_address: int,
+        symbol_name: str,
+        address: int,
+        reloc_type: RelocationType,
     ) -> None:
         match reloc_type:
             case RelocationType.ABSOLUTE_16:

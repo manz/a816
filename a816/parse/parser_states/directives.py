@@ -39,6 +39,8 @@ from a816.parse.ast.nodes import (
     ReclaimAstNode,
     RegisterSizeAstNode,
     RelocateAstNode,
+    ReserveAstNode,
+    ReserveTypedAstNode,
     ScopeAstNode,
     StructAstNode,
     Term,
@@ -496,6 +498,37 @@ def _parse_pinned_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Toke
     at_size = _parse_optional_size_clause(p)
     body = _parse_alloc_body(p, parse_block)
     return AllocAstNode(name, None, body, keyword, at_address=at_address, at_size=at_size)
+
+
+def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
+    """Parse a flat byte-less reservation into a `bss` pool:
+
+    * `.reserve NAME SIZE in POOL`: reserve SIZE bytes.
+    * `.reserve NAME as TYPE in POOL`: reserve sizeof(TYPE) + publish fields.
+
+    The size form desugars to `.alloc NAME in POOL { .res SIZE }`; the `as`
+    form is expanded against the struct layout at codegen.
+    """
+    keyword = p.current()
+    name_token = p.next()
+    expect_token(name_token, TokenType.IDENTIFIER)
+
+    # `.reserve NAME as TYPE in POOL`: struct-typed reservation.
+    if p.current().type == TokenType.IDENTIFIER and p.current().value == "as":
+        p.next()  # consume `as`
+        type_token = p.next()
+        expect_token(type_token, TokenType.IDENTIFIER)
+        _expect_contextual_keyword(p, "in")
+        pool_token = p.next()
+        expect_token(pool_token, TokenType.IDENTIFIER)
+        return ReserveTypedAstNode(name_token.value, type_token.value, pool_token.value, keyword)
+
+    size_expr = parse_expression(p)
+    _expect_contextual_keyword(p, "in")
+    pool_token = p.next()
+    expect_token(pool_token, TokenType.IDENTIFIER)
+    body = BlockAstNode([ReserveAstNode(size_expr, keyword)], keyword)
+    return AllocAstNode(name_token.value, pool_token.value, body, keyword)
 
 
 def _parse_alloc_body(p: Parser, parse_block: ParseBlockFn) -> BlockAstNode:

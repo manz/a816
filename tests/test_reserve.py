@@ -86,6 +86,69 @@ hp:
         assert all(s.code == b"" for s in linked.sections if s.bss)
 
 
+def test_flat_reserve_binds_symbols() -> None:
+    """`.reserve NAME SIZE in POOL` lays out RAM vars flat, no wrapper alloc."""
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "m.s"
+        asm.write_text(
+            _PREAMBLE
+            + ".reserve player_x  0x2   in wram\n"
+            + ".reserve player_hp 0x1   in wram\n"
+            + ".reserve scratch   0x100 in wram\n"
+        )
+        obj = Path(tmp) / "m.o"
+        assert Program().assemble_as_object(str(asm), obj) == 0
+        linked = Linker([ObjectFile.from_file(str(obj))]).link(base_address=0x8000)
+        syms = _symbols(linked)
+        assert syms["player_x"] == 0x7E0000
+        assert syms["player_hp"] == 0x7E0002  # player_x + 2
+        assert syms["scratch"] == 0x7E0003  # player_hp + 1
+        assert all(s.code == b"" for s in linked.sections if s.bss)
+
+
+_STRUCT = """
+.struct GameState {
+    word score
+    byte lives
+    byte level
+}
+"""
+
+
+def test_typed_reserve_publishes_struct_fields() -> None:
+    """`.reserve NAME as TYPE in POOL` reserves sizeof(TYPE) and binds NAME +
+    NAME.<field> at the allocator-assigned address."""
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "m.s"
+        asm.write_text(_PREAMBLE + _STRUCT + ".reserve game_state as GameState in wram\n.reserve after 0x1 in wram\n")
+        obj = Path(tmp) / "m.o"
+        assert Program().assemble_as_object(str(asm), obj) == 0
+        linked = Linker([ObjectFile.from_file(str(obj))]).link(base_address=0x8000)
+        syms = _symbols(linked)
+        assert syms["game_state"] == 0x7E0000
+        assert syms["game_state.score"] == 0x7E0000  # offset 0
+        assert syms["game_state.lives"] == 0x7E0002  # offset 2 (word + )
+        assert syms["game_state.level"] == 0x7E0003  # offset 3
+        # The next reservation lands past the whole 4-byte struct.
+        assert syms["after"] == 0x7E0004
+        assert all(s.code == b"" for s in linked.sections if s.bss)
+
+
+def test_typed_reserve_unknown_struct_errors() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "m.s"
+        asm.write_text(_PREAMBLE + ".reserve x as NoSuchStruct in wram\n")
+        assert Program().assemble_as_object(str(asm), Path(tmp) / "m.o") != 0
+
+
+def test_flat_reserve_into_non_bss_pool_errors() -> None:
+    """Reserving in a non-bss (ROM) pool is a clear error, not a struct crash."""
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "m.s"
+        asm.write_text(".pool rom { range 0xc10000 0xc1ffff }\n.reserve x 0x10 in rom\n")
+        assert Program().assemble_as_object(str(asm), Path(tmp) / "m.o") != 0
+
+
 def test_bss_pool_rejects_emitted_bytes() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         asm = Path(tmp) / "m.s"
@@ -113,3 +176,7 @@ def test_bss_and_reserve_round_trip_canonical() -> None:
     res = A816Parser.parse_as_ast(".res 0x10\n", "t.s").nodes[0]
     assert res.to_canonical() == ".res 0x10"
     assert res.to_representation()[0] == "res"
+
+    typed = A816Parser.parse_as_ast(".reserve game_state as GameState in wram\n", "t.s").nodes[0]
+    assert typed.to_canonical() == ".reserve game_state as GameState in wram"
+    assert typed.to_representation() == ("reserve_typed", "game_state", "GameState", "wram")

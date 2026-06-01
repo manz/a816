@@ -100,8 +100,18 @@ class ObjectEmitMixin:
                 from a816.parse.nodes import NodeError
 
                 raise NodeError(
-                    f".alloc in bss pool {node.pool_name!r} cannot emit bytes; "
-                    f"reserve space with `.res` instead",
+                    f".alloc in bss pool {node.pool_name!r} cannot emit bytes; reserve space with `.res` instead",
+                    node.file_info,
+                )
+            if not is_bss and object_writer._current_section is None:
+                # A byte-less body (only `.res` / `.reserve`) into a non-bss
+                # pool: there is nothing to place, and the section bookkeeping
+                # would mis-index. Reservations belong in a `bss` pool.
+                from a816.parse.nodes import NodeError
+
+                raise NodeError(
+                    f"reservation into non-bss pool {node.pool_name!r} emits no bytes; "
+                    f"declare the pool `bss` to reserve RAM",
                     node.file_info,
                 )
         finally:
