@@ -216,9 +216,7 @@ class Linker:
                 f"{existing.strategy.value!r} vs {decl.strategy!r}"
             )
         if existing.bss != decl.bss:
-            raise ValueError(
-                f"pool {decl.name!r} declared with conflicting bss flags: {existing.bss} vs {decl.bss}"
-            )
+            raise ValueError(f"pool {decl.name!r} declared with conflicting bss flags: {existing.bss} vs {decl.bss}")
         # Dedupe identical ranges: a prelude-declared pool replicates
         # across every module's .o, and reclaiming the same bytes twice
         # is an error. Skip ranges already covered; only contribute

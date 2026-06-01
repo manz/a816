@@ -100,6 +100,7 @@ class LinkedModuleNode(NodeProtocol):
                 ],
                 fill=decl.fill,
                 strategy=Strategy(decl.strategy),
+                bss=decl.bss,
             )
 
     def _compute_delta_and_base(self, current_pc: Address) -> None:

@@ -108,8 +108,7 @@ class ObjectEmitMixin:
                     from a816.parse.nodes import NodeError
 
                     raise NodeError(
-                        f".alloc in bss pool {node.pool_name!r} cannot emit bytes; "
-                        f"reserve space with `.res` instead",
+                        f".alloc in bss pool {node.pool_name!r} cannot emit bytes; reserve space with `.res` instead",
                         node.file_info,
                     )
                 # Real bytes: not a byte-less section, so don't skip it at emit.

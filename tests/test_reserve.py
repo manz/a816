@@ -37,6 +37,42 @@ def _symbols(linked: ObjectFile) -> dict[str, int]:
     return {name: value for name, value, *_ in linked.symbols}
 
 
+def test_bss_pool_survives_cross_module_import() -> None:
+    """Regression: a `bss` pool declared in an *imported* module must build.
+
+    The importer both inlines the preamble source (a fresh decl, bss=True)
+    AND reads the preamble's compiled `.o` (an extern decl). If the object
+    format drops `bss`, the `.o` copy deserializes as bss=False and the two
+    collide on `generate_pool`'s shape-check ('already declared with
+    different shape'). A same-file decl never exercises this - only the
+    import path does. Pin the round-trip through compile + link.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        (tmp / "preamble.s").write_text(
+            ".map identifier=3 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=1\n"
+            ".map identifier=1 bank_range=0xc0, 0xfd addr_range=0x0000, 0xffff mask=0x10000 mirror_bank_range=0x40, 0x7d\n"
+            ".pool wram { bss  range 0x7e0000 0x7e1fff  strategy order }\n"
+            ".pool code { range 0xc10000 0xc1ffff  strategy order }\n"
+            ".reserve blob 0x10 in wram\n"
+        )
+        (tmp / "main.s").write_text('.import "preamble"\n.alloc main in code {\n    lda.l blob\n    rts\n}\n')
+        # Compile the imported module first (carries the bss PoolDecl + the
+        # reservation), then the consumer that imports it.
+        pre_o = tmp / "preamble.o"
+        assert Program().assemble_as_object(str(tmp / "preamble.s"), pre_o) == 0
+        main_program = Program()
+        main_program.add_module_path(tmp)
+        main_o = tmp / "main.o"
+        # Before the fix this raised 'pool wram already declared with different
+        # shape' at the importer's compile (inline bss=True vs imported-.o
+        # bss=False).
+        assert main_program.assemble_as_object(str(tmp / "main.s"), main_o) == 0
+        linked = Linker([ObjectFile.from_file(str(pre_o)), ObjectFile.from_file(str(main_o))]).link(base_address=0x8000)
+        # Reserved base label resolves to the bss pool's range start.
+        assert _symbols(linked)["blob"] == 0x7E0000
+
+
 def test_bss_alloc_binds_symbols_without_emitting() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         linked = _link(
@@ -150,9 +186,7 @@ def test_byte_less_alloc_survives_in_any_pool() -> None:
         asm = Path(tmp) / "m.s"
         # reserve into a NON-bss pool (reserves a gap) + a label-only pinned alloc.
         asm.write_text(
-            ".pool rom { range 0xc10000 0xc1ffff }\n"
-            ".reserve gap 0x10 in rom\n"
-            ".alloc at 0xc18000 { entry_marker: }\n"
+            ".pool rom { range 0xc10000 0xc1ffff }\n.reserve gap 0x10 in rom\n.alloc at 0xc18000 { entry_marker: }\n"
         )
         obj = Path(tmp) / "m.o"
         assert Program().assemble_as_object(str(asm), obj) == 0
