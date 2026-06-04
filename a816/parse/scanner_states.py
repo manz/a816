@@ -252,7 +252,23 @@ def lex_opcode(s: "Scanner") -> None:
         lex_opcode_size(s)
 
     s.ignore_run(" ")
-    lex_operand(s)
+    if opcode_candidate in ("mvn", "mvp"):
+        lex_block_move_operands(s)
+    else:
+        lex_operand(s)
+
+
+def lex_block_move_operands(s: "Scanner") -> None:
+    """`mvn src, dst` / `mvp src, dst`: two expressions separated by a plain
+    comma. Unlike the normal operand lexer, the comma is a `COMMA` token (a
+    second operand), not an addressing-mode index (`,x`/`,y`/`,s`)."""
+    s.ignore_run(" ")
+    lex_expression(s)
+    s.ignore_run(" ")
+    if s.accept(","):
+        s.emit(TokenType.COMMA)
+    s.ignore_run(" ")
+    lex_expression(s)
 
 
 DIRECTIVE_NAMES = {

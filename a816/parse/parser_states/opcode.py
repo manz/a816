@@ -17,10 +17,29 @@ def is_value_size(value_size: str) -> TypeGuard[ValueSize]:
     return value_size in ["b", "w", "l"]
 
 
+def _parse_block_move(opcode: Token, p: Parser) -> OpcodeAstNode:
+    """`mvn src, dst` / `mvp src, dst`: two bank operands (block move)."""
+    src = parse_expression(p)
+    expect_token(p.next(), TokenType.COMMA)
+    dest = parse_expression(p)
+    return OpcodeAstNode(
+        addressing_mode=AddressingMode.block_move,
+        opcode=opcode.value,
+        value_size=None,
+        operand=src,
+        operand2=dest,
+        index=None,
+        file_info=opcode,
+    )
+
+
 def parse_opcode(p: Parser) -> OpcodeAstNode:
     opcode: Token = p.next()
     size: str | None = None
     index: str | None = None
+
+    if opcode.value.lower() in ("mvn", "mvp"):
+        return _parse_block_move(opcode, p)
 
     if accept_token(opcode, TokenType.OPCODE_NAKED):
         addressing_mode = AddressingMode.none

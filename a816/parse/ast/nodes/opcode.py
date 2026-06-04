@@ -20,12 +20,15 @@ class OpcodeAstNode(AstNode):
         operand: ExpressionAstNode | None,
         index: str | None,
         file_info: Token,
+        operand2: ExpressionAstNode | None = None,
     ):
         super().__init__("opcode", file_info)
         self.addressing_mode = addressing_mode
         self.opcode = opcode
         self.value_size = value_size
         self.operand = operand
+        # Second operand for block-move (`mvn src, dst`); None otherwise.
+        self.operand2 = operand2
         self.index = index
 
     @property

@@ -77,9 +77,11 @@ class TestDisassembler:
 
     def test_decode_absolute_long(self) -> None:
         disasm = Disassembler()
-        inst = disasm.decode_instruction(bytes([0x22, 0x00, 0x80, 0x01]), 0x8000)  # jsl $018000
+        inst = disasm.decode_instruction(bytes([0x22, 0x00, 0x80, 0x01]), 0x8000)  # jsr.l $018000
         assert inst is not None
-        assert inst.mnemonic == "jsl"
+        # 0x22 decodes as `jsr` ABSOLUTE_LONG (a816: jsl ≡ jsr.l). The decoder
+        # is derived from the assembler table, which owns 0x22 as jsr.l.
+        assert inst.mnemonic == "jsr"
         assert inst.mode == AddrMode.ABSOLUTE_LONG
         assert inst.operand_value == 0x018000
         assert inst.length == 4
@@ -480,7 +482,7 @@ class TestA816BlockFormat:
 
     def test_minimal_suffixes_round_trip(self) -> None:
         disasm = Disassembler()
-        # lda #0x42, sta 0x1234, lda 0x10, jsl 0x018000, nop
+        # lda #0x42, sta 0x1234, lda 0x10, jsr.l 0x018000, nop
         data = bytes.fromhex("a9428d3412a510220080 01ea".replace(" ", ""))
         instructions = disasm.disassemble(data, 0x008000)
         lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
@@ -488,7 +490,7 @@ class TestA816BlockFormat:
         assert "lda #0x42" in joined
         assert "sta 0x1234" in joined
         assert "lda 0x10" in joined
-        assert "jsl.l _018000" in joined
+        assert "jsr.l _018000" in joined
         assert "nop" in joined
         assert ".w" not in joined  # no verbose word suffix on absolute / direct
 
