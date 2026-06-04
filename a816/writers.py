@@ -173,6 +173,7 @@ class ObjectWriter(Writer):
         # offsets recorded mid-emit reflect the right intra-section position.
         self._pending_emit_bytes: int = 0
         self._has_explicit_position: bool = False
+        self._pending_bss: bool = False
 
     def begin(self) -> None:
         self.sections = []
@@ -185,6 +186,7 @@ class ObjectWriter(Writer):
         self._section_bytes_emitted = 0
         self._pending_emit_bytes = 0
         self._has_explicit_position = False
+        self._pending_bss = False
         self.pool_decls = []
         self.pool_allocs = []
         self.bus_mappings = []
@@ -199,22 +201,31 @@ class ObjectWriter(Writer):
         """
         self._pending_emit_bytes += count
 
-    def start_section(self, base_address: int, explicit: bool = False) -> None:
+    def start_section(self, base_address: int, explicit: bool = False, bss: bool = False) -> None:
         """Open a new section at base_address, closing any current section.
 
         `explicit=True` marks this as the result of a `*=` directive — the
         module loses single-section relocatability once any explicit section
-        is opened.
+        is opened. `bss=True` opens a byte-less reservation section (a `.alloc`
+        into a `bss` pool): it is force-created and protected from the
+        drop-empty pass so it survives with no `code`.
         """
-        # Drop empty pending sections instead of leaving zero-byte placeholders.
-        if self._current_section is not None and not self._current_section.code:
+        # Drop empty pending sections instead of leaving zero-byte placeholders,
+        # but never drop a bss section: empty `code` is its whole point.
+        if self._current_section is not None and not self._current_section.code and not self._current_section.bss:
             self.sections.pop()
         self._pending_base_address = base_address
         self._current_section = None
         self._section_bytes_emitted = 0
         self._pending_emit_bytes = 0
+        self._pending_bss = bss
         if explicit:
             self._has_explicit_position = True
+        if bss:
+            # Materialize immediately: a bss body emits no bytes, so nothing
+            # else would trigger section creation, and the PoolAlloc must
+            # reference a real section index.
+            self._ensure_section()
 
     def relocation_offset(self, pending_block_bytes: int = 0) -> int:
         """Byte offset where the next emitted byte will land in the section."""
@@ -258,8 +269,9 @@ class ObjectWriter(Writer):
         self.aliases.append((name, expression))
 
     def end(self) -> None:
-        # Strip a trailing empty section (e.g. trailing `*=` with no code).
-        if self.sections and not self.sections[-1].code:
+        # Strip a trailing empty section (e.g. trailing `*=` with no code),
+        # but keep a bss section: it is byte-less by design.
+        if self.sections and not self.sections[-1].code and not self.sections[-1].bss:
             self.sections.pop()
         relocatable = not self._has_explicit_position
         obj_file = ObjectFile(
@@ -277,6 +289,7 @@ class ObjectWriter(Writer):
     def _ensure_section(self) -> Section:
         if self._current_section is None:
             section = Section.anonymous_pinned(base_address=self._pending_base_address, code=b"")
+            section.bss = self._pending_bss
             self.sections.append(section)
             self._current_section = section
             self._section_bytes_emitted = 0

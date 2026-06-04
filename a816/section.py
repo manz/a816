@@ -130,6 +130,15 @@ class Section:
     lines: list[tuple[int, int, int, int, int]] = field(default_factory=list)
     """Source-line provenance for adbg debug info."""
 
+    bss: bool = False
+    """Byte-less reservation section (a `.alloc` into a `bss` pool).
+
+    Carries placement + labels but no `code`. The allocator reserves its
+    span (via the matching `PoolAlloc.size`); the final SFC/IPS emit skips
+    it (empty `code`), so WRAM/RAM layout is collision-checked and symbol-
+    bound without writing anything into the image. Must survive the object
+    writer's drop-empty-section pass."""
+
     def __post_init__(self) -> None:
         if self.placement is Placement.PINNED and self.pool_name is not None:
             raise ValueError(

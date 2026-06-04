@@ -73,6 +73,10 @@ class PoolDecl:
     ranges: list[tuple[int, int]]
     fill: int
     strategy: str
+    bss: bool = False
+    """Byte-less pool: reservations emit nothing into the image. Must round-trip
+    through the object format, else an imported bss pool deserializes as bss=False
+    and `generate_pool`'s shape-check rejects the inline (bss=True) re-declaration."""
 
 
 @dataclass
@@ -111,7 +115,7 @@ class PoolAlloc:
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x0009  # Version 9: bus mappings serialized for cross-TU bus replay.
+    VERSION = 0x000B  # Version 11: PoolDecl carries the bss flag (round-trips through import).
 
     def __init__(
         self,
@@ -209,6 +213,7 @@ class ObjectFile:
             f.write(name_bytes)
             f.write(struct.pack("<B", len(strategy_bytes)))
             f.write(strategy_bytes)
+            f.write(struct.pack("<B", 1 if decl.bss else 0))
             f.write(struct.pack("<BH", decl.fill, len(decl.ranges)))
             for start, end in decl.ranges:
                 f.write(struct.pack("<II", start, end))
@@ -260,6 +265,8 @@ class ObjectFile:
         f.write(struct.pack("<H", len(self.sections)))
         for section in self.sections:
             f.write(struct.pack("<II", section.base_address, len(section.code)))
+            section_flags = 0x01 if section.bss else 0x00
+            f.write(struct.pack("<B", section_flags))
             f.write(
                 struct.pack("<HHI", len(section.relocations), len(section.expression_relocations), len(section.lines))
             )
@@ -308,6 +315,7 @@ class ObjectFile:
         sections: list[Section] = []
         for _ in range(count):
             base_address, code_size = struct.unpack("<II", f.read(8))
+            (section_flags,) = struct.unpack("<B", f.read(1))
             num_relocs, num_expr_relocs, num_lines = struct.unpack("<HHI", f.read(8))
             code = f.read(code_size)
             relocs: list[tuple[int, str, RelocationType]] = []
@@ -326,15 +334,15 @@ class ObjectFile:
             for _ in range(num_lines):
                 offset, file_idx, line, column, flags = struct.unpack("<IIIHB", f.read(15))
                 lines.append((offset, file_idx, line, column, flags))
-            sections.append(
-                Section.anonymous_pinned(
-                    base_address=base_address,
-                    code=code,
-                    relocations=relocs,
-                    expression_relocations=expr_relocs,
-                    lines=lines,
-                )
+            section = Section.anonymous_pinned(
+                base_address=base_address,
+                code=code,
+                relocations=relocs,
+                expression_relocations=expr_relocs,
+                lines=lines,
             )
+            section.bss = bool(section_flags & 0x01)
+            sections.append(section)
         return sections
 
     @staticmethod
@@ -378,12 +386,13 @@ class ObjectFile:
             name = f.read(name_len).decode("utf-8")
             (strategy_len,) = struct.unpack("<B", f.read(1))
             strategy = f.read(strategy_len).decode("utf-8")
+            (bss_flag,) = struct.unpack("<B", f.read(1))
             fill, range_count = struct.unpack("<BH", f.read(3))
             ranges: list[tuple[int, int]] = []
             for _ in range(range_count):
                 start, end = struct.unpack("<II", f.read(8))
                 ranges.append((start, end))
-            out.append(PoolDecl(name=name, ranges=ranges, fill=fill, strategy=strategy))
+            out.append(PoolDecl(name=name, ranges=ranges, fill=fill, strategy=strategy, bss=bool(bss_flag)))
         return out
 
     @staticmethod

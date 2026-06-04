@@ -7,14 +7,19 @@ from a816.exceptions import (
     ExternalSymbolReference,
     SymbolNotDefined,
 )
-from a816.parse.ast.expression import eval_expression
+from a816.parse.ast.expression import eval_expression, expr_to_ast
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    AstNode,
+    BlockAstNode,
     CodePositionAstNode,
     ExpressionAstNode,
+    LabelAstNode,
     PoolAstNode,
     ReclaimAstNode,
     RelocateAstNode,
+    ReserveAstNode,
+    ReserveTypedAstNode,
 )
 from a816.parse.ast.visitor import walk
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators
@@ -79,6 +84,7 @@ def generate_pool(
             ranges=ranges,
             fill=fill_value,
             strategy=Strategy(node.strategy),
+            bss=node.bss,
         )
         if node.pool_name in resolver.pools:
             existing = resolver.pools[node.pool_name]
@@ -86,6 +92,7 @@ def generate_pool(
                 [(r.start, r.end) for r in existing.ranges] == [(r.start, r.end) for r in pool.ranges]
                 and existing.fill == pool.fill
                 and existing.strategy == pool.strategy
+                and existing.bss == pool.bss
             )
             if not same_shape:
                 raise NodeError(f"pool {node.pool_name!r} already declared with different shape", file_info)
@@ -108,6 +115,7 @@ def generate_pool(
                 ranges=[(r.start, r.end) for r in pool.ranges],
                 fill=pool.fill,
                 strategy=pool.strategy.value,
+                bss=pool.bss,
             )
         )
     return []
@@ -180,6 +188,43 @@ def generate_alloc(
     body_nodes.append(PopScopeNode(resolver, exports=True))
     resolver.restore_scope(exports=True)
     return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info)]
+
+
+def generate_reserve_typed(
+    node: ReserveTypedAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Expand `.reserve NAME as TYPE in POOL` against TYPE's layout.
+
+    Builds an `.alloc NAME in POOL { ... }` whose body lays out a label
+    `NAME.<field>` at each struct offset (padding the gaps with `.res`) and
+    reserves the struct's full size. The field labels bind as alloc-body
+    labels, so the linker rebases them with NAME to the allocator-chosen
+    address: the byte-less equivalent of a typed bind over fixed memory.
+    """
+    if node.type_name not in resolver.struct_sizes:
+        raise NodeError(
+            f".reserve {node.name!r} as unknown struct type {node.type_name!r}",
+            file_info,
+        )
+    size = resolver.struct_sizes[node.type_name]
+    layout = sorted(resolver.struct_layouts[node.type_name], key=lambda field: field[1])
+
+    body: list[AstNode] = []
+    cursor = 0
+    for field_path, offset, _width in layout:
+        if offset > cursor:
+            body.append(ReserveAstNode(expr_to_ast(hex(offset - cursor)), file_info))
+            cursor = offset
+        body.append(LabelAstNode(f"{node.name}.{field_path}", file_info))
+    if size > cursor:
+        body.append(ReserveAstNode(expr_to_ast(hex(size - cursor)), file_info))
+
+    resolver.typed_instances[node.name] = node.type_name
+    alloc = AllocAstNode(node.name, node.pool_name, BlockAstNode(body, file_info), file_info)
+    return generate_alloc(alloc, resolver, macro_definitions, file_info)
 
 
 _NESTED_PLACEMENT_KINDS = {
@@ -281,6 +326,7 @@ def _synthesize_pinned_pool(
                 ranges=[(r.start, r.end) for r in ranges],
                 fill=0x00,
                 strategy=Strategy.PACK.value,
+                bss=False,  # pinned allocs emit bytes; never byte-less
             )
         )
     return pool_name
@@ -314,5 +360,6 @@ def generate_relocate(
 
 generators["pool"] = generate_pool
 generators["alloc"] = generate_alloc
+generators["reserve_typed"] = generate_reserve_typed
 generators["relocate"] = generate_relocate
 generators["reclaim"] = generate_reclaim

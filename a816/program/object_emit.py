@@ -88,12 +88,31 @@ class ObjectEmitMixin:
         self._flush_object_block(object_writer, state)
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
+        pool = self.resolver.pools.get(node.pool_name)
+        is_bss = bool(pool and pool.bss)
         try:
             self.resolver.set_position(sandbox_logical)
-            object_writer.start_section(sandbox_logical, explicit=True)
+            # Always force-create the body section (`bss=True` here means
+            # "byte-less-capable": survives the writer's drop-empty pass and
+            # gets a stable index for the PoolAlloc). A label-only `.alloc at`
+            # (entry-point marker) and a `.reserve` both legitimately emit no
+            # bytes; both must survive. Sections that DO emit bytes get their
+            # bss flag cleared below so the final SFC/IPS emit still writes them.
+            object_writer.start_section(sandbox_logical, explicit=True, bss=True)
             for child in node.body:
                 self._object_emit_one(child, object_writer, state)
             self._flush_object_block(object_writer, state)
+            section = object_writer.sections[-1] if object_writer.sections else None
+            if section is not None and section.code:
+                if is_bss:
+                    from a816.parse.nodes import NodeError
+
+                    raise NodeError(
+                        f".alloc in bss pool {node.pool_name!r} cannot emit bytes; reserve space with `.res` instead",
+                        node.file_info,
+                    )
+                # Real bytes: not a byte-less section, so don't skip it at emit.
+                section.bss = False
         finally:
             self.resolver.pc = saved_pc
             self.resolver.reloc_address = saved_reloc

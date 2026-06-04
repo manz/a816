@@ -1,6 +1,22 @@
 from pathlib import Path
 
-from a816.object_file import ObjectFile, RelocationType, Section, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
+
+
+def test_pool_decl_bss_round_trips(tmp_path: Path) -> None:
+    """A bss `.pool` must survive write/read. If `bss` is dropped on the way
+    out, an imported bss pool deserializes as bss=False and the inline
+    (bss=True) re-declaration trips `generate_pool`'s shape-check."""
+    obj = ObjectFile([], [])
+    obj.pool_decls = [
+        PoolDecl(name="wram", ranges=[(0x7E0000, 0x7E1FFF)], fill=0x00, strategy="order", bss=True),
+        PoolDecl(name="rom", ranges=[(0xC10000, 0xC1FFFF)], fill=0x00, strategy="order", bss=False),
+    ]
+    obj.write(str(tmp_path / "pools.o"))
+    obj2 = ObjectFile.from_file(str(tmp_path / "pools.o"))
+    by_name = {d.name: d for d in obj2.pool_decls}
+    assert by_name["wram"].bss is True
+    assert by_name["rom"].bss is False
 
 
 def test_write_empty_object_file(tmp_path: Path) -> None:

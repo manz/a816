@@ -74,6 +74,10 @@ class Pool:
     ranges: list[PoolRange]
     fill: int = 0x00
     strategy: Strategy = Strategy.PACK
+    bss: bool = False
+    """Byte-less pool: allocations reserve + overlap-check address space (WRAM,
+    SRAM, custom RAM maps) but emit nothing into the image. Bodies may only
+    reserve (`.res`) / label / assign; emitting a byte is an error."""
     allocations: list[Allocation] = field(default_factory=list)
     _allocated: bool = field(default=False, init=False)
 

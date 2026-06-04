@@ -27,18 +27,22 @@ class PoolAstNode(AstNode):
         fill: ExpressionAstNode,
         strategy: str,
         file_info: Token,
+        bss: bool = False,
     ) -> None:
         super().__init__("pool", file_info)
         self.pool_name = name
         self.ranges = ranges
         self.fill = fill
         self.strategy = strategy
+        self.bss = bss
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.pool_name, len(self.ranges), self.strategy
 
     def to_canonical(self) -> str:
         lines = [f".pool {self.pool_name} {{"]
+        if self.bss:
+            lines.append("    bss")
         for start, end in self.ranges:
             lines.append(f"    range {start.to_canonical()} {end.to_canonical()}")
         lines.append(f"    fill {self.fill.to_canonical()}")
