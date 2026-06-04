@@ -4,9 +4,19 @@
 Provides instruction decoding with support for all addressing modes.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import Enum
+
+from a816.cpu.cpu_65c816 import (
+    BlockMoveOpcode,
+    Opcode,
+    OpcodeWithoutOperand,
+    RelativeJumpOpcode,
+    RelativeLongJumpOpcode,
+    snes_opcode_table,
+)
+from a816.cpu.types import AddressingMode as _AsmMode
 
 
 class AddrMode(Enum):
@@ -208,304 +218,106 @@ class Instruction:
 
 # Opcode table: opcode -> (mnemonic, addressing_mode, operand_size)
 # operand_size: 0=none, 1=byte, 2=word, 3=long, -1=M-dependent, -2=X-dependent
-OPCODE_TABLE: dict[int, tuple[str, AddrMode, int]] = {
-    # ADC
-    0x69: ("adc", AddrMode.IMMEDIATE_M, -1),
-    0x65: ("adc", AddrMode.DIRECT, 1),
-    0x75: ("adc", AddrMode.DIRECT_X, 1),
-    0x72: ("adc", AddrMode.DIRECT_IND, 1),
-    0x61: ("adc", AddrMode.DIRECT_IND_X, 1),
-    0x71: ("adc", AddrMode.DIRECT_IND_Y, 1),
-    0x67: ("adc", AddrMode.DIRECT_IND_LONG, 1),
-    0x77: ("adc", AddrMode.DIRECT_IND_LONG_Y, 1),
-    0x6D: ("adc", AddrMode.ABSOLUTE, 2),
-    0x7D: ("adc", AddrMode.ABSOLUTE_X, 2),
-    0x79: ("adc", AddrMode.ABSOLUTE_Y, 2),
-    0x6F: ("adc", AddrMode.ABSOLUTE_LONG, 3),
-    0x7F: ("adc", AddrMode.ABSOLUTE_LONG_X, 3),
-    0x63: ("adc", AddrMode.STACK_REL, 1),
-    0x73: ("adc", AddrMode.STACK_REL_IND_Y, 1),
-    # AND
-    0x29: ("and", AddrMode.IMMEDIATE_M, -1),
-    0x25: ("and", AddrMode.DIRECT, 1),
-    0x35: ("and", AddrMode.DIRECT_X, 1),
-    0x32: ("and", AddrMode.DIRECT_IND, 1),
-    0x21: ("and", AddrMode.DIRECT_IND_X, 1),
-    0x31: ("and", AddrMode.DIRECT_IND_Y, 1),
-    0x27: ("and", AddrMode.DIRECT_IND_LONG, 1),
-    0x37: ("and", AddrMode.DIRECT_IND_LONG_Y, 1),
-    0x2D: ("and", AddrMode.ABSOLUTE, 2),
-    0x3D: ("and", AddrMode.ABSOLUTE_X, 2),
-    0x39: ("and", AddrMode.ABSOLUTE_Y, 2),
-    0x2F: ("and", AddrMode.ABSOLUTE_LONG, 3),
-    0x3F: ("and", AddrMode.ABSOLUTE_LONG_X, 3),
-    0x23: ("and", AddrMode.STACK_REL, 1),
-    0x33: ("and", AddrMode.STACK_REL_IND_Y, 1),
-    # ASL
-    0x0A: ("asl", AddrMode.IMPLIED, 0),
-    0x06: ("asl", AddrMode.DIRECT, 1),
-    0x16: ("asl", AddrMode.DIRECT_X, 1),
-    0x0E: ("asl", AddrMode.ABSOLUTE, 2),
-    0x1E: ("asl", AddrMode.ABSOLUTE_X, 2),
-    # Branch instructions
-    0x90: ("bcc", AddrMode.RELATIVE, 1),
-    0xB0: ("bcs", AddrMode.RELATIVE, 1),
-    0xF0: ("beq", AddrMode.RELATIVE, 1),
-    0x30: ("bmi", AddrMode.RELATIVE, 1),
-    0xD0: ("bne", AddrMode.RELATIVE, 1),
-    0x10: ("bpl", AddrMode.RELATIVE, 1),
-    0x80: ("bra", AddrMode.RELATIVE, 1),
-    0x82: ("brl", AddrMode.RELATIVE_LONG, 2),
-    0x50: ("bvc", AddrMode.RELATIVE, 1),
-    0x70: ("bvs", AddrMode.RELATIVE, 1),
-    # BIT
-    0x89: ("bit", AddrMode.IMMEDIATE_M, -1),
-    0x24: ("bit", AddrMode.DIRECT, 1),
-    0x34: ("bit", AddrMode.DIRECT_X, 1),
-    0x2C: ("bit", AddrMode.ABSOLUTE, 2),
-    0x3C: ("bit", AddrMode.ABSOLUTE_X, 2),
-    # BRK, COP
-    0x00: ("brk", AddrMode.IMMEDIATE_8, 1),
-    0x02: ("cop", AddrMode.IMMEDIATE_8, 1),
-    # Clear/Set flags
-    0x18: ("clc", AddrMode.IMPLIED, 0),
-    0xD8: ("cld", AddrMode.IMPLIED, 0),
-    0x58: ("cli", AddrMode.IMPLIED, 0),
-    0xB8: ("clv", AddrMode.IMPLIED, 0),
-    0x38: ("sec", AddrMode.IMPLIED, 0),
-    0xF8: ("sed", AddrMode.IMPLIED, 0),
-    0x78: ("sei", AddrMode.IMPLIED, 0),
-    # CMP
-    0xC9: ("cmp", AddrMode.IMMEDIATE_M, -1),
-    0xC5: ("cmp", AddrMode.DIRECT, 1),
-    0xD5: ("cmp", AddrMode.DIRECT_X, 1),
-    0xD2: ("cmp", AddrMode.DIRECT_IND, 1),
-    0xC1: ("cmp", AddrMode.DIRECT_IND_X, 1),
-    0xD1: ("cmp", AddrMode.DIRECT_IND_Y, 1),
-    0xC7: ("cmp", AddrMode.DIRECT_IND_LONG, 1),
-    0xD7: ("cmp", AddrMode.DIRECT_IND_LONG_Y, 1),
-    0xCD: ("cmp", AddrMode.ABSOLUTE, 2),
-    0xDD: ("cmp", AddrMode.ABSOLUTE_X, 2),
-    0xD9: ("cmp", AddrMode.ABSOLUTE_Y, 2),
-    0xCF: ("cmp", AddrMode.ABSOLUTE_LONG, 3),
-    0xDF: ("cmp", AddrMode.ABSOLUTE_LONG_X, 3),
-    0xC3: ("cmp", AddrMode.STACK_REL, 1),
-    0xD3: ("cmp", AddrMode.STACK_REL_IND_Y, 1),
-    # CPX
-    0xE0: ("cpx", AddrMode.IMMEDIATE_X, -2),
-    0xE4: ("cpx", AddrMode.DIRECT, 1),
-    0xEC: ("cpx", AddrMode.ABSOLUTE, 2),
-    # CPY
-    0xC0: ("cpy", AddrMode.IMMEDIATE_X, -2),
-    0xC4: ("cpy", AddrMode.DIRECT, 1),
-    0xCC: ("cpy", AddrMode.ABSOLUTE, 2),
-    # DEC
-    0x3A: ("dec", AddrMode.IMPLIED, 0),
-    0xC6: ("dec", AddrMode.DIRECT, 1),
-    0xD6: ("dec", AddrMode.DIRECT_X, 1),
-    0xCE: ("dec", AddrMode.ABSOLUTE, 2),
-    0xDE: ("dec", AddrMode.ABSOLUTE_X, 2),
-    # DEX, DEY
-    0xCA: ("dex", AddrMode.IMPLIED, 0),
-    0x88: ("dey", AddrMode.IMPLIED, 0),
-    # EOR
-    0x49: ("eor", AddrMode.IMMEDIATE_M, -1),
-    0x45: ("eor", AddrMode.DIRECT, 1),
-    0x55: ("eor", AddrMode.DIRECT_X, 1),
-    0x52: ("eor", AddrMode.DIRECT_IND, 1),
-    0x41: ("eor", AddrMode.DIRECT_IND_X, 1),
-    0x51: ("eor", AddrMode.DIRECT_IND_Y, 1),
-    0x47: ("eor", AddrMode.DIRECT_IND_LONG, 1),
-    0x57: ("eor", AddrMode.DIRECT_IND_LONG_Y, 1),
-    0x4D: ("eor", AddrMode.ABSOLUTE, 2),
-    0x5D: ("eor", AddrMode.ABSOLUTE_X, 2),
-    0x59: ("eor", AddrMode.ABSOLUTE_Y, 2),
-    0x4F: ("eor", AddrMode.ABSOLUTE_LONG, 3),
-    0x5F: ("eor", AddrMode.ABSOLUTE_LONG_X, 3),
-    0x43: ("eor", AddrMode.STACK_REL, 1),
-    0x53: ("eor", AddrMode.STACK_REL_IND_Y, 1),
-    # INC
-    0x1A: ("inc", AddrMode.IMPLIED, 0),
-    0xE6: ("inc", AddrMode.DIRECT, 1),
-    0xF6: ("inc", AddrMode.DIRECT_X, 1),
-    0xEE: ("inc", AddrMode.ABSOLUTE, 2),
-    0xFE: ("inc", AddrMode.ABSOLUTE_X, 2),
-    # INX, INY
-    0xE8: ("inx", AddrMode.IMPLIED, 0),
-    0xC8: ("iny", AddrMode.IMPLIED, 0),
-    # JMP
-    0x4C: ("jmp", AddrMode.ABSOLUTE, 2),
-    0x5C: ("jmp", AddrMode.ABSOLUTE_LONG, 3),
-    0x6C: ("jmp", AddrMode.ABSOLUTE_IND, 2),
-    0x7C: ("jmp", AddrMode.ABSOLUTE_IND_X, 2),
-    0xDC: ("jmp", AddrMode.ABSOLUTE_IND_LONG, 2),
-    # JSR, JSL
-    0x20: ("jsr", AddrMode.ABSOLUTE, 2),
-    0x22: ("jsl", AddrMode.ABSOLUTE_LONG, 3),
-    0xFC: ("jsr", AddrMode.ABSOLUTE_IND_X, 2),
-    # LDA
-    0xA9: ("lda", AddrMode.IMMEDIATE_M, -1),
-    0xA5: ("lda", AddrMode.DIRECT, 1),
-    0xB5: ("lda", AddrMode.DIRECT_X, 1),
-    0xB2: ("lda", AddrMode.DIRECT_IND, 1),
-    0xA1: ("lda", AddrMode.DIRECT_IND_X, 1),
-    0xB1: ("lda", AddrMode.DIRECT_IND_Y, 1),
-    0xA7: ("lda", AddrMode.DIRECT_IND_LONG, 1),
-    0xB7: ("lda", AddrMode.DIRECT_IND_LONG_Y, 1),
-    0xAD: ("lda", AddrMode.ABSOLUTE, 2),
-    0xBD: ("lda", AddrMode.ABSOLUTE_X, 2),
-    0xB9: ("lda", AddrMode.ABSOLUTE_Y, 2),
-    0xAF: ("lda", AddrMode.ABSOLUTE_LONG, 3),
-    0xBF: ("lda", AddrMode.ABSOLUTE_LONG_X, 3),
-    0xA3: ("lda", AddrMode.STACK_REL, 1),
-    0xB3: ("lda", AddrMode.STACK_REL_IND_Y, 1),
-    # LDX
-    0xA2: ("ldx", AddrMode.IMMEDIATE_X, -2),
-    0xA6: ("ldx", AddrMode.DIRECT, 1),
-    0xB6: ("ldx", AddrMode.DIRECT_Y, 1),
-    0xAE: ("ldx", AddrMode.ABSOLUTE, 2),
-    0xBE: ("ldx", AddrMode.ABSOLUTE_Y, 2),
-    # LDY
-    0xA0: ("ldy", AddrMode.IMMEDIATE_X, -2),
-    0xA4: ("ldy", AddrMode.DIRECT, 1),
-    0xB4: ("ldy", AddrMode.DIRECT_X, 1),
-    0xAC: ("ldy", AddrMode.ABSOLUTE, 2),
-    0xBC: ("ldy", AddrMode.ABSOLUTE_X, 2),
-    # LSR
-    0x4A: ("lsr", AddrMode.IMPLIED, 0),
-    0x46: ("lsr", AddrMode.DIRECT, 1),
-    0x56: ("lsr", AddrMode.DIRECT_X, 1),
-    0x4E: ("lsr", AddrMode.ABSOLUTE, 2),
-    0x5E: ("lsr", AddrMode.ABSOLUTE_X, 2),
-    # Block move
-    0x54: ("mvn", AddrMode.BLOCK_MOVE, 2),
-    0x44: ("mvp", AddrMode.BLOCK_MOVE, 2),
-    # NOP
-    0xEA: ("nop", AddrMode.IMPLIED, 0),
-    # ORA
-    0x09: ("ora", AddrMode.IMMEDIATE_M, -1),
-    0x05: ("ora", AddrMode.DIRECT, 1),
-    0x15: ("ora", AddrMode.DIRECT_X, 1),
-    0x12: ("ora", AddrMode.DIRECT_IND, 1),
-    0x01: ("ora", AddrMode.DIRECT_IND_X, 1),
-    0x11: ("ora", AddrMode.DIRECT_IND_Y, 1),
-    0x07: ("ora", AddrMode.DIRECT_IND_LONG, 1),
-    0x17: ("ora", AddrMode.DIRECT_IND_LONG_Y, 1),
-    0x0D: ("ora", AddrMode.ABSOLUTE, 2),
-    0x1D: ("ora", AddrMode.ABSOLUTE_X, 2),
-    0x19: ("ora", AddrMode.ABSOLUTE_Y, 2),
-    0x0F: ("ora", AddrMode.ABSOLUTE_LONG, 3),
-    0x1F: ("ora", AddrMode.ABSOLUTE_LONG_X, 3),
-    0x03: ("ora", AddrMode.STACK_REL, 1),
-    0x13: ("ora", AddrMode.STACK_REL_IND_Y, 1),
-    # PEA, PEI, PER
-    0xF4: ("pea", AddrMode.ABSOLUTE, 2),
-    0xD4: ("pei", AddrMode.DIRECT_IND, 1),
-    0x62: ("per", AddrMode.RELATIVE_LONG, 2),
-    # Push/Pull
-    0x48: ("pha", AddrMode.IMPLIED, 0),
-    0x8B: ("phb", AddrMode.IMPLIED, 0),
-    0x0B: ("phd", AddrMode.IMPLIED, 0),
-    0x4B: ("phk", AddrMode.IMPLIED, 0),
-    0x08: ("php", AddrMode.IMPLIED, 0),
-    0xDA: ("phx", AddrMode.IMPLIED, 0),
-    0x5A: ("phy", AddrMode.IMPLIED, 0),
-    0x68: ("pla", AddrMode.IMPLIED, 0),
-    0xAB: ("plb", AddrMode.IMPLIED, 0),
-    0x2B: ("pld", AddrMode.IMPLIED, 0),
-    0x28: ("plp", AddrMode.IMPLIED, 0),
-    0xFA: ("plx", AddrMode.IMPLIED, 0),
-    0x7A: ("ply", AddrMode.IMPLIED, 0),
-    # REP, SEP
-    0xC2: ("rep", AddrMode.IMMEDIATE_8, 1),
-    0xE2: ("sep", AddrMode.IMMEDIATE_8, 1),
-    # ROL
-    0x2A: ("rol", AddrMode.IMPLIED, 0),
-    0x26: ("rol", AddrMode.DIRECT, 1),
-    0x36: ("rol", AddrMode.DIRECT_X, 1),
-    0x2E: ("rol", AddrMode.ABSOLUTE, 2),
-    0x3E: ("rol", AddrMode.ABSOLUTE_X, 2),
-    # ROR
-    0x6A: ("ror", AddrMode.IMPLIED, 0),
-    0x66: ("ror", AddrMode.DIRECT, 1),
-    0x76: ("ror", AddrMode.DIRECT_X, 1),
-    0x6E: ("ror", AddrMode.ABSOLUTE, 2),
-    0x7E: ("ror", AddrMode.ABSOLUTE_X, 2),
-    # RTI, RTL, RTS
-    0x40: ("rti", AddrMode.IMPLIED, 0),
-    0x6B: ("rtl", AddrMode.IMPLIED, 0),
-    0x60: ("rts", AddrMode.IMPLIED, 0),
-    # SBC
-    0xE9: ("sbc", AddrMode.IMMEDIATE_M, -1),
-    0xE5: ("sbc", AddrMode.DIRECT, 1),
-    0xF5: ("sbc", AddrMode.DIRECT_X, 1),
-    0xF2: ("sbc", AddrMode.DIRECT_IND, 1),
-    0xE1: ("sbc", AddrMode.DIRECT_IND_X, 1),
-    0xF1: ("sbc", AddrMode.DIRECT_IND_Y, 1),
-    0xE7: ("sbc", AddrMode.DIRECT_IND_LONG, 1),
-    0xF7: ("sbc", AddrMode.DIRECT_IND_LONG_Y, 1),
-    0xED: ("sbc", AddrMode.ABSOLUTE, 2),
-    0xFD: ("sbc", AddrMode.ABSOLUTE_X, 2),
-    0xF9: ("sbc", AddrMode.ABSOLUTE_Y, 2),
-    0xEF: ("sbc", AddrMode.ABSOLUTE_LONG, 3),
-    0xFF: ("sbc", AddrMode.ABSOLUTE_LONG_X, 3),
-    0xE3: ("sbc", AddrMode.STACK_REL, 1),
-    0xF3: ("sbc", AddrMode.STACK_REL_IND_Y, 1),
-    # STA
-    0x85: ("sta", AddrMode.DIRECT, 1),
-    0x95: ("sta", AddrMode.DIRECT_X, 1),
-    0x92: ("sta", AddrMode.DIRECT_IND, 1),
-    0x81: ("sta", AddrMode.DIRECT_IND_X, 1),
-    0x91: ("sta", AddrMode.DIRECT_IND_Y, 1),
-    0x87: ("sta", AddrMode.DIRECT_IND_LONG, 1),
-    0x97: ("sta", AddrMode.DIRECT_IND_LONG_Y, 1),
-    0x8D: ("sta", AddrMode.ABSOLUTE, 2),
-    0x9D: ("sta", AddrMode.ABSOLUTE_X, 2),
-    0x99: ("sta", AddrMode.ABSOLUTE_Y, 2),
-    0x8F: ("sta", AddrMode.ABSOLUTE_LONG, 3),
-    0x9F: ("sta", AddrMode.ABSOLUTE_LONG_X, 3),
-    0x83: ("sta", AddrMode.STACK_REL, 1),
-    0x93: ("sta", AddrMode.STACK_REL_IND_Y, 1),
-    # STP, WAI
-    0xDB: ("stp", AddrMode.IMPLIED, 0),
-    0xCB: ("wai", AddrMode.IMPLIED, 0),
-    # STX
-    0x86: ("stx", AddrMode.DIRECT, 1),
-    0x96: ("stx", AddrMode.DIRECT_Y, 1),
-    0x8E: ("stx", AddrMode.ABSOLUTE, 2),
-    # STY
-    0x84: ("sty", AddrMode.DIRECT, 1),
-    0x94: ("sty", AddrMode.DIRECT_X, 1),
-    0x8C: ("sty", AddrMode.ABSOLUTE, 2),
-    # STZ
-    0x64: ("stz", AddrMode.DIRECT, 1),
-    0x74: ("stz", AddrMode.DIRECT_X, 1),
-    0x9C: ("stz", AddrMode.ABSOLUTE, 2),
-    0x9E: ("stz", AddrMode.ABSOLUTE_X, 2),
-    # Transfers
-    0xAA: ("tax", AddrMode.IMPLIED, 0),
-    0xA8: ("tay", AddrMode.IMPLIED, 0),
-    0x5B: ("tcd", AddrMode.IMPLIED, 0),
-    0x1B: ("tcs", AddrMode.IMPLIED, 0),
-    0x7B: ("tdc", AddrMode.IMPLIED, 0),
-    0x3B: ("tsc", AddrMode.IMPLIED, 0),
-    0xBA: ("tsx", AddrMode.IMPLIED, 0),
-    0x8A: ("txa", AddrMode.IMPLIED, 0),
-    0x9A: ("txs", AddrMode.IMPLIED, 0),
-    0x9B: ("txy", AddrMode.IMPLIED, 0),
-    0x98: ("tya", AddrMode.IMPLIED, 0),
-    0xBB: ("tyx", AddrMode.IMPLIED, 0),
-    # TRB, TSB
-    0x14: ("trb", AddrMode.DIRECT, 1),
-    0x1C: ("trb", AddrMode.ABSOLUTE, 2),
-    0x04: ("tsb", AddrMode.DIRECT, 1),
-    0x0C: ("tsb", AddrMode.ABSOLUTE, 2),
-    # WDM (reserved)
-    0x42: ("wdm", AddrMode.IMMEDIATE_8, 1),
-    # XBA, XCE
-    0xEB: ("xba", AddrMode.IMPLIED, 0),
-    0xFB: ("xce", AddrMode.IMPLIED, 0),
+#
+# DERIVED from the assembler's `snes_opcode_table` (the single source of
+# truth); the disassembler stands on the assembler's shoulders. Each
+# assembler entry is inverted to byte -> (mnemonic, AddrMode, size) from the
+# emitter type, size slot, and index. Encode-only aliases (`jsl`/`jml`) are
+# skipped so each byte decodes to exactly one mnemonic (0x22 -> `jsr.l`,
+# 0x5C -> `jmp.l`).
+
+# (asm AddressingMode, index) -> per-size-slot (AddrMode, base_size) | None.
+_SLOT_MODES: dict[tuple["_AsmMode", str | None], list[tuple[AddrMode, int] | None]] = {
+    (_AsmMode.direct, None): [(AddrMode.DIRECT, 1), (AddrMode.ABSOLUTE, 2), (AddrMode.ABSOLUTE_LONG, 3)],
+    (_AsmMode.direct_indexed, "x"): [(AddrMode.DIRECT_X, 1), (AddrMode.ABSOLUTE_X, 2), (AddrMode.ABSOLUTE_LONG_X, 3)],
+    (_AsmMode.direct_indexed, "y"): [(AddrMode.DIRECT_Y, 1), (AddrMode.ABSOLUTE_Y, 2), None],
+    (_AsmMode.direct_indexed, "s"): [(AddrMode.STACK_REL, 1), None, None],
+    (_AsmMode.indirect, None): [(AddrMode.DIRECT_IND, 1), (AddrMode.ABSOLUTE_IND, 2), None],
+    (_AsmMode.indirect_long, None): [(AddrMode.DIRECT_IND_LONG, 1), (AddrMode.ABSOLUTE_IND_LONG, 2), None],
+    (_AsmMode.indirect_indexed, "y"): [(AddrMode.DIRECT_IND_Y, 1), None, None],
+    (_AsmMode.indirect_indexed_long, "y"): [(AddrMode.DIRECT_IND_LONG_Y, 1), None, None],
+    (_AsmMode.dp_or_sr_indirect_indexed, "x"): [(AddrMode.DIRECT_IND_X, 1), (AddrMode.ABSOLUTE_IND_X, 2), None],
+    (_AsmMode.dp_or_sr_indirect_indexed, None): [(AddrMode.DIRECT_IND_X, 1), (AddrMode.ABSOLUTE_IND_X, 2), None],
+    (_AsmMode.stack_indexed_indirect_indexed, "y"): [(AddrMode.STACK_REL_IND_Y, 1), None, None],
 }
+
+
+def _immediate_record(op: Opcode) -> tuple[AddrMode, int]:
+    if op.is_a:
+        return AddrMode.IMMEDIATE_M, -1
+    if op.is_x:
+        return AddrMode.IMMEDIATE_X, -2
+    return AddrMode.IMMEDIATE_8, 1
+
+
+def _slot_records(mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Opcode) -> list[tuple[int, AddrMode, int]]:
+    """(byte, AddrMode, size) per filled size slot of a memory-mode `Opcode`."""
+    records: list[tuple[int, AddrMode, int]] = []
+    for i, slot in enumerate(_SLOT_MODES[(asm_mode, index)]):
+        if i >= len(op.opcode_def):
+            break
+        byte = op.opcode_def[i]
+        if byte is None:
+            continue
+        assert slot is not None, f"{mnemonic} {asm_mode} slot {i} has a byte but no mode mapping"
+        records.append((byte, slot[0], slot[1]))
+    return records
+
+
+def _opcode_records(mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Opcode) -> list[tuple[int, AddrMode, int]]:
+    """(byte, AddrMode, size) records for an operand-bearing `Opcode`."""
+    if op.alias:
+        return []  # jsl/jml: encode-only, not decoded
+    if asm_mode is _AsmMode.immediate:
+        byte = op.opcode_def[0]
+        assert byte is not None
+        mode, size = _immediate_record(op)
+        return [(byte, mode, size)]
+    return _slot_records(mnemonic, asm_mode, index, op)
+
+
+def _emitter_records(
+    mnemonic: str, asm_mode: "_AsmMode", index: str | None, em: object
+) -> list[tuple[int, AddrMode, int]]:
+    """(byte, AddrMode, size) records for one emitter. Empty for encode-only aliases.
+
+    Order matters: the relative/block emitters subclass the plain ones.
+    """
+    if isinstance(em, BlockMoveOpcode):
+        return [(em.opcode, AddrMode.BLOCK_MOVE, 2)]
+    if isinstance(em, RelativeLongJumpOpcode):
+        return [(em.opcode, AddrMode.RELATIVE_LONG, 2)]
+    if isinstance(em, RelativeJumpOpcode):
+        return [(em.opcode, AddrMode.RELATIVE, 1)]
+    if isinstance(em, OpcodeWithoutOperand):
+        return [(em.opcode, AddrMode.IMPLIED, 0)]
+    if isinstance(em, Opcode):
+        return _opcode_records(mnemonic, asm_mode, index, em)
+    return []
+
+
+def _mode_records(
+    mnemonic: str, asm_mode: "_AsmMode", emitter: object
+) -> Iterator[tuple[int, AddrMode, int]]:
+    """Flatten one mnemonic+mode entry (single emitter or index dict) to records."""
+    entries = emitter.items() if isinstance(emitter, dict) else [(None, emitter)]
+    for index, em in entries:
+        yield from _emitter_records(mnemonic, asm_mode, index, em)
+
+
+def _derive_opcode_table() -> dict[int, tuple[str, AddrMode, int]]:
+    """Invert `snes_opcode_table` into the decoder's byte->instruction map."""
+    table: dict[int, tuple[str, AddrMode, int]] = {}
+    for mnemonic, modes in snes_opcode_table.items():
+        for asm_mode, emitter in modes.items():
+            for byte, mode, size in _mode_records(mnemonic, asm_mode, emitter):
+                if byte in table:
+                    raise ValueError(f"opcode 0x{byte:02x} claimed by {table[byte][0]!r} and {mnemonic!r}")
+                table[byte] = (mnemonic, mode, size)
+    return table
+
+
+OPCODE_TABLE: dict[int, tuple[str, AddrMode, int]] = _derive_opcode_table()
 
 
 class Disassembler:

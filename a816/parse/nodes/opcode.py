@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from a816.cpu.cpu_65c816 import NoOpcodeForOperandSize, guess_value_size, snes_opcode_table
+from typing import cast
+
+from a816.cpu.cpu_65c816 import BlockMoveOpcode, NoOpcodeForOperandSize, guess_value_size, snes_opcode_table
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
 from a816.diagnostics.suggest import did_you_mean_hint as _did_you_mean_hint
@@ -23,6 +25,7 @@ class OpcodeNode(NodeProtocol):
         addressing_mode: AddressingMode,
         index: str | None = None,
         value_node: ValueNodeProtocol | None = None,
+        value_node2: ValueNodeProtocol | None = None,
         file_info: Token,
         resolver: Resolver,
     ) -> None:
@@ -30,6 +33,8 @@ class OpcodeNode(NodeProtocol):
         self.addressing_mode = addressing_mode
         self.index = index
         self.value_node = value_node
+        # Second operand, block move only (`mvn src, dst`).
+        self.value_node2 = value_node2
         self.size = size
         self.file_info = file_info
         self.resolver = resolver
@@ -65,6 +70,11 @@ class OpcodeNode(NodeProtocol):
         # survives the desugar of legacy `*=` into `.alloc at`.
         self._maybe_update_register_sizes()
         opcode_emitter = self._get_emitter()
+        if self.addressing_mode is AddressingMode.block_move:
+            assert self.value_node is not None and self.value_node2 is not None
+            return cast(BlockMoveOpcode, opcode_emitter).emit_block_move(
+                self.value_node, self.value_node2, self.resolver
+            )
         try:
             return opcode_emitter.emit(self.value_node, self.resolver, self.size)
         except NoOpcodeForOperandSize as e:

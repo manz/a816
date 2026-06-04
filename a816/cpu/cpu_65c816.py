@@ -133,10 +133,14 @@ def guess_value_size(
 
 
 class Opcode(OpcodeProtocol):
-    def __init__(self, opcode_def: list[int | None], is_a: bool = False, is_x: bool = False):
+    def __init__(self, opcode_def: list[int | None], is_a: bool = False, is_x: bool = False, alias: bool = False):
         self.opcode_def = opcode_def
         self.is_a = is_a
         self.is_x = is_x
+        # `alias=True` marks an encode-only convenience entry (e.g. `jsl` ≡
+        # `jsr.l`). The disassembler's derived byte-to-instruction map skips
+        # these so each opcode byte decodes to exactly one mnemonic.
+        self.alias = alias
         self.size_opcode_map: dict[str, int] = {"b": 0, "w": 1, "l": 2}
 
     def emit_value(self, value_node: "ValueNodeProtocol", size: ValueSize) -> bytes:
@@ -217,6 +221,75 @@ class Opcode(OpcodeProtocol):
         return node_bytes
 
 
+class LongOpcode(Opcode):
+    """Always emits the 24-bit long form, regardless of inferred operand size.
+
+    `jsl` / `jml` are inherently 3-byte-operand instructions (long call / long
+    jump). Encoding them as a plain size-indexed `Opcode` would infer width from
+    the target value, so a sub-bank target (`jsl $1234`) would raise
+    `NoOpcodeForOperandSize`. Pinning the operand to `l` keeps them long.
+    """
+
+    def __init__(self, opcode: int, alias: bool = False) -> None:
+        super().__init__([None, None, opcode], alias=alias)
+
+    def emit(
+        self,
+        value_node: "ValueNodeProtocol | None",
+        resolver: "Resolver",
+        size: ValueSize | None = None,
+    ) -> bytes:
+        return super().emit(value_node, resolver, "l")
+
+    def supposed_length(
+        self,
+        value_node: "ValueNodeProtocol | None",
+        size: ValueSize | None = None,
+        resolver: "Resolver | None" = None,
+    ) -> int:
+        return super().supposed_length(value_node, "l", resolver)
+
+
+class BlockMoveOpcode(OpcodeProtocol):
+    """`mvn` / `mvp` block move: two bank operands.
+
+    Source order is `mvn srcbank, destbank`, but the encoded operand bytes are
+    REVERSED: `opcode, destbank, srcbank`. Each operand contributes its low 8
+    bits (the bank byte). Driven by `OpcodeNode` via `emit_block_move` because
+    the generic single-operand `emit` path can't carry two value nodes.
+    """
+
+    def __init__(self, opcode: int) -> None:
+        self.opcode = opcode
+
+    def emit_block_move(
+        self,
+        src_node: "ValueNodeProtocol",
+        dest_node: "ValueNodeProtocol",
+        resolver: "Resolver",
+    ) -> bytes:
+        del resolver
+        src = src_node.get_value() & 0xFF
+        dest = dest_node.get_value() & 0xFF
+        return struct.pack("BBB", self.opcode, dest, src)
+
+    def emit(
+        self,
+        value_node: "ValueNodeProtocol | None",
+        resolver: "Resolver",
+        size: ValueSize | None = None,
+    ) -> bytes:
+        raise NoOpcodeForOperandSize()  # block move is routed via emit_block_move
+
+    def supposed_length(
+        self,
+        value_node: "ValueNodeProtocol | None",
+        size: ValueSize | None = None,
+        resolver: "Resolver | None" = None,
+    ) -> int:
+        return 3
+
+
 OpcodeDef = OpcodeProtocol | dict[str, OpcodeProtocol]
 
 snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
@@ -253,20 +326,25 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.stack_indexed_indirect_indexed: {"y": Opcode([0xB3])},
     },
     "ora": {
-        AddressingMode.immediate: Opcode([0x09, 0xA9], is_a=True),
+        AddressingMode.immediate: Opcode([0x09, 0x09], is_a=True),
         AddressingMode.direct: Opcode([0x05, 0x0D, 0x0F], is_a=True),
         AddressingMode.direct_indexed: {
-            "x": Opcode([None, 0x1D, 0x1F], is_a=True),
+            "x": Opcode([0x15, 0x1D, 0x1F], is_a=True),
             "y": Opcode([None, 0x19, None], is_a=True),
             "s": Opcode([0x03]),
         },
+        AddressingMode.indirect: Opcode([0x12]),
+        AddressingMode.indirect_long: Opcode([0x07]),
+        AddressingMode.indirect_indexed: {"y": Opcode([0x11])},
         AddressingMode.indirect_indexed_long: {"y": Opcode([0x17])},
+        AddressingMode.dp_or_sr_indirect_indexed: {"x": Opcode([0x01])},
+        AddressingMode.stack_indexed_indirect_indexed: {"y": Opcode([0x13])},
     },
     "eor": {
-        AddressingMode.immediate: Opcode([0x49, 0x49]),
+        AddressingMode.immediate: Opcode([0x49, 0x49], is_a=True),
         AddressingMode.direct: Opcode([0x45, 0x4D, 0x4F]),
         AddressingMode.direct_indexed: {
-            "x": Opcode([None, 0x5D, 0x5F]),
+            "x": Opcode([0x55, 0x5D, 0x5F]),
             "y": Opcode([None, 0x59, None]),
             "s": Opcode([0x43]),
         },
@@ -292,13 +370,20 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct: Opcode([0x46, 0x4E]),
         AddressingMode.direct_indexed: {"x": Opcode([0x56, 0x5E])},
     },
-    "jsr": {AddressingMode.direct: Opcode([None, 0x20, 0x22])},
+    "jsr": {
+        AddressingMode.direct: Opcode([None, 0x20, 0x22]),
+        AddressingMode.dp_or_sr_indirect_indexed: Opcode([None, 0xFC]),
+    },
     "jmp": {
         AddressingMode.direct: Opcode([None, 0x4C, 0x5C]),
         AddressingMode.indirect: Opcode([None, 0x6C, None]),
         AddressingMode.indirect_long: Opcode([None, 0xDC, None]),
         AddressingMode.dp_or_sr_indirect_indexed: Opcode([None, 0x7C, None]),
     },
+    # jsl / jml: encode-only aliases for `jsr.l` (0x22) / `jmp.l` (0x5C).
+    # alias=True keeps them out of the disassembler's derived table.
+    "jsl": {AddressingMode.direct: LongOpcode(0x22, alias=True)},
+    "jml": {AddressingMode.direct: LongOpcode(0x5C, alias=True)},
     "inc": {
         AddressingMode.none: OpcodeWithoutOperand(0x1A),
         AddressingMode.direct: Opcode([0xE6, 0xEE]),
@@ -320,6 +405,8 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.indirect_indexed: {"y": Opcode([0x71])},
         AddressingMode.indirect_long: Opcode([0x67]),
         AddressingMode.indirect_indexed_long: {"y": Opcode([0x77])},
+        AddressingMode.dp_or_sr_indirect_indexed: {"x": Opcode([0x61])},
+        AddressingMode.stack_indexed_indirect_indexed: {"y": Opcode([0x73])},
     },
     "and": {
         AddressingMode.immediate: Opcode([0x29, 0x29], is_a=True),
@@ -327,11 +414,14 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {
             "x": Opcode([0x35, 0x3D, 0x3F]),
             "y": Opcode([None, 0x39, None]),
+            "s": Opcode([0x23]),
         },
         AddressingMode.indirect: Opcode([0x32]),
         AddressingMode.indirect_indexed: {"y": Opcode([0x31])},
         AddressingMode.indirect_long: Opcode([0x27]),
         AddressingMode.indirect_indexed_long: {"y": Opcode([0x37])},
+        AddressingMode.dp_or_sr_indirect_indexed: {"x": Opcode([0x21])},
+        AddressingMode.stack_indexed_indirect_indexed: {"y": Opcode([0x33])},
     },
     "asl": {
         AddressingMode.none: OpcodeWithoutOperand(0x0A),
@@ -351,6 +441,8 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "bpl": {AddressingMode.direct: RelativeJumpOpcode(0x10)},
     "bra": {AddressingMode.direct: RelativeJumpOpcode(0x80)},
     "brl": {AddressingMode.direct: RelativeLongJumpOpcode(0x82)},
+    "bvc": {AddressingMode.direct: RelativeJumpOpcode(0x50)},
+    "bvs": {AddressingMode.direct: RelativeJumpOpcode(0x70)},
     # BRK / COP / WDM are 2-byte instructions on 65816: opcode + a
     # signature byte the handler reads off the stack (PC pushed is the
     # instruction + 2). Force callers to supply the signature so the
@@ -358,6 +450,8 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "brk": {AddressingMode.immediate: Opcode([0x00])},
     "cop": {AddressingMode.immediate: Opcode([0x02])},
     "wdm": {AddressingMode.immediate: Opcode([0x42])},
+    "mvn": {AddressingMode.block_move: BlockMoveOpcode(0x54)},
+    "mvp": {AddressingMode.block_move: BlockMoveOpcode(0x44)},
     "clc": {AddressingMode.none: OpcodeWithoutOperand(0x18)},
     "cld": {AddressingMode.none: OpcodeWithoutOperand(0xD8)},
     "cli": {AddressingMode.none: OpcodeWithoutOperand(0x58)},
@@ -366,13 +460,20 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.immediate: Opcode([0xC9, 0xC9], is_a=True),
         AddressingMode.direct: Opcode([0xC5, 0xCD, 0xCF], is_a=True),
         AddressingMode.direct_indexed: {
-            "x": Opcode([None, 0xDD, 0xDF], is_a=True),
+            "x": Opcode([0xD5, 0xDD, 0xDF], is_a=True),
             "y": Opcode([None, 0xD9, None], is_a=True),
             "s": Opcode([0xC3]),
         },
+        AddressingMode.indirect: Opcode([0xD2]),
+        AddressingMode.indirect_long: Opcode([0xC7]),
+        AddressingMode.indirect_indexed: {"y": Opcode([0xD1])},
+        AddressingMode.indirect_indexed_long: {"y": Opcode([0xD7])},
+        AddressingMode.dp_or_sr_indirect_indexed: {"x": Opcode([0xC1])},
+        AddressingMode.stack_indexed_indirect_indexed: {"y": Opcode([0xD3])},
     },
     "pea": {AddressingMode.direct: Opcode([None, 0xF4])},
     "pei": {AddressingMode.indirect: Opcode([0xD4])},
+    "per": {AddressingMode.direct: RelativeLongJumpOpcode(0x62)},
     "pha": {AddressingMode.none: OpcodeWithoutOperand(0x48)},
     "pla": {AddressingMode.none: OpcodeWithoutOperand(0x68)},
     "phy": {AddressingMode.none: OpcodeWithoutOperand(0x5A)},
@@ -410,8 +511,11 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
             "s": Opcode([0xE3]),
         },
         AddressingMode.indirect: Opcode([0xF2]),
+        AddressingMode.indirect_long: Opcode([0xE7]),
         AddressingMode.indirect_indexed: {"y": Opcode([0xF1])},
         AddressingMode.indirect_indexed_long: {"y": Opcode([0xF7])},
+        AddressingMode.dp_or_sr_indirect_indexed: {"x": Opcode([0xE1])},
+        AddressingMode.stack_indexed_indirect_indexed: {"y": Opcode([0xF3])},
     },
     "sec": {AddressingMode.none: OpcodeWithoutOperand(0x38)},
     "sed": {AddressingMode.none: OpcodeWithoutOperand(0xF8)},
@@ -428,6 +532,8 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
             "y": Opcode([None, 0x99, None]),
             "s": Opcode([0x83]),
         },
+        AddressingMode.dp_or_sr_indirect_indexed: {"x": Opcode([0x81])},
+        AddressingMode.stack_indexed_indirect_indexed: {"y": Opcode([0x93])},
     },
     "stx": {
         AddressingMode.direct: Opcode([0x86, 0x8E]),

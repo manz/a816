@@ -30,6 +30,7 @@ class AddressingMode(Enum):
     indirect_indexed_long = 7
     dp_or_sr_indirect_indexed = 8
     stack_indexed_indirect_indexed = 9
+    block_move = 10  # mvn / mvp: two bank operands
 
 
 # Type alias for operand size hints

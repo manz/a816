@@ -62,6 +62,18 @@ def generate_opcode(
     mode = node.addressing_mode
     if mode == AddressingMode.none:
         code.append(OpcodeNode(opcode, addressing_mode=mode, file_info=file_info, resolver=resolver))
+    elif mode == AddressingMode.block_move:
+        assert node.operand is not None and node.operand2 is not None
+        code.append(
+            OpcodeNode(
+                opcode,
+                addressing_mode=mode,
+                value_node=ExpressionNode(node.operand, resolver, file_info),
+                value_node2=ExpressionNode(node.operand2, resolver, file_info),
+                file_info=file_info,
+                resolver=resolver,
+            )
+        )
     else:
         operand = node.operand
         assert operand is not None
