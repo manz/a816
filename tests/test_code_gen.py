@@ -80,6 +80,32 @@ class CodeGenTest(unittest.TestCase):
                 assert isinstance(node, OpcodeNode)
                 self.assertEqual(node.emit(program.resolver.reloc_address), expected)
 
+    def test_alu_immediate_opcodes_under_a16(self) -> None:
+        """16-bit immediate ALU opcodes must each use their own opcode.
+
+        Regression: `ora #imm` under .a16 was mis-encoded as `$A9` (LDA),
+        copy-pasted from the lda row, so `ora #0x2000` silently became
+        `lda #0x2000` (replace instead of OR). Pin the whole family.
+        """
+        cases = {
+            "ora": b"\x09\x00\x20",
+            "and": b"\x29\x00\x20",
+            "eor": b"\x49\x00\x20",
+            "adc": b"\x69\x00\x20",
+            "sbc": b"\xe9\x00\x20",
+            "lda": b"\xa9\x00\x20",
+            "cmp": b"\xc9\x00\x20",
+        }
+        for opcode, expected in cases.items():
+            with self.subTest(opcode=opcode):
+                program = Program()
+                _, nodes = program.parser.parse(f"{opcode} #0x2000")
+                program.resolve_labels(nodes)
+                program.resolver.a_size = 16
+                node = nodes[-1]
+                assert isinstance(node, OpcodeNode)
+                self.assertEqual(node.emit(program.resolver.reloc_address), expected)
+
     def test_ateq_reslove(self) -> None:
         program = Program()
         program.resolve_labels(

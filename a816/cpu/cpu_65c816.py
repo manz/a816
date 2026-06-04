@@ -253,7 +253,7 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.stack_indexed_indirect_indexed: {"y": Opcode([0xB3])},
     },
     "ora": {
-        AddressingMode.immediate: Opcode([0x09, 0xA9], is_a=True),
+        AddressingMode.immediate: Opcode([0x09, 0x09], is_a=True),
         AddressingMode.direct: Opcode([0x05, 0x0D, 0x0F], is_a=True),
         AddressingMode.direct_indexed: {
             "x": Opcode([None, 0x1D, 0x1F], is_a=True),
