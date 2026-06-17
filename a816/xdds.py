@@ -355,9 +355,11 @@ def make_rom_data_provider(rom_bytes: bytes, bus: Bus) -> Callable[[int, int], b
     """
 
     def provide(logical_addr: int, length: int) -> bytes:
+        from a816.exceptions import UnmappedBankError
+
         try:
             physical = bus.get_address(logical_addr).physical
-        except KeyError:
+        except (KeyError, UnmappedBankError):
             return b""
         if physical is None:
             return b""

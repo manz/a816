@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from a816.program import Program
 
+from a816.exceptions import A816Error
 from a816.linker import Linker
 from a816.module_loader import resolve_module
 from a816.object_file import ObjectFile
@@ -440,6 +441,10 @@ def build_with_imports(
         )
 
     except Exception as e:
-        logger.error(f"Build failed: {e}")  # NOSONAR python:S8572
+        # A816Error subclasses carry a `format()` that renders a source-located,
+        # human-readable diagnostic; prefer it over the bare `str()` so the
+        # build output is actionable rather than e.g. `Build failed: 252`.
+        formatted = e.format() if isinstance(e, A816Error) and hasattr(e, "format") else str(e)
+        logger.error(f"Build failed: {formatted}")  # NOSONAR python:S8572
         logger.debug("Build traceback", exc_info=True)
-        return BuildResult(exit_code=1, diagnostics=[str(e)])
+        return BuildResult(exit_code=1, diagnostics=[formatted])

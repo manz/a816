@@ -177,6 +177,62 @@ class ExpressionEvaluationError(LinkerError):
 
 
 # =============================================================================
+# Bus / Mapping Errors
+# =============================================================================
+
+
+class UnmappedBankError(A816Error):
+    """Raised when an address lands in a bank no `.map` region covers.
+
+    The bus `lookup` table only carries banks declared by a `.map`
+    directive (or the rom_type's default mapping). A `.pool` / `.alloc` /
+    `*=` placing code or data at an unmapped bank used to surface as a bare
+    `KeyError: <bank>` deep in the traceback - useless to anyone reading the
+    build output. This carries the bank, the banks that *are* mapped, and an
+    optional source location so the diagnostic points at the offending
+    construct.
+    """
+
+    def __init__(
+        self,
+        bank: int,
+        logical_address: int | None = None,
+        mapped_banks: list[int] | None = None,
+    ) -> None:
+        self.bank = bank
+        self.logical_address = logical_address
+        self.mapped_banks = sorted(mapped_banks) if mapped_banks else []
+        super().__init__(f"bank ${bank:02X} is not covered by any `.map` region")
+
+    @staticmethod
+    def _format_ranges(banks: list[int]) -> str:
+        """Collapse a sorted bank list into contiguous `$xx-$yy` ranges."""
+        if not banks:
+            return "(none)"
+        ranges: list[str] = []
+        start = prev = banks[0]
+        for bank in banks[1:]:
+            if bank == prev + 1:
+                prev = bank
+                continue
+            ranges.append(f"${start:02X}" if start == prev else f"${start:02X}-${prev:02X}")
+            start = prev = bank
+        ranges.append(f"${start:02X}" if start == prev else f"${start:02X}-${prev:02X}")
+        return ", ".join(ranges)
+
+    def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.errors import format_error_simple
+
+        details: list[tuple[str, str]] = [("bank", f"${self.bank:02X}")]
+        if self.logical_address is not None:
+            details.append(("address", f"${self.logical_address:06X}"))
+        details.append(("mapped banks", self._format_ranges(self.mapped_banks)))
+        message = f"bank ${self.bank:02X} is not covered by any `.map` region (and is not backed by the configured ROM)"
+        return format_error_simple("error", message, details=details)
+
+
+# =============================================================================
 # CPU/Opcode Errors
 # =============================================================================
 

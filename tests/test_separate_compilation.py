@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from a816.exceptions import UnresolvedSymbolError
+from a816.exceptions import UnmappedBankError, UnresolvedSymbolError
 from a816.linker import Linker
 from a816.object_file import ObjectFile, SymbolType
 from a816.program import Program
@@ -576,8 +576,9 @@ helper:
 
         program = Program()
 
-        # Address with no physical mapping should raise KeyError (unmapped bank)
-        with pytest.raises(KeyError):
+        # An address in a bank no `.map` covers raises a clear UnmappedBankError,
+        # not the bare KeyError that used to leak from the bus lookup.
+        with pytest.raises(UnmappedBankError, match=r"bank \$FF"):
             program.get_physical_address(0xFFFFFF)
 
     def test_link_as_patch_empty_code(self) -> None:

@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from a816.config import discover_a816_config
-from a816.exceptions import LinkerError
+from a816.exceptions import A816Error, LinkerError
 from a816.linker import Linker
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
@@ -295,6 +295,14 @@ def cli_main() -> None:
         sys.exit(1)
     except NodeError as e:
         print(e.format(), file=sys.stderr)
+        sys.exit(1)
+    except A816Error as e:
+        # Other assembler errors (e.g. UnmappedBankError) carry their own
+        # `format()`; fall back to a simple render if a subclass lacks one.
+        from a816.errors import format_error_simple
+
+        message = e.format() if hasattr(e, "format") else format_error_simple("error", str(e))
+        print(message, file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         from a816.errors import format_error_simple
