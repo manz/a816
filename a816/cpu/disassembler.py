@@ -250,7 +250,9 @@ def _immediate_record(op: Opcode) -> tuple[AddrMode, int]:
     return AddrMode.IMMEDIATE_8, 1
 
 
-def _slot_records(mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Opcode) -> list[tuple[int, AddrMode, int]]:
+def _slot_records(
+    mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Opcode
+) -> list[tuple[int, AddrMode, int]]:
     """(byte, AddrMode, size) per filled size slot of a memory-mode `Opcode`."""
     records: list[tuple[int, AddrMode, int]] = []
     for i, slot in enumerate(_SLOT_MODES[(asm_mode, index)]):
@@ -264,7 +266,9 @@ def _slot_records(mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Op
     return records
 
 
-def _opcode_records(mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Opcode) -> list[tuple[int, AddrMode, int]]:
+def _opcode_records(
+    mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Opcode
+) -> list[tuple[int, AddrMode, int]]:
     """(byte, AddrMode, size) records for an operand-bearing `Opcode`."""
     if op.alias:
         return []  # jsl/jml: encode-only, not decoded
@@ -296,9 +300,7 @@ def _emitter_records(
     return []
 
 
-def _mode_records(
-    mnemonic: str, asm_mode: "_AsmMode", emitter: object
-) -> Iterator[tuple[int, AddrMode, int]]:
+def _mode_records(mnemonic: str, asm_mode: "_AsmMode", emitter: object) -> Iterator[tuple[int, AddrMode, int]]:
     """Flatten one mnemonic+mode entry (single emitter or index dict) to records."""
     entries = emitter.items() if isinstance(emitter, dict) else [(None, emitter)]
     for index, em in entries:
