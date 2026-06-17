@@ -12,18 +12,20 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "kintsuki" },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "lsprotocol" },
-    { name = "pygls" },
+    { name = "lsprotocol", specifier = ">=2025.0.0,<2026" },
+    { name = "pygls", specifier = ">=2.1.1,<3" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "kintsuki", specifier = ">=0.0.0a14" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
 ]
@@ -200,6 +202,15 @@ wheels = [
 ]
 
 [[package]]
+name = "kintsuki"
+version = "0.0.0a14"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/dc/7d8178ba8beb53fe9b139d8a8eb75268dadd5e4a90e708e6ff248863bf32/kintsuki-0.0.0a14-py3-none-macosx_11_0_arm64.whl", hash = "sha256:cc608cf831890fec028301358b81a7524b3e18c009aecfbe83d35c1b9f15e418", size = 822166, upload-time = "2026-05-22T06:51:27.732Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/b2/7bdc4e08511ace748548c595e43637e63613b37ba66713a5abb77d730828/kintsuki-0.0.0a14-py3-none-manylinux_2_39_aarch64.whl", hash = "sha256:29224cf73e06f27d8f85c3daf7f1ef980c8a5b86506bc06f52ff5daaef311ab3", size = 762081, upload-time = "2026-05-22T06:51:29.513Z" },
+]
+
+[[package]]
 name = "lsprotocol"
 version = "2025.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -232,16 +243,16 @@ wheels = [
 
 [[package]]
 name = "pygls"
-version = "2.0.1"
+version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "cattrs" },
     { name = "lsprotocol" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1b/94/cce3560f6c7296be43bd67ba342f8972b8adddfe407b62b25d1fb90c514b/pygls-2.0.1.tar.gz", hash = "sha256:2f774a669fbe2ece977d302786f01f9b0c5df7d0204ea0fa371ecb08288d6b86", size = 55796, upload-time = "2026-01-26T23:04:33.8Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/2e/7bbe061d175c0baddde8fc9edb908a4c31ba5d9165b8c68e3439c3a9f138/pygls-2.1.1.tar.gz", hash = "sha256:1da03ba9053201bb337dcdd8d121df70feb2a91e1a0dcc74de5da79755b1a201", size = 55091, upload-time = "2026-03-25T11:19:10.541Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/8b/d0d7e51f928ec6e555c943f7c07a712b992e9cf061d52cbf37fbf8622c05/pygls-2.0.1-py3-none-any.whl", hash = "sha256:d29748042cea5bedc98285eb3e2c0c60bf3fc73786319519001bf72bbe8f36cc", size = 69536, upload-time = "2026-01-26T23:04:35.197Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/1a/208293b6c350f5abea6941d5606080d4a492644052504f5312e5de30a902/pygls-2.1.1-py3-none-any.whl", hash = "sha256:510a6dea2476177230c7d851125e5948efdf3fdb9ebfd8543fc434972f8faed4", size = 68975, upload-time = "2026-03-25T11:19:11.374Z" },
 ]
 
 [[package]]
