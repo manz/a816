@@ -165,7 +165,10 @@ def generate_alloc(
 ) -> GenNodes:
     from a816.parse.nodes import AllocNode, PopScopeNode, ScopeNode
 
-    if node.is_pinned:
+    pinned_addr: int | None = None
+    if node.is_pinned and node.pool_name is None:
+        # `.alloc at ADDR { body }`: synthesize a per-location pool that the
+        # body floats into (the pool's single range starts at ADDR).
         pool_name = _synthesize_pinned_pool(node, resolver, file_info)
         alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
     else:
@@ -173,6 +176,11 @@ def generate_alloc(
             raise NodeError(f"alloc into unknown pool {node.pool_name!r}", file_info)
         pool_name = node.pool_name
         alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
+        if node.is_pinned and node.at_address is not None:
+            # `.reserve NAME SIZE at ADDR in POOL`: pin the slot at ADDR
+            # inside the existing (named) pool; the allocator validates the
+            # span is in-range and overlap-free rather than choosing it.
+            pinned_addr = _eval_int(node.at_address, resolver, file_info)
 
     _reject_nested_placement(node)
     # Open an AllocBodyScope around the body so per-block underscore
@@ -187,7 +195,7 @@ def generate_alloc(
     body_nodes += _code_gen(node.body.body, resolver, macro_definitions)
     body_nodes.append(PopScopeNode(resolver, exports=True))
     resolver.restore_scope(exports=True)
-    return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info)]
+    return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info, pinned_addr=pinned_addr)]
 
 
 def generate_reserve_typed(

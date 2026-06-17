@@ -111,7 +111,8 @@ class Linker:
                 key = (req.pool_name, req.symbol_name)
                 alloc_obj = first_placed.get(key)
                 if alloc_obj is None:
-                    alloc_obj = pool.request(req.symbol_name, req.size)
+                    pinned = req.pinned_addr if req.pinned_addr >= 0 else None
+                    alloc_obj = pool.request(req.symbol_name, req.size, pinned)
                     first_placed[key] = alloc_obj
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
         for pool in merged.values():
@@ -126,10 +127,21 @@ class Linker:
         own delta, not by the module's relocation.
         """
         for local_idx, section in enumerate(obj_file.sections):
-            if (obj_idx, local_idx) not in self._pool_section_deltas:
+            key = (obj_idx, local_idx)
+            if key not in self._pool_section_deltas:
                 continue
-            if section.placed_base <= address < section.placed_base + len(section.code):
-                return self._pool_section_deltas[(obj_idx, local_idx)]
+            # Byte-less (bss/reserve) sections carry no code, so `len(code)`
+            # is 0 and an address-range check against the emitted bytes never
+            # matches. Use the allocation's reserved size for the span so a
+            # reserved symbol still picks up its section delta, required once
+            # a pinned reserve shifts a pool's final addresses away from the
+            # sequential sandbox bases.
+            alloc = getattr(self, "_section_pool_alloc", {}).get(key)
+            span = len(section.code)
+            if alloc is not None:
+                span = max(span, getattr(alloc, "size", 0))
+            if section.placed_base <= address < section.placed_base + span:
+                return self._pool_section_deltas[key]
         return None
 
     @staticmethod

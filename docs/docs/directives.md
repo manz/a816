@@ -405,6 +405,31 @@ legacy `*=` shape).
 Overlap with any other pinned region (legacy `*=` included) trips
 the overlap auditor with both locations named.
 
+### `.reserve NAME SIZE [at ADDR] in POOL`
+
+Byte-less reservation into a (typically `bss`) pool; lays out a RAM/VRAM
+variable flat, no wrapper `.alloc` block. `NAME` binds at the reserved
+address; nothing is emitted into the image.
+
+* `.reserve NAME SIZE in POOL`: the allocator picks the address.
+* `.reserve NAME SIZE at ADDR in POOL`: pins the slot at `ADDR`. The
+  allocator validates the span lies within a pool range and overlaps no
+  other allocation (pinned or floating), then carves it out. Use for fixed
+  memory maps (VRAM, MMIO mirrors) where the address is the contract but
+  you still want overlap checking across the whole layout.
+* `.reserve NAME as TYPE in POOL`: reserves `sizeof(TYPE)` and publishes
+  `NAME.<field>` at each struct offset.
+
+```ca65
+.pool vram { bss  range 0x0000 0x7fff  strategy order }
+.reserve bg_char 0x2000 at 0x1000 in vram   ; pinned VRAM word
+.reserve bg1_map 0x0800 at 0x6800 in vram
+.reserve scratch 0x0040           in vram   ; allocator picks a free hole
+```
+
+Pinned spans that fall outside the pool or collide with another allocation
+fail the build, naming the offending reservation.
+
 ### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
 
 Moves `SYMBOL` from `[OLD_START, OLD_END]` into the pool — old range

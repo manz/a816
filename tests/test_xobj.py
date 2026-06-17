@@ -31,7 +31,7 @@ def test_summary_default(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert rc == 0
     assert "sections: 1" in captured.out
     assert "symbols: 1" in captured.out
-    assert "version: 11" in captured.out
+    assert "version: 12" in captured.out
 
 
 def test_json_roundtrip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -40,7 +40,7 @@ def test_json_roundtrip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     captured = capsys.readouterr()
     assert rc == 0
     data = json.loads(captured.out)
-    assert data["version"] == 11
+    assert data["version"] == 12
     assert data["sections"][0]["base_address"] == 0x008000
     assert bytes.fromhex(data["sections"][0]["code"]) == b"\xea\xea"
     assert data["symbols"][0]["type"] == "GLOBAL"

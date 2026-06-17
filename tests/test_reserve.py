@@ -142,6 +142,58 @@ def test_flat_reserve_binds_symbols() -> None:
         assert all(s.code == b"" for s in linked.sections if s.bss)
 
 
+def test_pinned_reserve_binds_at_fixed_address() -> None:
+    """`.reserve NAME SIZE at ADDR in POOL` pins the slot at ADDR, leaving the
+    surrounding pool free for the allocator. Models fixed memory maps (VRAM/MMIO)
+    where the address is the contract, not the allocator's choice."""
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "m.s"
+        asm.write_text(
+            _PREAMBLE
+            + ".reserve tilemap  0x800 at 0x7e1000 in wram\n"
+            + ".reserve charbase 0x400 at 0x7e0200 in wram\n"
+            + ".reserve floating 0x10        in wram\n"
+        )
+        obj = Path(tmp) / "m.o"
+        assert Program().assemble_as_object(str(asm), obj) == 0
+        linked = Linker([ObjectFile.from_file(str(obj))]).link(base_address=0x8000)
+        syms = _symbols(linked)
+        assert syms["tilemap"] == 0x7E1000
+        assert syms["charbase"] == 0x7E0200
+        # Floating alloc lands in free space, clear of both pinned spans.
+        assert syms["floating"] == 0x7E0000
+        assert all(s.code == b"" for s in linked.sections if s.bss)
+
+
+def test_pinned_reserve_overlap_is_rejected() -> None:
+    """Two pinned spans that collide fail the build (overlap check)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "m.s"
+        asm.write_text(_PREAMBLE + ".reserve a 0x100 at 0x7e0000 in wram\n" + ".reserve b 0x100 at 0x7e0080 in wram\n")
+        obj = Path(tmp) / "m.o"
+        assert Program().assemble_as_object(str(asm), obj) == 0
+        # Overlap surfaces at link (allocator) time.
+        try:
+            Linker([ObjectFile.from_file(str(obj))]).link(base_address=0x8000)
+        except Exception:  # PoolOverlapError, wrapped or direct
+            return
+        raise AssertionError("expected overlap rejection for colliding pinned reserves")
+
+
+def test_pinned_reserve_out_of_range_is_rejected() -> None:
+    """A pin outside the pool's ranges fails the build."""
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "m.s"
+        asm.write_text(_PREAMBLE + ".reserve x 0x10 at 0x7e9000 in wram\n")
+        obj = Path(tmp) / "m.o"
+        assert Program().assemble_as_object(str(asm), obj) == 0
+        try:
+            Linker([ObjectFile.from_file(str(obj))]).link(base_address=0x8000)
+        except Exception:
+            return
+        raise AssertionError("expected out-of-range rejection for pinned reserve")
+
+
 _STRUCT = """
 .struct GameState {
     word score

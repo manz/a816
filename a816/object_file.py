@@ -111,11 +111,15 @@ class PoolAlloc:
     symbol_name: str
     section_idx: int
     size: int
+    pinned_addr: int = -1
+    """Fixed address for a `.reserve NAME SIZE at ADDR in POOL` request; -1
+    when the allocator is free to pick. Round-trips so the linker honors the
+    pin across modules."""
 
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x000B  # Version 11: PoolDecl carries the bss flag (round-trips through import).
+    VERSION = 0x000C  # Version 12: PoolAlloc carries pinned_addr (fixed-address reserves).
 
     def __init__(
         self,
@@ -227,7 +231,7 @@ class ObjectFile:
             f.write(pool_bytes)
             f.write(struct.pack("<B", len(sym_bytes)))
             f.write(sym_bytes)
-            f.write(struct.pack("<II", alloc.section_idx, alloc.size))
+            f.write(struct.pack("<IIi", alloc.section_idx, alloc.size, alloc.pinned_addr))
 
     def _write_bus_mappings(self, f: IO[bytes]) -> None:
         f.write(struct.pack("<H", len(self.bus_mappings)))
@@ -429,8 +433,16 @@ class ObjectFile:
             pool_name = f.read(pool_len).decode("utf-8")
             (sym_len,) = struct.unpack("<B", f.read(1))
             sym_name = f.read(sym_len).decode("utf-8")
-            section_idx, size = struct.unpack("<II", f.read(8))
-            out.append(PoolAlloc(pool_name=pool_name, symbol_name=sym_name, section_idx=section_idx, size=size))
+            section_idx, size, pinned_addr = struct.unpack("<IIi", f.read(12))
+            out.append(
+                PoolAlloc(
+                    pool_name=pool_name,
+                    symbol_name=sym_name,
+                    section_idx=section_idx,
+                    size=size,
+                    pinned_addr=pinned_addr,
+                )
+            )
         return out
 
     @staticmethod

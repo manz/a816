@@ -126,6 +126,7 @@ class ObjectEmitMixin:
                 symbol_name=node.name,
                 section_idx=actual_idx,
                 size=node._size,
+                pinned_addr=node.pinned_addr if node.pinned_addr is not None else -1,
             )
         )
 
