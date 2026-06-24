@@ -8,11 +8,11 @@ jobs:
     name: Publish wheel to PyPI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Setup Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Install hatch
         run: pip install -r requirements.txt
       - name: Publish wheel
@@ -26,11 +26,11 @@ jobs:
     name: Build Windows binary and create GitHub release
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Setup Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Install hatch
         run: pip install -r requirements.txt
       - name: Build binary and publish release
