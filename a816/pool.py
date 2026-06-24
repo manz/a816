@@ -62,6 +62,17 @@ class Allocation:
     name: str
     size: int
     addr: int = -1
+    pinned_addr: int = -1
+    """Fixed-address request (`.reserve NAME SIZE at ADDR in POOL`): the
+    allocator places this span *at* `pinned_addr` (validating it lies within
+    a pool range and overlaps nothing else, then carving it) before floating
+    allocations are placed. Kept separate from `addr` so `placed` stays False
+    until `allocate()` runs (object mode binds body labels at the sandbox base
+    uniformly and lets the linker apply the final address)."""
+
+    @property
+    def pinned(self) -> bool:
+        return self.pinned_addr >= 0
 
     @property
     def placed(self) -> bool:
@@ -86,12 +97,15 @@ class Pool:
             raise PoolError(f"fill byte 0x{self.fill:x} out of range")
         self.ranges = _normalize_ranges(self.ranges)
 
-    def request(self, name: str, size: int) -> Allocation:
+    def request(self, name: str, size: int, addr: int | None = None) -> Allocation:
         if size <= 0:
             raise PoolError(f"alloc '{name}' has non-positive size {size}")
         if self._allocated:
             raise PoolError(f"pool '{self.name}' already allocated; cannot request more")
-        alloc = Allocation(name=name, size=size)
+        if addr is not None:
+            alloc = Allocation(name=name, size=size, pinned_addr=addr)
+        else:
+            alloc = Allocation(name=name, size=size)
         self.allocations.append(alloc)
         return alloc
 
@@ -109,16 +123,31 @@ class Pool:
     def allocate(self) -> None:
         if self._allocated:
             return
-        order = _sort_allocations(self.allocations, self.strategy)
+        pinned = [a for a in self.allocations if a.pinned]
+        floating = [a for a in self.allocations if not a.pinned]
+        order = _sort_allocations(floating, self.strategy)
         free = list(self.ranges)
         total = sum(r.size for r in self.ranges)
         logger.info(
-            "pool %s: %d alloc(s) into %d range(s) totaling %d bytes",
+            "pool %s: %d pinned + %d floating alloc(s) into %d range(s) totaling %d bytes",
             self.name,
+            len(pinned),
             len(order),
             len(self.ranges),
             total,
         )
+        for alloc in sorted(pinned, key=lambda a: a.pinned_addr):
+            alloc.addr = alloc.pinned_addr
+            free = _carve(alloc, free, self.ranges, self.name)
+            free_total = sum(r.size for r in free)
+            logger.info(
+                "  pinned %s size %d at 0x%06x  (free: %d bytes across %d range(s))",
+                alloc.name,
+                alloc.size,
+                alloc.addr,
+                free_total,
+                len(free),
+            )
         for alloc in order:
             free = _place(alloc, free)
             free_total = sum(r.size for r in free)
@@ -205,6 +234,33 @@ def _place(alloc: Allocation, free: list[PoolRange]) -> list[PoolRange]:
             alloc.addr = chunk.start
             return _shrink_chunk(free, idx, alloc.size)
     raise PoolOverflowError(f"alloc '{alloc.name}' size {alloc.size} does not fit in any free chunk")
+
+
+def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:
+    span_start = alloc.addr
+    span_end = alloc.addr + alloc.size - 1
+    for idx, chunk in enumerate(free):
+        if span_start < chunk.start or span_end > chunk.end:
+            continue
+        # span fits wholly inside this free chunk: split off head + tail.
+        out: list[PoolRange] = list(free[:idx])
+        if span_start > chunk.start:
+            out.append(PoolRange(start=chunk.start, end=span_start - 1, allow_bank_cross=chunk.allow_bank_cross))
+        if span_end < chunk.end:
+            out.append(PoolRange(start=span_end + 1, end=chunk.end, allow_bank_cross=chunk.allow_bank_cross))
+        out.extend(free[idx + 1 :])
+        return out
+    # No free chunk contains the span. If a declared pool range does contain it,
+    # the conflict is with another (already-carved) allocation; otherwise the
+    # address simply lies outside the pool.
+    if any(r.start <= span_start and span_end <= r.end for r in ranges):
+        raise PoolOverlapError(
+            f"pinned alloc '{alloc.name}' 0x{span_start:06x}..0x{span_end:06x} "
+            f"overlaps another allocation in pool '{pool_name}'"
+        )
+    raise PoolInvalidRangeError(
+        f"pinned alloc '{alloc.name}' 0x{span_start:06x}..0x{span_end:06x} is outside the ranges of pool '{pool_name}'"
+    )
 
 
 def _shrink_chunk(free: list[PoolRange], idx: int, used: int) -> list[PoolRange]:

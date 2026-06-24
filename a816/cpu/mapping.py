@@ -42,7 +42,12 @@ class Bus:
         return self.mappings != {}
 
     def get_mapping_for_bank(self, bank: int) -> Mapping:
-        return self.mappings[self.lookup[bank]]
+        try:
+            return self.mappings[self.lookup[bank]]
+        except KeyError as exc:
+            from a816.exceptions import UnmappedBankError
+
+            raise UnmappedBankError(bank, mapped_banks=list(self.lookup.keys())) from exc
 
     def map(
         self,
@@ -92,7 +97,15 @@ class Address:
         return self.logical_value >> 16
 
     def _get_mapping(self) -> Mapping:
-        return self.bus.get_mapping_for_bank(self._get_bank())
+        from a816.exceptions import UnmappedBankError
+
+        try:
+            return self.bus.get_mapping_for_bank(self._get_bank())
+        except UnmappedBankError as exc:
+            # Re-raise with the full logical address so the diagnostic can show
+            # the offending `$xxyyzz`, not just the bank byte.
+            exc.logical_address = self.logical_value
+            raise
 
     @property
     def physical(self) -> int | None:

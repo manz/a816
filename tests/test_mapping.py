@@ -1,6 +1,7 @@
 import unittest
 
 from a816.cpu.mapping import Bus
+from a816.exceptions import UnmappedBankError
 
 # mapping.yml
 #   rom name=program.rom size=0x180000
@@ -77,3 +78,32 @@ class MappingTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             _ = rom_address + "coin"
+
+    def test_unmapped_bank_raises_clear_error(self) -> None:
+        # Bank $FC is outside every mapped range; the bus must raise a clear
+        # UnmappedBankError, not the bare KeyError that used to leak out.
+        with self.assertRaises(UnmappedBankError) as ctx:
+            self.bus.get_mapping_for_bank(0xFC)
+        self.assertEqual(ctx.exception.bank, 0xFC)
+
+    def test_unmapped_bank_via_get_address_carries_logical_address(self) -> None:
+        # Going through `get_address` attaches the full logical address so the
+        # diagnostic can show `$FC8000`, not just the bank byte.
+        with self.assertRaises(UnmappedBankError) as ctx:
+            self.bus.get_address(0xFC8000)
+        self.assertEqual(ctx.exception.bank, 0xFC)
+        self.assertEqual(ctx.exception.logical_address, 0xFC8000)
+
+    def test_unmapped_bank_error_message_lists_mapped_ranges(self) -> None:
+        try:
+            self.bus.get_address(0xFC0000)
+        except UnmappedBankError as exc:
+            rendered = exc.format()
+            self.assertIn("$FC", rendered)
+            self.assertIn("$FC0000", rendered)
+            # Mapped ranges collapse into contiguous spans (ram $7E-$7F is
+            # adjacent to the rom mirror $80-$CF, so they merge to $7E-$CF).
+            self.assertIn("$00-$6F", rendered)
+            self.assertIn("$7E-$CF", rendered)
+        else:  # pragma: no cover - guard against silent regression
+            self.fail("expected UnmappedBankError")

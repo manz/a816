@@ -516,7 +516,13 @@ class Resolver:
         # index so each alloc's private label exports (and relocates)
         # under a distinct name.
         if isinstance(scope, AllocBodyScope):
-            if name.startswith("_") and mangle_nested and idx > 0:
+            # Private (underscore) labels are local to THIS alloc body; mangle them
+            # to a per-scope-index name so two allocs' `_loop`/`_done` don't collide
+            # as bare globals in the flat link table (a wild, layout-dependent
+            # branch). The index-0 alloc is NOT exempt: an alloc can legitimately be
+            # scope index 0 in its module, and skipping it leaked bare privates that
+            # collided across modules (boot crash). Include idx 0.
+            if name.startswith("_") and mangle_nested:
                 return f"__sc{idx}__{name}"
             return name
         if mangle_nested and idx > 0 and not isinstance(scope, NamedScope):
@@ -533,7 +539,11 @@ class Resolver:
         names pass through unchanged so externs and root labels are untouched.
         """
         owner = self.current_scope.find_label_scope(name)
-        if owner is None or owner is self.scopes[0]:
+        # Root-owned (scopes[0]) and unknown/extern names pass through bare - EXCEPT
+        # when scopes[0] is itself an AllocBodyScope: its private labels must still
+        # mangle (mirrors _export_name including idx 0), else a reference binds bare
+        # while the definition exports `__sc0__name`.
+        if owner is None or (owner is self.scopes[0] and not isinstance(owner, AllocBodyScope)):
             return name
         return self._export_name(name, owner, self.scopes.index(owner), mangle_nested=True)
 

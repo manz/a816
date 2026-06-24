@@ -209,11 +209,13 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         caller would have written the logical address pre-multi-section
         anyway, so the fallback preserves existing behavior.
         """
+        from a816.exceptions import UnmappedBankError
+
         try:
             bus = self.resolver.get_bus()
             addr = bus.get_address(logical_address)
             physical = addr.physical
-        except KeyError:
+        except (KeyError, UnmappedBankError):
             return logical_address
         if physical is None:
             return logical_address

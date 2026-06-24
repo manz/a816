@@ -503,11 +503,15 @@ def _parse_pinned_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Toke
 def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
     """Parse a flat byte-less reservation into a `bss` pool:
 
-    * `.reserve NAME SIZE in POOL`: reserve SIZE bytes.
+    * `.reserve NAME SIZE in POOL`: reserve SIZE bytes (allocator picks addr).
+    * `.reserve NAME SIZE at ADDR in POOL`: reserve SIZE bytes pinned at ADDR
+      (allocator validates the span is in-range + overlap-free). Used for
+      fixed memory maps (VRAM/MMIO) where the address is the contract.
     * `.reserve NAME as TYPE in POOL`: reserve sizeof(TYPE) + publish fields.
 
-    The size form desugars to `.alloc NAME in POOL { .res SIZE }`; the `as`
-    form is expanded against the struct layout at codegen.
+    The size form desugars to `.alloc NAME in POOL { .res SIZE }` (plus an
+    `at ADDR` pin when present); the `as` form is expanded against the struct
+    layout at codegen.
     """
     keyword = p.current()
     name_token = p.next()
@@ -524,11 +528,16 @@ def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
         return ReserveTypedAstNode(name_token.value, type_token.value, pool_token.value, keyword)
 
     size_expr = parse_expression(p)
+    # Optional `at ADDR` pin between SIZE and `in POOL`.
+    at_address: ExpressionAstNode | None = None
+    if p.current().type == TokenType.IDENTIFIER and p.current().value == "at":
+        p.next()  # consume `at`
+        at_address = parse_expression(p)
     _expect_contextual_keyword(p, "in")
     pool_token = p.next()
     expect_token(pool_token, TokenType.IDENTIFIER)
     body = BlockAstNode([ReserveAstNode(size_expr, keyword)], keyword)
-    return AllocAstNode(name_token.value, pool_token.value, body, keyword)
+    return AllocAstNode(name_token.value, pool_token.value, body, keyword, at_address=at_address)
 
 
 def _parse_alloc_body(p: Parser, parse_block: ParseBlockFn) -> BlockAstNode:

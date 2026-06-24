@@ -28,12 +28,17 @@ class AllocNode(NodeProtocol):
         body: list[NodeProtocol],
         resolver: Resolver,
         file_info: Token,
+        pinned_addr: int | None = None,
     ) -> None:
         self.name = name
         self.pool_name = pool_name
         self.body = body
         self.resolver = resolver
         self.file_info = file_info
+        # Fixed address for a `.reserve NAME SIZE at ADDR in POOL` request;
+        # None lets the pool allocator pick. Carried into `pool.request` and
+        # the object-mode PoolAlloc so the pin survives to link time.
+        self.pinned_addr = pinned_addr
         self._alloc: Allocation | None = None
         self._size: int = 0
         # Only set in object mode (`_request_slot`). Stays `None` in
@@ -123,7 +128,7 @@ class AllocNode(NodeProtocol):
     def _request_slot(self) -> None:
         pool = self.resolver.pools[self.pool_name]
         self._size = max(1, self._measure_body())
-        self._alloc = pool.request(self.name, self._size)
+        self._alloc = pool.request(self.name, self._size, self.pinned_addr)
         # Object mode defers allocator to link time. Bind the alloc's
         # symbol + body labels at the sandbox PC (pool start + cursor)
         # so they record sensible offsets; the linker rebases the body
