@@ -12,7 +12,7 @@ jobs:
       - name: Setup Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Install hatch
         run: pip install -r requirements.txt
       - name: Publish wheel
@@ -30,7 +30,7 @@ jobs:
       - name: Setup Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Install hatch
         run: pip install -r requirements.txt
       - name: Build binary and publish release
