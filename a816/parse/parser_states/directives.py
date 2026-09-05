@@ -5,6 +5,7 @@ ascii/text/incbin/table/.aN/.iN)."""
 from __future__ import annotations
 
 import ast
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -314,17 +315,64 @@ def _resolve_include_path(p: Parser, keyword: Token, include_path: str) -> str:
     return include_path  # let the eventual open() raise the canonical error
 
 
-def parse_include(p: Parser, keyword: Token) -> IncludeAstNode:
+#: (resolved path, search paths) -> (file stamp, parsed body).
+_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[tuple[int, int], list[AstNode]]] = {}
+
+
+def clear_include_ast_cache() -> None:
+    """Drop every memoised include. For tests and long-running servers."""
+    _INCLUDE_AST_CACHE.clear()
+
+
+def _include_stamp(resolved_path: str) -> tuple[int, int] | None:
+    """Identity of the file on disk, or None when it cannot be stat'd (in
+    which case the include is parsed fresh and never cached)."""
+    try:
+        stat = os.stat(resolved_path)
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _parse_include_file(resolved_path: str, include_paths: list[Path]) -> list[AstNode]:
     from a816.parse.parser_states.core import parse_initial
 
-    include_path = parse_directive_with_quoted_string(p)
-    resolved_path = _resolve_include_path(p, keyword, include_path)
     with open(resolved_path, encoding="utf-8") as fd:
         source = fd.read()
     scanner = Scanner(cast(ScannerStateFunc, lex_initial))
     tokens = scanner.scan(resolved_path, source)
-    parser = Parser(tokens, cast(StateFunc, parse_initial), include_paths=p.include_paths)
-    sub_ast = parser.parse()
+    parser = Parser(tokens, cast(StateFunc, parse_initial), include_paths=include_paths)
+    return parser.parse()
+
+
+def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode]:
+    """The parsed body of an include, memoised per file revision.
+
+    A header pulled in from thirty sites was scanned and parsed thirty
+    times; on one project that came to 1024 parses of 55 distinct files.
+    The body only depends on the file's bytes and the search paths used to
+    resolve its own nested includes, so it is shared between sites.
+
+    Codegen reads these nodes and emits fresh ones rather than mutating
+    them, which is what makes sharing safe."""
+    key = (resolved_path, tuple(str(path) for path in include_paths))
+    stamp = _include_stamp(resolved_path)
+    if stamp is not None:
+        cached = _INCLUDE_AST_CACHE.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+    sub_ast = _parse_include_file(resolved_path, include_paths)
+    if stamp is not None:
+        # Keyed per file, so the cache stays the size of the project rather
+        # than growing with every edit.
+        _INCLUDE_AST_CACHE[key] = (stamp, sub_ast)
+    return sub_ast
+
+
+def parse_include(p: Parser, keyword: Token) -> IncludeAstNode:
+    include_path = parse_directive_with_quoted_string(p)
+    resolved_path = _resolve_include_path(p, keyword, include_path)
+    sub_ast = _included_ast(resolved_path, p.include_paths)
     return IncludeAstNode(include_path, sub_ast, keyword, resolved_path=resolved_path)
 
 
