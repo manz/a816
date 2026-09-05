@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from lsprotocol.types import (
     DidOpenTextDocumentParams,
     DocumentSymbolParams,
@@ -20,6 +22,7 @@ from lsprotocol.types import (
     TextDocumentItem,
 )
 
+import a816.lsp.server as server_module
 from a816.lsp.document import A816Document
 from a816.lsp.server import A816LanguageServer
 from a816.lsp.workspace import IndexProgress, ProgressCallback, WorkspaceIndex, _index_workers
@@ -395,3 +398,55 @@ def test_progress_capability_is_false_before_initialize() -> None:
 def test_progress_channel_defaults_to_the_pygls_one() -> None:
     server = A816LanguageServer()
     assert server._progress_channel() is server.server.work_done_progress
+
+
+async def test_requests_wait_for_the_open_parse() -> None:
+    """The pin: a request racing didOpen must see the parsed document,
+    not an empty table."""
+    server, _ = _server_with_unbuilt_index()
+    opening = asyncio.create_task(server._handle_did_open(_did_open_params(MAIN)))
+    await asyncio.sleep(0)  # let didOpen register its pending parse
+
+    await server._document_ready(MAIN.as_uri())
+    symbols = server._handle_document_symbols(
+        DocumentSymbolParams(text_document=TextDocumentIdentifier(uri=MAIN.as_uri()))
+    )
+    assert [s.name for s in symbols if s.name == "main"] == ["main"]
+
+    await opening
+    assert server._workspace_build_task is not None
+    await server._workspace_build_task
+
+
+async def test_document_ready_ignores_unknown_documents() -> None:
+    """Nothing in flight means nothing to wait for."""
+    server, _ = _server_with_unbuilt_index()
+    await server._document_ready("file:///never/opened.s")
+
+
+async def test_a_failed_parse_still_releases_waiters() -> None:
+    """A document that fails to parse must unblock its requests rather
+    than hang them forever."""
+    server, _ = _server_with_unbuilt_index()
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("parser blew up")
+
+    with patch.object(server_module, "A816Document", explode):
+        with pytest.raises(RuntimeError):
+            await server._handle_did_open(_did_open_params(MAIN))
+
+    assert server._pending_parses == {}
+    await asyncio.wait_for(server._document_ready(MAIN.as_uri()), timeout=1)
+
+    if server._workspace_build_task is not None:
+        await server._workspace_build_task
+
+
+async def test_pending_parse_is_cleared_after_open() -> None:
+    server, _ = _server_with_unbuilt_index()
+    await server._handle_did_open(_did_open_params(MAIN))
+
+    assert server._pending_parses == {}
+    assert server._workspace_build_task is not None
+    await server._workspace_build_task

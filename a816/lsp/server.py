@@ -91,6 +91,9 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         self.formatter = A816Formatter()
         self.workspace_index: WorkspaceIndex | None = None
         self._workspace_build_task: asyncio.Task[None] | None = None
+        # uri -> parse in flight, so requests racing didOpen wait for it
+        # instead of being answered from an empty document table.
+        self._pending_parses: dict[str, asyncio.Future[None]] = {}
         self._setup_handlers()
 
         # Cache instruction completions
@@ -119,18 +122,22 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
 
         @self.server.feature("textDocument/completion")
         async def completions(ls: LanguageServer, params: CompletionParams) -> CompletionList:
+            await self._document_ready(params.text_document.uri)
             return self._handle_completions(params)
 
         @self.server.feature("textDocument/hover")
         async def hover(ls: LanguageServer, params: HoverParams) -> Hover | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_hover(params)
 
         @self.server.feature("textDocument/documentSymbol")
         async def document_symbols(ls: LanguageServer, params: DocumentSymbolParams) -> list[DocumentSymbol]:
+            await self._document_ready(params.text_document.uri)
             return self._handle_document_symbols(params)
 
         @self.server.feature("textDocument/definition")
         async def go_to_definition(ls: LanguageServer, params: TextDocumentPositionParams) -> list[Location] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_definition(params)
 
         @self.server.feature("workspace/symbol")
@@ -139,18 +146,22 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
 
         @self.server.feature("textDocument/references")
         async def find_references(ls: LanguageServer, params: ReferenceParams) -> list[Location] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_references(params)
 
         @self.server.feature("textDocument/prepareRename")
         async def prepare_rename(ls: LanguageServer, params: PrepareRenameParams) -> Range | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_prepare_rename(params)
 
         @self.server.feature("textDocument/rename")
         async def rename_symbol(ls: LanguageServer, params: RenameParams) -> WorkspaceEdit | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_rename(params)
 
         @self.server.feature("textDocument/signatureHelp")
         async def signature_help(ls: LanguageServer, params: SignatureHelpParams) -> SignatureHelp | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_signature_help(params)
 
         @self.server.feature(
@@ -171,6 +182,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
             ),
         )
         async def semantic_tokens_full(ls: LanguageServer, params: SemanticTokensParams) -> SemanticTokens | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_semantic_tokens_full(params)
 
         from lsprotocol.types import CodeActionOptions
@@ -180,36 +192,70 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
             CodeActionOptions(code_action_kinds=[CodeActionKind.QuickFix, CodeActionKind.SourceFixAll]),
         )
         async def code_action(ls: LanguageServer, params: CodeActionParams) -> list[CodeAction] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_code_action(params)
 
         @self.server.feature("textDocument/formatting")
         async def format_document(ls: LanguageServer, params: DocumentFormattingParams) -> list[TextEdit] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_format_document(params)
 
         @self.server.feature("textDocument/rangeFormatting")
         async def format_range(ls: LanguageServer, params: DocumentRangeFormattingParams) -> list[TextEdit] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_format_document(
                 DocumentFormattingParams(text_document=params.text_document, options=params.options)
             )
 
     async def _handle_did_open(self, params: DidOpenTextDocumentParams) -> None:
+        uri = params.text_document.uri
         workspace = self._ensure_workspace_index()
         # Queue the project-wide walk before anything marks the index built,
         # so the first opened buffer is what triggers it.
         if workspace:
             self._schedule_workspace_build(workspace)
         include_paths = workspace.include_paths if workspace else []
-        # Heavy: scanner + parser + symbol extraction. Off the event loop.
-        doc = await asyncio.to_thread(
-            A816Document,
-            params.text_document.uri,
-            params.text_document.text,
-            include_paths,
-        )
-        self.documents[params.text_document.uri] = doc
+        ready = self._mark_parse_pending(uri)
+        try:
+            # Heavy: scanner + parser + symbol extraction. Off the event loop.
+            doc = await asyncio.to_thread(
+                A816Document,
+                uri,
+                params.text_document.text,
+                include_paths,
+            )
+            self.documents[uri] = doc
+        finally:
+            self._resolve_parse(uri, ready)
         if workspace:
             await asyncio.to_thread(workspace.replace_document, doc)
         self._publish_diagnostics_for(doc, workspace)
+
+    def _mark_parse_pending(self, uri: str) -> asyncio.Future[None]:
+        """Register the parse that is about to start, so requests for this
+        document queue behind it."""
+        ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._pending_parses[uri] = ready
+        return ready
+
+    def _resolve_parse(self, uri: str, ready: asyncio.Future[None]) -> None:
+        """Release the waiters. Runs even when the parse raised: a document
+        that failed to parse still has to unblock its requests rather than
+        hang them."""
+        self._pending_parses.pop(uri, None)
+        if not ready.done():
+            ready.set_result(None)
+
+    async def _document_ready(self, uri: str) -> None:
+        """Wait for an in-flight parse of `uri`.
+
+        An editor fires its first semantic-tokens and definition requests
+        the moment it attaches, which is while `didOpen` is still parsing.
+        Answering those from the empty document table is what left buffers
+        uncoloured; waiting the ~200ms costs nothing anyone can see."""
+        ready = self._pending_parses.get(uri)
+        if ready is not None:
+            await ready
 
     def _schedule_workspace_build(self, index: WorkspaceIndex) -> None:
         """Start the one-shot background index build, if it is still owed."""
