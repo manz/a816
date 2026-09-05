@@ -130,7 +130,7 @@ class CompletionsMixin:
     def _build_opcode_completions(self) -> list[CompletionItem]:
         """Build completion items for all opcodes"""
         completions = []
-        for opcode in snes_opcode_table.keys():
+        for opcode in snes_opcode_table:
             completions.append(
                 CompletionItem(
                     label=opcode.upper(),
@@ -169,13 +169,13 @@ class CompletionsMixin:
 
     def _build_labels_completions(self, doc: A816Document) -> list[CompletionItem]:
         return [
-            CompletionItem(label=sym, kind=CompletionItemKind.Variable, detail="Symbol") for sym in doc.symbols.keys()
+            CompletionItem(label=sym, kind=CompletionItemKind.Variable, detail="Symbol") for sym in doc.symbols
         ]
 
     def _build_workspace_label_completions(self, doc: A816Document, workspace: WorkspaceIndex) -> list[CompletionItem]:
         doc_labels = set(doc.labels.keys())
         items: list[CompletionItem] = []
-        for label in workspace.labels.keys():
+        for label in workspace.labels:
             if label in doc_labels:
                 continue
             doc_text = workspace.get_label_doc(label)
@@ -192,7 +192,7 @@ class CompletionsMixin:
     def _build_workspace_symbol_completions(self, doc: A816Document, workspace: WorkspaceIndex) -> list[CompletionItem]:
         doc_symbols = set(doc.symbols.keys())
         items: list[CompletionItem] = []
-        for symbol in workspace.symbols.keys():
+        for symbol in workspace.symbols:
             if symbol in doc_symbols:
                 continue
             items.append(CompletionItem(label=symbol, kind=CompletionItemKind.Variable, detail="Symbol"))
@@ -201,7 +201,7 @@ class CompletionsMixin:
     def _build_workspace_macro_completions(self, doc: A816Document, workspace: WorkspaceIndex) -> list[CompletionItem]:
         doc_macros = set(doc.macros.keys())
         items: list[CompletionItem] = []
-        for macro in workspace.macros.keys():
+        for macro in workspace.macros:
             if macro in doc_macros:
                 continue
             macro_params = workspace.get_macro_params(macro)

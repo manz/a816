@@ -12,15 +12,15 @@ if typing.TYPE_CHECKING:  # pragma: nocover
 # Re-export types for backward compatibility
 __all__ = [
     "AddressingMode",
+    "NoOpcodeForOperandSize",
+    "OpcodeProtocol",
     "RomType",
     "ValueSize",
-    "OpcodeProtocol",
-    "NoOpcodeForOperandSize",
-    "snes_opcode_table",
-    "rom_to_snes",
-    "snes_to_rom",
     "get_opcodes_with_addressing",
     "guess_value_size",
+    "rom_to_snes",
+    "snes_opcode_table",
+    "snes_to_rom",
 ]
 
 
@@ -31,7 +31,6 @@ class NoOpcodeForOperandSize(Exception):
     more informative OperandSizeError with opcode context.
     """
 
-    pass
 
 
 class OpcodeWithoutOperand(OpcodeProtocol):

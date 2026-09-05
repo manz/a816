@@ -160,7 +160,7 @@ label2:
     semantic_tokens = server._extract_semantic_tokens_from_ast(doc)
 
     # Check that we have tokens on multiple lines
-    lines_with_tokens = set(token["line"] for token in semantic_tokens)
+    lines_with_tokens = {token["line"] for token in semantic_tokens}
     assert len(lines_with_tokens) > 1, "Should have tokens on multiple lines"
 
     # Check that positions are reasonable (within document bounds)

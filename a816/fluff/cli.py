@@ -39,9 +39,7 @@ def _discover_sources(path: Path) -> Iterable[Path]:
 def _colorize_diff(diff_lines: Iterable[str]) -> str:
     colored: list[str] = []
     for line in diff_lines:
-        if line.startswith("@@"):
-            colored.append(f"{CYAN}{line}{RESET}")
-        elif line.startswith(("+++", "---")):
+        if line.startswith(("@@", "+++", "---")):
             colored.append(f"{CYAN}{line}{RESET}")
         elif line.startswith("+"):
             colored.append(f"{GREEN}{line}{RESET}")

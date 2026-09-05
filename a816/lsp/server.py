@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 try:
     import tomllib
@@ -48,6 +49,9 @@ from lsprotocol.types import (
     TextDocumentContentChangeWholeDocument,
     TextDocumentPositionParams,
     TextEdit,
+    WorkDoneProgressBegin,
+    WorkDoneProgressEnd,
+    WorkDoneProgressReport,
     WorkspaceEdit,
     WorkspaceSymbolParams,
 )
@@ -64,7 +68,7 @@ from a816.lsp.handlers.completions import CompletionsMixin
 from a816.lsp.handlers.hover import HoverMixin
 from a816.lsp.handlers.tokens import TokensMixin
 from a816.lsp.mask import build_code_mask
-from a816.lsp.workspace import WorkspaceIndex
+from a816.lsp.workspace import IndexProgress, ProgressCallback, WorkspaceIndex
 from a816.util import uri_to_path
 
 logger = logging.getLogger(__name__)
@@ -86,6 +90,10 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         self.documents: dict[str, A816Document] = {}
         self.formatter = A816Formatter()
         self.workspace_index: WorkspaceIndex | None = None
+        self._workspace_build_task: asyncio.Task[None] | None = None
+        # uri -> parse in flight, so requests racing didOpen wait for it
+        # instead of being answered from an empty document table.
+        self._pending_parses: dict[str, asyncio.Future[None]] = {}
         self._setup_handlers()
 
         # Cache instruction completions
@@ -114,18 +122,22 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
 
         @self.server.feature("textDocument/completion")
         async def completions(ls: LanguageServer, params: CompletionParams) -> CompletionList:
+            await self._document_ready(params.text_document.uri)
             return self._handle_completions(params)
 
         @self.server.feature("textDocument/hover")
         async def hover(ls: LanguageServer, params: HoverParams) -> Hover | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_hover(params)
 
         @self.server.feature("textDocument/documentSymbol")
         async def document_symbols(ls: LanguageServer, params: DocumentSymbolParams) -> list[DocumentSymbol]:
+            await self._document_ready(params.text_document.uri)
             return self._handle_document_symbols(params)
 
         @self.server.feature("textDocument/definition")
         async def go_to_definition(ls: LanguageServer, params: TextDocumentPositionParams) -> list[Location] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_definition(params)
 
         @self.server.feature("workspace/symbol")
@@ -134,18 +146,22 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
 
         @self.server.feature("textDocument/references")
         async def find_references(ls: LanguageServer, params: ReferenceParams) -> list[Location] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_references(params)
 
         @self.server.feature("textDocument/prepareRename")
         async def prepare_rename(ls: LanguageServer, params: PrepareRenameParams) -> Range | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_prepare_rename(params)
 
         @self.server.feature("textDocument/rename")
         async def rename_symbol(ls: LanguageServer, params: RenameParams) -> WorkspaceEdit | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_rename(params)
 
         @self.server.feature("textDocument/signatureHelp")
         async def signature_help(ls: LanguageServer, params: SignatureHelpParams) -> SignatureHelp | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_signature_help(params)
 
         @self.server.feature(
@@ -166,6 +182,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
             ),
         )
         async def semantic_tokens_full(ls: LanguageServer, params: SemanticTokensParams) -> SemanticTokens | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_semantic_tokens_full(params)
 
         from lsprotocol.types import CodeActionOptions
@@ -175,32 +192,206 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
             CodeActionOptions(code_action_kinds=[CodeActionKind.QuickFix, CodeActionKind.SourceFixAll]),
         )
         async def code_action(ls: LanguageServer, params: CodeActionParams) -> list[CodeAction] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_code_action(params)
 
         @self.server.feature("textDocument/formatting")
         async def format_document(ls: LanguageServer, params: DocumentFormattingParams) -> list[TextEdit] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_format_document(params)
 
         @self.server.feature("textDocument/rangeFormatting")
         async def format_range(ls: LanguageServer, params: DocumentRangeFormattingParams) -> list[TextEdit] | None:
+            await self._document_ready(params.text_document.uri)
             return self._handle_format_document(
                 DocumentFormattingParams(text_document=params.text_document, options=params.options)
             )
 
     async def _handle_did_open(self, params: DidOpenTextDocumentParams) -> None:
+        uri = params.text_document.uri
         workspace = self._ensure_workspace_index()
+        # Queue the project-wide walk before anything marks the index built,
+        # so the first opened buffer is what triggers it.
+        if workspace:
+            self._schedule_workspace_build(workspace)
         include_paths = workspace.include_paths if workspace else []
-        # Heavy: scanner + parser + symbol extraction. Off the event loop.
-        doc = await asyncio.to_thread(
-            A816Document,
-            params.text_document.uri,
-            params.text_document.text,
-            include_paths,
-        )
-        self.documents[params.text_document.uri] = doc
+        ready = self._mark_parse_pending(uri)
+        try:
+            # Heavy: scanner + parser + symbol extraction. Off the event loop.
+            doc = await asyncio.to_thread(
+                A816Document,
+                uri,
+                params.text_document.text,
+                include_paths,
+            )
+            self.documents[uri] = doc
+        finally:
+            self._resolve_parse(uri, ready)
         if workspace:
             await asyncio.to_thread(workspace.replace_document, doc)
         self._publish_diagnostics_for(doc, workspace)
+
+    def _mark_parse_pending(self, uri: str) -> asyncio.Future[None]:
+        """Register the parse that is about to start, so requests for this
+        document queue behind it."""
+        ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._pending_parses[uri] = ready
+        return ready
+
+    def _resolve_parse(self, uri: str, ready: asyncio.Future[None]) -> None:
+        """Release the waiters. Runs even when the parse raised: a document
+        that failed to parse still has to unblock its requests rather than
+        hang them."""
+        self._pending_parses.pop(uri, None)
+        if not ready.done():
+            ready.set_result(None)
+
+    async def _document_ready(self, uri: str) -> None:
+        """Wait for an in-flight parse of `uri`.
+
+        An editor fires its first semantic-tokens and definition requests
+        the moment it attaches, which is while `didOpen` is still parsing.
+        Answering those from the empty document table is what left buffers
+        uncoloured; waiting the ~200ms costs nothing anyone can see."""
+        ready = self._pending_parses.get(uri)
+        if ready is not None:
+            await ready
+
+    def _schedule_workspace_build(self, index: WorkspaceIndex) -> None:
+        """Start the one-shot background index build, if it is still owed."""
+        if index.built or self._workspace_build_task is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop: unit tests drive the handlers directly.
+            # Build inline so they still get a usable index.
+            index.rebuild()
+            return
+        self._workspace_build_task = loop.create_task(self._build_workspace(index))
+
+    async def _build_workspace(self, index: WorkspaceIndex) -> None:
+        """Walk and parse the project off the event loop, then swap the
+        result in.
+
+        Built into a *fresh* index rather than in place: `rebuild()` clears
+        every lookup table before repopulating it, and requests served while
+        that ran would see a half-empty workspace. The replacement is only
+        published once it is complete, which also keeps the worker thread
+        off state the event loop is reading.
+
+        Clients ask for semantic tokens and definitions once, right after
+        attach. Those land before this finishes and get answered from the
+        single open document alone, so the refresh at the end is what
+        actually colours the buffer."""
+        token = await self._begin_index_progress()
+        reporter = self._progress_reporter(token, asyncio.get_running_loop())
+        try:
+            replacement = await asyncio.to_thread(self._rebuilt_index, index, reporter)
+        except Exception:
+            logger.exception("Workspace index build failed")
+            self._end_index_progress(token, "Indexing failed")
+            return
+        finally:
+            self._workspace_build_task = None
+        self.workspace_index = replacement
+        for doc in list(self.documents.values()):
+            replacement.replace_document(doc)
+            self._publish_diagnostics_for(doc, replacement)
+        self._refresh_semantic_tokens()
+        self._end_index_progress(token, f"Indexed {len(replacement.documents)} files")
+
+    @staticmethod
+    def _rebuilt_index(index: WorkspaceIndex, progress: ProgressCallback | None = None) -> WorkspaceIndex:
+        replacement = WorkspaceIndex(index.root_path)
+        replacement.rebuild(progress)
+        return replacement
+
+    async def _begin_index_progress(self) -> str | None:
+        """Claim a progress token and open the notification.
+
+        Returns None when the client did not advertise `window/workDoneProgress`,
+        or refused the token, in which case every later progress call is a
+        no-op and the build just runs quietly."""
+        if not self._client_supports_progress():
+            return None
+        token = f"a816-index-{uuid4().hex}"
+        try:
+            channel = self._progress_channel()
+            await channel.create_async(token)
+            channel.begin(
+                token,
+                WorkDoneProgressBegin(title="Indexing a816 workspace", message="Discovering sources", percentage=0),
+            )
+        except (AttributeError, RuntimeError, TypeError, TimeoutError) as e:
+            logger.debug(f"Could not start progress: {e}")
+            return None
+        return token
+
+    def _client_supports_progress(self) -> bool:
+        """Whether the client asked for `$/progress`.
+
+        `client_capabilities` is only populated by `initialize`, and reading
+        it before then raises rather than returning None, so this has to
+        tolerate being asked too early."""
+        try:
+            window = getattr(self.server.client_capabilities, "window", None)
+        except AttributeError:
+            return False
+        return bool(getattr(window, "work_done_progress", False))
+
+    def _progress_channel(self) -> Any:
+        """The work-done progress channel. Seam: pygls exposes it as a
+        read-only property, so tests substitute it here."""
+        return self.server.work_done_progress
+
+    def _progress_reporter(self, token: str | None, loop: asyncio.AbstractEventLoop) -> ProgressCallback | None:
+        """Bridge the index's callbacks onto the event loop.
+
+        The walk runs in a worker thread and the parse fans out further, so
+        the callback fires from threads that must not touch the protocol
+        directly."""
+        if token is None:
+            return None
+        last_percentage = -1
+
+        def report(event: IndexProgress) -> None:
+            nonlocal last_percentage
+            percentage = int(event.done * 100 / event.total) if event.total else 0
+            # One notification per whole percent: a big workspace would
+            # otherwise spend real time serialising its own progress.
+            if event.total and percentage == last_percentage:
+                return
+            last_percentage = percentage
+            loop.call_soon_threadsafe(self._report_index_progress, token, event, percentage)
+
+        return report
+
+    def _report_index_progress(self, token: str, event: IndexProgress, percentage: int) -> None:
+        if event.total:
+            message = f"Parsing {event.detail} ({event.done}/{event.total})"
+        else:
+            message = f"Discovering sources ({event.done} found)"
+        try:
+            self._progress_channel().report(token, WorkDoneProgressReport(message=message, percentage=percentage))
+        except (AttributeError, RuntimeError, TypeError) as e:
+            logger.debug(f"Could not report progress: {e}")
+
+    def _end_index_progress(self, token: str | None, message: str) -> None:
+        if token is None:
+            return
+        try:
+            self._progress_channel().end(token, WorkDoneProgressEnd(message=message))
+        except (AttributeError, RuntimeError, TypeError) as e:
+            logger.debug(f"Could not end progress: {e}")
+
+    def _refresh_semantic_tokens(self) -> None:
+        """Ask the client to re-request tokens. Best effort: not every
+        client implements the refresh request."""
+        try:
+            self.server.workspace_semantic_tokens_refresh(None)
+        except (AttributeError, RuntimeError, TypeError) as e:
+            logger.debug(f"Could not refresh semantic tokens: {e}")
 
     def _publish_diagnostics_for(self, doc: A816Document, workspace: WorkspaceIndex | None) -> None:
         """Push per-doc + cross-doc diagnostics. Single funnel so every
@@ -230,10 +421,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         if workspace:
             await asyncio.to_thread(workspace.replace_document, doc)
         self._publish_diagnostics_for(doc, workspace)
-        try:
-            self.server.workspace_semantic_tokens_refresh(None)
-        except (AttributeError, RuntimeError, TypeError) as e:
-            logger.debug(f"Could not refresh semantic tokens: {e}")
+        self._refresh_semantic_tokens()
 
     def _handle_did_close(self, params: DidCloseTextDocumentParams) -> None:
         self.documents.pop(params.text_document.uri, None)
@@ -687,7 +875,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
                 return [TextEdit(range=self._full_document_range(doc), new_text=formatted_content)]
             return []
         except FormattingError as exc:
-            logger.exception("Formatter failed for %s: %s", doc.uri, exc)
+            logger.exception("Formatter failed for %s", doc.uri)
             self.server.window_show_message(ShowMessageParams(type=MessageType.Error, message=str(exc)))
             return []
         finally:
@@ -702,7 +890,14 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         )
 
     def _ensure_workspace_index(self) -> WorkspaceIndex | None:
-        """Ensure workspace-level symbols are indexed and up to date."""
+        """Return the workspace index, creating and preparing it if needed.
+
+        Deliberately does *not* walk the project: that took ~4s on a 60-file
+        workspace and used to run inline on the first `didOpen`, which
+        swallowed the definition and semantic-token requests an editor fires
+        straight after attach, which left the buffer uncoloured until the next
+        keystroke. `prepare()` only resolves the entrypoint and search paths;
+        `_schedule_workspace_build` does the rest in the background."""
         try:
             root_path = self.server.workspace.root_path
         except RuntimeError:
@@ -718,8 +913,8 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
             self.workspace_index = WorkspaceIndex(root)
         if self.workspace_index.root_path is None:
             self.workspace_index.root_path = root
-        if not self.workspace_index.built:
-            self.workspace_index.rebuild()
+        if not self.workspace_index.built and not self.workspace_index.prepared:
+            self.workspace_index.prepare()
         return self.workspace_index
 
     def _full_document_range(self, doc: A816Document) -> Range:

@@ -237,7 +237,7 @@ class TestIdempotence:
 class TestFreeRangesEdgeCases:
     def test_free_ranges_before_allocate_returns_full_ranges(self) -> None:
         pool = _pool(_range(0x028000, 0x0280FF))
-        free = pool._free_ranges()  # noqa: SLF001
+        free = pool._free_ranges()
         assert free == [_range(0x028000, 0x0280FF)]
 
     def test_subtract_one_placement_outside_range(self) -> None:
@@ -251,7 +251,7 @@ class TestFreeRangesEdgeCases:
         pool.allocate()
         # The unused tail of chunk 1 plus all of chunk 2 should be reported.
         assert pool.fragments == 2
-        chunks = pool._free_ranges()  # noqa: SLF001
+        chunks = pool._free_ranges()
         assert chunks[0].start == 0x028080
         assert chunks[1] == _range(0x02A000, 0x02A0FF)
 

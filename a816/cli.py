@@ -304,7 +304,7 @@ def cli_main() -> None:
         message = e.format() if hasattr(e, "format") else format_error_simple("error", str(e))
         print(message, file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - CLI boundary: any failure becomes a clean message
         from a816.errors import format_error_simple
 
         print(format_error_simple("error", str(e)), file=sys.stderr)

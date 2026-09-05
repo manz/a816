@@ -97,7 +97,7 @@ def generate_incbin(
 
 def _generate_data(
     node: DataNode,
-    node_type: type[ByteNode] | type[WordNode] | type[LongNode],
+    node_type: type[ByteNode | WordNode | LongNode],
     resolver: Resolver,
     file_info: Token,
 ) -> GenNodes:

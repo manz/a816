@@ -132,8 +132,8 @@ class AssembleMixin:
                     logger.error(str(e))  # NOSONAR python:S8572
                     return 128
 
-        except RuntimeError as e:
-            self.logger.exception(_ASSEMBLY_FAILED_MSG, e)
+        except RuntimeError:
+            self.logger.exception(_ASSEMBLY_FAILED_MSG)
             return -1
         finally:
             self.resolver.context.mode = previous_mode
@@ -168,8 +168,8 @@ class AssembleMixin:
             exit_code = self.assemble_with_object_emitter(asm_file, object_writer)
             object_writer.end()
             return exit_code
-        except RuntimeError as e:
-            self.logger.exception(_ASSEMBLY_FAILED_MSG, e)
+        except RuntimeError:
+            self.logger.exception(_ASSEMBLY_FAILED_MSG)
             return -1
 
     def _classify_object_symbol(
@@ -234,9 +234,8 @@ class AssembleMixin:
             return True  # purely external, owner provides it
         if name in self.resolver.pool_stat_symbol_names:
             return True  # pool stat snapshots are per-module, not linker-visible
-        if name in self.resolver.imported_symbol_names:
-            return True  # contributed by an inlined `.import`; owner's `.o` is the sole source
-        return False
+        # contributed by an inlined `.import`; owner's `.o` is the sole source
+        return name in self.resolver.imported_symbol_names
 
     def assemble_with_object_emitter(self, asm_file: str, object_writer: ObjectWriter) -> int:
         """Assemble with object file emission, collecting symbols and relocations."""
@@ -268,8 +267,8 @@ class AssembleMixin:
                 logger.error(str(e))  # NOSONAR python:S8572
                 logger.debug("Object emit failure traceback", exc_info=True)
                 return -1
-        except RuntimeError as e:
-            self.logger.exception(_ASSEMBLY_FAILED_MSG, e)
+        except RuntimeError:
+            self.logger.exception(_ASSEMBLY_FAILED_MSG)
             return -1
         finally:
             self.resolver.context.mode = previous_mode

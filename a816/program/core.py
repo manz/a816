@@ -192,7 +192,7 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
 
         previous_pc = self.resolver.reloc_address
         for node in program_nodes:
-            if isinstance(node, LabelNode) or isinstance(node, BinaryNode):
+            if isinstance(node, (LabelNode, BinaryNode)):
                 continue
             previous_pc = node.pc_after(previous_pc)
         self.resolver_reset()
@@ -235,8 +235,7 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
             return
         log_path = output_path.with_suffix(output_path.suffix + ".emit.log")
         with open(log_path, "w", encoding="utf-8") as logf:
-            for snes, phys, size, src in self._emit_trace:
-                logf.write(f"snes=${snes & 0xFFFFFF:06X}  phys=0x{phys & 0xFFFFFF:06X}  size={size}  src={src}\n")
+            logf.writelines(f"snes=${snes & 0xFFFFFF:06X}  phys=0x{phys & 0xFFFFFF:06X}  size={size}  src={src}\n" for snes, phys, size, src in self._emit_trace)
         self._emit_trace = []
 
     def _trace_linked_sections(self, linked_obj: ObjectFile) -> None:

@@ -1,5 +1,4 @@
 from enum import Enum, auto
-from typing import Any
 
 
 class File:
@@ -106,7 +105,7 @@ class Token:
     def __repr__(self) -> str:
         return f"Token({self.type}, {self.value})"
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Token):
             return False
 

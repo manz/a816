@@ -49,7 +49,7 @@ def _try_eager_constant_bind(node: SymbolAffectationAstNode, resolver: Resolver)
     """
     try:
         value = eval_expression(node.value, resolver)
-    except Exception:  # SymbolNotDefined / external refs / non-int — fall through
+    except Exception:  # noqa: BLE001 - SymbolNotDefined / external refs / non-int, fall through
         return False
     if not isinstance(value, int):
         return False
