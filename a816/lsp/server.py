@@ -86,6 +86,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         self.documents: dict[str, A816Document] = {}
         self.formatter = A816Formatter()
         self.workspace_index: WorkspaceIndex | None = None
+        self._workspace_build_task: asyncio.Task[None] | None = None
         self._setup_handlers()
 
         # Cache instruction completions
@@ -189,6 +190,10 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
 
     async def _handle_did_open(self, params: DidOpenTextDocumentParams) -> None:
         workspace = self._ensure_workspace_index()
+        # Queue the project-wide walk before anything marks the index built,
+        # so the first opened buffer is what triggers it.
+        if workspace:
+            self._schedule_workspace_build(workspace)
         include_paths = workspace.include_paths if workspace else []
         # Heavy: scanner + parser + symbol extraction. Off the event loop.
         doc = await asyncio.to_thread(
@@ -201,6 +206,60 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         if workspace:
             await asyncio.to_thread(workspace.replace_document, doc)
         self._publish_diagnostics_for(doc, workspace)
+
+    def _schedule_workspace_build(self, index: WorkspaceIndex) -> None:
+        """Start the one-shot background index build, if it is still owed."""
+        if index.built or self._workspace_build_task is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop: unit tests drive the handlers directly.
+            # Build inline so they still get a usable index.
+            index.rebuild()
+            return
+        self._workspace_build_task = loop.create_task(self._build_workspace(index))
+
+    async def _build_workspace(self, index: WorkspaceIndex) -> None:
+        """Walk and parse the project off the event loop, then swap the
+        result in.
+
+        Built into a *fresh* index rather than in place: `rebuild()` clears
+        every lookup table before repopulating it, and requests served while
+        that ran would see a half-empty workspace. The replacement is only
+        published once it is complete, which also keeps the worker thread
+        off state the event loop is reading.
+
+        Clients ask for semantic tokens and definitions once, right after
+        attach. Those land before this finishes and get answered from the
+        single open document alone, so the refresh at the end is what
+        actually colours the buffer."""
+        try:
+            replacement = await asyncio.to_thread(self._rebuilt_index, index)
+        except Exception:
+            logger.exception("Workspace index build failed")
+            return
+        finally:
+            self._workspace_build_task = None
+        self.workspace_index = replacement
+        for doc in list(self.documents.values()):
+            replacement.replace_document(doc)
+            self._publish_diagnostics_for(doc, replacement)
+        self._refresh_semantic_tokens()
+
+    @staticmethod
+    def _rebuilt_index(index: WorkspaceIndex) -> WorkspaceIndex:
+        replacement = WorkspaceIndex(index.root_path)
+        replacement.rebuild()
+        return replacement
+
+    def _refresh_semantic_tokens(self) -> None:
+        """Ask the client to re-request tokens. Best effort: not every
+        client implements the refresh request."""
+        try:
+            self.server.workspace_semantic_tokens_refresh(None)
+        except (AttributeError, RuntimeError, TypeError) as e:
+            logger.debug(f"Could not refresh semantic tokens: {e}")
 
     def _publish_diagnostics_for(self, doc: A816Document, workspace: WorkspaceIndex | None) -> None:
         """Push per-doc + cross-doc diagnostics. Single funnel so every
@@ -230,10 +289,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         if workspace:
             await asyncio.to_thread(workspace.replace_document, doc)
         self._publish_diagnostics_for(doc, workspace)
-        try:
-            self.server.workspace_semantic_tokens_refresh(None)
-        except (AttributeError, RuntimeError, TypeError) as e:
-            logger.debug(f"Could not refresh semantic tokens: {e}")
+        self._refresh_semantic_tokens()
 
     def _handle_did_close(self, params: DidCloseTextDocumentParams) -> None:
         self.documents.pop(params.text_document.uri, None)
@@ -702,7 +758,14 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         )
 
     def _ensure_workspace_index(self) -> WorkspaceIndex | None:
-        """Ensure workspace-level symbols are indexed and up to date."""
+        """Return the workspace index, creating and preparing it if needed.
+
+        Deliberately does *not* walk the project: that took ~4s on a 60-file
+        workspace and used to run inline on the first `didOpen`, which
+        swallowed the definition and semantic-token requests an editor fires
+        straight after attach, which left the buffer uncoloured until the next
+        keystroke. `prepare()` only resolves the entrypoint and search paths;
+        `_schedule_workspace_build` does the rest in the background."""
         try:
             root_path = self.server.workspace.root_path
         except RuntimeError:
@@ -718,8 +781,8 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
             self.workspace_index = WorkspaceIndex(root)
         if self.workspace_index.root_path is None:
             self.workspace_index.root_path = root
-        if not self.workspace_index.built:
-            self.workspace_index.rebuild()
+        if not self.workspace_index.built and not self.workspace_index.prepared:
+            self.workspace_index.prepare()
         return self.workspace_index
 
     def _full_document_range(self, doc: A816Document) -> Range:
