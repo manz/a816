@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 try:
     import tomllib
@@ -48,6 +49,9 @@ from lsprotocol.types import (
     TextDocumentContentChangeWholeDocument,
     TextDocumentPositionParams,
     TextEdit,
+    WorkDoneProgressBegin,
+    WorkDoneProgressEnd,
+    WorkDoneProgressReport,
     WorkspaceEdit,
     WorkspaceSymbolParams,
 )
@@ -64,7 +68,7 @@ from a816.lsp.handlers.completions import CompletionsMixin
 from a816.lsp.handlers.hover import HoverMixin
 from a816.lsp.handlers.tokens import TokensMixin
 from a816.lsp.mask import build_code_mask
-from a816.lsp.workspace import WorkspaceIndex
+from a816.lsp.workspace import IndexProgress, ProgressCallback, WorkspaceIndex
 from a816.util import uri_to_path
 
 logger = logging.getLogger(__name__)
@@ -234,10 +238,13 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
         attach. Those land before this finishes and get answered from the
         single open document alone, so the refresh at the end is what
         actually colours the buffer."""
+        token = await self._begin_index_progress()
+        reporter = self._progress_reporter(token, asyncio.get_running_loop())
         try:
-            replacement = await asyncio.to_thread(self._rebuilt_index, index)
+            replacement = await asyncio.to_thread(self._rebuilt_index, index, reporter)
         except Exception:
             logger.exception("Workspace index build failed")
+            self._end_index_progress(token, "Indexing failed")
             return
         finally:
             self._workspace_build_task = None
@@ -246,12 +253,91 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
             replacement.replace_document(doc)
             self._publish_diagnostics_for(doc, replacement)
         self._refresh_semantic_tokens()
+        self._end_index_progress(token, f"Indexed {len(replacement.documents)} files")
 
     @staticmethod
-    def _rebuilt_index(index: WorkspaceIndex) -> WorkspaceIndex:
+    def _rebuilt_index(index: WorkspaceIndex, progress: ProgressCallback | None = None) -> WorkspaceIndex:
         replacement = WorkspaceIndex(index.root_path)
-        replacement.rebuild()
+        replacement.rebuild(progress)
         return replacement
+
+    async def _begin_index_progress(self) -> str | None:
+        """Claim a progress token and open the notification.
+
+        Returns None when the client did not advertise `window/workDoneProgress`,
+        or refused the token, in which case every later progress call is a
+        no-op and the build just runs quietly."""
+        if not self._client_supports_progress():
+            return None
+        token = f"a816-index-{uuid4().hex}"
+        try:
+            channel = self._progress_channel()
+            await channel.create_async(token)
+            channel.begin(
+                token,
+                WorkDoneProgressBegin(title="Indexing a816 workspace", message="Discovering sources", percentage=0),
+            )
+        except (AttributeError, RuntimeError, TypeError, TimeoutError) as e:
+            logger.debug(f"Could not start progress: {e}")
+            return None
+        return token
+
+    def _client_supports_progress(self) -> bool:
+        """Whether the client asked for `$/progress`.
+
+        `client_capabilities` is only populated by `initialize`, and reading
+        it before then raises rather than returning None, so this has to
+        tolerate being asked too early."""
+        try:
+            window = getattr(self.server.client_capabilities, "window", None)
+        except AttributeError:
+            return False
+        return bool(getattr(window, "work_done_progress", False))
+
+    def _progress_channel(self) -> Any:
+        """The work-done progress channel. Seam: pygls exposes it as a
+        read-only property, so tests substitute it here."""
+        return self.server.work_done_progress
+
+    def _progress_reporter(self, token: str | None, loop: asyncio.AbstractEventLoop) -> ProgressCallback | None:
+        """Bridge the index's callbacks onto the event loop.
+
+        The walk runs in a worker thread and the parse fans out further, so
+        the callback fires from threads that must not touch the protocol
+        directly."""
+        if token is None:
+            return None
+        last_percentage = -1
+
+        def report(event: IndexProgress) -> None:
+            nonlocal last_percentage
+            percentage = int(event.done * 100 / event.total) if event.total else 0
+            # One notification per whole percent: a big workspace would
+            # otherwise spend real time serialising its own progress.
+            if event.total and percentage == last_percentage:
+                return
+            last_percentage = percentage
+            loop.call_soon_threadsafe(self._report_index_progress, token, event, percentage)
+
+        return report
+
+    def _report_index_progress(self, token: str, event: IndexProgress, percentage: int) -> None:
+        if event.total:
+            message = f"Parsing {event.detail} ({event.done}/{event.total})"
+        else:
+            message = f"Discovering sources ({event.done} found)"
+        try:
+            self._progress_channel().report(token, WorkDoneProgressReport(message=message, percentage=percentage))
+        except (AttributeError, RuntimeError, TypeError) as e:
+            logger.debug(f"Could not report progress: {e}")
+
+    def _end_index_progress(self, token: str | None, message: str) -> None:
+        if token is None:
+            return
+        try:
+            self._progress_channel().end(token, WorkDoneProgressEnd(message=message))
+        except (AttributeError, RuntimeError, TypeError) as e:
+            logger.debug(f"Could not end progress: {e}")
 
     def _refresh_semantic_tokens(self) -> None:
         """Ask the client to re-request tokens. Best effort: not every

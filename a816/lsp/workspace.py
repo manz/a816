@@ -11,9 +11,10 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Iterable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import NamedTuple
 
 try:
     import tomllib
@@ -29,6 +30,29 @@ from a816.util import uri_to_path
 logger = logging.getLogger(__name__)
 
 MAX_INDEX_WORKERS = 8
+
+
+class IndexProgress(NamedTuple):
+    """One step of a workspace rebuild, for callers that surface progress.
+
+    `total` is 0 while a phase cannot know its size yet: discovery only
+    learns the file count by finishing, since each file's includes are
+    what queue the next ones."""
+
+    phase: str
+    done: int
+    total: int
+    detail: str
+
+
+#: Invoked from worker threads as well as the calling one, so an
+#: implementation that touches an event loop has to marshal onto it.
+ProgressCallback = Callable[[IndexProgress], None]
+
+
+def _notify(progress: ProgressCallback | None, phase: str, done: int, total: int, detail: str) -> None:
+    if progress is not None:
+        progress(IndexProgress(phase=phase, done=done, total=total, detail=detail))
 
 
 def _index_workers() -> int:
@@ -100,14 +124,17 @@ class WorkspaceIndex:
         self.macro_name_lookup.clear()
         self.scope_name_lookup.clear()
 
-    def rebuild(self) -> None:
-        """Re-index the workspace from the detected entrypoint."""
+    def rebuild(self, progress: ProgressCallback | None = None) -> None:
+        """Re-index the workspace from the detected entrypoint.
+
+        `progress` is called as discovery and parsing advance, so a server
+        can tell the editor what it is waiting on."""
         self.prepare()
         if not self.entrypoint:
             logger.debug("WorkspaceIndex: no entrypoint detected")
             self.built = True
             return
-        self._explore_from(self.entrypoint)
+        self._explore_from(self.entrypoint, progress)
         self.built = True
 
     def prepare(self) -> None:
@@ -299,15 +326,20 @@ class WorkspaceIndex:
             logger.debug("WorkspaceIndex: unable to read %s", current)
             return None
 
-    def _explore_from(self, entrypoint: Path) -> None:
+    def _explore_from(self, entrypoint: Path, progress: ProgressCallback | None = None) -> None:
         """Index everything reachable from `entrypoint`. Called at
         workspace rebuild after `clear()`, so no existing index entry
         is at risk of being clobbered."""
-        discovered = list(self._walk([entrypoint.resolve()], set(), skip_indexed=False))
-        for document in self._parse_discovered(discovered):
+        discovered: list[tuple[Path, str]] = []
+        for path, content in self._walk([entrypoint.resolve()], set(), skip_indexed=False):
+            discovered.append((path, content))
+            _notify(progress, "discover", len(discovered), 0, path.name)
+        for document in self._parse_discovered(discovered, progress):
             self._store_document(document)
 
-    def _parse_discovered(self, discovered: list[tuple[Path, str]]) -> list[A816Document]:
+    def _parse_discovered(
+        self, discovered: list[tuple[Path, str]], progress: ProgressCallback | None = None
+    ) -> list[A816Document]:
         """Parse every discovered source, fanning out across threads.
 
         Discovery has to stay serial, since a file's includes are only
@@ -319,10 +351,15 @@ class WorkspaceIndex:
         Documents come back in discovery order and the caller stores them
         on a single thread, so the resulting index is identical to a
         serial walk."""
-        if len(discovered) < 2:
+        total = len(discovered)
+        if total < 2:
             return [self._parse_one(item) for item in discovered]
         with ThreadPoolExecutor(max_workers=_index_workers(), thread_name_prefix="a816-index") as pool:
-            return list(pool.map(self._parse_one, discovered))
+            futures = [pool.submit(self._parse_one, item) for item in discovered]
+            for done, future in enumerate(as_completed(futures), start=1):
+                _notify(progress, "parse", done, total, future.result().uri.rsplit("/", 1)[-1])
+            # Read back in submission order, not completion order.
+            return [future.result() for future in futures]
 
     def _parse_one(self, discovered: tuple[Path, str]) -> A816Document:
         path, content = discovered
