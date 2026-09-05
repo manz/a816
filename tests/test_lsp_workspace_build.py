@@ -109,7 +109,7 @@ def test_single_document_walk_skips_the_thread_pool() -> None:
 async def test_did_open_answers_before_the_workspace_is_indexed() -> None:
     """The pin: the opened buffer resolves its own symbols straight away,
     while the project walk is still only scheduled."""
-    server, index = _server_with_unbuilt_index()
+    server, _ = _server_with_unbuilt_index()
 
     await server._handle_did_open(_did_open_params(MAIN))
 
@@ -284,7 +284,7 @@ def test_rebuild_without_a_callback_still_indexes() -> None:
 
 
 async def test_build_announces_progress_to_the_client() -> None:
-    server, index, channel = _server_reporting_progress()
+    server, _, channel = _server_reporting_progress()
 
     await server._handle_did_open(_did_open_params(MAIN))
     assert server._workspace_build_task is not None
@@ -432,9 +432,8 @@ async def test_a_failed_parse_still_releases_waiters() -> None:
     def explode(*args: object, **kwargs: object) -> None:
         raise RuntimeError("parser blew up")
 
-    with patch.object(server_module, "A816Document", explode):
-        with pytest.raises(RuntimeError):
-            await server._handle_did_open(_did_open_params(MAIN))
+    with patch.object(server_module, "A816Document", explode), pytest.raises(RuntimeError):
+        await server._handle_did_open(_did_open_params(MAIN))
 
     assert server._pending_parses == {}
     await asyncio.wait_for(server._document_ready(MAIN.as_uri()), timeout=1)
