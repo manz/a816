@@ -35,7 +35,7 @@ class AstNode(ABC):
 class ExprNode:
     token: Token
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, ExprNode):
             return False
 

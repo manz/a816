@@ -173,17 +173,17 @@ def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | s
     if isinstance(current, CastAccessExprNode):
         base = _eval_inner(current.inner, resolver)
         if not isinstance(base, int):
-            raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")
+            raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")  # noqa: TRY004 - invariant failure, not a caller type error
         field_symbol = ".".join([current.type_name, *current.field_path])
         offset = resolver.current_scope.value_for(field_symbol)
         if not isinstance(offset, int):
-            raise RuntimeError(f"Struct field {field_symbol!r} did not resolve to an offset")
+            raise RuntimeError(f"Struct field {field_symbol!r} did not resolve to an offset")  # noqa: TRY004 - invariant failure, not a caller type error
         values_stack.append(base + offset)
         return
     if isinstance(current, CastValueExprNode):
         base = _eval_inner(current.inner, resolver)
         if not isinstance(base, int):
-            raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")
+            raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")  # noqa: TRY004 - invariant failure, not a caller type error
         values_stack.append(base)
         return
     if current.token.type == TokenType.NUMBER:

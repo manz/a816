@@ -82,7 +82,7 @@ sta 0x2000
         ]
         for line in instruction_lines:
             if line.strip():  # Skip empty lines
-                self.assertTrue(line.startswith("    "), f"Line not properly indented: {repr(line)}")
+                self.assertTrue(line.startswith("    "), f"Line not properly indented: {line!r}")
 
     def test_format_with_comments(self) -> None:
         """Test formatting preserves comments"""
@@ -547,7 +547,7 @@ sta 0x2000
         for line in instruction_lines:
             if line.strip():
                 self.assertTrue(
-                    line.startswith("  ") and not line.startswith("   "), f"Expected 2-space indent, got: {repr(line)}"
+                    line.startswith("  ") and not line.startswith("   "), f"Expected 2-space indent, got: {line!r}"
                 )
 
     def test_format_handles_mixed_content(self) -> None:

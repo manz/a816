@@ -152,7 +152,7 @@ class TestCommentToDocstringFix:
         same, _ = apply_fixes(src, diagnostics)
         assert same == src
         # With unsafe allowed, the comment block migrates into the body.
-        new, applied = apply_fixes(src, diagnostics, allow_unsafe=True)
+        new, _applied = apply_fixes(src, diagnostics, allow_unsafe=True)
         assert "; banner one" not in new
         assert "; banner two" not in new
         assert '"""\n    banner one\n    banner two\n    """' in new

@@ -875,7 +875,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
                 return [TextEdit(range=self._full_document_range(doc), new_text=formatted_content)]
             return []
         except FormattingError as exc:
-            logger.exception("Formatter failed for %s: %s", doc.uri, exc)
+            logger.exception("Formatter failed for %s", doc.uri)
             self.server.window_show_message(ShowMessageParams(type=MessageType.Error, message=str(exc)))
             return []
         finally:

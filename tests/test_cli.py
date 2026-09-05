@@ -45,7 +45,7 @@ main:
                 encoding="utf-8",
             )
 
-            exit_code, stdout, stderr = self._run_cli(["-c", str(asm_file)])
+            exit_code, _stdout, stderr = self._run_cli(["-c", str(asm_file)])
 
             self.assertEqual(exit_code, 0, f"CLI failed: {stderr}")
 

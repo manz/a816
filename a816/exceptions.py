@@ -1,7 +1,6 @@
 class A816Error(Exception):
     """Base exception class for all assembler errors."""
 
-    pass
 
 
 class AssemblyError(A816Error):
@@ -24,7 +23,6 @@ class AssemblyError(A816Error):
 class SymbolNotDefined(A816Error):
     """Raised when a symbol is not found in the current scope."""
 
-    pass
 
 
 class ExternalSymbolReference(A816Error):
@@ -47,13 +45,11 @@ class ExternalExpressionReference(A816Error):
 class UnableToEvaluateSize(A816Error):
     """Raised during size evaluation failures."""
 
-    pass
 
 
 class FormattingError(A816Error):
     """Raised when the formatter cannot process the input."""
 
-    pass
 
 
 # =============================================================================
@@ -240,7 +236,6 @@ class UnmappedBankError(A816Error):
 class OpcodeError(A816Error):
     """Base class for opcode-related errors."""
 
-    pass
 
 
 class MissingOperandError(OpcodeError):

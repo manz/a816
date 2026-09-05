@@ -17,7 +17,7 @@ class Table:
     def include(self, path: str) -> None:
         """Includes a table content to the current instance."""
         with open(path, encoding="utf-8") as f:
-            for line in f.readlines():
+            for line in f:
                 self.parse_table_line(line)
 
             self.max_bytes_length = len(max(self.lookup.values(), key=len))

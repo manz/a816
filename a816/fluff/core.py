@@ -466,13 +466,11 @@ def _strip_comment_prefix(comment_text: str) -> str:
     text = comment_text
     if text.startswith("/*"):
         text = text[2:]
-        if text.endswith("*/"):
-            text = text[:-2]
+        text = text.removesuffix("*/")
         return text.strip("\n")
     if text.startswith(";"):
         text = text[1:]
-        if text.startswith(" "):
-            text = text[1:]
+        text = text.removeprefix(" ")
     return text
 
 

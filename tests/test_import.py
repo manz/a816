@@ -415,10 +415,9 @@ class TestImportErrors:
 
             program = Program()
 
-            with pytest.raises(Exception) as exc_info:
-                with open(consumer_file, encoding="utf-8") as f:
-                    content = f.read()
-                    program.parser.parse(content, str(consumer_file))
+            with pytest.raises(Exception) as exc_info, open(consumer_file, encoding="utf-8") as f:
+                content = f.read()
+                program.parser.parse(content, str(consumer_file))
 
             assert "nonexistent_module" in str(exc_info.value)
 

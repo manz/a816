@@ -96,7 +96,7 @@ def lex_docstring(s: "Scanner", quote_char: str) -> None:
 def accept_opcode(s: "Scanner") -> bool:
     opcode_candidate = s.input[s.start : s.pos + 3].lower()
     is_ws = s.peek(3)
-    if opcode_candidate in snes_opcode_table.keys() and is_ws in (
+    if opcode_candidate in snes_opcode_table and is_ws in (
         " ",
         "\n",
         "\t",

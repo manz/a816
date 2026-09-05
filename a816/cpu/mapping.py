@@ -77,10 +77,10 @@ class Bus:
         if self.editable is not True:
             raise RuntimeError("Bus cannot be edited.")
 
-        if identifier in self.mappings.keys():
+        if identifier in self.mappings:
             del self.mappings[identifier]
         mirror_identifier = f"{identifier}_mirror"
-        if mirror_identifier in self.mappings.keys():
+        if mirror_identifier in self.mappings:
             del self.mappings[mirror_identifier]
 
     def get_address(self, addr: int) -> "Address":
@@ -125,7 +125,8 @@ class Address:
                 logical_address = self.logical_value + other
             return Address(self.bus, logical_address)
         else:
-            raise ValueError("Address can only be added with ints.")
+
+            raise ValueError("Address can only be added with ints.")  # noqa: TRY004
 
 
 class LinearAddress(Address):

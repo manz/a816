@@ -212,7 +212,7 @@ async def test_did_save_without_text_reanalyzes() -> None:
 async def test_hover_returns_none_on_unknown_word() -> None:
     server = server_with_fixture_workspace()
     await _open(server, "src/main.s")
-    line, char = locate_in_fixture("src/main.s", "main:")
+    line, _char = locate_in_fixture("src/main.s", "main:")
     # Cursor on an empty / non-identifier column.
     hover = server._handle_hover(
         HoverParams(

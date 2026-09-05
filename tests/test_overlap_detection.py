@@ -96,7 +96,7 @@ def test_empty_block_skipped() -> None:
 
 def test_default_mode_is_warn() -> None:
     auditor, _ = _audit()
-    assert auditor._mode == "warn"  # noqa: SLF001 — testing default
+    assert auditor._mode == "warn"
 
 
 def test_end_to_end_overlap_via_two_star_eq_blocks_errors_by_default(tmp_path: Path) -> None:

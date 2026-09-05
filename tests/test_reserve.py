@@ -175,7 +175,7 @@ def test_pinned_reserve_overlap_is_rejected() -> None:
         # Overlap surfaces at link (allocator) time.
         try:
             Linker([ObjectFile.from_file(str(obj))]).link(base_address=0x8000)
-        except Exception:  # PoolOverlapError, wrapped or direct
+        except Exception:  # noqa: BLE001 - PoolOverlapError, wrapped or direct
             return
         raise AssertionError("expected overlap rejection for colliding pinned reserves")
 
@@ -189,7 +189,7 @@ def test_pinned_reserve_out_of_range_is_rejected() -> None:
         assert Program().assemble_as_object(str(asm), obj) == 0
         try:
             Linker([ObjectFile.from_file(str(obj))]).link(base_address=0x8000)
-        except Exception:
+        except Exception:  # noqa: BLE001 - rejection may arrive wrapped or direct
             return
         raise AssertionError("expected out-of-range rejection for pinned reserve")
 

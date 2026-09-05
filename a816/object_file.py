@@ -30,8 +30,10 @@ class SymbolSection(Enum):
     ABS_LABEL = 0x03
 
 
-from a816.section import Placement as Placement  # noqa: E402  (explicit re-export)
-from a816.section import Section as Section  # noqa: E402  (explicit re-export)
+from a816.section import Placement, Section
+
+# Re-exported for callers that import them from here.
+__all__ = ["Placement", "Section"]
 
 
 def _legacy_pinned_section(

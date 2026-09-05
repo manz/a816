@@ -34,7 +34,7 @@ def test_emit_trace_off_no_log(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_emit_trace_on_writes_log(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("A816_EMIT_TRACE", "1")
-    tmpdir, linked, asm_path = _build_two_section_linked()
+    tmpdir, linked, _asm_path = _build_two_section_linked()
     ips_path = tmpdir / "out.ips"
     assert Program().link_as_patch(linked, ips_path) == 0
     log_path = tmpdir / "out.ips.emit.log"

@@ -156,7 +156,7 @@ class A816Document:
         except (AttributeError, KeyError, IndexError, TypeError) as e:
             # Catch AST processing exceptions
             self.parse_error = ParseError(
-                message=f"Unexpected parser error: {str(e)}",
+                message=f"Unexpected parser error: {e!s}",
                 filename=self.uri,
                 line=0,
                 column=0,
@@ -577,10 +577,8 @@ class A816Document:
             return 0, 0, length
         if line >= len(self.lines):
             line = len(self.lines) - 1
-        if line < 0:
-            line = 0
-        if col < 0:
-            col = 0
+        line = max(line, 0)
+        col = max(col, 0)
         line_length = len(self.lines[line])
         if col >= line_length:
             col = max(0, line_length - 1)

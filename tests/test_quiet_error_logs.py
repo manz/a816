@@ -92,9 +92,8 @@ def test_discover_imports_oserror_demotes_traceback(
 
     monkeypatch.setattr(Path, "read_text", fake_read)
     builder = module_builder.ModuleBuilder(output_dir=tmp / "build")
-    with caplog.at_level(logging.DEBUG):
-        with pytest.raises(OSError):
-            builder._discover_imports_recursive(main, "__main__")
+    with caplog.at_level(logging.DEBUG), pytest.raises(OSError):
+        builder._discover_imports_recursive(main, "__main__")
     debug_traces = [r for r in caplog.records if r.levelno == logging.DEBUG and "traceback" in r.message.lower()]
     assert debug_traces
     assert debug_traces[0].exc_info is not None
@@ -110,9 +109,8 @@ def test_ips_apply_value_error_demotes_traceback(
     rom.write_bytes(b"\x00" * 0x10000)
     bad_ips = tmp_path / "bad.ips"
     bad_ips.write_bytes(b"not-an-ips-file")
-    with caplog.at_level(logging.DEBUG):
-        with pytest.raises(SystemExit):
-            _apply_ips_to_temp(rom, bad_ips)
+    with caplog.at_level(logging.DEBUG), pytest.raises(SystemExit):
+        _apply_ips_to_temp(rom, bad_ips)
     error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
     debug_traces = [r for r in caplog.records if r.levelno == logging.DEBUG and "traceback" in r.message.lower()]
     assert error_records

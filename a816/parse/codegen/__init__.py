@@ -7,7 +7,6 @@ populated by the time external callers hit `code_gen`.
 
 from __future__ import annotations
 
-# noqa: F401 — these imports populate base.generators via module-load side effects.
 from a816.parse.codegen import (
     blocks,  # noqa: F401
     directives,  # noqa: F401

@@ -102,7 +102,7 @@ def _collect_known_struct_types(ctx: LintContext) -> set[str]:
 
 
 def _collect_imported_struct_types(ctx: LintContext) -> set[str]:
-    if ctx._imported_struct_types is not None:  # noqa: SLF001 — cache on ctx
+    if ctx._imported_struct_types is not None:
         return ctx._imported_struct_types
     discovered: set[str] = set()
     seen_paths: set[str] = set()
@@ -111,7 +111,7 @@ def _collect_imported_struct_types(ctx: LintContext) -> set[str]:
             module_path = _resolve_import_for_lint(node.module_name, ctx)
             if module_path is not None:
                 discovered |= _struct_names_in_file(module_path, seen_paths)
-    ctx._imported_struct_types = discovered  # noqa: SLF001
+    ctx._imported_struct_types = discovered
     return discovered
 
 

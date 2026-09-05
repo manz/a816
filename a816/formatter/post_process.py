@@ -56,8 +56,7 @@ def separate_labels(lines: list[str]) -> list[str]:
             adjusted.append("")
         adjusted.append(line)
         depth += stripped.count("{") - stripped.count("}")
-        if depth < 0:
-            depth = 0
+        depth = max(depth, 0)
     return adjusted
 
 

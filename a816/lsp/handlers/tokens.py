@@ -182,7 +182,7 @@ class TokensMixin:
             return 2  # comment
         if isinstance(node, DocstringAstNode):
             return 4  # string
-        if isinstance(node, IncludeAstNode) or isinstance(node, TokensMixin._DIRECTIVE_TYPES):
+        if isinstance(node, (IncludeAstNode, *TokensMixin._DIRECTIVE_TYPES)):
             return 7  # macro (directive)
         return None
 

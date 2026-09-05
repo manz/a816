@@ -100,8 +100,7 @@ def write_pointers_as_xml(pointers: list[Pointer], table: Table, output_file: st
 def write_pointers_value_as_binary(pointers: list[Pointer], output_file: str) -> None:
     sorted_pointers = sorted(pointers, key=lambda x: x.id)
     with open(output_file, "wb") as fd:
-        for pointer in sorted_pointers:
-            fd.write(pointer.get_value())
+        fd.writelines(pointer.get_value() for pointer in sorted_pointers)
 
 
 def write_pointers_addresses_as_binary(
