@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 
 from a816.fluff import fluff_main, lint_file
+from a816.fluff.core import LintContext
+from a816.fluff.rules_style import _resolve_include_for_lint, _struct_names_in_file
+from a816.parse.ast.nodes import IncludeAstNode
+from a816.parse.tokens import Token, TokenType
 
 
 def test_doc001_flags_missing_module_docstring(tmp_path: Path) -> None:
@@ -595,3 +599,95 @@ def test_s001_follows_a_nested_include(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert "S001" not in [d.code for d in lint_file(src)]
+
+
+def test_s001_resolves_an_include_through_the_configured_include_paths(tmp_path: Path) -> None:
+    """A header the file names but does not sit beside still resolves.
+
+    `include-paths` in `a816.toml` is how a project points at its header
+    directory, and the assembler searches it, so the lint has to as well.
+    """
+    (tmp_path / "a816.toml").write_text('include-paths = ["headers"]\n', encoding="utf-8")
+    headers = tmp_path / "headers"
+    headers.mkdir()
+    (headers / "types.i").write_text(
+        '"""Types."""\n.struct Player {\n    word hp\n}\n',
+        encoding="utf-8",
+    )
+    src = tmp_path / "src" / "main.s"
+    src.parent.mkdir()
+    src.write_text(
+        '"""Module."""\n.include "types.i"\np := (0x7E1000 as Player)\n',
+        encoding="utf-8",
+    )
+    assert "S001" not in [d.code for d in lint_file(src)]
+
+
+def test_struct_names_in_file_stops_on_a_cycle(tmp_path: Path) -> None:
+    """Headers that include each other must terminate.
+
+    Driven through the helper rather than a lint run: the parser itself
+    recurses without limit on a cyclic include, so a full lint never
+    reaches this guard.
+    """
+    (tmp_path / "a.i").write_text('"""A."""\n.struct Player {\n    word hp\n}\n', encoding="utf-8")
+    seen = {str((tmp_path / "a.i").resolve())}
+    assert _struct_names_in_file(tmp_path / "a.i", seen) == set()
+
+
+def test_struct_names_in_file_shrugs_off_an_unreadable_path(tmp_path: Path) -> None:
+    """A header that cannot be read yields no names instead of raising."""
+    target = tmp_path / "types.i"
+    target.mkdir()
+    assert _struct_names_in_file(target, set()) == set()
+
+
+def test_s001_include_lookup_is_cached_across_casts(tmp_path: Path) -> None:
+    """Several casts in one file share a single walk of the include graph."""
+    (tmp_path / "types.i").write_text(
+        '"""Types."""\n.struct Player {\n    word hp\n}\n',
+        encoding="utf-8",
+    )
+    src = tmp_path / "main.s"
+    src.write_text(
+        '"""Module."""\n.include "types.i"\np := (0x7E1000 as Player)\nq := (0x7E1010 as Player)\n',
+        encoding="utf-8",
+    )
+    assert "S001" not in [d.code for d in lint_file(src)]
+
+
+def _include_node(file_path: str, resolved_path: str | None) -> IncludeAstNode:
+    """An `.include` node standing on its own, outside any parse."""
+    return IncludeAstNode(
+        file_path=file_path,
+        included_nodes=[],
+        file_info=Token(TokenType.QUOTED_STRING, file_path),
+        resolved_path=resolved_path,
+    )
+
+
+def test_resolve_include_falls_back_when_the_parser_left_no_path(tmp_path: Path) -> None:
+    """The node's own `resolved_path` is preferred, then the search paths.
+
+    Nested headers are parsed without include paths, so their include
+    nodes come back unresolved and only this fallback finds them.
+    """
+    headers = tmp_path / "headers"
+    headers.mkdir()
+    (headers / "types.i").write_text('"""Types."""\n.struct Player {\n    word hp\n}\n', encoding="utf-8")
+    node = _include_node("types.i", resolved_path=str(tmp_path / "gone.i"))
+    ctx = LintContext(
+        path=tmp_path / "main.s",
+        text="",
+        nodes=[],
+        parse_failed=False,
+        include_paths_for_lookup=[headers],
+    )
+    assert _resolve_include_for_lint(node, ctx) == headers / "types.i"
+
+
+def test_resolve_include_returns_none_when_nothing_matches(tmp_path: Path) -> None:
+    """An include naming a file that exists nowhere resolves to nothing."""
+    node = _include_node("absent.i", resolved_path=None)
+    ctx = LintContext(path=tmp_path / "main.s", text="", nodes=[], parse_failed=False)
+    assert _resolve_include_for_lint(node, ctx) is None
