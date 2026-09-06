@@ -108,8 +108,8 @@ class LintContext:
     parse_failed: bool
     # Search paths forwarded by the lint entry-points. `module_paths` lets
     # struct-type rules (S001) follow `.import` chains so cross-module
-    # struct names resolve. `include_paths` is reserved for future rules
-    # that need to chase `.include` outside the already-inlined AST.
+    # struct names resolve; `include_paths_for_lookup` does the same for
+    # `.include` targets the parser could not resolve on its own.
     module_paths: list[Path] | None = None
     include_paths_for_lookup: list[Path] | None = None
 
@@ -117,6 +117,7 @@ class LintContext:
     _expanded_top_level: list[AstNode] | None = field(default=None, init=False, repr=False)
     _placement_hits: dict[str, list[Diagnostic]] | None = field(default=None, init=False, repr=False)
     _imported_struct_types: set[str] | None = field(default=None, init=False, repr=False)
+    _included_struct_types: set[str] | None = field(default=None, init=False, repr=False)
 
     @property
     def flat_nodes(self) -> list[AstNode]:

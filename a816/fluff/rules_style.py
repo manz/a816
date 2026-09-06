@@ -26,6 +26,7 @@ from a816.parse.ast.nodes import (
     ExpressionAstNode,
     ExprNode,
     ImportAstNode,
+    IncludeAstNode,
     IncludeIpsAstNode,
     LabelDeclAstNode,
     OpcodeAstNode,
@@ -89,15 +90,23 @@ def _walk_cast_nodes(
 
 
 def _collect_known_struct_types(ctx: LintContext) -> set[str]:
-    """Struct types declared in this file plus those reachable via imports.
+    """Struct types declared in this file plus those it can reach.
 
     Local `.struct` decls are always available. `.import` targets are
-    resolved through the stdlib + module-path search order; their files
-    get parsed once per lint and the discovered struct names cached on
-    the context.
+    resolved through the stdlib + module-path search order, and
+    `.include` targets through the parser's own resolution (falling back
+    to the configured include paths); their files get parsed once per
+    lint and the discovered struct names cached on the context.
+
+    Includes matter as much as imports here: a project that keeps its
+    struct declarations in a `.i` header and pulls it in from one
+    entrypoint has every other file reaching those types by `.include`,
+    and linting each file on its own would otherwise report every cast
+    in the project as targeting an unknown type.
     """
     known = {n.name for n in ctx.flat_nodes if isinstance(n, StructAstNode)}
     known |= _collect_imported_struct_types(ctx)
+    known |= _collect_included_struct_types(ctx)
     return known
 
 
@@ -113,6 +122,43 @@ def _collect_imported_struct_types(ctx: LintContext) -> set[str]:
                 discovered |= _struct_names_in_file(module_path, seen_paths)
     ctx._imported_struct_types = discovered
     return discovered
+
+
+def _collect_included_struct_types(ctx: LintContext) -> set[str]:
+    if ctx._included_struct_types is not None:
+        return ctx._included_struct_types
+    discovered: set[str] = set()
+    seen_paths: set[str] = set()
+    for node in ctx.flat_nodes:
+        if isinstance(node, IncludeAstNode):
+            include_path = _resolve_include_for_lint(node, ctx)
+            if include_path is not None:
+                discovered |= _struct_names_in_file(include_path, seen_paths)
+    ctx._included_struct_types = discovered
+    return discovered
+
+
+def _resolve_include_for_lint(node: IncludeAstNode, ctx: LintContext) -> Path | None:
+    """Map an `.include` to an absolute path.
+
+    The parser already records `resolved_path` when it could resolve the
+    file itself; that is the common case and is honoured first. Otherwise
+    the name is tried against the lint context's include paths and then
+    the including file's own directory, matching how the assembler
+    searches.
+    """
+    resolved = getattr(node, "resolved_path", None)
+    if resolved:
+        candidate = Path(resolved)
+        if candidate.is_file():
+            return candidate
+    bases: list[Path] = list(ctx.include_paths_for_lookup or [])
+    bases.append(ctx.path.parent)
+    for base in bases:
+        candidate = base / node.file_path
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _resolve_import_for_lint(module_name: str, ctx: LintContext) -> Path | None:
@@ -148,6 +194,11 @@ def _struct_names_in_file(path: Path, seen_paths: set[str]) -> set[str]:
             transitive = resolve_module(node.module_name, ".s", [])
             if transitive is not None:
                 names |= _struct_names_in_file(transitive, seen_paths)
+        elif isinstance(node, IncludeAstNode):
+            nested = getattr(node, "resolved_path", None) or (path.parent / node.file_path)
+            nested_path = Path(nested)
+            if nested_path.is_file():
+                names |= _struct_names_in_file(nested_path, seen_paths)
     return names
 
 

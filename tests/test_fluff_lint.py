@@ -544,3 +544,54 @@ def test_doc003_does_not_attribute_above_label_when_previous_was_a_label(tmp_pat
     )
     diags = lint_file(src)
     assert all(d.code != "DOC003" for d in diags), [d.format() for d in diags]
+
+
+def test_s001_resolves_struct_types_through_include(tmp_path: Path) -> None:
+    """A struct declared in an included header is a known type.
+
+    Projects that keep their struct declarations in a `.i` header pull it
+    in with `.include`, so a file linted on its own has to follow that
+    edge; otherwise every cast in the project reports an unknown type.
+    """
+    (tmp_path / "types.i").write_text(
+        '"""Types."""\n.struct Player {\n    word hp\n}\n',
+        encoding="utf-8",
+    )
+    src = tmp_path / "main.s"
+    src.write_text(
+        '"""Module."""\n.include "types.i"\np := (0x7E1000 as Player)\n',
+        encoding="utf-8",
+    )
+    assert "S001" not in [d.code for d in lint_file(src)]
+
+
+def test_s001_still_flags_a_type_no_include_declares(tmp_path: Path) -> None:
+    """Following includes must not turn the rule into a rubber stamp."""
+    (tmp_path / "types.i").write_text(
+        '"""Types."""\n.struct Player {\n    word hp\n}\n',
+        encoding="utf-8",
+    )
+    src = tmp_path / "main.s"
+    src.write_text(
+        '"""Module."""\n.include "types.i"\np := (0x7E1000 as Monster)\n',
+        encoding="utf-8",
+    )
+    assert "S001" in [d.code for d in lint_file(src)]
+
+
+def test_s001_follows_a_nested_include(tmp_path: Path) -> None:
+    """Headers include other headers; the walk has to go all the way down."""
+    (tmp_path / "base.i").write_text(
+        '"""Base."""\n.struct Player {\n    word hp\n}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "types.i").write_text(
+        '"""Types."""\n.include "base.i"\n',
+        encoding="utf-8",
+    )
+    src = tmp_path / "main.s"
+    src.write_text(
+        '"""Module."""\n.include "types.i"\np := (0x7E1000 as Player)\n',
+        encoding="utf-8",
+    )
+    assert "S001" not in [d.code for d in lint_file(src)]
