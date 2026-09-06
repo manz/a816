@@ -42,6 +42,13 @@ def format_operand(opcode_ast: OpcodeAstNode, options: FormattingOptions) -> str
     def with_index(base: str) -> str:
         return f"{base}{comma}{index}" if index else base
 
+    # Block moves (`mvn src, dst`) are the one opcode carrying a second
+    # operand. It is never indexed and never wrapped, so it short-circuits
+    # the addressing-mode tables below rather than threading through them.
+    if opcode_ast.operand2 is not None:
+        second = opcode_ast.operand2.to_canonical().strip()
+        return f"{operand}{comma}{second}"
+
     wrappers: dict[AddressingMode, Callable[[str], str]] = {
         AddressingMode.indirect_indexed: lambda o: with_index(f"({o})"),
         AddressingMode.indirect_indexed_long: lambda o: with_index(f"[{o}]"),

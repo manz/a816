@@ -996,3 +996,36 @@ class TestPositionDirectiveBlanks(TestCase):
         src = '"""m"""\nlabel_one:\n    rts\n\n*= 0x0AF000\n.incbin "x.bin"\n'
         out = self.formatter.format_text(src)
         self.assertIn("\n\n*=0x0AF000", out)
+
+
+class TestBlockMoveFormatting(TestCase):
+    """`mvn` / `mvp` carry two bank operands.
+
+    The formatter rendered only the first, so `mvn 0x7E, 0x7E` came back
+    as `mvn 0x7E`: source silently rewritten into something the assembler
+    then rejects. Anything downstream of a reformat inherited the loss,
+    which is the worst shape a formatter bug can take.
+    """
+
+    def setUp(self) -> None:
+        self.formatter = A816Formatter()
+
+    def test_mvn_keeps_both_banks(self) -> None:
+        formatted = self.formatter.format_text("main:\n    mvn 0x7E, 0x7E\n")
+        self.assertIn("mvn 0x7E, 0x7E", formatted)
+
+    def test_mvp_keeps_both_banks(self) -> None:
+        formatted = self.formatter.format_text("main:\n    mvp 0x01, 0x02\n")
+        self.assertIn("mvp 0x01, 0x02", formatted)
+
+    def test_block_move_survives_a_second_pass(self) -> None:
+        """Formatting is idempotent, so the second pass must not erode it."""
+        once = self.formatter.format_text("main:\n    mvn 0x7E, 0x7E\n")
+        twice = self.formatter.format_text(once)
+        self.assertEqual(once, twice)
+        self.assertIn("mvn 0x7E, 0x7E", twice)
+
+    def test_block_move_honours_comma_spacing(self) -> None:
+        formatter = A816Formatter(FormattingOptions(space_after_comma=False))
+        formatted = formatter.format_text("main:\n    mvn 0x7E, 0x7E\n")
+        self.assertIn("mvn 0x7E,0x7E", formatted)
