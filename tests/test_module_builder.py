@@ -470,3 +470,37 @@ end_main:
             assert "main" in result.symbol_map
             assert result.symbol_map["main"] == 0x8000
             assert result.program is not None
+
+
+class TestModuleResolutionIsPathQualified:
+    """A neighbour must not shadow a project-wide module.
+
+    Resolution used to try the importing file's own directory first, so
+    `.import "items"` from `src/ingame/` found `src/ingame/items.s`
+    instead of `src/items.s`. The wrong file was compiled under that
+    module name and the mistake surfaced elsewhere, as a missing symbol.
+    """
+
+    def _tree(self, root: Path) -> None:
+        (root / "src" / "ingame").mkdir(parents=True)
+        (root / "src" / "items.s").write_text('"""Shared."""\nSHARED := 1\n', encoding="utf-8")
+        (root / "src" / "ingame" / "items.s").write_text('"""Neighbour."""\nNEIGHBOUR := 1\n', encoding="utf-8")
+
+    def test_bare_name_resolves_against_the_module_paths(self, tmp_path: Path) -> None:
+        self._tree(tmp_path)
+        builder = ModuleBuilder(module_paths=[tmp_path / "src"])
+        assert builder._resolve_module_source("items") == tmp_path / "src" / "items.s"
+
+    def test_a_neighbour_is_reached_by_its_path(self, tmp_path: Path) -> None:
+        self._tree(tmp_path)
+        builder = ModuleBuilder(module_paths=[tmp_path / "src"])
+        assert builder._resolve_module_source("ingame/items") == tmp_path / "src" / "ingame" / "items.s"
+
+    def test_an_unreachable_name_resolves_to_nothing(self, tmp_path: Path) -> None:
+        """A module only a sibling could supply is not found at all."""
+        self._tree(tmp_path)
+        (tmp_path / "src" / "ingame" / "sibling_only.s").write_text(
+            '"""Only next to the importer."""\n', encoding="utf-8"
+        )
+        builder = ModuleBuilder(module_paths=[tmp_path / "src"])
+        assert builder._resolve_module_source("sibling_only") is None
