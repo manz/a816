@@ -51,7 +51,7 @@ _INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
 )
 
 
-def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
+def _import_search_paths(resolver: Resolver) -> list[Path]:
     """Where `.import` looks, in order.
 
     The configured module paths, and nothing else. The importing file's
@@ -63,7 +63,7 @@ def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
 
     A module under a subdirectory is addressed by its path,
     `ingame/items`, so a bare name means the same module wherever it is
-    imported from. `file_info` is kept for diagnostics.
+    imported from.
     """
     return list(resolver.context.module_paths)
 
@@ -274,7 +274,7 @@ def generate_import(
     """
     module_name = node.module_name
     direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
-    search_paths = _import_search_paths(resolver, file_info)
+    search_paths = _import_search_paths(resolver)
 
     obj_path = resolve_module(module_name, ".o", search_paths)
     src_path = resolve_module(module_name, ".s", search_paths)
