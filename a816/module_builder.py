@@ -148,7 +148,7 @@ class ModuleBuilder:
                 self.graph.add_dependency(module_name, import_name)
 
                 # Find the source file for this import
-                import_source = self._resolve_module_source(import_name, source_path.parent)
+                import_source = self._resolve_module_source(import_name)
                 if import_source:
                     self._discover_imports_recursive(import_source, import_name)
                 else:
@@ -165,12 +165,20 @@ class ModuleBuilder:
 
         return [node.module_name for node in walk(nodes) if isinstance(node, ImportAstNode)]
 
-    def _resolve_module_source(self, module_name: str, base_dir: Path) -> Path | None:
+    def _resolve_module_source(self, module_name: str) -> Path | None:
         """Find the source file for a module via the shared `module_loader`.
 
-        Search order: stdlib `@std/...` → `base_dir` → configured `module_paths`.
+        Search order: stdlib `@std/...` then the configured `module_paths`.
+
+        The importing file's own directory is deliberately NOT searched.
+        It used to come first, which let a file shadow a project-wide
+        module with a same-named neighbour: `.import "items"` from
+        `src/ingame/` picked up `src/ingame/items.s` rather than
+        `src/items.s`, compiled the wrong file as that module, and
+        surfaced as a missing symbol somewhere else entirely. A module
+        under a subdirectory is addressed by its path, `ingame/items`.
         """
-        return resolve_module(module_name, ".s", [base_dir, *self.module_paths])
+        return resolve_module(module_name, ".s", self.module_paths)
 
     def _needs_recompilation(self, module_name: str) -> bool:
         """Whether a module's own files changed since its `.o` was built.
