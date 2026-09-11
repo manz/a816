@@ -504,3 +504,33 @@ class TestModuleResolutionIsPathQualified:
         )
         builder = ModuleBuilder(module_paths=[tmp_path / "src"])
         assert builder._resolve_module_source("sibling_only") is None
+
+
+class TestCompileTimeImportIsPathQualified:
+    """The same rule has to hold where `.import` is actually resolved.
+
+    Discovery and codegen resolve module names separately. Fixing only
+    discovery left the shadowing in place: the graph pointed at the right
+    file while codegen still compiled the neighbour.
+    """
+
+    def test_a_neighbour_does_not_shadow_a_shared_module(self, tmp_path: Path) -> None:
+        src = tmp_path / "src"
+        (src / "ingame").mkdir(parents=True)
+        (src / "shared.s").write_text('"""Shared."""\n.struct Thing {\n    word hp\n}\n', encoding="utf-8")
+        (src / "ingame" / "shared.s").write_text('"""Neighbour, no struct."""\nOTHER := 1\n', encoding="utf-8")
+        (src / "ingame" / "user.s").write_text(
+            '"""Imports the shared module by bare name."""\n.import "shared"\nbound := (0x7E0000 as Thing)\n',
+            encoding="utf-8",
+        )
+        main = tmp_path / "main.s"
+        main.write_text('"""Main."""\n.import "ingame/user"\n', encoding="utf-8")
+
+        result = build_with_imports(
+            main_source=main,
+            output_file=tmp_path / "out.ips",
+            output_format="ips",
+            module_paths=[src],
+            output_dir=tmp_path / "obj",
+        )
+        assert result.exit_code == 0

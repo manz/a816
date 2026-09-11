@@ -51,14 +51,21 @@ _INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
 )
 
 
-def _import_search_paths(resolver: Resolver, file_info: Token) -> list[Path]:
-    paths: list[Path] = []
-    if file_info.position and file_info.position.file:
-        from a816.util import uri_to_path
+def _import_search_paths(resolver: Resolver) -> list[Path]:
+    """Where `.import` looks, in order.
 
-        paths.append(uri_to_path(file_info.position.file.filename).parent)
-    paths.extend(resolver.context.module_paths)
-    return paths
+    The configured module paths, and nothing else. The importing file's
+    own directory used to come first, which let a neighbour shadow a
+    project-wide module: `.import "items"` from `src/ingame/` resolved
+    to `src/ingame/items.s` rather than `src/items.s`, compiled the
+    wrong file under that name, and failed somewhere else entirely with
+    the shared module's declarations missing.
+
+    A module under a subdirectory is addressed by its path,
+    `ingame/items`, so a bare name means the same module wherever it is
+    imported from.
+    """
+    return list(resolver.context.module_paths)
 
 
 def _object_has_pool_allocs(obj_path: Path) -> bool:
@@ -267,7 +274,7 @@ def generate_import(
     """
     module_name = node.module_name
     direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
-    search_paths = _import_search_paths(resolver, file_info)
+    search_paths = _import_search_paths(resolver)
 
     obj_path = resolve_module(module_name, ".o", search_paths)
     src_path = resolve_module(module_name, ".s", search_paths)
