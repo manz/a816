@@ -52,6 +52,7 @@ class EmitMixin:
             current_block_addr=self.resolver.pc,
             current_block_logical=self.resolver.reloc_address.logical_value,
         )
+        self.resolver.forget_register_sizes()
         for node in program:
             self._emit_one(node, writer, state)
         self._flush_pending(writer, state)

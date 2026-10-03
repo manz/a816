@@ -300,6 +300,12 @@ class Resolver:
         # those. Enabled via `--experimental track_register_size` or
         # the `[experimental]` table in `a816.toml`.
         self.track_register_size: bool = False
+        # Whether `a_size` / `i_size` reflect a size the source actually
+        # asserted (`.a8`/`.a16`/`.i8`/`.i16`, or a tracked `rep`/`sep`)
+        # during emission, as opposed to the 8-bit default. Only known
+        # sizes drive the immediate-width mismatch warning.
+        self.a_size_known: bool = False
+        self.i_size_known: bool = False
         # Per-pool sandbox cursor for object-mode `.alloc` body labels.
         # Each `.alloc NAME in POOL` advances this so successive allocs
         # bind their bodies at distinct addresses inside the pool's
@@ -384,6 +390,11 @@ class Resolver:
             return
         for pool in self.pools.values():
             pool.allocate()
+
+    def forget_register_sizes(self) -> None:
+        """Mark A/X sizes unknown (new placement block, `plp`, ...)."""
+        self.a_size_known = False
+        self.i_size_known = False
 
     def get_bus(self) -> Bus:
         if self.bus.has_mappings():

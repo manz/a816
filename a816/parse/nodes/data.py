@@ -26,8 +26,10 @@ class RegisterSizeNode(NodeProtocol):
         # Update resolver state during emission
         if self.register == "a":
             self.resolver.a_size = self.size
+            self.resolver.a_size_known = True
         else:
             self.resolver.i_size = self.size
+            self.resolver.i_size_known = True
         return b""
 
     def pc_after(self, current_pc: Address) -> Address:

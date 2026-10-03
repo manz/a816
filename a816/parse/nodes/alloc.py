@@ -251,6 +251,8 @@ class AllocNode(NodeProtocol):
         attributed: list[tuple[NodeProtocol, int, bytes]] = []
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
+        # Each alloc body is its own routine: drop asserted A/X sizes.
+        self.resolver.forget_register_sizes()
         try:
             self.resolver.set_position(alloc.addr)
             cur = self.resolver.reloc_address

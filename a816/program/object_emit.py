@@ -37,6 +37,7 @@ class ObjectEmitMixin:
         # placeholder section and opens a new explicit one.
         object_writer.start_section(self.resolver.reloc_address.logical_value, explicit=False)
         state = ObjectEmitState(current_block=b"")
+        self.resolver.forget_register_sizes()
         try:
             for node in program:
                 self._object_emit_one(node, object_writer, state)
@@ -90,6 +91,8 @@ class ObjectEmitMixin:
         saved_reloc = self.resolver.reloc_address
         pool = self.resolver.pools.get(node.pool_name)
         is_bss = bool(pool and pool.bss)
+        # Each alloc body is its own routine: drop asserted A/X sizes.
+        self.resolver.forget_register_sizes()
         try:
             self.resolver.set_position(sandbox_logical)
             # Always force-create the body section (`bss=True` here means

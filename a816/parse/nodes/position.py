@@ -22,6 +22,8 @@ class CodePositionNode(NodeProtocol):
 
     def emit(self, current_addr: Address) -> bytes:
         self.resolver.set_position(self.value_node.get_value())
+        # A new placement starts a new routine: drop asserted A/X sizes.
+        self.resolver.forget_register_sizes()
         return b""
 
     def __str__(self) -> str:
