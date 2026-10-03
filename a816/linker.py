@@ -159,11 +159,11 @@ class Linker:
     def _merge_bus_mappings(self) -> None:
         """Collect `.map` declarations across input modules.
 
-        Cartridge mapping is project-scoped — one ROM, one map — but
-        paired-import re-emits the same `.map` in every consumer's
-        `.o`. Dedupe identical declarations on `identifier`; raise
-        when two `.o`s ship the SAME identifier with different bank
-        range / addr range / mask / mirror.
+        Cartridge mapping is project-scoped (one ROM, one map), yet
+        several modules may each declare it. Dedupe identical
+        declarations on `identifier`; raise when two `.o`s ship the
+        SAME identifier with a different shape (same rule codegen
+        applies to `.map`s brought in through `.import`).
         """
         from a816.object_file import BusMapping
 
@@ -174,13 +174,7 @@ class Linker:
                 if existing is None:
                     merged[mapping.identifier] = mapping
                     continue
-                if (
-                    existing.bank_range != mapping.bank_range
-                    or existing.addr_range != mapping.addr_range
-                    or existing.mask != mapping.mask
-                    or existing.writeable != mapping.writeable
-                    or existing.mirror_bank_range != mapping.mirror_bank_range
-                ):
+                if existing != mapping:
                     raise ValueError(f"conflicting `.map {mapping.identifier!r}` declarations across modules")
         self._merged_bus_mappings = list(merged.values())
 

@@ -87,6 +87,9 @@ separate blocks separated by a blank line.
 - `E0305` typed bind base must evaluate to an address.
 - `E0306` operand size mismatch.
 - `E0307` addressing mode not supported by opcode.
+- `E0308` conflicting `.map` declaration. Two modules (or a module
+  and one it `.import`s) declare the same identifier with different
+  ranges, mask, writable flag or mirror.
 
 ### Linker
 

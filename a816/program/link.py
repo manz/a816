@@ -47,7 +47,7 @@ class LinkMixin:
     def _replay_bus_mappings(self, linked_obj: ObjectFile) -> None:
         """Apply each module's `.map` directives onto this program's bus.
 
-        Linker dedupes paired-import re-emissions and errors on
+        Linker dedupes identical per-module declarations and errors on
         conflicting same-identifier declarations, so by the time we
         get here the mapping list is canonical. Skip identifiers
         already present (a previous link_as_* call on the same Program

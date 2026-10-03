@@ -18,6 +18,7 @@ from a816.parse.ast.nodes import (
     LabelAstNode,
     LabelDeclAstNode,
     MacroAstNode,
+    MapAstNode,
     PoolAstNode,
     ReclaimAstNode,
     ScopeAstNode,
@@ -25,18 +26,20 @@ from a816.parse.ast.nodes import (
     SymbolAffectationAstNode,
 )
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators, logger
+from a816.parse.codegen.structs import declare_bus_mapping
 from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
 from a816.symbols import Resolver
 
 # AST node types whose effect must be visible to codegen of the
-# importer (struct/macro/const defs, scopes, conditionals, nested
-# imports, pool decls, reclaims, docstrings). Everything else is
-# runtime-bound and surfaces as an `ExternNode` so the linker wires
-# it up at link time.
+# importer (struct/macro/const defs, `.map` bus layout, scopes,
+# conditionals, nested imports, pool decls, reclaims, docstrings).
+# Everything else is runtime-bound and surfaces as an `ExternNode` so
+# the linker wires it up at link time.
 _INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
     StructAstNode,
     MacroAstNode,
+    MapAstNode,
     SymbolAffectationAstNode,
     AssignAstNode,
     LabelDeclAstNode,
@@ -82,11 +85,15 @@ def _import_from_object(
     obj_path: Path,
     resolver: Resolver,
     direct_mode: bool,
+    file_info: Token,
 ) -> GenNodes | None:
     try:
         obj_file = ObjectFile.from_file(str(obj_path))
     except (FileNotFoundError, ValueError):
         return None
+
+    for mapping in obj_file.bus_mappings:
+        declare_bus_mapping(resolver, mapping, file_info)
 
     if direct_mode:
         symbols_data = [
@@ -280,10 +287,10 @@ def generate_import(
     src_path = resolve_module(module_name, ".s", search_paths)
 
     if obj_path and not direct_mode and src_path:
-        return _paired_object_and_source_import(module_name, obj_path, src_path, resolver, macro_definitions)
+        return _paired_object_and_source_import(module_name, obj_path, src_path, resolver, macro_definitions, file_info)
 
     if obj_path and not (direct_mode and _object_has_pool_allocs(obj_path)):
-        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
+        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode, file_info)
         if nodes is not None:
             return nodes
 
@@ -299,6 +306,7 @@ def _paired_object_and_source_import(
     src_path: Path,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     """Object-mode import: pair `.o` (runtime extern stubs) with source
     (compile-time inline). Neither half is complete on its own — `.o`
@@ -310,7 +318,7 @@ def _paired_object_and_source_import(
     if _is_imported(src_path, resolver, module_name):
         return []
     _mark_imported(src_path, resolver)
-    extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode=False) or []
+    extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode=False, file_info=file_info) or []
     inline_nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode=False) or []
     return extern_nodes + inline_nodes
 
