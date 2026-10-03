@@ -26,6 +26,9 @@ from a816.parse.mzparser import A816Parser
 
 logger = logging.getLogger("a816.module_builder")
 
+# `.deps` sidecar line recording the experimental flags an object was built with.
+_EXPERIMENTAL_PREFIX = "experimental:"
+
 
 @dataclass
 class BuildResult:
@@ -100,6 +103,7 @@ class ModuleBuilder:
         output_dir: Path | None = None,
         symbols: dict[str, int | str] | None = None,
         include_paths: list[Path] | None = None,
+        experimental: list[str] | None = None,
     ) -> None:
         """Initialize the module builder.
 
@@ -108,11 +112,13 @@ class ModuleBuilder:
             output_dir: Directory to write compiled .o files.
             symbols: Predefined symbols (e.g., LANG=1) for conditional compilation.
             include_paths: Directories to search for .include files.
+            experimental: Experimental feature flags applied to every module compile.
         """
         self.module_paths = module_paths or []
         self.output_dir = output_dir or Path("build/obj")
         self.symbols: dict[str, int | str] = symbols or {}
         self.include_paths: list[Path] = include_paths or []
+        self.experimental: list[str] = sorted(set(experimental or []))
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
 
@@ -209,7 +215,11 @@ class ModuleBuilder:
         if not deps_path.exists():
             return True
 
-        deps = [dep for dep in deps_path.read_text(encoding="utf-8").splitlines() if dep]
+        lines = [line for line in deps_path.read_text(encoding="utf-8").splitlines() if line]
+        flags = [line for line in lines if line.startswith(_EXPERIMENTAL_PREFIX)]
+        if flags != self._experimental_lines():
+            return True
+        deps = [line for line in lines if not line.startswith(_EXPERIMENTAL_PREFIX)]
         # The source that built this object is recorded in its sidecar; if the
         # current source path isn't there, the object belongs to a different
         # file that mapped to the same module name, so rebuild.
@@ -248,7 +258,16 @@ class ModuleBuilder:
         deps = {os.path.abspath(str(source_path))}
         deps.update(os.path.abspath(f) for f in obj.files)
         deps.update(asset_files)
-        self._deps_path(module_name).write_text("\n".join(sorted(deps)) + "\n", encoding="utf-8")
+        lines = self._experimental_lines() + sorted(deps)
+        self._deps_path(module_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _experimental_lines(self) -> list[str]:
+        """Sidecar lines pinning the experimental flags the `.o` was built with.
+
+        Flags change codegen (e.g. `track_register_size` widens immediates),
+        so toggling one must invalidate every cached object.
+        """
+        return [_EXPERIMENTAL_PREFIX + ",".join(self.experimental)] if self.experimental else []
 
     def _compile_module(
         self, module_name: str, source_path: Path, obj_path: Path, constants: dict[str, int]
@@ -263,6 +282,7 @@ class ModuleBuilder:
 
         logger.info(f"Compiling {module_name}: {source_path} -> {obj_path}")
         program = Program()
+        apply_experimental_flags(program, self.experimental)
         program.add_module_path(self.output_dir)
         for path in self.module_paths:
             program.add_module_path(path)
@@ -350,7 +370,7 @@ def _object_needs_linking(obj: ObjectFile) -> bool:
     )
 
 
-def _apply_experimental_flags(program: "Program", flags: list[str] | None) -> None:
+def apply_experimental_flags(program: "Program", flags: list[str] | None) -> None:
     """Set experimental feature flags on `program.resolver`.
 
     Known flags:
@@ -413,6 +433,7 @@ def build_with_imports(
             output_dir=output_dir,
             symbols=symbols,
             include_paths=include_paths,
+            experimental=experimental,
         )
 
         linked = builder.build(main_source, parsed_main_nodes=main_nodes)
@@ -421,7 +442,7 @@ def build_with_imports(
         from a816.program import Program
 
         program = Program(overlap_mode=overlap_mode)
-        _apply_experimental_flags(program, experimental)
+        apply_experimental_flags(program, experimental)
         program.enable_debug_capture()
 
         if output_format == "ips":

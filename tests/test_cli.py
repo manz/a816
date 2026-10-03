@@ -400,3 +400,29 @@ class CLIFluffLegacyTestCase(TestCase):
             self.assertEqual(rc, 1)
             self.assertIn("deprecated", stderr_capture.getvalue())
             self.assertIn("DOC001", stdout_capture.getvalue())
+
+
+class CLIExperimentalFlagsTestCase(CLITestCase):
+    """`--experimental` must reach every per-module compile on `a816 build`."""
+
+    def _build(self, tmpdir: str, extra: list[str]) -> bytes:
+        asm_file = Path(tmpdir) / "main.s"
+        asm_file.write_text('"""m"""\n*= 0x8000\nrep #0x30\nlda #0x42\n', encoding="utf-8")
+        ips_file = Path(tmpdir) / "out.ips"
+        obj_dir = Path(tmpdir) / "obj"
+        exit_code, _, stderr = self._run_cli(
+            ["build", str(asm_file), "-o", str(ips_file), "--obj-dir", str(obj_dir), *extra]
+        )
+        self.assertEqual(exit_code, 0, stderr)
+        return ips_file.read_bytes()
+
+    def test_track_register_size_widens_immediate_in_module_compile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ips = self._build(tmpdir, ["--experimental", "track_register_size"])
+        self.assertIn(b"\xc2\x30\xa9\x42\x00", ips)
+
+    def test_toggling_flag_invalidates_cached_object(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._build(tmpdir, [])
+            ips = self._build(tmpdir, ["--experimental", "track_register_size"])
+        self.assertIn(b"\xc2\x30\xa9\x42\x00", ips)

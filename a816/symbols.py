@@ -297,9 +297,8 @@ class Resolver:
         # written assuming value-driven width inference only - a
         # `lda #$01` after some earlier `rep #$20` was always meant
         # as 2 bytes (value forces .b). Enabling globally breaks
-        # those. Block-scoped opt-in via `.track_register_size`
-        # (or via the original `.a16` / `rep #$30` flow within a
-        # tight routine) is the path forward.
+        # those. Enabled via `--experimental track_register_size` or
+        # the `[experimental]` table in `a816.toml`.
         self.track_register_size: bool = False
         # Per-pool sandbox cursor for object-mode `.alloc` body labels.
         # Each `.alloc NAME in POOL` advances this so successive allocs

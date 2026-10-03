@@ -12,13 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from a816.cli import _apply_a816_toml, _apply_experimental
+from a816.cli import _apply_a816_toml
+from a816.module_builder import apply_experimental_flags as _apply_experimental
 from a816.parse.nodes import NodeError
 from a816.program import Program
 
 
 class TestCliExperimental:
-    """cli.py:174-178 — `--experimental` flag dispatch."""
+    """`--experimental` flag dispatch (module_builder.apply_experimental_flags)."""
 
     def test_track_register_size_sets_resolver_flag(self) -> None:
         program = Program()
