@@ -98,57 +98,46 @@ def parse_macro(p: Parser) -> MacroAstNode:
     )
 
 
-def parse_map(p: Parser) -> MapAstNode:
+_MAP_KEYS = frozenset({"identifier", "writable", "bank_range", "addr_range", "mask", "mirror_bank_range"})
+_MapKey = Literal["identifier", "writable", "bank_range", "addr_range", "mask", "mirror_bank_range"]
+
+
+def _parse_map_value(p: Parser) -> int | tuple[int, int]:
+    expect_token(p.next(), TokenType.EQUAL)
+    number1 = p.next()
+    expect_token(number1, TokenType.NUMBER)
+    if not accept_token(p.current(), TokenType.COMMA):
+        return cast(int, ast.literal_eval(number1.value))
+    p.next()
+    number2 = p.next()
+    expect_token(number2, TokenType.NUMBER)
+    return ast.literal_eval(number1.value), ast.literal_eval(number2.value)
+
+
+def _token_line(token: Token) -> int | None:
+    return token.position.line if token.position is not None else None
+
+
+def _is_map_attribute(token: Token, keyword: Token) -> bool:
+    """Attributes live on the `.map` line; newlines emit no token, so the line number is the terminator."""
+    return token.type == TokenType.IDENTIFIER and _token_line(token) == _token_line(keyword)
+
+
+def parse_map(p: Parser, keyword: Token) -> MapAstNode:
     args: MapArgs = {}
     first_identifier = p.current()
     expect_token(first_identifier, TokenType.IDENTIFIER)
 
-    while p.current().type == TokenType.IDENTIFIER:
+    while _is_map_attribute(p.current(), keyword):
         identifier = p.next()
-
-        expect_token(identifier, TokenType.IDENTIFIER)
-        key = identifier.value
-
-        if key in {
-            "identifier",
-            "writable",
-            "bank_range",
-            "addr_range",
-            "mask",
-            "mirror_bank_range",
-        }:
-            map_key = cast(
-                Literal[
-                    "identifier",
-                    "writable",
-                    "bank_range",
-                    "addr_range",
-                    "mask",
-                    "mirror_bank_range",
-                ],
-                key,
-            )
-            expect_token(p.next(), TokenType.EQUAL)
-            number1 = p.next()
-            expect_token(number1, TokenType.NUMBER)
-            if accept_token(p.current(), TokenType.COMMA):
-                p.next()
-                number2 = p.next()
-                expect_token(number2, TokenType.NUMBER)
-
-                args[map_key] = (
-                    ast.literal_eval(number1.value),
-                    ast.literal_eval(number2.value),
-                )
-            else:
-                args[map_key] = ast.literal_eval(number1.value)
-        else:
+        if identifier.value not in _MAP_KEYS:
             raise ParserSyntaxError(
                 f"unknown attribute for `.map` directive: `{identifier.value}`",
                 identifier,
                 code=str(E_PARSER_UNKNOWN_DIRECTIVE_ATTR),
                 hint="valid attributes: identifier, writable, bank_range, addr_range, mask, mirror_bank_range",
             )
+        args[cast(_MapKey, identifier.value)] = _parse_map_value(p)
 
     return MapAstNode(args, first_identifier)
 

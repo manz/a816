@@ -78,7 +78,7 @@ _DIRECTIVE_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     "incbin": lambda p, kw: IncludeBinaryAstNode(parse_directive_with_quoted_string(p), kw),
     "table": lambda p, kw: TableAstNode(parse_directive_with_quoted_string(p), kw),
     "macro": lambda p, _kw: parse_macro(p),
-    "map": lambda p, _kw: parse_map(p),
+    "map": parse_map,
     "if": lambda p, _kw: parse_if(p),
     "for": lambda p, _kw: parse_for(p),
     "struct": lambda p, _kw: parse_struct(p),
