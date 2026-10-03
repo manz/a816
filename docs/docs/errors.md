@@ -90,6 +90,8 @@ separate blocks separated by a blank line.
 - `E0308` conflicting `.map` declaration. Two modules (or a module
   and one it `.import`s) declare the same identifier with different
   ranges, mask, writable flag or mirror.
+- `E0309` byte immediate does not fit in 8 bits: an explicit `.b`
+  immediate whose value exceeds `0xFF`.
 
 ### Linker
 

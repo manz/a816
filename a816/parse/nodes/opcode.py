@@ -9,6 +9,7 @@ from a816.cpu.cpu_65c816 import BlockMoveOpcode, NoOpcodeForOperandSize, Opcode,
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
 from a816.diagnostics.suggest import did_you_mean_hint as _did_you_mean_hint
+from a816.error_codes import E_CODEGEN_IMMEDIATE_OVERFLOW as _E_IMMEDIATE_OVERFLOW
 from a816.error_codes import E_SYMBOL_NOT_DEFINED as _E_SYMBOL_NOT_DEFINED
 from a816.exceptions import SymbolNotDefined
 from a816.parse.nodes.errors import NodeError, format_node_warning
@@ -103,8 +104,33 @@ class OpcodeNode(NodeProtocol):
                 code=str(_E_SYMBOL_NOT_DEFINED),
                 hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
             ) from e
+        self._check_byte_immediate_overflow(opcode_emitter)
         self._warn_on_immediate_width_mismatch(opcode_emitter)
         return emitted
+
+    def _check_byte_immediate_overflow(self, emitter: OpcodeProtocol) -> None:
+        """Reject a `.b` immediate whose value does not fit one byte.
+
+        Only the byte width errors: `.w`/`.l` immediates keep masking
+        (`lda.w #symbol` loads the low word of an address on purpose).
+        A byte accepts -0x100..0xFF, i.e. the bits above bit 7 are all
+        zero or all one, so `#-1` and `#~0x80` stay valid. External
+        symbols resolve to 0 here and are left to the linker.
+        """
+        if self.addressing_mode is not AddressingMode.immediate or not isinstance(emitter, Opcode):
+            return
+        assert self.value_node is not None
+        if guess_value_size(self.value_node, self.size, self.resolver, emitter.is_a, emitter.is_x) != "b":
+            return
+        value = self.value_node.get_value()
+        if not isinstance(value, int) or value >> 8 in (0, -1):
+            return
+        raise NodeError(
+            f"immediate {value:#x} does not fit in a byte (`{self.opcode}.b` takes -0x100..0xFF)",
+            self.file_info,
+            code=str(_E_IMMEDIATE_OVERFLOW),
+            hint=f"use `{self.opcode}.w` if the register is 16-bit, or mask the value explicitly (`& 0xFF`)",
+        )
 
     def _known_register_width(self, emitter: Opcode) -> tuple[str, int] | None:
         """`(register, bits)` the immediate is read at, if the source asserted it."""
