@@ -205,6 +205,121 @@ class TestAllocEndToEnd:
         assert "fn" in labels
 
 
+class TestAllocBodyLabelsDirectPath:
+    """Labels inside a later `.alloc` in a pool must bind at that alloc's
+    placed address on the direct path, not at the pool base the pass-1
+    size measurement walks from."""
+
+    @staticmethod
+    def _assemble(src: str) -> tuple[dict[str, int], dict[int, bytes]]:
+        program = Program()
+        writer = StubWriter()
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        blocks = dict(zip(writer.data_addresses, writer.data, strict=True))
+        return program.resolver.current_scope.labels, blocks
+
+    def test_label_used_before_its_alloc(self) -> None:
+        labels, blocks = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .alloc first in p {
+                jsr.w baz
+                jsr.w qux
+                rts
+            }
+            .alloc second in p {
+            baz:
+                nop
+            qux:
+                rts
+            }
+            """
+        )
+        assert (labels["baz"], labels["qux"]) == (0x028007, 0x028008)
+        assert blocks[0x010000] == bytes.fromhex("20 07 80 20 08 80 60")
+
+    def test_label_used_after_its_alloc(self) -> None:
+        labels, blocks = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .alloc first in p {
+                nop
+            }
+            .alloc second in p {
+            baz:
+                rts
+            }
+            .alloc third in p {
+                jsr.w baz
+                rts
+            }
+            """
+        )
+        assert labels["baz"] == 0x028001
+        assert blocks[0x010002] == bytes.fromhex("20 01 80 60")
+
+    def test_labels_across_multiple_allocs(self) -> None:
+        labels, _ = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .alloc first in p {
+            a1:
+                nop
+                nop
+            }
+            .alloc second in p {
+                nop
+            b1:
+                nop
+            }
+            .alloc third in p {
+                nop
+                nop
+            c1:
+                rts
+            }
+            """
+        )
+        assert (labels["a1"], labels["b1"], labels["c1"]) == (0x028000, 0x028003, 0x028006)
+
+    def test_label_in_alloc_inside_named_scope(self) -> None:
+        labels, blocks = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .scope mod {
+                .alloc first in p {
+                    jsr.w baz
+                    rts
+                }
+                .alloc second in p {
+                baz:
+                    rts
+                }
+            }
+            """
+        )
+        assert labels["mod.baz"] == 0x028004
+        assert blocks[0x010000] == bytes.fromhex("20 04 80 60")
+
+    def test_sibling_alloc_label_collision_keeps_first(self) -> None:
+        labels, _ = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .alloc first in p {
+                nop
+            dup:
+                rts
+            }
+            .alloc second in p {
+                nop
+            dup:
+                rts
+            }
+            """
+        )
+        assert labels["dup"] == 0x028001
+
+
 class TestRelocateCodegen:
     def test_relocate_into_unknown_pool_errors(self) -> None:
         with pytest.raises(Exception, match="unknown pool"):
