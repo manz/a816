@@ -17,18 +17,19 @@ def _write(path: Path, body: str) -> None:
 
 
 def test_direct_build_exposes_module_global_in_symbol_map() -> None:
-    main_src = """*=0x008000
-.import "vwf"
+    main_src = """.import "vwf"
+*=0x008000
 
 main:
     jsr.l vwf_render
     rts
 """
 
-    vwf_src = """*=0x009000
+    vwf_src = """.alloc at 0x009000 {
 vwf_render:
     rep #0x30
     rts
+}
 """
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -55,18 +56,19 @@ vwf_render:
 
 
 def test_direct_build_emits_adbg_with_module_symbol() -> None:
-    main_src = """*=0x008000
-.import "vwf"
+    main_src = """.import "vwf"
+*=0x008000
 
 main:
     jsr.l vwf_render
     rts
 """
 
-    vwf_src = """*=0x009000
+    vwf_src = """.alloc at 0x009000 {
 vwf_render:
     rep #0x30
     rts
+}
 """
 
     with tempfile.TemporaryDirectory() as tmp:

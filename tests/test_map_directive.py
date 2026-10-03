@@ -79,7 +79,7 @@ def test_conflicting_map_diagnostic_names_identifier(tmp_path: Path, caplog: pyt
 
 def test_conflicting_map_diagnostic_points_at_import_site(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     _build(tmp_path, _SRAM_MAP_CONFLICT + _SRAM_ALLOC)
-    assert "sram.s:2:9" in caplog.text
+    assert "sram.s:2:2" in caplog.text
 
 
 def test_source_only_import_conflict_points_at_imported_map(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

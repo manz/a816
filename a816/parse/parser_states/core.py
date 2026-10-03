@@ -83,7 +83,7 @@ _DIRECTIVE_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     "for": lambda p, _kw: parse_for(p),
     "struct": lambda p, _kw: parse_struct(p),
     "extern": lambda p, _kw: parse_extern(p),
-    "import": lambda p, _kw: parse_import(p),
+    "import": parse_import,
     "debug": lambda p, _kw: parse_debug(p),
     "label": parse_label_decl,
     "pool": lambda p, _kw: parse_pool(p),

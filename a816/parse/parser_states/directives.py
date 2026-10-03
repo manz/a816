@@ -264,15 +264,16 @@ def parse_extern(p: Parser) -> ExternAstNode:
     return ExternAstNode(symbol_token.value, symbol_token)
 
 
-def parse_import(p: Parser) -> ImportAstNode:
+def parse_import(p: Parser, keyword: Token) -> ImportAstNode:
     """Parse .import "module_name" directive.
 
     The .import directive imports all public symbols from a module.
-    Module resolution happens at code generation time.
+    Module resolution happens at code generation time. The node's
+    file_info is the `.import` keyword so diagnostics underline the
+    directive itself.
     """
-    current = p.current()
     module_name = parse_directive_with_quoted_string(p)
-    return ImportAstNode(module_name, current)
+    return ImportAstNode(module_name, keyword)
 
 
 def parse_debug(p: Parser) -> DebugAstNode:

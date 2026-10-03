@@ -364,6 +364,13 @@ class Resolver:
         # owned by its dependencies - the owner's `.o` is the single
         # source of truth, downstream `.o`s carry externs.
         self.imported_symbol_names: set[str] = set()
+        # Placement context seen by `.import` at codegen. A `*=` cursor
+        # stays active until the end of the source unit that opened it
+        # (`.import` restores the importer's flag); the depth counts the
+        # `.alloc` / `.relocate` bodies being generated. Either one makes
+        # an `.import` a hard error: modules own their placement.
+        self.star_eq_cursor_active: bool = False
+        self.placement_body_depth: int = 0
         # Absolute paths of non-source assets pulled in during assembly
         # (`.incbin` blobs, `.table` files). The module builder records
         # these alongside the `.o`'s source-file table so an incremental

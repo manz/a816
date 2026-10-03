@@ -436,6 +436,7 @@ class TestImportExpressionRelocations:
             module_code = """
 .extern data_table
 
+*=0x9000
 get_data:
     lda.l data_table        ; Should be replaced with actual address
     rts
@@ -457,8 +458,8 @@ get_data_plus2:
 
             # Create main file that defines the external symbol and imports module
             main_code = """
-*=0x8000
 .import "module"
+*=0x8000
 
 data_table:
     .db 0x11, 0x22, 0x33, 0x44
@@ -487,7 +488,7 @@ main:
                 code = f.read()
 
             # The module code should have the actual address, not 0x000000
-            # data_table is at 0x8000 + module_size (module comes first due to import)
+            # The module pins itself at 0x9000; data_table sits at 0x8000 in main.
             # Find the LDA.L instruction bytes and verify they're not zero
             # LDA.L opcode is 0xAF, followed by 3-byte address
 
@@ -510,6 +511,7 @@ main:
 .extern table_a
 .extern table_b
 
+*=0x9000
 func1:
     ldx.w table_a
     ldy.w table_b
@@ -533,8 +535,8 @@ func2:
 
             # Main file
             main_code = """
-*=0x8000
 .import "multi_reloc"
+*=0x8000
 
 table_a:
     .dw 0x1111, 0x2222, 0x3333, 0x4444

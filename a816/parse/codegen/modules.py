@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
 from a816.module_loader import resolve_module
 from a816.object_file import ObjectFile, SymbolType
 from a816.parse.ast.nodes import (
@@ -279,7 +280,44 @@ def generate_import(
     keep the existing winner/loser mechanism intact — `LinkedModuleNode`
     already handles duplicates by marking earlier placements as losers.
     """
-    module_name = node.module_name
+    _reject_import_in_placement(resolver, file_info)
+    importer_cursor = resolver.star_eq_cursor_active
+    resolver.star_eq_cursor_active = False
+    try:
+        return _resolve_import(node.module_name, resolver, macro_definitions, file_info)
+    finally:
+        resolver.star_eq_cursor_active = importer_cursor
+
+
+def _reject_import_in_placement(resolver: Resolver, file_info: Token) -> None:
+    """Refuse an `.import` that would ride a placement context.
+
+    The `*= ADDR / .import "mod"` chain and `.import` inside an `.alloc`
+    body used to be accepted and silently placed the module wherever the
+    module itself said (or nowhere sensible). Modules own their placement
+    through `.alloc at` / `.alloc in POOL`; imports belong in the prelude.
+    """
+    if resolver.placement_body_depth > 0:
+        where = "inside an `.alloc` / `.relocate` body"
+    elif resolver.star_eq_cursor_active:
+        where = "after a `*=` placement"
+    else:
+        return
+    raise NodeError(
+        f"`.import` {where}: modules own their placement",
+        file_info,
+        code=str(E_CODEGEN_IMPORT_IN_PLACEMENT),
+        hint="move the `.import` to the top of the file and place code inside the module with `.alloc at` / `.alloc in`",
+    )
+
+
+def _resolve_import(
+    module_name: str,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Locate the module and bring it in as `.o` stubs, a linked module or inlined source."""
     direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
     search_paths = _import_search_paths(resolver)
 

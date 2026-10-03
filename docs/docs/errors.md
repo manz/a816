@@ -95,6 +95,8 @@ separate blocks separated by a blank line.
 - `E0310` code emitted outside any placement. Under `a816 build`,
   a module (entrypoint included) emitted bytes before any `*=` and
   outside every `.alloc`. Wrap them in `.alloc` or set `*=` first.
+- `E0311` `.import` inside a placement context. `.import` must sit in
+  the file prelude, before the first `*=` and outside any `.alloc` body.
 
 ### Linker
 
