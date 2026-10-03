@@ -25,7 +25,8 @@ main:
     rts
 """
 
-    vwf_src = """vwf_render:
+    vwf_src = """*=0x009000
+vwf_render:
     rep #0x30
     rts
 """
@@ -49,7 +50,7 @@ main:
         assert result.exit_code == 0, result.diagnostics
         assert "main" in result.symbol_map
         assert "vwf_render" in result.symbol_map
-        # vwf_render lands somewhere after main; bsnes wants bank:offset.
+        # bsnes wants bank:offset.
         assert isinstance(result.symbol_map["vwf_render"], int)
 
 
@@ -62,7 +63,8 @@ main:
     rts
 """
 
-    vwf_src = """vwf_render:
+    vwf_src = """*=0x009000
+vwf_render:
     rep #0x30
     rts
 """
@@ -103,7 +105,8 @@ main:
     rts
 """
 
-    helper_src = """far_helper:
+    helper_src = """*=0x009000
+far_helper:
     rtl
 """
 
@@ -152,7 +155,8 @@ main:
     rts
 """
 
-    helper_src = """far_helper:
+    helper_src = """*=0x009000
+far_helper:
     rtl
 """
 
