@@ -6,7 +6,7 @@ on:
 jobs:
   pypi:
     name: Publish wheel to PyPI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - name: Setup Python 3.12
@@ -24,7 +24,7 @@ jobs:
 
   binaries:
     name: Build Windows binary and create GitHub release
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
       - name: Setup Python 3.12
