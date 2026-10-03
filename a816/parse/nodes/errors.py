@@ -15,7 +15,7 @@ class NodeError(A816Error):
     def __init__(
         self,
         message: str,
-        file_info: Token,
+        file_info: Token | None,
         *,
         code: str | None = None,
         hint: str | None = None,

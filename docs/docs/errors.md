@@ -92,6 +92,9 @@ separate blocks separated by a blank line.
   ranges, mask, writable flag or mirror.
 - `E0309` byte immediate does not fit in 8 bits: an explicit `.b`
   immediate whose value exceeds `0xFF`.
+- `E0310` code emitted outside any placement. Under `a816 build`,
+  a module (entrypoint included) emitted bytes before any `*=` and
+  outside every `.alloc`. Wrap them in `.alloc` or set `*=` first.
 
 ### Linker
 

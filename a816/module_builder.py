@@ -283,6 +283,7 @@ class ModuleBuilder:
         logger.info(f"Compiling {module_name}: {source_path} -> {obj_path}")
         program = Program()
         apply_experimental_flags(program, self.experimental)
+        program.resolver.context.require_placement = True
         program.add_module_path(self.output_dir)
         for path in self.module_paths:
             program.add_module_path(path)

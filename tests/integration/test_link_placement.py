@@ -106,3 +106,63 @@ def test_cli_explicit_link_rejects_overlap(tmp_path: Path) -> None:
     _write_project(tmp_path, _OVERLAPPING_MODULES)
     rc, stderr = _run_cli(["build", str(tmp_path / "a.s"), str(tmp_path / "b.s"), "-o", str(tmp_path / "out.ips")])
     assert rc != 0 and "overlaps" in stderr
+
+
+def _build_logged(main: Path, caplog: pytest.LogCaptureFixture) -> tuple[BuildResult, str]:
+    with caplog.at_level(logging.ERROR):
+        result = _build(main, overlap_mode="error")
+    return result, "\n".join(r.getMessage() for r in caplog.records)
+
+
+def test_unplaced_imported_module_is_a_located_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The modules walkthrough shape: vwf has no placement, main pins 0x008000."""
+    main = _write_project(
+        tmp_path,
+        {
+            "main.s": '.import "vwf"\n.alloc main at 0x008000 {\n    jsl vwf_init\n}\n',
+            "vwf.s": "; renderer\nvwf_init:\n    rtl\n",
+        },
+    )
+    result, log = _build_logged(main, caplog)
+    assert result.exit_code != 0 and "error[E0310]" in log and f"{tmp_path / 'vwf.s'}:3:5" in log
+
+
+def test_unplaced_error_carets_the_first_unplaced_statement(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    main = _write_project(tmp_path, {"main.s": "label:\n    lda #0x01\n    rts\n"})
+    _, log = _build_logged(main, caplog)
+    assert "    lda #0x01\n  |     ^^^" in log
+
+
+def test_unplaced_data_directive_is_located(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    main = _write_project(tmp_path, {"main.s": "table:\n    .db 0x01, 0x02\n"})
+    _, log = _build_logged(main, caplog)
+    assert f"{tmp_path / 'main.s'}:2:6" in log
+
+
+def test_code_after_alloc_without_position_is_unplaced(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    main = _write_project(tmp_path, {"main.s": ".alloc head at 0x008000 {\n    nop\n}\n    rts\n"})
+    result, log = _build_logged(main, caplog)
+    assert result.exit_code != 0 and f"{tmp_path / 'main.s'}:4:5" in log
+
+
+def test_code_after_alloc_continues_an_earlier_position(tmp_path: Path) -> None:
+    main = _write_project(
+        tmp_path, {"main.s": "*= 0x008000\n    nop\n.alloc tail at 0x009000 {\n    rts\n}\n    nop\n"}
+    )
+    assert _build(main, overlap_mode="error").exit_code == 0
+
+
+def test_byte_less_module_needs_no_placement(tmp_path: Path) -> None:
+    files = {
+        "main.s": '.import "defs"\n*= 0x008000\n    lda #VALUE\n',
+        "defs.s": "VALUE = 0x42\n.macro twice(x) {\n    .db x, x\n}\n",
+    }
+    assert _build(_write_project(tmp_path, files), overlap_mode="error").exit_code == 0
+
+
+def test_separate_compile_keeps_relocatable_objects(tmp_path: Path) -> None:
+    """Outside `a816 build <entry>`, unplaced objects stay relocatable: the
+    explicit link lays them out back to back from 0x008000."""
+    _write_project(tmp_path, {"a.s": "a:\n    nop\n", "b.s": "b:\n    rts\n"})
+    rc, stderr = _run_cli(["build", str(tmp_path / "a.s"), str(tmp_path / "b.s"), "-o", str(tmp_path / "out.ips")])
+    assert rc == 0, stderr

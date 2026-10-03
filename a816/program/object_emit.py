@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from a816.parse.nodes import AllocNode, CodePositionNode, IncludeIpsNode
+from a816.error_codes import E_CODEGEN_UNPLACED_CODE
+from a816.parse.nodes import AllocNode, CodePositionNode, IncludeIpsNode, NodeError
+from a816.parse.tokens import Token
 from a816.program.state import ObjectEmitState
 from a816.protocols import NodeProtocol
 from a816.writers import ObjectWriter
@@ -36,8 +38,10 @@ class ObjectEmitMixin:
         # If the source begins with `*=`, that emit immediately closes this
         # placeholder section and opens a new explicit one.
         object_writer.start_section(self.resolver.reloc_address.logical_value, explicit=False)
-        state = ObjectEmitState(current_block=b"")
         self.resolver.forget_register_sizes()
+        # Without `require_placement` the implicit section is a legitimate
+        # home: the `.o` stays relocatable and the linker places it.
+        state = ObjectEmitState(current_block=b"", placed=not self.resolver.context.require_placement)
         try:
             for node in program:
                 self._object_emit_one(node, object_writer, state)
@@ -58,6 +62,7 @@ class ObjectEmitMixin:
             return
         self._accumulate_object_bytes(node, object_writer, state)
         if isinstance(node, CodePositionNode):
+            state.placed = True
             self._object_open_section(object_writer, state, explicit=True)
         if isinstance(node, IncludeIpsNode):
             self._object_emit_ips_blocks(node, object_writer, state)
@@ -102,9 +107,11 @@ class ObjectEmitMixin:
             # bytes; both must survive. Sections that DO emit bytes get their
             # bss flag cleared below so the final SFC/IPS emit still writes them.
             object_writer.start_section(sandbox_logical, explicit=True, bss=True)
+            outer_placed, state.placed = state.placed, True
             for child in node.body:
                 self._object_emit_one(child, object_writer, state)
             self._flush_object_block(object_writer, state)
+            state.placed = outer_placed
             section = object_writer.sections[-1] if object_writer.sections else None
             if section is not None and section.code:
                 if is_bss:
@@ -137,6 +144,8 @@ class ObjectEmitMixin:
         node_bytes = node.emit(self.resolver.reloc_address)
         if not node_bytes:
             return
+        if not state.placed:
+            raise _unplaced_code_error(node)
         self._record_object_line(node, object_writer.relocation_offset(), object_writer)
         state.current_block += node_bytes
         object_writer.mark_emitted(len(node_bytes))
@@ -162,3 +171,25 @@ class ObjectEmitMixin:
         if state.current_block:
             object_writer.write_block(state.current_block, 0)
             state.current_block = b""
+
+
+def _statement_token(node: NodeProtocol) -> Token | None:
+    """Source token of the statement that produced `node`, if it carries one.
+
+    Opcodes / text carry `file_info` directly; `.db` / `.dw` / `.dl`
+    nodes carry it on their value expression.
+    """
+    token = getattr(node, "file_info", None)
+    if token is None:
+        token = getattr(getattr(node, "value_node", None), "file_info", None)
+    return token if isinstance(token, Token) else None
+
+
+def _unplaced_code_error(node: NodeProtocol) -> NodeError:
+    return NodeError(
+        "code emitted outside any placement",
+        _statement_token(node),
+        code=str(E_CODEGEN_UNPLACED_CODE),
+        hint="give these bytes a home: wrap them in `.alloc NAME in POOL { ... }` / "
+        "`.alloc at ADDR { ... }`, or set the position with `*= ADDR` first",
+    )

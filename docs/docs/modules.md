@@ -45,6 +45,25 @@ You can still write `.extern name` for symbols you want to reference
 without `.import`ing the owning module — useful for build-script
 injected constants or third-party `.o` drops.
 
+## Placement
+
+Under `a816 build <entry>.s` every emitted byte needs an explicit home,
+in the entrypoint and in every imported module alike: an `.alloc`
+(`at ADDR` or `in POOL`) or a preceding `*= ADDR`. Bytes emitted before
+the first `*=` and outside every `.alloc` fail the build with `E0310`,
+pointing at the first such statement. They used to land silently at
+`0x008000` and overwrite whatever else lived there.
+
+Byte-less modules (constants, structs, macros, pool decls) need no
+placement. Code after an `.alloc { ... }` block continues the enclosing
+`*=` position, so it needs one too.
+
+Explicit separate compilation (`a816 build --compile-only` then linking
+`.o` files, or several sources on one command line) keeps unplaced
+objects relocatable: the linker lays them out back to back from
+`0x008000`. The link-time [overlap check](directives.md#write-overlap-detection)
+still rejects them if they collide with pinned code.
+
 ## Cross-module references
 
 Declare symbols defined in another module with `.extern`:

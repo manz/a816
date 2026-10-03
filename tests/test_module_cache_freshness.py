@@ -40,7 +40,7 @@ def _rebuilt(obj: Path) -> bool:
 
 def test_unchanged_module_is_not_recompiled(tmp_path: Path) -> None:
     main = tmp_path / "main.s"
-    main.write_text("main:\n    lda #0x01\n    rts\n")
+    main.write_text("*= 0x008000\nmain:\n    lda #0x01\n    rts\n")
     _build(tmp_path, main)
 
     obj = _obj(tmp_path, "__main__")
@@ -53,7 +53,7 @@ def test_unchanged_module_is_not_recompiled(tmp_path: Path) -> None:
 
 def test_edited_source_recompiles(tmp_path: Path) -> None:
     main = tmp_path / "main.s"
-    main.write_text("main:\n    lda #0x01\n    rts\n")
+    main.write_text("*= 0x008000\nmain:\n    lda #0x01\n    rts\n")
     _build(tmp_path, main)
 
     obj = _obj(tmp_path, "__main__")
@@ -68,7 +68,7 @@ def test_edited_include_recompiles_dependent(tmp_path: Path) -> None:
     inc = tmp_path / "consts.s"
     inc.write_text("BAR = 0x7E0802\n")
     main = tmp_path / "main.s"
-    main.write_text('.include "consts.s"\nmain:\n    lda #0x01\n    rts\n')
+    main.write_text('.include "consts.s"\n*= 0x008000\nmain:\n    lda #0x01\n    rts\n')
     _build(tmp_path, main)
 
     obj = _obj(tmp_path, "__main__")
@@ -84,7 +84,7 @@ def test_edited_incbin_asset_recompiles(tmp_path: Path) -> None:
     blob = tmp_path / "blob.bin"
     blob.write_bytes(b"\x01\x02\x03\x04")
     main = tmp_path / "main.s"
-    main.write_text('.incbin "blob.bin"\n')
+    main.write_text('*= 0x008000\n.incbin "blob.bin"\n')
     _build(tmp_path, main)
 
     obj = _obj(tmp_path, "__main__")
@@ -100,7 +100,7 @@ def test_edited_table_asset_recompiles(tmp_path: Path) -> None:
     tbl = tmp_path / "font.tbl"
     tbl.write_text("41=A\n42=B\n")
     main = tmp_path / "main.s"
-    main.write_text('.table "font.tbl"\n.text "AB"\n')
+    main.write_text('.table "font.tbl"\n*= 0x008000\n.text "AB"\n')
     _build(tmp_path, main)
 
     obj = _obj(tmp_path, "__main__")
@@ -122,7 +122,7 @@ def test_same_module_name_different_source_recompiles(tmp_path: Path) -> None:
     obj_dir = tmp_path / "obj"
 
     first = tmp_path / "first.s"
-    first.write_text("main:\n    lda #0x01\n    rts\n")
+    first.write_text("*= 0x008000\nmain:\n    lda #0x01\n    rts\n")
     ModuleBuilder(output_dir=obj_dir).build(first)
     obj = obj_dir / "__main__.o"
     _set_mtime(obj, _SENTINEL)
@@ -130,7 +130,7 @@ def test_same_module_name_different_source_recompiles(tmp_path: Path) -> None:
     # A different entry file, same `__main__` object name, older than the
     # cached object; only the source-identity guard forces a rebuild.
     second = tmp_path / "second.s"
-    second.write_text("other:\n    lda #0x02\n    rts\n")
+    second.write_text("*= 0x008000\nother:\n    lda #0x02\n    rts\n")
     _set_mtime(second, _OLDER)
     ModuleBuilder(output_dir=obj_dir).build(second)
     assert _rebuilt(obj), "object built from a different source must rebuild"
@@ -138,9 +138,9 @@ def test_same_module_name_different_source_recompiles(tmp_path: Path) -> None:
 
 def test_edited_import_recompiles_importer(tmp_path: Path) -> None:
     lib = tmp_path / "mylib.s"
-    lib.write_text("lib_func:\n    lda #0x01\n    rts\n")
+    lib.write_text("*= 0x009000\nlib_func:\n    lda #0x01\n    rts\n")
     main = tmp_path / "main.s"
-    main.write_text('.import "mylib"\nmain:\n    jsr.w lib_func\n    rts\n')
+    main.write_text('.import "mylib"\n*= 0x008000\nmain:\n    jsr.w lib_func\n    rts\n')
     _build(tmp_path, main)
 
     main_obj = _obj(tmp_path, "__main__")

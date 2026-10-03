@@ -249,6 +249,7 @@ main:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "main.s"
             source.write_text("""
+*= 0x008000
 main:
     lda #0x42
     sta 0x2000
@@ -267,6 +268,7 @@ main:
             # Create module
             lib_source = Path(tmpdir) / "mylib.s"
             lib_source.write_text("""
+*= 0x009000
 lib_func:
     lda #0x01
     sta 0x2000
@@ -278,6 +280,7 @@ lib_func:
             main_source.write_text("""
 .import "mylib"
 
+*= 0x008000
 main:
     jsr.w lib_func
     rts

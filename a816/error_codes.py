@@ -66,6 +66,7 @@ E_CODEGEN_BAD_OPERAND_SIZE = ErrorCode("E0306", "codegen", "operand size mismatc
 E_CODEGEN_BAD_ADDRESSING_MODE = ErrorCode("E0307", "codegen", "addressing mode not supported by opcode")
 E_CODEGEN_MAP_CONFLICT = ErrorCode("E0308", "codegen", "conflicting `.map` declaration")
 E_CODEGEN_IMMEDIATE_OVERFLOW = ErrorCode("E0309", "codegen", "byte immediate does not fit in 8 bits")
+E_CODEGEN_UNPLACED_CODE = ErrorCode("E0310", "codegen", "code emitted outside any placement")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")
