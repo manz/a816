@@ -25,7 +25,7 @@ from a816.fluff.rules_doc import (
 )
 from a816.fluff.rules_naming import ConstantNaming, LabelNaming
 from a816.fluff.rules_opcode import RedundantOpcodeSizeSuffix
-from a816.fluff.rules_structural import NestedPlacementInAlloc
+from a816.fluff.rules_structural import ImportOutsidePrelude, NestedPlacementInAlloc
 from a816.fluff.rules_style import (
     LineTooLong,
     RedundantTypedCast,
@@ -52,6 +52,7 @@ RULES: list[Rule] = [
     StarEqualToAllocAt(),
     RedundantOpcodeSizeSuffix(),
     NestedPlacementInAlloc(),
+    ImportOutsidePrelude(),
 ]
 Rule.registry = {rule.code: rule for rule in RULES}
 
