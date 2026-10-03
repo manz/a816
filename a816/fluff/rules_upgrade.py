@@ -11,6 +11,7 @@ will now fail to assemble after the fix.
 
 from __future__ import annotations
 
+import textwrap
 from collections.abc import Iterable
 
 from a816.fluff.core import (
@@ -22,8 +23,19 @@ from a816.fluff.core import (
     TextEdit,
     line_col_to_offset,
 )
-from a816.parse.ast.nodes import AstNode, CodePositionAstNode, IfAstNode
+from a816.parse.ast.nodes import (
+    AstNode,
+    CodePositionAstNode,
+    IfAstNode,
+    ImportAstNode,
+    IncludeAstNode,
+    IncludeBinaryAstNode,
+)
 from a816.parse.ast.placement import is_placement_boundary
+from a816.parse.ast.visitor import walk
+
+# Run content UP001 leaves for a manual migration (see `_run_has_skip_trigger`).
+_SKIP_TRIGGERS: tuple[type[AstNode], ...] = (ImportAstNode, IncludeAstNode, IncludeBinaryAstNode)
 
 
 class StarEqualToAllocAt(Rule):
@@ -36,7 +48,8 @@ class StarEqualToAllocAt(Rule):
         "hard error on cross-bank overflow instead of the silent wrap "
         "the legacy form allows. Migration is mechanical; the autofix "
         "wraps the run between `*=` and the next placement boundary "
-        "in an anonymous alloc."
+        "in an anonymous alloc. Runs holding `.import`, `.include` or "
+        "`.incbin` are flagged without an autofix: migrate those by hand."
     )
     bad = '"""Module."""\n*= 0x008000\n.db 0xEA\n'
     good = '"""Module."""\n.alloc at 0x008000 {\n    .db 0xEA\n}\n'
@@ -156,12 +169,32 @@ def _emit_up001(rule: Rule, ctx: LintContext, siblings: list[AstNode], idx: int,
     star_eq = siblings[idx]
     assert isinstance(star_eq, CodePositionAstNode)
     addr_text = star_eq.expression.to_canonical()
+    message = f"replace `*= {addr_text}` with `.alloc at {addr_text} {{ ... }}`"
+    if _run_has_skip_trigger(siblings, idx):
+        return rule.diagnose(ctx, star_eq, f"{message}; migrate by hand: the run holds `.import`/`.include`/`.incbin`")
     return rule.diagnose(
         ctx,
         star_eq,
-        f"replace `*= {addr_text}` with `.alloc at {addr_text} {{ ... }}`",
+        message,
         fix=_build_star_eq_to_alloc_fix(ctx.text, siblings, idx, addr_text, body_end),
     )
+
+
+def _run_has_skip_trigger(siblings: list[AstNode], idx: int) -> bool:
+    """Does the `*=` run after `siblings[idx]` hold `.import` / `.include` / `.incbin`?
+
+    The run ends at the next placement boundary, same as the autofix
+    span. Those directives don't wrap mechanically: `.import` belongs in
+    the file prelude (the assembler rejects it inside `.alloc`),
+    `.include` may carry its own placement, and `.incbin` may rely on
+    the legacy silent bank wrap that `.alloc at` turns into an error.
+    """
+    for sibling in siblings[idx + 1 :]:
+        if is_placement_boundary(sibling):
+            return False
+        if any(isinstance(node, _SKIP_TRIGGERS) for node in walk([sibling])):
+            return True
+    return False
 
 
 def _build_star_eq_to_alloc_fix(
@@ -175,8 +208,10 @@ def _build_star_eq_to_alloc_fix(
 
     Body run = nodes from `siblings[idx + 1]` up to (but not
     including) the next `CodePositionAstNode` at this level, or end
-    of `siblings`. Original source bytes for the body are preserved
-    verbatim and indented by 4 spaces inside the new braces.
+    of `siblings`. The wrapper takes the `*=` line's indent; the body
+    keeps its relative layout, dedented then re-indented one level
+    deeper than the wrapper (an already-indented body is not pushed
+    a second level in).
 
     Returns None when source positions can't be resolved (defensive).
     """
@@ -189,9 +224,10 @@ def _build_star_eq_to_alloc_fix(
     if end <= start:
         return None
     snippet = text[start:end]
-    body_source = _extract_body_source(snippet)
-    body_indented = _indent_block(body_source, 4)
-    replacement = f".alloc at {addr_text} {{\n{body_indented}\n}}\n"
+    base = snippet[: len(snippet) - len(snippet.lstrip(" \t"))]
+    body_source = textwrap.dedent(_extract_body_source(snippet))
+    body_indented = _indent_block(body_source, len(base) + 4)
+    replacement = f"{base}.alloc at {addr_text} {{\n{body_indented}\n{base}}}\n"
     return Fix(
         edits=(TextEdit(start=start, end=end, replacement=replacement),),
         applicability=Applicability.UNSAFE,

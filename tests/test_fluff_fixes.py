@@ -275,6 +275,62 @@ class TestStarEqMigrationFix:
         assert "*=" not in new
 
 
+def _up001_fixed(src: str) -> str:
+    diagnostics = lint_text(src, Path("<mem>"))
+    new, _ = apply_fixes(src, diagnostics, allow_unsafe=True, select={"UP001"})
+    return new
+
+
+def _up001(src: str) -> list[Diagnostic]:
+    return [d for d in lint_text(src, Path("<mem>")) if d.code == "UP001"]
+
+
+class TestStarEqMigrationIndent:
+    def test_up001_does_not_double_indent_an_indented_body(self) -> None:
+        src = '"""m"""\n*=0x00B335\n    jmp.w 0x8000\n    rts\n'
+        assert _up001_fixed(src) == '"""m"""\n.alloc at 0x00B335 {\n    jmp.w 0x8000\n    rts\n}\n'
+
+    def test_up001_keeps_relative_indent_inside_the_body(self) -> None:
+        src = '"""m"""\n*=0x008000\nmain:\n    rts\n'
+        assert _up001_fixed(src) == '"""m"""\n.alloc at 0x008000 {\n    main:\n        rts\n}\n'
+
+    def test_up001_nested_alloc_takes_the_star_eq_indent(self) -> None:
+        src = '"""m"""\n.scope s {\n    *=0x008000\n    .db 0x42\n}\n'
+        expected = '"""m"""\n.scope s {\n    .alloc at 0x008000 {\n        .db 0x42\n    }\n}\n'
+        assert _up001_fixed(src) == expected
+
+
+class TestStarEqMigrationSkipTriggers:
+    """`*=` runs that splice other sources or blobs in are migrated by hand:
+    `.import` must move to the prelude, `.include` may carry its own
+    placement, `.incbin` may rely on the legacy silent bank wrap."""
+
+    def test_up001_offers_no_fix_when_run_holds_import(self) -> None:
+        src = '"""m"""\n*=0x008000\n.db 0x01\n.import "mod"\n'
+        assert [d.fix for d in _up001(src)] == [None]
+
+    def test_up001_offers_no_fix_when_run_holds_include(self, tmp_path: Path) -> None:
+        (tmp_path / "inc.i").write_text("FOO = 1\n")
+        src = f'"""m"""\n*=0x008000\n.include "{tmp_path / "inc.i"}"\n'
+        assert [d.fix for d in _up001(src)] == [None]
+
+    def test_up001_offers_no_fix_when_run_holds_incbin(self) -> None:
+        src = '"""m"""\n*=0x008000\n.incbin "blob.bin"\n'
+        assert [d.fix for d in _up001(src)] == [None]
+
+    def test_up001_offers_no_fix_when_trigger_is_nested_in_the_run(self) -> None:
+        src = '"""m"""\n*=0x008000\n.scope s {\n    .incbin "blob.bin"\n}\n'
+        assert [d.fix for d in _up001(src)] == [None]
+
+    def test_up001_skip_message_says_migrate_by_hand(self) -> None:
+        src = '"""m"""\n*=0x008000\n.incbin "blob.bin"\n'
+        assert "by hand" in _up001(src)[0].message
+
+    def test_up001_trigger_after_the_next_boundary_does_not_block_the_fix(self) -> None:
+        src = '"""m"""\n*=0x008000\n.db 0x01\n*=0x009000\n.incbin "blob.bin"\n'
+        assert [d.fix is None for d in _up001(src)] == [False, True]
+
+
 class TestRedundantTypedCastFix:
     def test_strips_cast_and_keeps_field_access(self) -> None:
         src = '"""m"""\n.struct Pt { word x }\np := (0x100 as Pt)\nlda.w (p as Pt).x\n'
