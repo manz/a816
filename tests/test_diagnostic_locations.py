@@ -242,3 +242,20 @@ def test_object_mode_unmapped_alloc_code(tmp_path: Path, caplog: pytest.LogCaptu
     with caplog.at_level(logging.ERROR):
         Program().assemble_with_object_emitter(str(source), writer)
     assert any("[E0317]" in record.getMessage() for record in caplog.records)
+
+
+def _parse_cli(argv: list[str]) -> int | str | None:
+    from a816.cli import _build_arg_parser
+
+    with pytest.raises(SystemExit) as exc_info:
+        _build_arg_parser().parse_args(argv)
+    return exc_info.value.code
+
+
+def test_cli_rejects_unknown_mapping_exit_code() -> None:
+    assert _parse_cli(["main.s", "-m", "high_rom"]) == 2
+
+
+def test_cli_unknown_mapping_lists_choices(capsys: pytest.CaptureFixture[str]) -> None:
+    _parse_cli(["main.s", "-m", "high_rom"])
+    assert "invalid choice: 'high_rom'" in capsys.readouterr().err
