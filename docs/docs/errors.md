@@ -1,8 +1,10 @@
 # Error codes
 
-Every user-facing assembler diagnostic carries a stable error code so
-you can search docs by code, suppress individual rules in tooling, and
-correlate output across CLI runs.
+Assembler diagnostics carry a stable error code so you can search docs
+by code, suppress individual rules in tooling, and correlate output
+across CLI runs. Some older codegen diagnostics still render as a plain
+`error:` with a located caret but no code; they get codes as they are
+touched.
 
 ## Anatomy
 
