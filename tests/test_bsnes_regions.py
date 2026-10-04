@@ -124,8 +124,9 @@ def test_inverse_without_near_uses_the_first_bank_range() -> None:
 
 
 def test_inverse_rejects_unreachable_offsets() -> None:
+    region = _region("00-3f:8000-ffff", base=0x400000, size=0x800000)
     with pytest.raises(ValueError):
-        _region("00-3f:8000-ffff", base=0x400000, size=0x800000).logical_address(0x000000)
+        region.logical_address(0x000000)
 
 
 def _board_1a3m() -> Bus:
@@ -142,8 +143,9 @@ def test_rom_and_sram_share_banks() -> None:
 
 
 def test_address_outside_every_window_is_unmapped() -> None:
+    bus = _board_1a3m()
     with pytest.raises(UnmappedBankError):
-        _board_1a3m().get_address(0x004000)
+        bus.get_address(0x004000)
 
 
 def test_adding_across_a_bank_stays_in_the_mirror_range() -> None:
@@ -196,5 +198,6 @@ def test_unsized_region_does_not_fold() -> None:
 
 
 def test_unsized_region_inverse_gives_up_past_24_bits() -> None:
+    region = _region("c0-ff:0000-ffff")
     with pytest.raises(ValueError):
-        _region("c0-ff:0000-ffff").logical_address(0x000000)
+        region.logical_address(0x000000)

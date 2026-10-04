@@ -1,7 +1,23 @@
 from typing import Any
 
 
-class Mapping:
+class BusRegion:
+    """Nominal base for bus regions: legacy `.map` strides and bsnes regions."""
+
+    bank_range: tuple[int, int]
+    address_range: tuple[int, int]
+    mask: int
+    writable: bool
+
+    def physical_address(self, value: int) -> int | None:
+        raise NotImplementedError
+
+    def logical_address(self, value: int, near: int | None = None) -> int:
+        """Logical address of file offset ``value``; ``near`` picks the bank range a caller is already in."""
+        raise NotImplementedError
+
+
+class Mapping(BusRegion):
     def __init__(
         self,
         bank_range: tuple[int, int],
@@ -91,7 +107,7 @@ def _hex_range(text: str, limit: int, spec: str) -> tuple[int, int]:
     return lo, hi
 
 
-class BsnesRegion:
+class BsnesRegion(BusRegion):
     """A bus region with bsnes semantics, as written in `boards.bml`.
 
     `physical = base + mirror(reduce(addr, mask), size - base)` over the full
@@ -154,7 +170,7 @@ class BsnesRegion:
         return in_window and self.physical_address(logical) == value
 
 
-Region = Mapping | BsnesRegion
+Region = BusRegion
 
 
 class Bus:
@@ -247,16 +263,13 @@ class Bus:
         for name in gone:
             self.mappings.pop(name, None)
             self.declared.pop(name, None)
-        for bank in list(self.windows):
-            kept = [w for w in self.windows[bank] if w[2] not in gone]
-            self._whole_bank.pop(bank, None)
-            if not kept:
-                del self.windows[bank]
-                continue
-            self.windows[bank] = kept
-            lo, hi, last = kept[-1]
-            if (lo, hi) == (0x0000, 0xFFFF):
-                self._whole_bank[bank] = self.mappings[last]
+        kept = {bank: [w for w in windows if w[2] not in gone] for bank, windows in self.windows.items()}
+        self.windows = {bank: windows for bank, windows in kept.items() if windows}
+        self._whole_bank = {
+            bank: self.mappings[windows[-1][2]]
+            for bank, windows in self.windows.items()
+            if windows[-1][:2] == (0x0000, 0xFFFF)
+        }
 
     def get_address(self, addr: int) -> "Address":
         return Address(self, addr)
