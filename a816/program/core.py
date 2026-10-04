@@ -127,13 +127,11 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
     def resolver_reset(self) -> None:
         """Reset the resolver state to initial values.
 
-        Resets PC, scope tracking, current scope pointer and A/X sizes for
-        a fresh pass.
+        Resets PC, scope tracking, and current scope pointer for a fresh pass.
         """
         self.resolver.pc = 0x000000
         self.resolver.last_used_scope = 0
         self.resolver.current_scope = self.resolver.scopes[0]
-        self.resolver.reset_register_sizes()
 
     @staticmethod
     def _mark_import_winners(program_nodes: list[NodeProtocol]) -> None:
@@ -182,18 +180,7 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
             program_nodes: List of executable nodes from parsing.
         """
         self.resolver.last_used_scope = 0
-        self.resolver.reset_register_sizes()
-
-        previous_pc = self.resolver.reloc_address
-
-        node: NodeProtocol | None = None
-        try:
-            for node in program_nodes:
-                if isinstance(node, SymbolNode):
-                    continue
-                previous_pc = node.pc_after(previous_pc)
-        except UnmappedBankError as exc:
-            raise unmapped_bank_error(exc, node_file_info(node)) from exc
+        self._label_pass(program_nodes, skip=(SymbolNode,))
 
         # Run the freespace allocator between passes so .alloc / .relocate
         # blocks see their final addresses when binding labels in pass 2.
@@ -208,16 +195,25 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
             ) from exc
 
         self.resolver_reset()
+        self._label_pass(program_nodes, skip=(LabelNode, BinaryNode))
+        self.resolver_reset()
 
+    def _label_pass(self, program_nodes: list[NodeProtocol], skip: tuple[type[NodeProtocol], ...]) -> None:
+        """Walk `pc_after` over every node not in `skip`, from power-on A/X sizes.
+
+        Each walk owns its register-size reset: the previous walk may end
+        on a `.a16` / tracked `rep` that must not resize the code ahead of it.
+        """
+        self.resolver.reset_register_sizes()
         previous_pc = self.resolver.reloc_address
+        node: NodeProtocol | None = None
         try:
             for node in program_nodes:
-                if isinstance(node, (LabelNode, BinaryNode)):
+                if isinstance(node, skip):
                     continue
                 previous_pc = node.pc_after(previous_pc)
         except UnmappedBankError as exc:
             raise unmapped_bank_error(exc, node_file_info(node)) from exc
-        self.resolver_reset()
 
     def _to_physical(self, logical_address: int) -> int:
         """Translate a logical SNES bus address to its physical ROM offset.
@@ -257,7 +253,10 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
             return
         log_path = output_path.with_suffix(output_path.suffix + ".emit.log")
         with open(log_path, "w", encoding="utf-8") as logf:
-            logf.writelines(f"snes=${snes & 0xFFFFFF:06X}  phys=0x{phys & 0xFFFFFF:06X}  size={size}  src={src}\n" for snes, phys, size, src in self._emit_trace)
+            logf.writelines(
+                f"snes=${snes & 0xFFFFFF:06X}  phys=0x{phys & 0xFFFFFF:06X}  size={size}  src={src}\n"
+                for snes, phys, size, src in self._emit_trace
+            )
         self._emit_trace = []
 
     def _trace_linked_sections(self, linked_obj: ObjectFile) -> None:
