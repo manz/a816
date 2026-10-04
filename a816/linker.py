@@ -105,9 +105,7 @@ class Linker:
                 pool.allocate()
             except PoolOverflowError as exc:
                 site = request_sites.get((exc.pool_name, exc.alloc_name))
-                raise PoolOverflowLinkError(
-                    exc.pool_name, exc.alloc_name, exc.size, exc.largest_free, self._section_location(site)
-                ) from exc
+                raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
         self._merged_pools_after_alloc = merged
 
     def _request_pool_allocs(self, merged: dict[str, Pool]) -> dict[tuple[str, str], tuple[int, int]]:
@@ -535,6 +533,8 @@ class Linker:
                 if not -0x800000 <= evaluated_value <= 0xFFFFFF:
                     raise ExpressionEvaluationError(expression, f"result {evaluated_value:#x} is out of 24-bit range")
                 self._write_le24(code, offset, evaluated_value & 0xFFFFFF)
+            elif size_bytes == 4:
+                struct.pack_into("<I", code, offset, evaluated_value & 0xFFFFFFFF)
             else:
                 raise ExpressionEvaluationError(expression, f"unsupported operand size: {size_bytes} bytes")
 

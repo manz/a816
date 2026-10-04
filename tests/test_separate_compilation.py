@@ -7,6 +7,7 @@ from a816.exceptions import UnmappedBankError, UnresolvedSymbolError
 from a816.linker import Linker
 from a816.object_file import ObjectFile, SymbolType
 from a816.program import Program
+from tests.ips_helpers import parse_ips_records
 
 
 class TestSeparateCompilation:
@@ -762,7 +763,7 @@ far_label:
             # Verify each section's bytes land at exactly the right LoROM
             # physical offset and only there.
             content = ips.read_bytes()
-            records = self._parse_ips_records(content)
+            records = parse_ips_records(content)
             placements: dict[int, bytes] = {phys: data for phys, data in records}
 
             # LoROM physical for SNES bank N $8000-$FFFF = N * 0x8000 + (addr - $8000).
@@ -805,33 +806,13 @@ far_label:
             assert program.assemble_as_patch(str(main), ips) == 0
 
             phys_a = 0x20 * 0x8000  # 0x100000
-            placements = {phys: data for phys, data in self._parse_ips_records(ips.read_bytes())}
+            placements = {phys: data for phys, data in parse_ips_records(ips.read_bytes())}
             patched = placements.get(phys_a)
             assert patched is not None and len(patched) >= 2
             operand = patched[0] | (patched[1] << 8)
             assert operand == 0x308000 & 0xFFFF, (
                 f"cross-section operand patched as {operand:#x}, expected {0x308000 & 0xFFFF:#x}"
             )
-
-    @staticmethod
-    def _parse_ips_records(content: bytes) -> list[tuple[int, bytes]]:
-        """Walk an IPS file and return [(physical_offset, data), ...]."""
-        out: list[tuple[int, bytes]] = []
-        i = 5  # skip "PATCH"
-        while i < len(content) - 3:
-            if content[i : i + 3] == b"EOF":
-                break
-            offset = int.from_bytes(content[i : i + 3], "big")
-            i += 3
-            size = int.from_bytes(content[i : i + 2], "big")
-            i += 2
-            if size == 0:
-                # RLE record — skip; not produced by a816's IPS writer.
-                i += 3
-                continue
-            out.append((offset, content[i : i + size]))
-            i += size
-        return out
 
     def test_duplicate_import_emits_module_bytes_once(self) -> None:
         """Two `.import "foo"` statements emit foo's bytes once.

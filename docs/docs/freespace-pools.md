@@ -43,9 +43,14 @@ mode).
 ## Concepts
 
 - **Pool** — a named bag of free `(start, end)` ranges in a single
-  ROM, plus a `fill` byte and an allocation strategy. Each range
-  must not cross a bank boundary; ranges of the same pool must not
-  overlap.
+  ROM, plus a `fill` byte and an allocation strategy. Ranges of one
+  pool may sit in different banks, but each range must stay inside
+  one bank, and ranges of the same pool must not overlap.
+- **Bank rule**: an allocation is always placed inside a single
+  free chunk, so a block never straddles a bank boundary or spans
+  two separate (non-adjacent) ranges. An alloc larger than the
+  pool's largest range can never fit, however much space is free
+  in total.
 - **Allocation** — a named request for `N` bytes inside a specific
   pool. After `Pool.allocate()` runs, every allocation has a final
   ROM address.
@@ -67,10 +72,18 @@ placement → byte-identical output.
 .pool bank02_slack {
     range 0x028000 0x028fff
     range 0x02a100 0x02a4c0   ; multiple ranges allowed
+    range 0x03f000 0x03ffff   ; ...in other banks too
     fill 0xea                  ; optional
     strategy order             ; optional (pack | order)
 }
 ```
+
+Ranges are tried first-fit in address order. Adjacent ranges in the
+same bank merge into one chunk (`range 0x028000 0x028007` +
+`range 0x028008 0x02800f` is one 16-byte chunk); ranges in
+different banks never do, even when their addresses touch, so
+`range 0x01fff0 0x01ffff` + `range 0x020000 0x02000f` is two
+16-byte chunks, not one 32-byte chunk.
 
 `range`, `fill`, and `strategy` accept constant expressions; literal
 arithmetic resolves at code-generation time. Constants declared
@@ -161,16 +174,27 @@ Available stats: `<pool>.capacity`, `<pool>.fragments`,
 
 ## Pool exhaustion
 
-When an alloc doesn't fit any chunk, the allocator raises
-`PoolOverflowError` carrying the alloc's name + size:
+When an alloc doesn't fit, the build stops with an error naming the
+pool, the alloc and its size. Direct mode reports `error[E0318]`
+with a caret on the alloc name; link time reports
+`linker error[E0404]` with the pool, the `file:line` of the alloc
+body and a hint. The message says which of three cases you hit:
 
 ```
-PoolOverflowError: alloc 'oversized' size 0x180 does not fit in any free chunk
+alloc 'big' (20 bytes) does not fit in pool 'slack': larger than its largest range (16 bytes); a block never spans a bank boundary or two separate ranges
+alloc 'c' (8 bytes) does not fit in pool 'slack': 8 bytes free in total but fragmented; largest free chunk is 4 bytes
+alloc 'c' (10 bytes) does not fit in pool 'slack': largest free chunk is 4 bytes
 ```
 
-`grep` the alloc name to find the offending source. Same error
-surfaces in direct-mode (during resolver pass 2) and at link time
-(cross-TU allocator).
+- **Larger than any range**: no free space helps; split the alloc
+  or give the pool a range at least that big. The bank boundary is
+  only mentioned when the pool's ranges sit in several banks. A
+  single-range pool (including the one behind `.alloc at ADDR size
+  N`, or adjacent same-bank ranges merged into one) says `larger
+  than the pool (N bytes)` instead.
+- **Fragmented**: the pool has the bytes, but not in one chunk;
+  split the alloc or grow one of the ranges.
+- **Out of room**: grow the pool or move code out of it.
 
 ## Object mode + cross-TU pool merging
 
@@ -189,11 +213,22 @@ allocator across all modules' deferred requests:
 .alloc fn_b in slack { rts }
 ```
 
-After link, `fn_a` lands in module A's chunk, `fn_b` in module B's
-chunk. Same-named pools must agree on `fill` and `strategy`;
-mismatches raise at link time.
+The linker does not keep an alloc in the range its own module
+declared: it unions every module's ranges into one pool, sorts them
+by address and places all requests first-fit. Here both `fn_a` and
+`fn_b` land in module A's `0x028000` range (`fn_a` at `0x028000`,
+`fn_b` at `0x028001`), because it is the lowest range with room;
+module B's range is only used once module A's runs out. Same-named
+pools must agree on `fill` and `strategy`; mismatches raise at link
+time.
 
-The `.o` format (version 0x0008) carries `PoolDecl` and `PoolAlloc`
+Complementary ranges like these work with separate compilation
+(`a816 -c module_a.s module_b.s`, then `a816 module_a.o module_b.o`).
+Under `a816 build`, a module that `.import`s both sees two `.pool
+slack` declarations with different ranges and rejects them; there,
+declare the pool once in a shared include with all its ranges.
+
+The `.o` format (version 0x000C) carries `PoolDecl` and `PoolAlloc`
 records (visible via `xobj`).
 
 ## Python API

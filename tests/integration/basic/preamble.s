@@ -20,11 +20,12 @@ screen := (PPU_BASE as PPU)
 cpu_regs := (CPU_REGS_BASE as CPU_REGS)
 
 ; --- Pools -----------------------------------------------------------------
-; Bank-per-role split: client (bank 0) holds reset + NMI thunk + vectors;
+; Bank-per-role split: client (bank 0) holds reset + NMI thunk (it stops
+; short of the $FFB0 cartridge header + vectors);
 ; data (bank 1) holds font/strings; engine (bank 2) holds the engine
 ; code that NMI long-calls into.
 .pool client {
-    range 0x008000 0x00FFBF
+    range 0x008000 0x00FFAF
     strategy order
 }
 
