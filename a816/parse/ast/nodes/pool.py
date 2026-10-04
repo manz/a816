@@ -28,8 +28,11 @@ class PoolAstNode(AstNode):
         strategy: str,
         file_info: Token,
         bss: bool = False,
+        close_token: Token | None = None,
     ) -> None:
         super().__init__("pool", file_info)
+        # Closing `}`: a trailing comment on its line folds onto the brace.
+        self.close_token = close_token
         self.pool_name = name
         self.ranges = ranges
         self.fill = fill
@@ -81,8 +84,15 @@ class AllocAstNode(AstNode):
         at_address: ExpressionAstNode | None = None,
         at_size: ExpressionAstNode | None = None,
         pool_token: Token | None = None,
+        close_token: Token | None = None,
+        reserve: bool = False,
     ) -> None:
         super().__init__("alloc", file_info)
+        # Closing `}`: a trailing comment on its line folds onto the brace.
+        self.close_token = close_token
+        # Desugared from `.reserve NAME SIZE [at ADDR] in POOL`; the
+        # formatter writes it back in that form.
+        self.reserve = reserve
         self.name = name
         self.pool_name = pool_name
         # Source token of POOL; unknown-pool diagnostics underline it.

@@ -598,7 +598,8 @@ def parse_pool(p: Parser) -> PoolAstNode:
         key_token = p.next()
         _parse_pool_attr(p, key_token, attrs)
 
-    expect_token(p.next(), TokenType.RBRACE)
+    close_token = p.next()
+    expect_token(close_token, TokenType.RBRACE)
     if not attrs.ranges:
         raise ParserSyntaxError(
             f"pool `{name_token.value}` declares no ranges",
@@ -613,6 +614,7 @@ def parse_pool(p: Parser) -> PoolAstNode:
         attrs.strategy,
         keyword,
         bss=attrs.bss,
+        close_token=close_token,
     )
 
 
@@ -652,8 +654,8 @@ def parse_alloc(p: Parser) -> AllocAstNode:
     if first.value == "in":
         pool_token = p.next()
         expect_token(pool_token, TokenType.IDENTIFIER)
-        body = _parse_alloc_body(p, parse_block)
-        return AllocAstNode(None, pool_token.value, body, keyword, pool_token=pool_token)
+        body, close = _parse_alloc_body(p, parse_block)
+        return AllocAstNode(None, pool_token.value, body, keyword, pool_token=pool_token, close_token=close)
 
     # `.alloc NAME ...` — pooled or named-pinned.
     name = first.value
@@ -661,8 +663,8 @@ def parse_alloc(p: Parser) -> AllocAstNode:
     if separator.value == "in":
         pool_token = p.next()
         expect_token(pool_token, TokenType.IDENTIFIER)
-        body = _parse_alloc_body(p, parse_block)
-        return AllocAstNode(name, pool_token.value, body, keyword, pool_token=pool_token)
+        body, close = _parse_alloc_body(p, parse_block)
+        return AllocAstNode(name, pool_token.value, body, keyword, pool_token=pool_token, close_token=close)
 
     return _parse_pinned_alloc_tail(p, parse_block, keyword, name=name)
 
@@ -674,8 +676,8 @@ def _parse_pinned_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Toke
     """Common tail for the two pinned alloc shapes: ADDR [size N] { body }."""
     at_address = parse_expression(p)
     at_size = _parse_optional_size_clause(p)
-    body = _parse_alloc_body(p, parse_block)
-    return AllocAstNode(name, None, body, keyword, at_address=at_address, at_size=at_size)
+    body, close = _parse_alloc_body(p, parse_block)
+    return AllocAstNode(name, None, body, keyword, at_address=at_address, at_size=at_size, close_token=close)
 
 
 def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
@@ -722,13 +724,17 @@ def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
     pool_token = p.next()
     expect_token(pool_token, TokenType.IDENTIFIER)
     body = BlockAstNode([ReserveAstNode(size_expr, keyword)], keyword)
-    return AllocAstNode(name_token.value, pool_token.value, body, keyword, at_address=at_address, pool_token=pool_token)
+    return AllocAstNode(
+        name_token.value, pool_token.value, body, keyword, at_address=at_address, pool_token=pool_token, reserve=True
+    )
 
 
-def _parse_alloc_body(p: Parser, parse_block: ParseBlockFn) -> BlockAstNode:
+def _parse_alloc_body(p: Parser, parse_block: ParseBlockFn) -> tuple[BlockAstNode, Token]:
+    """Parse `{ body }`; returns the block and its closing `}` token."""
     lbrace = p.next()
     expect_token(lbrace, TokenType.LBRACE)
-    return BlockAstNode(parse_block(p), lbrace)
+    body = BlockAstNode(parse_block(p), lbrace)
+    return body, p.previous()
 
 
 def _parse_optional_size_clause(p: Parser) -> ExpressionAstNode | None:
