@@ -523,7 +523,10 @@ full reference. Quick form:
 ### `.pool NAME { ... }`
 
 Declares a named freespace pool with one or more ranges, optional
-fill byte, and allocation strategy (`pack` | `order`).
+fill byte, and allocation strategy (`pack` | `order`). `bss` makes it
+a byte-less memory pool; `contexts A, B` lets screens that never run
+together share its memory (`.reserve x 4 in POOL.A`). See
+[Memory pools](freespace-pools.md#memory-pools-bss-and-contexts).
 
 ### `.alloc NAME in POOL { body }`
 

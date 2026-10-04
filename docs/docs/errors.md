@@ -162,6 +162,10 @@ separate blocks separated by a blank line.
   the body emitted code, the `file:line` of its first instruction.
 - `E0405` an alloc request names a pool that no linked object
   declares.
+- `E0406` reservations from two different `bss` pools share memory.
+  Lists every clash with both reservations, their spans and their
+  `file:line`. Memory used in turns goes in one pool's `contexts`
+  (see [Freespace pools](freespace-pools.md#memory-pools-bss-and-contexts)).
 
 ### I/O / config
 

@@ -13,7 +13,7 @@ All integers are little-endian.
 
 ```
 magic   : u32 = 0x41383136 ('A816')
-version : u16 = current 6
+version : u16 = current 14
 flags   : u8  bit 0 = relocatable (1 when produced by --compile-only)
 ```
 
@@ -143,18 +143,24 @@ count : u16
 per entry:
     name_len      : u8
     name          : utf-8[name_len]
+    strategy_len  : u8
+    strategy      : utf-8[strategy_len]   "pack" | "order"
+    bss           : u8    1 = byte-less memory pool
+    context_len   : u8    0 = not a context
+    context       : utf-8[context_len]
+    fill          : u8    byte used to back-fill the pool's slack
     num_ranges    : u16
     per range:
         start     : u32   inclusive logical SNES address
         end       : u32   inclusive
-    fill          : u8    byte used to back-fill the pool's slack
-    strategy_len  : u8
-    strategy      : utf-8[strategy_len]   "pack" | "order"
 ```
 
 The linker keys pools by `name` and merges identical decls across
-modules. Mismatched shape (different ranges / fill / strategy under
-the same name) is a hard error during merge.
+modules. Mismatched shape (different fill / strategy / bss / context
+under the same name) is a hard error during merge. A pool's
+`contexts A, B` reach the format as sibling decls named `POOL.A`,
+`POOL.B` carrying `context`; every module declaring `POOL` must list
+the same contexts.
 
 ### Pool allocations
 
@@ -168,6 +174,9 @@ per entry:
     symbol_name     : utf-8[symbol_name_len]
     section_idx     : u32   index into the section table — the alloc's body
     size            : u32   byte length the allocator must reserve
+    pinned_addr     : i32   fixed address (`.reserve … at ADDR`), -1 = allocator picks
+    source_len      : u16
+    source          : utf-8[source_len]   `file:line` of the request, for diagnostics
 ```
 
 Each entry binds one `.alloc NAME in POOL { ... }` to the section
@@ -179,7 +188,10 @@ list, then rewrites the owning section's base address before emit.
 
 The format version is bumped on every breaking change. Past versions:
 
-- v6 (current): section-aware code layout — `*=` produces a new section,
+- v14 (current): pool decls carry `bss` and a context name; pool allocs
+  carry `pinned_addr` and their source location. (v7 to v13 are not
+  listed here.)
+- v6: section-aware code layout. `*=` produces a new section,
   preserving disjoint address ranges across the same module.
 - v5: added per-section line tables for `.adbg` debug info.
 
