@@ -63,7 +63,8 @@ def _config_error_code(tmp_path: Path, body: str) -> str:
     return info.value.code.code
 
 
-_SRAM_MAP = "[map.3]\nbank_range = [0x70, 0x7d]\naddr_range = [0x0000, 0x7fff]\nmask = 0x8000\nwritable = true\n"
+_SRAM_MAP = '[map.3]\naddress = "70-7d,f0-ff:0000-7fff"\nmask = 0x8000\nwritable = true\n'
+_ROM_MAP = 'rom_size = 0x200000\n[map.1]\naddress = "00-7d,80-ff:8000-ffff"\nmask = 0x8000\n'
 
 
 def test_bus_map_defaults_to_empty(tmp_path: Path) -> None:
@@ -72,11 +73,36 @@ def test_bus_map_defaults_to_empty(tmp_path: Path) -> None:
 
 def test_map_entry_parses_every_key(tmp_path: Path) -> None:
     body = (
-        "[map.1]\nbank_range = [0xc0, 0xfd]\naddr_range = [0x0000, 0xffff]\n"
-        "mask = 0x10000\nwritable = true\nmirror_bank_range = [0x40, 0x7d]\n"
+        'rom_size = 0x800000\n[map.1]\naddress = "00-3f:8000-ffff"\nmask = 0x8000\nbase = 0x400000\nwritable = false\n'
     )
     shape = _load(tmp_path, body).bus_map[0].shape()
-    assert shape == ("1", (0xC0, 0xFD), (0x0000, 0xFFFF), 0x10000, True, (0x40, 0x7D))
+    assert shape == ("1", (0, 0), (0, 0), 0x8000, False, None, "00-3f:8000-ffff", 0x400000, 0x800000)
+
+
+def test_map_mask_and_base_default_to_zero(tmp_path: Path) -> None:
+    region = _load(tmp_path, 'rom_size = 0x400000\n[map.1]\naddress = "c0-ff:0000-ffff"\n').bus_map[0]
+    assert (region.mask, region.base) == (0, 0)
+
+
+def test_rom_region_requires_rom_size(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _ROM_MAP.replace("rom_size = 0x200000\n", "")) == "E0506"
+
+
+def test_ram_only_regions_need_no_rom_size(tmp_path: Path) -> None:
+    assert _load(tmp_path, _SRAM_MAP).bus_map[0].rom_size == 0
+
+
+def test_rom_size_must_be_positive(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _ROM_MAP.replace("0x200000", "0")) == "E0506"
+
+
+def test_rom_size_must_be_an_integer(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _ROM_MAP.replace("0x200000", '"2MB"')) == "E0506"
+
+
+def test_legacy_range_keys_are_rejected(tmp_path: Path) -> None:
+    message = _config_error_message(tmp_path, _SRAM_MAP + "bank_range = [0x70, 0x7d]\n")
+    assert message == "[map.3]: unknown keys bank_range"
 
 
 def test_map_integer_identifier_matches_directive_spelling(tmp_path: Path) -> None:
@@ -87,16 +113,16 @@ def test_map_integer_identifier_matches_directive_spelling(tmp_path: Path) -> No
 def test_mapper_lorom_expands_to_default_bus(tmp_path: Path) -> None:
     shapes = [m.shape() for m in _load(tmp_path, 'mapper = "lorom"\n').bus_map]
     assert shapes == [
-        ("1", (0x00, 0x6F), (0x8000, 0xFFFF), 0x8000, False, (0x80, 0xCF)),
-        ("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x10000, True, None),
+        ("1", (0x00, 0x6F), (0x8000, 0xFFFF), 0x8000, False, (0x80, 0xCF), None, 0, 0),
+        ("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x10000, True, None, None, 0, 0),
     ]
 
 
 def test_mapper_hirom_expands_to_default_bus(tmp_path: Path) -> None:
     shapes = [m.shape() for m in _load(tmp_path, 'mapper = "hirom"\n').bus_map]
     assert shapes == [
-        ("1", (0x40, 0x7F), (0x0000, 0xFFFF), 0x10000, False, (0xC0, 0xFF)),
-        ("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x10000, True, None),
+        ("1", (0x40, 0x7F), (0x0000, 0xFFFF), 0x10000, False, (0xC0, 0xFF), None, 0, 0),
+        ("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x10000, True, None, None, 0, 0),
     ]
 
 
@@ -121,7 +147,7 @@ def test_map_unknown_key_is_rejected(tmp_path: Path) -> None:
 
 
 def test_map_missing_key_is_rejected(tmp_path: Path) -> None:
-    assert _config_error_code(tmp_path, _SRAM_MAP.replace("mask = 0x8000\n", "")) == "E0505"
+    assert _config_error_code(tmp_path, _SRAM_MAP.replace('address = "70-7d,f0-ff:0000-7fff"\n', "")) == "E0505"
 
 
 def test_map_must_be_a_table_of_tables(tmp_path: Path) -> None:
@@ -137,8 +163,8 @@ def _config_error_message(tmp_path: Path, body: str) -> str:
 
 
 def test_map_missing_key_message_names_only_missing_keys(tmp_path: Path) -> None:
-    message = _config_error_message(tmp_path, _SRAM_MAP.replace("mask = 0x8000\n", ""))
-    assert message == "[map.3]: missing keys mask"
+    message = _config_error_message(tmp_path, _SRAM_MAP.replace('address = "70-7d,f0-ff:0000-7fff"\n', ""))
+    assert message == "[map.3]: missing keys address"
 
 
 def test_map_unknown_key_message_names_only_unknown_keys(tmp_path: Path) -> None:
@@ -159,12 +185,20 @@ def test_experimental_flags_are_loaded(tmp_path: Path) -> None:
     assert _load(tmp_path, body).experimental == {"track_register_size": True, "other": False}
 
 
-def test_map_range_needs_two_integers(tmp_path: Path) -> None:
-    assert _config_error_code(tmp_path, _SRAM_MAP.replace("[0x70, 0x7d]", "[0x70]")) == "E0506"
+def test_map_address_must_be_a_string(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _SRAM_MAP.replace('"70-7d,f0-ff:0000-7fff"', "0x70")) == "E0506"
 
 
-def test_map_range_rejects_booleans(tmp_path: Path) -> None:
-    assert _config_error_code(tmp_path, _SRAM_MAP.replace("[0x70, 0x7d]", "[true, 0x7d]")) == "E0506"
+def test_map_address_needs_banks_and_window(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _SRAM_MAP.replace('"70-7d,f0-ff:0000-7fff"', '"70-7d"')) == "E0506"
+
+
+def test_map_address_rejects_reversed_ranges(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _SRAM_MAP.replace('"70-7d,f0-ff:0000-7fff"', '"7d-70:0000-7fff"')) == "E0506"
+
+
+def test_map_address_rejects_non_hex(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _SRAM_MAP.replace('"70-7d,f0-ff:0000-7fff"', '"zz:0000-7fff"')) == "E0506"
 
 
 def test_map_mask_must_be_integer(tmp_path: Path) -> None:

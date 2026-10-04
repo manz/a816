@@ -24,7 +24,8 @@ _ROM = BusMapping("1", (0xC0, 0xFF), (0x0000, 0xFFFF), 0x1_0000)
 _ROM_MAP_LINE = ".map identifier=1 bank_range=0xc0, 0xff addr_range=0x0000, 0xffff mask=0x10000\n"
 _ROM_MAP_CONFLICT = ".map identifier=1 bank_range=0xc0, 0xfe addr_range=0x0000, 0xffff mask=0x10000\n"
 _PLACED_CODE = ".alloc at 0xf00000 {\n    rts\n}\n"
-_ROM_TOML = 'entrypoint = "main.s"\n[map.1]\nbank_range = [0xc0, 0xff]\naddr_range = [0x0000, 0xffff]\nmask = 0x10000\n'
+_ROM_TOML = 'entrypoint = "main.s"\nrom_size = 0x400000\n[map.1]\naddress = "c0-ff:0000-ffff"\n'
+_ROM_BML = BusMapping.bml("1", "c0-ff:0000-ffff", rom_size=0x400000)
 
 
 def _compile(tmp_path: Path, source: str, bus_map: list[BusMapping]) -> tuple[int, Path]:
@@ -143,7 +144,7 @@ def _args(tmp_path: Path, toml: str, *argv: str) -> argparse.Namespace:
 def test_cli_reads_bus_map_from_toml(tmp_path: Path) -> None:
     args = _args(tmp_path, _ROM_TOML)
     _apply_a816_toml(args)
-    assert args.bus_map == [_ROM]
+    assert args.bus_map == [_ROM_BML]
 
 
 def test_cli_mapper_selects_the_matching_rom_type(tmp_path: Path) -> None:
@@ -185,7 +186,7 @@ def test_cli_build_uses_toml_map(tmp_path: Path) -> None:
 def test_cli_compile_only_seeds_toml_map(tmp_path: Path) -> None:
     args = _args(tmp_path, _ROM_TOML, "-c")
     _run_assemble(args)
-    assert _shapes(tmp_path / "main.o") == [_ROM_SHAPE]
+    assert _shapes(tmp_path / "main.o") == [_ROM_BML.shape()]
 
 
 def test_cli_link_of_sources_seeds_toml_map(tmp_path: Path) -> None:

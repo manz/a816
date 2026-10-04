@@ -175,11 +175,12 @@ separate blocks separated by a blank line.
 - `E0504` `mapper` in `a816.toml` names no supported preset
   (`lorom`, `hirom`).
 - `E0505` malformed `[map.N]` entry: not a table, an unknown key, a
-  missing `bank_range` / `addr_range` / `mask`, or two keys spelling
-  the same number (`[map.1]` and `[map.0x1]`).
-- `E0506` a `[map.N]` value has the wrong type: `N` and `mask` are
-  integers, ranges are `[start, end]` integer pairs, `writable` a
-  boolean.
+  missing `address`, or two keys spelling the same number (`[map.1]`
+  and `[map.0x1]`).
+- `E0506` a `[map.N]` value is invalid: `N`, `mask` and `base` are
+  integers, `address` is a `BANKS:WINDOW` hex string
+  (`"00-3f,80-bf:8000-ffff"`), `writable` a boolean; or `rom_size` is
+  missing (with a read-only region), not an integer, or not positive.
 - `E0507` `mapper` and `[map.N]` are both set; they are mutually
   exclusive.
 - `E0508` `-m` disagrees with the `a816.toml` `mapper`.

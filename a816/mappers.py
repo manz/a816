@@ -9,7 +9,7 @@ one ROM image across two bank windows (ExHiROM) has no preset.
 
 from __future__ import annotations
 
-from a816.cpu.mapping import Bus
+from a816.cpu.mapping import BsnesRegion, Bus, parse_bml_address
 from a816.object_file import BusMapping
 
 _WRAM = BusMapping("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x1_0000, writeable=True)
@@ -34,15 +34,21 @@ MAPPER_CLI_FLAGS: dict[str, str] = {"lorom": "low", "hirom": "high"}
 
 
 def map_on_bus(bus: Bus, mapping: BusMapping) -> None:
-    """Declare one region on ``bus``."""
-    bus.map(
-        mapping.identifier,
-        mapping.bank_range,
-        mapping.addr_range,
-        mapping.mask,
-        writeable=mapping.writeable,
-        mirror_bank_range=mapping.mirror_bank_range,
-    )
+    """Declare one region on ``bus``: bsnes semantics for a BML region, legacy stride for a `.map`."""
+    if mapping.address is not None:
+        ranges, window = parse_bml_address(mapping.address)
+        region = BsnesRegion(ranges, window, mapping.mask, mapping.base, mapping.rom_size, mapping.writeable)
+        bus.map_region(mapping.identifier, region)
+    else:
+        bus.map(
+            mapping.identifier,
+            mapping.bank_range,
+            mapping.addr_range,
+            mapping.mask,
+            writeable=mapping.writeable,
+            mirror_bank_range=mapping.mirror_bank_range,
+        )
+    bus.declared[mapping.identifier] = mapping.shape()
 
 
 def build_mapper_bus(name: str, mapper: str) -> Bus:

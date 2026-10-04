@@ -258,7 +258,8 @@ track_register_size = true
 | `include-paths` | build, LSP, fluff | directories searched by `.include` |
 | `module-paths` | build, LSP, fluff | directories searched by `.import` |
 | `mapper` | build | fixed cartridge preset: `"lorom"` or `"hirom"` |
-| `[map.N]` | build | bus region `N`, same keys as `.map` |
+| `[map.N]` | build | bus region `N`, in bsnes/`boards.bml` form |
+| `rom_size` | build | ROM image size in bytes; required with read-only `[map.N]` regions |
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
 
 `--include-path` / `-I` replace the file's `include-paths` /
@@ -276,27 +277,35 @@ into each `.o` like a source `.map`; the linker keeps one copy.
   `lorom` is identifier 1 (`$00-$6F:$8000-$FFFF`, mirrored at
   `$80-$CF`) plus identifier 2 (WRAM `$7E-$7F`, writable); `hirom` is
   identifier 1 (`$40-$7F:$0000-$FFFF`, mirrored at `$C0-$FF`) plus the
-  same WRAM region. ExHiROM has no preset: a region always starts at
-  physical offset 0, so it cannot express a ROM split across two bank
-  windows. Declare such layouts with `[map.N]`.
+  same WRAM region. Any other board (SRAM, ExHiROM, ...) is declared
+  with `[map.N]`.
 - `[map.N]` declares region `N` (the identifier a source `.map` uses,
-  so `N` must be an integer: `[map.3]`, `[map.0x3]`). Each table takes
-  `bank_range`, `addr_range`, `mask`, and optionally `writable`
-  (boolean) and `mirror_bank_range`:
+  so `N` must be an integer: `[map.3]`, `[map.0x3]`) the way bsnes and
+  ares' `boards.bml` write it, so a board's `map` lines copy over as
+  they are. `address` is required; `mask`, `base` (both default 0)
+  and `writable` are optional:
 
   ```toml
-  [map.1]
-  bank_range        = [0x00, 0x6f]
-  addr_range        = [0x8000, 0xffff]
-  mask              = 0x8000
-  mirror_bank_range = [0x80, 0xef]
+  rom_size = 0x400000        # 4 MB image
 
-  [map.3]
-  bank_range = [0x70, 0x7d]
-  addr_range = [0x0000, 0x7fff]
-  mask       = 0x8000
-  writable   = true
+  [map.1]                    # SHVC-1A3M: LoROM ROM
+  address = "00-7d,80-ff:8000-ffff"
+  mask    = 0x8000
+
+  [map.2]                    # ... and its SRAM, in the same banks
+  address  = "70-7d,f0-ff:0000-7fff"
+  mask     = 0x8000
+  writable = true
   ```
+
+  `address` is `BANKS:WINDOW` in hex; several bank ranges separate
+  with commas and share the window. A region owns only its window, so
+  ROM and SRAM can share banks. The file offset of a read-only address
+  is computed as in bsnes: the `mask` bits are removed from the full
+  24-bit address, `base` is added, and the result folds into
+  `rom_size` (so mirrors land on the same bytes). `rom_size` is
+  required as soon as one region is read-only. Writable regions have
+  no file offset.
 
 - `mapper` and `[map.N]` are mutually exclusive (`E0507`): use the
   preset, or list every region yourself.

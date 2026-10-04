@@ -11,6 +11,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from a816.cpu.mapping import parse_bml_address
 from a816.error_codes import (
     E_CONFIG_BAD_EXPERIMENTAL,
     E_CONFIG_BAD_MAP_ENTRY,
@@ -26,8 +27,8 @@ from a816.mappers import CLI_MAPPERS, MAPPER_CLI_FLAGS, MAPPERS
 from a816.object_file import BusMapping
 
 CONFIG_FILENAME = "a816.toml"
-_MAP_REQUIRED_KEYS = ("bank_range", "addr_range", "mask")
-_MAP_KEYS = frozenset(_MAP_REQUIRED_KEYS + ("writable", "mirror_bank_range"))
+_MAP_REQUIRED_KEYS = ("address",)
+_MAP_KEYS = frozenset(_MAP_REQUIRED_KEYS + ("mask", "base", "writable"))
 
 
 @dataclass(frozen=True)
@@ -90,9 +91,28 @@ class _BusMapParser:
             )
         if mapper is not None:
             return mapper, list(MAPPERS[mapper])
-        regions = [self._entry(key, item) for key, item in raw.items()]
+        rom_size = self._rom_size(data.get("rom_size"))
+        regions = [self._entry(key, item, rom_size) for key, item in raw.items()]
         self._reject_aliased_keys(regions)
+        self._require_rom_size(regions, rom_size)
         return None, regions
+
+    def _rom_size(self, value: object) -> int:
+        if value is None:
+            return 0
+        size = self._int(value, "rom_size")
+        if size <= 0:
+            raise self._error(E_CONFIG_BAD_MAP_VALUE, f"rom_size must be positive, got {size}")
+        return size
+
+    def _require_rom_size(self, regions: list[BusMapping], rom_size: int) -> None:
+        """bsnes folds a ROM address by the image size, so a read-only region needs it."""
+        if rom_size or all(region.writeable for region in regions):
+            return
+        raise self._error(
+            E_CONFIG_BAD_MAP_VALUE,
+            "`rom_size` is required when `[map.N]` declares a read-only (ROM) region",
+        )
 
     def _error(self, code: ErrorCode, message: str) -> A816ConfigError:
         return A816ConfigError(code, message, self.config_path)
@@ -105,20 +125,29 @@ class _BusMapParser:
             raise self._error(E_CONFIG_UNKNOWN_MAPPER, f"unknown mapper {value!r} (supported: {supported})")
         return value
 
-    def _entry(self, key: str, item: object) -> BusMapping:
+    def _entry(self, key: str, item: object, rom_size: int) -> BusMapping:
         where = f"[map.{key}]"
         if not isinstance(item, dict):
             raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"{where} must be a table")
         self._check_keys(item, where)
-        mirror = item.get("mirror_bank_range")
-        return BusMapping(
+        return BusMapping.bml(
             identifier=self._identifier(key, where),
-            bank_range=self._pair(item["bank_range"], f"{where} bank_range"),
-            addr_range=self._pair(item["addr_range"], f"{where} addr_range"),
-            mask=self._int(item["mask"], f"{where} mask"),
+            address=self._address(item["address"], f"{where} address"),
+            mask=self._int(item.get("mask", 0), f"{where} mask"),
+            base=self._int(item.get("base", 0), f"{where} base"),
+            rom_size=rom_size,
             writeable=self._bool(item.get("writable", False), f"{where} writable"),
-            mirror_bank_range=None if mirror is None else self._pair(mirror, f"{where} mirror_bank_range"),
         )
+
+    def _address(self, value: object, where: str) -> str:
+        """A BML `map address=` value: `00-7d,80-ff:8000-ffff`."""
+        if not isinstance(value, str):
+            raise self._error(E_CONFIG_BAD_MAP_VALUE, f'{where} must be a string like "00-3f,80-bf:8000-ffff"')
+        try:
+            parse_bml_address(value)
+        except ValueError as exc:
+            raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where}: {exc}") from None
+        return value
 
     def _check_keys(self, item: dict[str, object], where: str) -> None:
         unknown = sorted(set(item) - _MAP_KEYS)
@@ -148,11 +177,6 @@ class _BusMapParser:
         if not isinstance(value, bool):
             raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where} must be true or false, got {value!r}")
         return value
-
-    def _pair(self, value: object, where: str) -> tuple[int, int]:
-        if not isinstance(value, list) or len(value) != 2:
-            raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where} must be a [start, end] pair, got {value!r}")
-        return self._int(value[0], where), self._int(value[1], where)
 
     def _reject_aliased_keys(self, regions: list[BusMapping]) -> None:
         """TOML rejects a repeated `[map.N]`; this catches spellings of one number (`[map.1]`, `[map.0x1]`)."""

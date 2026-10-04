@@ -17,7 +17,7 @@ from a816.module_builder import BuildResult, build_with_imports
 from a816.object_file import BusMapping
 
 _ROM = BusMapping("1", (0xC0, 0xFF), (0x0000, 0xFFFF), 0x1_0000)
-_ROM_TOML = 'entrypoint = "main.s"\n[map.1]\nbank_range = [0xc0, 0xff]\naddr_range = [0x0000, 0xffff]\nmask = 0x10000\n'
+_ROM_TOML = 'entrypoint = "main.s"\nrom_size = 0x400000\n[map.1]\naddress = "c0-ff:0000-ffff"\n'
 
 
 def _build(root: Path, toml: str | None, **kwargs: object) -> BuildResult:
