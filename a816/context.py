@@ -38,7 +38,7 @@ class AssemblyContext:
     # `ModuleBuilder` for every module of an `a816 build <entry>` link;
     # explicit `--compile-only` objects stay relocatable.
     require_placement: bool = False
-    # `[[map]]` / `mapper` regions from `a816.toml`, declared on the bus
+    # `mapper` or `[map.N]` regions from `a816.toml`, declared on the bus
     # of every translation unit before its own `.map` lines.
     bus_map: list["BusMapping"] = field(default_factory=list)
 

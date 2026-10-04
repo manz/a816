@@ -14,7 +14,7 @@ from pathlib import Path
 from a816.error_codes import (
     E_CONFIG_BAD_MAP_ENTRY,
     E_CONFIG_BAD_MAP_VALUE,
-    E_CONFIG_DUPLICATE_MAP,
+    E_CONFIG_MAPPER_AND_MAP,
     E_CONFIG_UNKNOWN_MAPPER,
     ErrorCode,
 )
@@ -23,7 +23,7 @@ from a816.mappers import MAPPERS
 from a816.object_file import BusMapping
 
 CONFIG_FILENAME = "a816.toml"
-_MAP_REQUIRED_KEYS = ("identifier", "bank_range", "addr_range", "mask")
+_MAP_REQUIRED_KEYS = ("bank_range", "addr_range", "mask")
 _MAP_KEYS = frozenset(_MAP_REQUIRED_KEYS + ("writable", "mirror_bank_range"))
 
 
@@ -44,7 +44,7 @@ class A816Config:
     # it against `-m`; its regions are already expanded into `bus_map`.
     mapper: str | None = None
     # Every bus region the project declares: the `mapper` preset first,
-    # then each `[[map]]` table. Seeded onto every translation unit's bus.
+    # or the `[map.N]` tables (never both). Seeded onto every translation unit's bus.
     bus_map: list[BusMapping] = field(default_factory=list)
 
     @property
@@ -71,20 +71,25 @@ def _resolve_paths(root: Path, raw: list[str]) -> list[Path]:
 
 
 class _BusMapParser:
-    """Turn the `mapper` key and `[[map]]` tables into `BusMapping`s."""
+    """Turn the `mapper` key and `[map.N]` tables into `BusMapping`s."""
 
     def __init__(self, config_path: Path) -> None:
         self.config_path = config_path
 
     def parse(self, data: dict[str, object]) -> tuple[str | None, list[BusMapping]]:
         mapper = self._mapper(data.get("mapper"))
-        regions = list(MAPPERS[mapper]) if mapper is not None else []
-        raw = data.get("map", [])
-        if not isinstance(raw, list):
-            raise self._error(E_CONFIG_BAD_MAP_ENTRY, "`map` must be an array of tables (`[[map]]`)")
-        regions.extend(self._entry(item, index) for index, item in enumerate(raw))
-        self._reject_duplicates(regions)
-        return mapper, regions
+        raw = data.get("map", {})
+        if not isinstance(raw, dict):
+            raise self._error(E_CONFIG_BAD_MAP_ENTRY, "`map` must be a table of regions (`[map.N]`)")
+        if mapper is not None and raw:
+            raise self._error(
+                E_CONFIG_MAPPER_AND_MAP, "`mapper` and `[map.N]` are mutually exclusive: use one or the other"
+            )
+        if mapper is not None:
+            return mapper, list(MAPPERS[mapper])
+        regions = [self._entry(key, item) for key, item in raw.items()]
+        self._reject_aliased_keys(regions)
+        return None, regions
 
     def _error(self, code: ErrorCode, message: str) -> A816ConfigError:
         return A816ConfigError(code, message, self.config_path)
@@ -97,8 +102,8 @@ class _BusMapParser:
             raise self._error(E_CONFIG_UNKNOWN_MAPPER, f"unknown mapper {value!r} (supported: {supported})")
         return value
 
-    def _entry(self, item: object, index: int) -> BusMapping:
-        where = f"[[map]] #{index + 1}"
+    def _entry(self, key: str, item: object) -> BusMapping:
+        where = f"[map.{key}]"
         if not isinstance(item, dict):
             raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"{where} must be a table")
         unknown = sorted(set(item) - _MAP_KEYS)
@@ -107,7 +112,7 @@ class _BusMapParser:
             raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"{where}: unknown keys {unknown}, missing keys {missing}")
         mirror = item.get("mirror_bank_range")
         return BusMapping(
-            identifier=self._identifier(item["identifier"], where),
+            identifier=self._identifier(key, where),
             bank_range=self._pair(item["bank_range"], f"{where} bank_range"),
             addr_range=self._pair(item["addr_range"], f"{where} addr_range"),
             mask=self._int(item["mask"], f"{where} mask"),
@@ -115,10 +120,13 @@ class _BusMapParser:
             mirror_bank_range=None if mirror is None else self._pair(mirror, f"{where} mirror_bank_range"),
         )
 
-    def _identifier(self, value: object, where: str) -> str:
+    def _identifier(self, key: str, where: str) -> str:
         # `.map identifier=N` only takes a number; keep the same keyspace so
         # a source `.map` and a toml region with the same N are comparable.
-        return str(self._int(value, f"{where} identifier"))
+        try:
+            return str(int(key, 0))
+        except ValueError:
+            raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where}: the region key must be an integer") from None
 
     def _int(self, value: object, where: str) -> int:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -135,11 +143,12 @@ class _BusMapParser:
             raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where} must be a [start, end] pair, got {value!r}")
         return self._int(value[0], where), self._int(value[1], where)
 
-    def _reject_duplicates(self, regions: list[BusMapping]) -> None:
+    def _reject_aliased_keys(self, regions: list[BusMapping]) -> None:
+        """TOML rejects a repeated `[map.N]`; this catches spellings of one number (`[map.1]`, `[map.0x1]`)."""
         seen: set[str] = set()
         for region in regions:
             if region.identifier in seen:
-                raise self._error(E_CONFIG_DUPLICATE_MAP, f"map identifier {region.identifier!r} is declared twice")
+                raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"map identifier {region.identifier} is declared twice")
             seen.add(region.identifier)
 
 
@@ -147,7 +156,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
     """Parse the project config. Return None on read / decode errors.
 
     Raises:
-        A816ConfigError: the file decodes but `mapper` / `[[map]]` is invalid.
+        A816ConfigError: the file decodes but `mapper` / `[map.N]` is invalid.
     """
     try:
         with config_path.open("rb") as handle:

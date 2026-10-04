@@ -1,6 +1,6 @@
 """`a816.toml` bus regions seeded onto every translation unit.
 
-`[[map]]` / `mapper` reach each module's resolver bus before its own
+`[map.N]` / `mapper` reach each module's resolver bus before its own
 `.map` lines run, so a module without a local `.map` still places code
 in the project's banks; a local `.map` identical to the toml one is a
 no-op and a conflicting one fails on the source line (E0308).
@@ -23,10 +23,7 @@ _ROM = BusMapping("1", (0xC0, 0xFF), (0x0000, 0xFFFF), 0x1_0000)
 _ROM_MAP_LINE = ".map identifier=1 bank_range=0xc0, 0xff addr_range=0x0000, 0xffff mask=0x10000\n"
 _ROM_MAP_CONFLICT = ".map identifier=1 bank_range=0xc0, 0xfe addr_range=0x0000, 0xffff mask=0x10000\n"
 _PLACED_CODE = ".alloc at 0xf00000 {\n    rts\n}\n"
-_ROM_TOML = (
-    'entrypoint = "main.s"\n'
-    "[[map]]\nidentifier = 1\nbank_range = [0xc0, 0xff]\naddr_range = [0x0000, 0xffff]\nmask = 0x10000\n"
-)
+_ROM_TOML = 'entrypoint = "main.s"\n[map.1]\nbank_range = [0xc0, 0xff]\naddr_range = [0x0000, 0xffff]\nmask = 0x10000\n'
 
 
 def _compile(tmp_path: Path, source: str, bus_map: list[BusMapping]) -> tuple[int, Path]:

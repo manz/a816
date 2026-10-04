@@ -81,14 +81,7 @@ def _config_error_code(tmp_path: Path, body: str) -> str:
     return info.value.code.code
 
 
-_SRAM_MAP = (
-    "[[map]]\n"
-    "identifier = 3\n"
-    "bank_range = [0x70, 0x7d]\n"
-    "addr_range = [0x0000, 0x7fff]\n"
-    "mask = 0x8000\n"
-    "writable = true\n"
-)
+_SRAM_MAP = "[map.3]\nbank_range = [0x70, 0x7d]\naddr_range = [0x0000, 0x7fff]\nmask = 0x8000\nwritable = true\n"
 
 
 def test_bus_map_defaults_to_empty(tmp_path: Path) -> None:
@@ -97,7 +90,7 @@ def test_bus_map_defaults_to_empty(tmp_path: Path) -> None:
 
 def test_map_entry_parses_every_key(tmp_path: Path) -> None:
     body = (
-        "[[map]]\nidentifier = 1\nbank_range = [0xc0, 0xfd]\naddr_range = [0x0000, 0xffff]\n"
+        "[map.1]\nbank_range = [0xc0, 0xfd]\naddr_range = [0x0000, 0xffff]\n"
         "mask = 0x10000\nmirror_bank_range = [0x40, 0x7d]\n"
     )
     shape = _shape(_load(tmp_path, body).bus_map[0])
@@ -109,7 +102,7 @@ def test_map_entry_writable(tmp_path: Path) -> None:
 
 
 def test_map_integer_identifier_matches_directive_spelling(tmp_path: Path) -> None:
-    body = _SRAM_MAP.replace("identifier = 3", "identifier = 0x42")
+    body = _SRAM_MAP.replace("[map.3]", "[map.0x42]")
     assert _load(tmp_path, body).bus_map[0].identifier == "66"
 
 
@@ -133,9 +126,8 @@ def test_mapper_recorded(tmp_path: Path) -> None:
     assert _load(tmp_path, 'mapper = "hirom"\n').mapper == "hirom"
 
 
-def test_map_entries_follow_mapper_entries(tmp_path: Path) -> None:
-    identifiers = [m.identifier for m in _load(tmp_path, 'mapper = "lorom"\n' + _SRAM_MAP).bus_map]
-    assert identifiers == ["1", "2", "3"]
+def test_mapper_and_map_are_mutually_exclusive(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, 'mapper = "lorom"\n' + _SRAM_MAP) == "E0507"
 
 
 def test_unknown_mapper_is_rejected(tmp_path: Path) -> None:
@@ -175,18 +167,11 @@ def test_map_writable_must_be_boolean(tmp_path: Path) -> None:
 
 
 def test_map_identifier_must_be_an_integer(tmp_path: Path) -> None:
-    assert _config_error_code(tmp_path, _SRAM_MAP.replace("identifier = 3", "identifier = 'sram'")) == "E0506"
+    assert _config_error_code(tmp_path, _SRAM_MAP.replace("[map.3]", "[map.sram]")) == "E0506"
 
 
-def test_duplicate_map_identifier_is_rejected(tmp_path: Path) -> None:
-    assert _config_error_code(tmp_path, _SRAM_MAP + _SRAM_MAP) == "E0507"
-
-
-def test_map_identifier_clashing_with_mapper_is_rejected(tmp_path: Path) -> None:
-    assert (
-        _config_error_code(tmp_path, 'mapper = "lorom"\n' + _SRAM_MAP.replace("identifier = 3", "identifier = 2"))
-        == "E0507"
-    )
+def test_map_keys_spelling_one_number_are_rejected(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _SRAM_MAP + _SRAM_MAP.replace("[map.3]", "[map.0x3]")) == "E0505"
 
 
 def test_config_error_names_the_file(tmp_path: Path) -> None:

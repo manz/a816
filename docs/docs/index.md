@@ -246,14 +246,7 @@ the LSP and fluff read the same file.
 entrypoint    = "src/main.s"
 include-paths = ["src/include"]
 module-paths  = ["src/modules"]
-mapper        = "hirom"
-
-[[map]]
-identifier = 3
-bank_range = [0x70, 0x7d]
-addr_range = [0x0000, 0x7fff]
-mask       = 0x8000
-writable   = true
+mapper        = "hirom"     # or explicit [map.N] regions, not both
 
 [experimental]
 track_register_size = true
@@ -265,13 +258,13 @@ track_register_size = true
 | `include-paths` | build, LSP, fluff | directories searched by `.include` |
 | `module-paths` | build, LSP, fluff | directories searched by `.import` |
 | `mapper` | build | fixed cartridge preset: `"lorom"` or `"hirom"` |
-| `[[map]]` | build | one bus region, same keys as `.map` |
+| `[map.N]` | build | bus region `N`, same keys as `.map` |
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
 
 `--include-path` / `-I` replace the file's `include-paths` /
 `module-paths`; `--experimental` flags add to `[experimental]`.
 
-### Bus map: `mapper` and `[[map]]`
+### Bus map: `mapper` or `[map.N]`
 
 The cartridge layout belongs to the project, not to each module. The
 regions declared here are put on the bus of every translation unit
@@ -285,17 +278,34 @@ into each `.o` like a source `.map`; the linker keeps one copy.
   identifier 1 (`$40-$7F:$0000-$FFFF`, mirrored at `$C0-$FF`) plus the
   same WRAM region. ExHiROM has no preset: a region always starts at
   physical offset 0, so it cannot express a ROM split across two bank
-  windows. Declare such layouts with `[[map]]`.
-- Each `[[map]]` table takes `identifier` (integer), `bank_range`,
-  `addr_range`, `mask`, and optionally `writable` (boolean) and
-  `mirror_bank_range`. They come after the `mapper` regions; an
-  identifier used twice is an error (`E0507`).
+  windows. Declare such layouts with `[map.N]`.
+- `[map.N]` declares region `N` (the identifier a source `.map` uses,
+  so `N` must be an integer: `[map.3]`, `[map.0x3]`). Each table takes
+  `bank_range`, `addr_range`, `mask`, and optionally `writable`
+  (boolean) and `mirror_bank_range`:
+
+  ```toml
+  [map.1]
+  bank_range        = [0x00, 0x6f]
+  addr_range        = [0x8000, 0xffff]
+  mask              = 0x8000
+  mirror_bank_range = [0x80, 0xef]
+
+  [map.3]
+  bank_range = [0x70, 0x7d]
+  addr_range = [0x0000, 0x7fff]
+  mask       = 0x8000
+  writable   = true
+  ```
+
+- `mapper` and `[map.N]` are mutually exclusive (`E0507`): use the
+  preset, or list every region yourself.
 - A source `.map` with the same identifier and the same shape as a
   toml region is accepted and does nothing; a different shape fails
   with `E0308` on the source line.
 - Declaring any region replaces the `-m` default bus, exactly as a
-  source `.map` does. With `mapper` absent, list every region the
-  project uses.
+  source `.map` does, so `[map.N]` must list every region the project
+  uses.
 - `-m` and `mapper` must agree (`low` / `low2` with `lorom`, `high`
   with `hirom`), otherwise the build stops with `E0508`. Without `-m`,
   `mapper` selects it. Without either, `-m low` applies.
