@@ -1,7 +1,9 @@
 import ctypes
 import re
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
+from a816.error_codes import E_CODEGEN_DIVISION_BY_ZERO
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
 from a816.parse.ast.nodes import (
     BinOp,
@@ -12,8 +14,11 @@ from a816.parse.ast.nodes import (
     Term,
     UnaryOp,
 )
-from a816.parse.tokens import TokenType
+from a816.parse.tokens import Token, TokenType
 from a816.symbols import Resolver
+
+if TYPE_CHECKING:
+    from a816.parse.nodes.errors import NodeError
 
 OPERATOR_PRECEDENCE = {
     # unary 1
@@ -87,23 +92,35 @@ def shunting_yard(expr_nodes: list[ExprNode]) -> list[ExprNode]:
     return output_queue
 
 
+_NUMBER_BASES = {"0x": 16, "0b": 2, "0o": 8}
+
+
 def eval_number(number: str) -> int:
-    if number.startswith("0x"):
-        base = 16
-    elif number.startswith("0b"):
-        base = 2
-    else:
-        base = 10
+    return int(number, _NUMBER_BASES.get(number[:2], 10))
 
-    return int(number, base)
 
+def _truncating_div(a: int, b: int) -> int:
+    """Integer division rounding toward zero (C / ca65), not Python's floor."""
+    quotient = abs(a) // abs(b)
+    return quotient if (a < 0) == (b < 0) else -quotient
+
+
+def _truncating_mod(a: int, b: int) -> int:
+    """Remainder matching `_truncating_div`: takes the sign of the dividend."""
+    return a - b * _truncating_div(a, b)
+
+
+_DIVISION_OPERATORS = frozenset({"/", "%"})
 
 _INT_BINOPS: dict[str, Callable[[int, int], int]] = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
     "*": lambda a, b: a * b,
+    "/": _truncating_div,
+    "%": _truncating_mod,
     "&": lambda a, b: a & b,
     "|": lambda a, b: a | b,
+    "^": lambda a, b: a ^ b,
     ">>": lambda a, b: a >> b,
     "<<": lambda a, b: a << b,
     ">=": lambda a, b: a >= b,
@@ -139,8 +156,23 @@ def _apply_unary(op: str, value: int | str) -> int:
     raise RuntimeError(f"Unsupported unary Operator {op}")
 
 
-def _apply_binary(op: str, v1: int | str, v2: int | str) -> int:
+def _division_by_zero(operator: Token) -> "NodeError":
+    # Late import: a816.parse.nodes imports this module.
+    from a816.parse.nodes.errors import NodeError
+
+    return NodeError(
+        "division by zero",
+        operator,
+        code=str(E_CODEGEN_DIVISION_BY_ZERO),
+        hint=f"the right-hand side of `{operator.value}` evaluates to 0",
+    )
+
+
+def _apply_binary(operator: BinOp, v1: int | str, v2: int | str) -> int:
+    op = operator.token.value
     if isinstance(v1, int) and isinstance(v2, int):
+        if v2 == 0 and op in _DIVISION_OPERATORS:
+            raise _division_by_zero(operator.token)
         try:
             return _INT_BINOPS[op](v1, v2)
         except KeyError as e:
@@ -221,7 +253,7 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
         elif isinstance(current, BinOp):
             v2 = values_stack.pop()
             v1 = values_stack.pop()
-            values_stack.append(_apply_binary(current.token.value, v1, v2))
+            values_stack.append(_apply_binary(current, v1, v2))
         else:
             _push_term(current, resolver, values_stack)
     return values_stack.pop()
@@ -286,10 +318,12 @@ def expr_to_ast(expr_str: str) -> ExpressionAstNode:
     from a816.parse.parser import Parser
     from a816.parse.parser_states import parse_expression_ep
     from a816.parse.scanner import Scanner
-    from a816.parse.scanner_states import lex_expression
+    from a816.parse.scanner_states import lex_standalone_expression
 
-    scanner = Scanner(lex_expression)
+    scanner = Scanner(lex_standalone_expression)
     tokens = scanner.scan("memory", expr_str)
+    if scanner.errors:
+        raise scanner.errors[0]
     parser = Parser(tokens, parse_expression_ep)
     nodes = parser.parse()
     first_node = nodes[0]

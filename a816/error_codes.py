@@ -68,6 +68,7 @@ E_CODEGEN_MAP_CONFLICT = ErrorCode("E0308", "codegen", "conflicting `.map` decla
 E_CODEGEN_IMMEDIATE_OVERFLOW = ErrorCode("E0309", "codegen", "byte immediate does not fit in 8 bits")
 E_CODEGEN_UNPLACED_CODE = ErrorCode("E0310", "codegen", "code emitted outside any placement")
 E_CODEGEN_IMPORT_IN_PLACEMENT = ErrorCode("E0311", "codegen", "`.import` inside a placement context")
+E_CODEGEN_DIVISION_BY_ZERO = ErrorCode("E0312", "codegen", "division or modulo by zero")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")
