@@ -44,7 +44,7 @@ from a816.program import Program
 from a816.protocols import NodeProtocol, OpcodeProtocol
 from a816.symbols import Resolver
 from a816.writers import ObjectWriter
-from tests import StubWriter
+from tests import CLIENT_POOL, StubWriter, label_address
 
 _ORIGIN = 0x008000
 _WIDTH_BYTES: dict[str, int] = {"b": 1, "w": 2, "l": 3}
@@ -188,8 +188,11 @@ def _expected_length(entry: Entry, suffix: str | None, operand: Operand, state: 
 
 
 def _resolvable(entry: Entry, suffix: str | None, operand: Operand, state: RegState) -> bool:
-    """False for an unsized forward reference: the first pass cannot size it
-    and assembly stops with E0200 (loud, never silent drift)."""
+    """False for an unsized forward reference.
+
+    The first pass cannot size it and assembly stops with E0200 (loud,
+    never silent drift).
+    """
     if operand.width is not None or not isinstance(entry.emitter, Opcode):
         return True
     return _width(entry, suffix, operand, state) is not None
@@ -210,7 +213,7 @@ def _node_operands(entry: Entry) -> tuple[Operand, ...]:
     return _NUMBERS
 
 
-def _apply(resolver: Resolver, state: RegState) -> Address:
+def _enter_state(resolver: Resolver, state: RegState) -> Address:
     resolver.track_register_size = state.track
     resolver.a_size = 16 if state.a16 else 8
     resolver.i_size = 16 if state.i16 else 8
@@ -219,13 +222,13 @@ def _apply(resolver: Resolver, state: RegState) -> Address:
 
 
 def _predicted(node: OpcodeNode, state: RegState) -> int:
-    start = _apply(node.resolver, state)
+    start = _enter_state(node.resolver, state)
     return node.pc_after(start).logical_value - start.logical_value
 
 
 def _emitted(node: OpcodeNode, state: RegState) -> int | None:
     """Emitted length, `None` when emit rejects the combination."""
-    start = _apply(node.resolver, state)
+    start = _enter_state(node.resolver, state)
     try:
         return len(node.emit(start))
     except NodeError:
@@ -254,7 +257,8 @@ def _node_case_failures(node: OpcodeNode, line: str, expected: int | None, state
         yield f"{where}: emitted {emitted} bytes, table encodes {expected}"
 
 
-def _node_failures(program: Program, entry: Entry) -> Iterator[str]:
+def _node_failures(entry: Entry) -> Iterator[str]:
+    program = Program()
     for suffix, operand in product(_suffixes(entry), _node_operands(entry)):
         line = _line(entry, suffix, operand)
         node = _parse_opcode(program, line)
@@ -263,21 +267,14 @@ def _node_failures(program: Program, entry: Entry) -> Iterator[str]:
             yield from _node_case_failures(node, line, expected, state)
 
 
-@pytest.fixture(scope="module")
-def shared_program() -> Program:
-    return Program()
-
-
 @pytest.mark.parametrize("entry", _ENTRIES, ids=[e.ident for e in _ENTRIES])
-def test_pc_after_matches_emit_length(shared_program: Program, entry: Entry) -> None:
-    assert list(_node_failures(shared_program, entry)) == []
+def test_pc_after_matches_emit_length(entry: Entry) -> None:
+    assert list(_node_failures(entry)) == []
 
 
 # --------------------------------------------------------------------------
 # End to end
 # --------------------------------------------------------------------------
-
-_POOL = ".pool client {\n range 0x008000 0x00FFEF\n strategy order\n}\n"
 
 
 @dataclass(frozen=True)
@@ -286,6 +283,11 @@ class Setup:
 
     lines: str
     state: RegState
+
+    @property
+    def ident(self) -> str:
+        lines = self.lines.replace("\n", ";")
+        return f"{lines}-{self.state.ident}"
 
 
 def _directives(a16: bool, i16: bool, track: bool) -> Setup:
@@ -330,22 +332,24 @@ def _alloc_at(setup: str, body: str) -> str:
 
 
 def _alloc_pool(setup: str, body: str) -> str:
-    return _POOL + f".alloc routine in client {{\nstart:\n{setup}\n{body}\n}}\n"
+    return CLIENT_POOL + f".alloc routine in client {{\nstart:\n{setup}\n{body}\n}}\n"
 
 
 def _alloc_entered(setup: str, body: str) -> str:
     """State set at top level, then a pooled alloc measured before placement."""
-    return _POOL + f"*=0x018000\n{setup}\nnop\n.alloc routine in client {{\nstart:\n{body}\n}}\n"
+    return CLIENT_POOL + f"*=0x018000\n{setup}\nnop\n.alloc routine in client {{\nstart:\n{body}\n}}\n"
 
 
 def _alloc_chained(setup: str, body: str) -> str:
     """State set by a previous alloc body, carried into the next one."""
-    return _POOL + f".alloc entry in client {{\n{setup}\nnop\n}}\n.alloc routine in client {{\nstart:\n{body}\n}}\n"
+    return (
+        CLIENT_POOL + f".alloc entry in client {{\n{setup}\nnop\n}}\n.alloc routine in client {{\nstart:\n{body}\n}}\n"
+    )
 
 
 def _alloc_exited(setup: str, body: str) -> str:
     """State set inside an alloc body, carried into the top-level code after it."""
-    return _POOL + f".alloc entry in client {{\n{setup}\nnop\n}}\n*=0x00c000\nstart:\n{body}\n"
+    return CLIENT_POOL + f".alloc entry in client {{\n{setup}\nnop\n}}\n*=0x00c000\nstart:\n{body}\n"
 
 
 def _top_trailing(setup: str, body: str) -> str:
@@ -388,16 +392,18 @@ class Case:
     expected: int
 
 
-def _family_cases(mode: AddressingMode, state: RegState, object_mode: bool) -> list[Case]:
+def _family_cases(mode: AddressingMode, entry_state: RegState, object_mode: bool) -> list[Case]:
+    """Body lines for one family; a tracked `rep`/`sep` line resizes the lines after it."""
     cases: list[Case] = []
+    running = entry_state
     for entry in (e for e in _ENTRIES if e.mode is mode):
         for suffix, operand in product(_suffixes(entry), _e2e_operands(entry, object_mode)):
-            expected = (
-                _expected_length(entry, suffix, operand, state) if _resolvable(entry, suffix, operand, state) else None
-            )
+            if not _resolvable(entry, suffix, operand, running):
+                continue
+            expected = _expected_length(entry, suffix, operand, running)
             if expected is not None:
                 cases.append(Case(_line(entry, suffix, operand, len(cases)), expected))
-                state = _state_after(entry, operand, state)
+                running = _state_after(entry, operand, running)
     return cases
 
 
@@ -420,12 +426,8 @@ def _opcodes(nodes: list[NodeProtocol]) -> Iterator[OpcodeNode]:
             yield from _opcodes(node.body)
 
 
-def _label(resolver: Resolver, name: str) -> int | None:
-    return next((scope.labels[name] for scope in resolver.scopes if name in scope.labels), None)
-
-
 class _EmitLog:
-    """Records `(node, address, length)` for every `OpcodeNode.emit`."""
+    """Maps `id(node)` to the `(address, length)` of its `OpcodeNode.emit`."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.records: dict[int, tuple[int, int]] = {}
@@ -466,7 +468,7 @@ def _body_opcodes(nodes: list[NodeProtocol], count: int, trailing: bool) -> list
 def _e2e_failures(program: Program, body: list[OpcodeNode], cases: list[Case], log: _EmitLog) -> Iterator[str]:
     for k, (case, node) in enumerate(zip(cases, body, strict=True)):
         address, length = log.records[id(node)]
-        label = _label(program.resolver, f"L{k}")
+        label = label_address(program.resolver, f"L{k}")
         if label != address + length:
             yield f"{case.line!r}: emitted {length} bytes at {address:#x}, next label bound at {label:#x}"
             return  # every later label inherits the drift
@@ -475,9 +477,7 @@ def _e2e_failures(program: Program, body: list[OpcodeNode], cases: list[Case], l
 
 
 @pytest.mark.parametrize("context", _CONTEXTS, ids=[c.name for c in _CONTEXTS])
-@pytest.mark.parametrize(
-    "setup", _SETUPS, ids=[f"{s.lines.replace(chr(10), ';') or 'default'}-{s.state.ident}" for s in _SETUPS]
-)
+@pytest.mark.parametrize("setup", _SETUPS, ids=[s.ident for s in _SETUPS])
 @pytest.mark.parametrize("mode", _FAMILIES, ids=[m.name for m in _FAMILIES])
 def test_labels_follow_emitted_bytes(
     monkeypatch: pytest.MonkeyPatch,
