@@ -13,6 +13,7 @@ import pytest
 from a816.module_builder import build_with_imports
 from a816.program import Program
 from a816.writers import ObjectWriter
+from tests import StubWriter
 
 
 def _write(src: str, name: str = "main.s") -> tuple[Path, Path]:
@@ -145,3 +146,48 @@ def test_verbose_flag_enables_debug_logging(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(SystemExit):
         cli.cli_main()
     assert captured["level"] == logging.INFO
+
+
+def _boom(*_args: object) -> None:
+    raise RuntimeError("boom")
+
+
+def _object_emit_internal_failure(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> list[logging.LogRecord]:
+    # An internal invariant failure (RuntimeError) inside the object pipeline
+    # must log a formatted message, not the literal `%s` + a traceback.
+    monkeypatch.setattr(Program, "resolve_labels", _boom)
+    tmp, asm = _write("nop\n")
+    writer = ObjectWriter(str(tmp / "out.o"))
+    writer.begin()
+    with caplog.at_level(logging.DEBUG):
+        Program().assemble_with_object_emitter(str(asm), writer)
+    return caplog.records
+
+
+def test_internal_failure_message_is_formatted(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = _object_emit_internal_failure(caplog, monkeypatch)
+    errors = [r.getMessage() for r in records if r.levelno == logging.ERROR]
+    assert errors == ["Assembly failed: boom"]
+
+
+def test_internal_failure_traceback_only_at_debug(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = _object_emit_internal_failure(caplog, monkeypatch)
+    with_traceback = [r.levelno for r in records if r.exc_info is not None]
+    assert with_traceback == [logging.DEBUG]
+
+
+def test_direct_mode_internal_failure_message_is_formatted(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Program, "resolve_labels", _boom)
+    _tmp, asm = _write("nop\n")
+    with caplog.at_level(logging.DEBUG), pytest.warns(DeprecationWarning):
+        Program().assemble_with_emitter(str(asm), StubWriter())
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert errors == ["Assembly failed: boom"]
