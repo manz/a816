@@ -220,6 +220,7 @@ def generate_alloc(
     # in the wrong block. Non-underscore body labels bubble back to the
     # parent on PopScope so cross-alloc public refs still resolve.
     resolver.append_alloc_body_scope()
+    body_scope = resolver.scopes[-1]
     resolver.use_next_scope()
     body_nodes: list[NodeProtocol] = [ScopeNode(resolver)]
     body_nodes += _code_gen_placement_body(node.body.body, resolver, macro_definitions)
@@ -234,6 +235,7 @@ def generate_alloc(
             file_info,
             pinned_addr=pinned_addr,
             pool_token=node.pool_token,
+            body_scope=body_scope,
         )
     ]
 

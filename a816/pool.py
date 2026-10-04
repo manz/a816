@@ -3,6 +3,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from a816.object_file import PoolDecl
 
 logger = logging.getLogger("a816.pool")
 
@@ -176,6 +180,25 @@ class Pool:
         if not 0 <= self.fill <= 0xFF:
             raise PoolError(f"fill byte 0x{self.fill:x} out of range")
         self.ranges = _normalize_ranges(self.ranges)
+
+    @classmethod
+    def from_decl(cls, decl: PoolDecl) -> Pool:
+        """Rebuild a pool from its object-file declaration.
+
+        The one decl-to-pool conversion: import mirrors and the linker all go
+        through it, so a field added to `PoolDecl` can't be dropped by one
+        copy (`bss`, then `context`, were). `allow_bank_cross` isn't
+        serialized; a range that crosses a bank must have had it, so it is
+        re-inferred from the range.
+        """
+        return cls(
+            name=decl.name,
+            ranges=[PoolRange(start=lo, end=hi, allow_bank_cross=(lo >> 16) != (hi >> 16)) for lo, hi in decl.ranges],
+            fill=decl.fill,
+            strategy=Strategy(decl.strategy),
+            bss=decl.bss,
+            context=decl.context,
+        )
 
     def request(self, name: str, size: int, addr: int | None = None) -> Allocation:
         if size <= 0:

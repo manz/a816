@@ -151,23 +151,12 @@ def _register_imported_object_pools(obj_file: ObjectFile, resolver: Resolver) ->
     """Mirror the imported `.o`'s pool decls into the importer's
     resolver.pools so `.alloc ... in POOL` sites resolve at codegen.
     Idempotent: identical re-registrations are skipped silently."""
-    from a816.pool import Pool, PoolRange, Strategy
+    from a816.pool import Pool
 
     for decl in obj_file.pool_decls:
         if decl.name in resolver.pools:
             continue
-        # Pool decls round-tripped through `.o` lose the
-        # `allow_bank_cross` flag (it's not in the serialised tuple).
-        # Re-infer it from the range itself: any range that legitimately
-        # crosses a bank boundary must have been built with the flag on,
-        # so flip it back on so reconstruction passes the PoolRange guard.
-        resolver.pools[decl.name] = Pool(
-            name=decl.name,
-            ranges=[PoolRange(start=lo, end=hi, allow_bank_cross=(lo >> 16) != (hi >> 16)) for lo, hi in decl.ranges],
-            fill=decl.fill,
-            strategy=Strategy(decl.strategy),
-            bss=decl.bss,
-        )
+        resolver.pools[decl.name] = Pool.from_decl(decl)
 
 
 def _import_from_source(

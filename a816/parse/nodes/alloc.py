@@ -10,7 +10,7 @@ from a816.parse.nodes.symbols import SymbolNode
 from a816.parse.tokens import Token
 from a816.pool import Allocation
 from a816.protocols import NodeBase, NodeProtocol
-from a816.symbols import Resolver
+from a816.symbols import Resolver, Scope
 
 
 class AllocNode(NodeBase):
@@ -31,8 +31,15 @@ class AllocNode(NodeBase):
         file_info: Token,
         pinned_addr: int | None = None,
         pool_token: Token | None = None,
+        body_scope: Scope | None = None,
     ) -> None:
         self.name = name
+        # The body's AllocBodyScope: every label in it (or nested in it)
+        # belongs to this alloc's section. The linker gets the list instead
+        # of guessing the section from sandbox addresses, which overlap
+        # between pools sharing memory (contexts).
+        self.body_scope = body_scope
+        self._name_scope: Scope | None = None
         self.pool_name = pool_name
         self.pool_token = pool_token
         self.body = body
@@ -124,6 +131,25 @@ class AllocNode(NodeBase):
                 self.resolver.alloc_sandbox_cursors.get(self.pool_name, 0) + self._size
             )
 
+    def exported_labels(self) -> list[str]:
+        """Names, as the object symbol table exports them, of every label
+        bound in this alloc's section: its own name, the body scope's labels
+        (and nested scopes'), and the public ones bubbled to the parent."""
+        scopes = self.resolver.scopes
+        names: set[str] = set()
+        if self._name_scope is not None:
+            names.add(Resolver._export_name(self.name, self._name_scope, scopes.index(self._name_scope), True))
+        body = self.body_scope
+        if body is None:
+            return sorted(names)
+        for idx, scope in enumerate(scopes):
+            if _within(scope, body):
+                names.update(Resolver._export_name(label, scope, idx, True) for label, _ in scope.get_labels())
+        if body.parent is not None:
+            parent_idx = scopes.index(body.parent)
+            names.update(Resolver._export_name(label, body.parent, parent_idx, True) for label in body.bubbled_labels)
+        return sorted(names)
+
     def _bind_body_labels_at(self, target: Address) -> None:
         """Bind the alloc name and body labels from `target`.
 
@@ -131,6 +157,7 @@ class AllocNode(NodeBase):
         `OpcodeNode.pc_after` sizes opcodes the way emission will and
         body labels (e.g. `_draw_string_loop:`) bind at their bytes.
         """
+        self._name_scope = self.resolver.current_scope
         self.resolver.current_scope.add_label(self.name, target)
         pc = target
         saved_current_scope = self.resolver.current_scope
@@ -292,3 +319,12 @@ class RelocateNode(AllocNode):
 
     def __str__(self) -> str:
         return f"RelocateNode({self.name} from 0x{self.old_start:06x}..0x{self.old_end:06x} -> {self.pool_name})"
+
+
+def _within(scope: Scope | None, ancestor: Scope) -> bool:
+    """True when `scope` is `ancestor` or nested somewhere inside it."""
+    while scope is not None:
+        if scope is ancestor:
+            return True
+        scope = scope.parent
+    return False

@@ -104,6 +104,7 @@ class Linker:
         # (obj_idx, section_idx) -> Allocation, to look up alloc.addr later.
         self._section_pool_alloc: dict[tuple[int, int], object] = {}
         request_sites = self._request_pool_allocs(merged)
+        self._index_alloc_labels()
         for pool in merged.values():
             try:
                 pool.allocate()
@@ -175,6 +176,16 @@ class Linker:
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
         return request_sites
 
+    def _index_alloc_labels(self) -> None:
+        """Map each symbol a pool alloc binds to that alloc's section:
+        (obj_idx, symbol) -> (obj_idx, section_idx)."""
+        self._label_sections: dict[tuple[int, str], tuple[int, int]] = {
+            (obj_idx, label): (obj_idx, req.section_idx)
+            for obj_idx, obj_file in enumerate(self.object_files)
+            for req in obj_file.pool_allocs
+            for label in req.labels
+        }
+
     def _section_location(self, site: tuple[int, int] | None) -> str | None:
         """`file:line` of the first emitted line in a requesting section, if any."""
         if site is None:
@@ -188,13 +199,19 @@ class Linker:
             return None
         return f"{obj_file.files[file_idx]}:{line + 1}"
 
-    def _pool_delta_for_symbol(self, obj_file: ObjectFile, obj_idx: int, address: int) -> int | None:
-        """Return the pool section delta if `address` falls inside a pool section.
+    def _pool_delta_for_symbol(self, obj_file: ObjectFile, obj_idx: int, name: str, address: int) -> int | None:
+        """Return the pool section delta for a symbol bound in a pool section.
 
         Pool sections are placed by the link-time allocator independent of
         module delta; symbols inside them must shift by the section's
-        own delta, not by the module's relocation.
+        own delta, not by the module's relocation. Each alloc lists the
+        symbols bound in its section; the address lookup below only covers
+        objects without that list, and is ambiguous once sections share
+        sandbox addresses (contexts of one pool all start at its base).
         """
+        owner = self._label_sections.get((obj_idx, name))
+        if owner is not None and owner in self._pool_section_deltas:
+            return self._pool_section_deltas[owner]
         for local_idx, section in enumerate(obj_file.sections):
             key = (obj_idx, local_idx)
             if key not in self._pool_section_deltas:
@@ -215,16 +232,9 @@ class Linker:
 
     @staticmethod
     def _pool_from_decl(decl: "PoolDecl") -> "Pool":
-        from a816.pool import Pool, PoolRange, Strategy
+        from a816.pool import Pool
 
-        return Pool(
-            name=decl.name,
-            ranges=[PoolRange(start=s, end=e, allow_bank_cross=(s >> 16) != (e >> 16)) for s, e in decl.ranges],
-            fill=decl.fill,
-            strategy=Strategy(decl.strategy),
-            bss=decl.bss,
-            context=decl.context,
-        )
+        return Pool.from_decl(decl)
 
     def _merge_bus_mappings(self) -> None:
         """Collect `.map` declarations across input modules.
@@ -395,7 +405,7 @@ class Linker:
         if symbol_type == SymbolType.EXTERNAL:
             self._external_symbols_needed.add(name)
             return
-        final_address = self._final_address(section, address, delta, obj_file, obj_idx)
+        final_address = self._final_address(name, section, address, delta, obj_file, obj_idx)
         if symbol_type == SymbolType.GLOBAL:
             self._register_global_symbol(name, final_address, section)
             return
@@ -407,6 +417,7 @@ class Linker:
 
     def _final_address(
         self,
+        name: str,
         section: SymbolSection,
         address: int,
         delta: int,
@@ -420,7 +431,7 @@ class Linker:
         # allocator chose the address, not module relocation).
         if section != SymbolSection.CODE:
             return address
-        pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, address)
+        pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, name, address)
         return address + (pool_delta if pool_delta is not None else delta)
 
     def _register_global_symbol(self, name: str, final_address: int, section: SymbolSection) -> None:
