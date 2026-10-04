@@ -37,6 +37,8 @@ class Linker:
         # Linked sections, keyed by their final logical base_address.
         self.linked_sections: list[Section] = []
         self.linked_symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
+        # First GLOBAL address per name, mirroring `linked_symbols` order.
+        self._global_addresses: dict[str, int] = {}
         # (final_address, section_idx, symbol_name, RelocationType)
         self._linked_relocations: list[tuple[int, int, str, RelocationType]] = []
         # (final_address, section_idx, expression, size_bytes)
@@ -377,12 +379,10 @@ class Linker:
             return
         self.symbol_map[name] = final_address
         self.linked_symbols.append((name, final_address, SymbolType.GLOBAL, section))
+        self._global_addresses.setdefault(name, final_address)
 
     def _existing_global_address(self, name: str) -> int | None:
-        for lname, laddr, lst, _ in self.linked_symbols:
-            if lname == name and lst == SymbolType.GLOBAL:
-                return laddr
-        return None
+        return self._global_addresses.get(name)
 
     def _register_local_symbol(self, name: str, final_address: int, section: SymbolSection) -> None:
         self.linked_symbols.append((name, final_address, SymbolType.LOCAL, section))
@@ -448,6 +448,7 @@ class Linker:
                     continue
                 self.symbol_map[name] = value
                 self.linked_symbols.append((name, value, SymbolType.GLOBAL, SymbolSection.DATA))
+                self._global_addresses.setdefault(name, value)
                 progress = True
             remaining = still_pending
         if remaining:
