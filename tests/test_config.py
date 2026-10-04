@@ -132,6 +132,24 @@ def test_map_must_be_array_of_tables(tmp_path: Path) -> None:
     assert _config_error_code(tmp_path, "map = 3\n") == "E0505"
 
 
+def _config_error_message(tmp_path: Path, body: str) -> str:
+    cfg = tmp_path / "a816.toml"
+    cfg.write_text(body, encoding="utf-8")
+    with pytest.raises(A816ConfigError) as info:
+        load_a816_toml(cfg)
+    return info.value.message
+
+
+def test_map_missing_key_message_names_only_missing_keys(tmp_path: Path) -> None:
+    message = _config_error_message(tmp_path, _SRAM_MAP.replace("mask = 0x8000\n", ""))
+    assert message == "[map.3]: missing keys mask"
+
+
+def test_map_unknown_key_message_names_only_unknown_keys(tmp_path: Path) -> None:
+    message = _config_error_message(tmp_path, _SRAM_MAP + "bogus = 1\n")
+    assert message == "[map.3]: unknown keys bogus"
+
+
 def test_map_range_needs_two_integers(tmp_path: Path) -> None:
     assert _config_error_code(tmp_path, _SRAM_MAP.replace("[0x70, 0x7d]", "[0x70]")) == "E0506"
 

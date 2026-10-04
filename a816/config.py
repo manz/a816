@@ -107,10 +107,7 @@ class _BusMapParser:
         where = f"[map.{key}]"
         if not isinstance(item, dict):
             raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"{where} must be a table")
-        unknown = sorted(set(item) - _MAP_KEYS)
-        missing = [key for key in _MAP_REQUIRED_KEYS if key not in item]
-        if unknown or missing:
-            raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"{where}: unknown keys {unknown}, missing keys {missing}")
+        self._check_keys(item, where)
         mirror = item.get("mirror_bank_range")
         return BusMapping(
             identifier=self._identifier(key, where),
@@ -121,9 +118,20 @@ class _BusMapParser:
             mirror_bank_range=None if mirror is None else self._pair(mirror, f"{where} mirror_bank_range"),
         )
 
+    def _check_keys(self, item: dict[str, object], where: str) -> None:
+        unknown = sorted(set(item) - _MAP_KEYS)
+        missing = [name for name in _MAP_REQUIRED_KEYS if name not in item]
+        problems = [
+            f"{label} {', '.join(names)}"
+            for label, names in (("unknown keys", unknown), ("missing keys", missing))
+            if names
+        ]
+        if problems:
+            raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"{where}: {'; '.join(problems)}")
+
     def _identifier(self, key: str, where: str) -> str:
-        # `.map identifier=N` only takes a number; keep the same keyspace so
-        # a source `.map` and a toml region with the same N are comparable.
+        """`.map identifier=N` only takes a number; keep the same keyspace so
+        a source `.map` and a toml region with the same N are comparable."""
         try:
             return str(int(key, 0))
         except ValueError:
