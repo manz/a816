@@ -1,7 +1,6 @@
 import re
 import struct
 from re import Match
-from typing import cast
 
 from a816.exceptions import (
     DuplicateSymbolError,
@@ -10,6 +9,9 @@ from a816.exceptions import (
     UnresolvedSymbolError,
 )
 from a816.object_file import ObjectFile, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
+from a816.parse.ast.expression import eval_constant_expression
+from a816.parse.errors import ParserSyntaxError, ScannerException
+from a816.parse.nodes.errors import NodeError
 from a816.pool import Pool
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
@@ -511,8 +513,10 @@ class Linker:
     def _evaluate_expression(self, expression: str, local_overlay: dict[str, int] | None = None) -> int:
         expr_to_eval = self._substitute_symbols(expression, local_overlay)
         try:
-            return cast(int, eval(expr_to_eval, {"__builtins__": {}}, {}))
-        except (SyntaxError, NameError, TypeError, ValueError) as e:
+            return eval_constant_expression(expr_to_eval)
+        except NodeError as e:
+            raise ExpressionEvaluationError(expression, e.message) from e
+        except (ScannerException, ParserSyntaxError, RuntimeError, ValueError) as e:
             raise ExpressionEvaluationError(expression, str(e)) from e
 
     def _substitute_symbols(self, expression: str, local_overlay: dict[str, int] | None = None) -> str:

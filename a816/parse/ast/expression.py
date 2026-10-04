@@ -246,6 +246,14 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
             expression_str = canonicalize_local_label_refs(expression_str, resolver)
             raise ExternalExpressionReference(expression_str, external_symbols)
 
+    return _fold_rpn(ordered, lambda current, stack: _push_term(current, resolver, stack))
+
+
+TermPusher = Callable[[ExprNode, list[int | str]], None]
+
+
+def _fold_rpn(ordered: list[ExprNode], push_term: TermPusher) -> int | str:
+    """Evaluate a shunting-yard output queue; `push_term` resolves operands."""
     values_stack: list[int | str] = []
     for current in ordered:
         if isinstance(current, UnaryOp):
@@ -255,8 +263,26 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
             v1 = values_stack.pop()
             values_stack.append(_apply_binary(current, v1, v2))
         else:
-            _push_term(current, resolver, values_stack)
+            push_term(current, values_stack)
     return values_stack.pop()
+
+
+def _push_number(current: ExprNode, values_stack: list[int | str]) -> None:
+    if current.token.type != TokenType.NUMBER:
+        raise ValueError(f"cannot resolve `{current.token.value}` at link time")
+    values_stack.append(eval_number(current.token.value))
+
+
+def eval_constant_expression(expr_str: str) -> int:
+    """Evaluate a symbol-free expression string with the assembler's semantics.
+
+    The linker calls this once every symbol in a relocation expression has
+    been substituted by its address. Raises `ValueError` for a leftover
+    identifier, `ScannerException` / `ParserSyntaxError` for malformed text
+    and `NodeError` for a division by zero.
+    """
+    ordered = shunting_yard(expr_to_ast(expr_str).tokens)
+    return int(_fold_rpn(ordered, _push_number))
 
 
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")

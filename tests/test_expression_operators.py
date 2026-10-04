@@ -1,7 +1,8 @@
 """One operator set, integer semantics, in every expression context.
 
-Opcode operands, `X =`, `X :=`, `.db` / `.dw` and `.if` must all accept
-the same operators and agree on their results.
+Opcode operands, `X =`, `X :=`, `.db` / `.dw`, `.if` and object-mode
+relocations evaluated by the linker must all accept the same operators
+and agree on their results.
 
 Division truncates toward zero and `%` takes the sign of the dividend
 (C / ca65 semantics), so `a == (a / b) * b + a % b` always holds.
@@ -9,9 +10,15 @@ Division truncates toward zero and `%` takes the sign of the dividend
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from a816.error_codes import E_CODEGEN_DIVISION_BY_ZERO
+from a816.exceptions import ExpressionEvaluationError
+from a816.linker import Linker
+from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.parse.ast.expression import eval_expression_str
 from a816.parse.errors import ScannerException
 from a816.parse.nodes import NodeError
@@ -159,3 +166,72 @@ class TestLexerAmbiguities:
         resolver = Resolver()
         with pytest.raises(ScannerException):
             eval_expression_str("1 $ 2", resolver)
+
+
+def _linked_word(expression: str, value: int) -> int:
+    obj = ObjectFile(b"\xa9\x00\x00", [("VAL", value, SymbolType.GLOBAL, SymbolSection.DATA)], [])
+    obj.expression_relocations = [(1, expression, 2)]
+    linked = Linker([obj]).link()
+    return int.from_bytes(bytes(linked.code[1:3]), "little")
+
+
+def _link_error(expression: str) -> ExpressionEvaluationError:
+    obj = ObjectFile(b"\xa9\x00", [("VAL", 1, SymbolType.GLOBAL, SymbolSection.DATA)], [])
+    obj.expression_relocations = [(1, expression, 1)]
+    linker = Linker([obj])
+    with pytest.raises(ExpressionEvaluationError) as exc:
+        linker.link()
+    return exc.value
+
+
+class TestLinkerExpressionSemantics:
+    @pytest.mark.parametrize(
+        ("expr", "expected"),
+        [
+            ("VAL / 3", 3),
+            ("VAL % 3", 1),
+            ("VAL ^ 0xFF", 0xF5),
+            ("VAL | 0x100", 0x10A),
+            ("~VAL", 0xF5),
+            ("-VAL / 4", (-2) & 0xFFFF),
+            ("VAL == 10", 1),
+        ],
+    )
+    def test_integer_semantics(self, expr: str, expected: int) -> None:
+        assert _linked_word(expr, 10) == expected
+
+    def test_division_by_zero_is_a_clean_error(self) -> None:
+        assert "division by zero" in _link_error("VAL / 0").reason
+
+    def test_modulo_by_zero_is_a_clean_error(self) -> None:
+        assert "division by zero" in _link_error("VAL % (VAL - 1)").reason
+
+    def test_unresolved_symbol_is_a_clean_error(self) -> None:
+        assert "missing" in _link_error("missing + 1").reason
+
+    def test_invalid_character_is_a_clean_error(self) -> None:
+        assert _link_error("VAL $ 2").expression == "VAL $ 2"
+
+
+class TestExternRelocationOperators:
+    @pytest.mark.parametrize(
+        ("expr", "expected"),
+        [
+            ("ext_label / 2", 0x4000),
+            ("ext_label % 0x300", 0x200),
+            ("ext_label ^ 0xFFFF", 0x7FFF),
+            ("ext_label | 3", 0x8003),
+            ("~ext_label", 0x7FFF),
+        ],
+    )
+    def test_operand_relocation(self, expr: str, expected: int) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / "p.s").write_text("*=0x008000\next_label:\n    nop\n")
+            (tmp / "c.s").write_text(f".extern ext_label\n*=0x009000\n    lda.w #{expr}\n")
+            Program().assemble_as_object(str(tmp / "p.s"), tmp / "p.o")
+            Program().assemble_as_object(str(tmp / "c.s"), tmp / "c.o")
+            objects = [ObjectFile.from_file(str(tmp / "p.o")), ObjectFile.from_file(str(tmp / "c.o"))]
+        linked = Linker(objects).link()
+        code = bytes(linked.sections[1].code)
+        assert code == b"\xa9" + _word(expected)
