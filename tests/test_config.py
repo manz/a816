@@ -39,12 +39,6 @@ def test_load_resolves_paths(tmp_path: Path) -> None:
     assert loaded.module_paths == [(tmp_path / "src" / "modules").resolve()]
 
 
-def test_load_returns_none_on_decode_error(tmp_path: Path) -> None:
-    cfg = tmp_path / "a816.toml"
-    cfg.write_text("not = valid = toml = at all", encoding="utf-8")
-    assert load_a816_toml(cfg) is None
-
-
 def test_discover_combines_find_and_load(tmp_path: Path) -> None:
     nested = tmp_path / "src" / "deeper"
     nested.mkdir(parents=True)
@@ -170,8 +164,16 @@ def test_map_identifier_must_be_an_integer(tmp_path: Path) -> None:
     assert _config_error_code(tmp_path, _SRAM_MAP.replace("[map.3]", "[map.sram]")) == "E0506"
 
 
+def test_repeated_map_table_is_invalid_toml(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, _SRAM_MAP + _SRAM_MAP) == "E0501"
+
+
 def test_map_keys_spelling_one_number_are_rejected(tmp_path: Path) -> None:
     assert _config_error_code(tmp_path, _SRAM_MAP + _SRAM_MAP.replace("[map.3]", "[map.0x3]")) == "E0505"
+
+
+def test_invalid_toml_is_reported_not_ignored(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, "entrypoint = \n") == "E0501"
 
 
 def test_config_error_names_the_file(tmp_path: Path) -> None:

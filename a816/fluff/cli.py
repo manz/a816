@@ -403,8 +403,18 @@ def _run_explain(args: argparse.Namespace) -> int:
 
 
 def fluff_main(argv: Sequence[str] | None = None) -> int:
+    from a816.exceptions import A816ConfigError
+
     parser = _build_fluff_parser()
     args = parser.parse_args(argv)
+    try:
+        return _dispatch(args, parser)
+    except A816ConfigError as exc:
+        print(exc.format(), file=sys.stderr)
+        return 2
+
+
+def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.command == "format":
         return _run_format(args, parser)
     if args.command == "check":

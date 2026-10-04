@@ -193,3 +193,22 @@ def test_cli_compile_only_seeds_toml_map(tmp_path: Path) -> None:
 def test_cli_link_of_sources_seeds_toml_map(tmp_path: Path) -> None:
     args = _args(tmp_path, _ROM_TOML, "--no-auto-imports", "-o", str(tmp_path / "out.ips"))
     assert _run_assemble(args) == 0
+
+
+def test_fluff_reports_a_broken_config_instead_of_crashing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from a816.fluff.cli import fluff_main
+
+    (tmp_path / "a816.toml").write_text("entrypoint = \n", encoding="utf-8")
+    source = tmp_path / "main.s"
+    source.write_text("nop\n", encoding="utf-8")
+    fluff_main(["check", str(source)])
+    assert "config error[E0501]" in capsys.readouterr().err
+
+
+def test_fluff_broken_config_exit_code(tmp_path: Path) -> None:
+    from a816.fluff.cli import fluff_main
+
+    (tmp_path / "a816.toml").write_text("entrypoint = \n", encoding="utf-8")
+    source = tmp_path / "main.s"
+    source.write_text("nop\n", encoding="utf-8")
+    assert fluff_main(["check", str(source)]) == 2

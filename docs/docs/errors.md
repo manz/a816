@@ -148,7 +148,8 @@ separate blocks separated by a blank line.
 ### I/O / config
 
 - `E0500` file not found.
-- `E0501` invalid project config.
+- `E0501` invalid project config: `a816.toml` is not valid TOML (a
+  repeated `[map.N]` table is one way to get there).
 - `E0502` `.include_ips` file is not an IPS patch (no `PATCH`
   header). An unreadable `.include_ips` path reports `E0500`.
 - `E0504` `mapper` in `a816.toml` names no supported preset

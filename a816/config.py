@@ -14,6 +14,7 @@ from pathlib import Path
 from a816.error_codes import (
     E_CONFIG_BAD_MAP_ENTRY,
     E_CONFIG_BAD_MAP_VALUE,
+    E_CONFIG_INVALID,
     E_CONFIG_MAPPER_AND_MAP,
     E_CONFIG_UNKNOWN_MAPPER,
     ErrorCode,
@@ -153,16 +154,18 @@ class _BusMapParser:
 
 
 def load_a816_toml(config_path: Path) -> A816Config | None:
-    """Parse the project config. Return None on read / decode errors.
+    """Parse the project config. Return None when the file can't be read.
 
     Raises:
-        A816ConfigError: the file decodes but `mapper` / `[map.N]` is invalid.
+        A816ConfigError: the file is not valid TOML, or `mapper` / `[map.N]` is invalid.
     """
     try:
         with config_path.open("rb") as handle:
             data = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except OSError:
         return None
+    except tomllib.TOMLDecodeError as exc:
+        raise A816ConfigError(E_CONFIG_INVALID, f"not valid TOML: {exc}", config_path) from None
     root = config_path.parent
     entry = data.get("entrypoint")
     entry_path = (root / entry).resolve() if isinstance(entry, str) else None
