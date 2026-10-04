@@ -82,8 +82,10 @@ def _expand(value: int, mask: int) -> int:
     return out | (value >> src) << 24
 
 
-def parse_bml_address(spec: str) -> tuple[list[tuple[int, int]], tuple[int, int]]:
-    """Split a BML `map address=` value (`00-7d,80-ff:8000-ffff`) into bank ranges and the address window.
+def parse_bml_address(spec: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Split a BML `map address=` value (`00-7d,80-ff:8000-ffff`) into bank ranges and address windows.
+
+    Both sides take comma-separated ranges (`00-3f,80-bf:6000-6bff,7000-7bff`).
 
     Raises:
         ValueError: `spec` is not `BANKS:ADDRESSES` with hex ranges.
@@ -92,7 +94,7 @@ def parse_bml_address(spec: str) -> tuple[list[tuple[int, int]], tuple[int, int]
     if not sep:
         raise ValueError(f"expected BANKS:ADDRESSES, got {spec!r}")
     ranges = [_hex_range(part, 0xFF, spec) for part in banks.split(",")]
-    return ranges, _hex_range(window, 0xFFFF, spec)
+    return ranges, [_hex_range(part, 0xFFFF, spec) for part in window.split(",")]
 
 
 def _hex_range(text: str, limit: int, spec: str) -> tuple[int, int]:
@@ -116,17 +118,23 @@ class BsnesRegion(BusRegion):
     """
 
     def __init__(
-        self, ranges: list[tuple[int, int]], window: tuple[int, int], mask: int, base: int, size: int, writable: bool
+        self,
+        ranges: list[tuple[int, int]],
+        windows: list[tuple[int, int]],
+        mask: int,
+        base: int,
+        size: int,
+        writable: bool,
     ) -> None:
         self.ranges = ranges
-        self.window = window
+        self.windows = windows
         self.mask = mask
         self.base = base
         self.size = size
         self.writable = writable
-        # Legacy-shaped views (xdds, diagnostics): the first bank range and the window.
+        # Legacy-shaped views (xdds, diagnostics): the first bank range and window.
         self.bank_range = ranges[0]
-        self.address_range = window
+        self.address_range = windows[0]
 
     def physical_address(self, value: int) -> int | None:
         if self.writable:
@@ -138,9 +146,10 @@ class BsnesRegion(BusRegion):
 
     def logical_address(self, value: int, near: int | None = None) -> int:
         for bank_lo, bank_hi in self._ranges_near(near):
-            logical = self._logical_in(value, bank_lo, bank_hi)
-            if logical is not None:
-                return logical
+            for window in self.windows:
+                logical = self._logical_in(value, bank_lo, bank_hi, window)
+                if logical is not None:
+                    return logical
         raise ValueError(f"physical ${value:06X} is not reachable through this region")
 
     def _ranges_near(self, near: int | None) -> list[tuple[int, int]]:
@@ -150,23 +159,23 @@ class BsnesRegion(BusRegion):
         current = [r for r in self.ranges if r[0] <= bank <= r[1]]
         return current + [r for r in self.ranges if r not in current]
 
-    def _logical_in(self, value: int, bank_lo: int, bank_hi: int) -> int | None:
+    def _logical_in(self, value: int, bank_lo: int, bank_hi: int, window: tuple[int, int]) -> int | None:
         span = (self.size - self.base) if self.size else 1 << 24
-        fill = ((bank_lo << 16) | self.window[0]) & self.mask
+        fill = ((bank_lo << 16) | window[0]) & self.mask
         offset = value - self.base
         while offset < 1 << 24:
             logical = _expand(offset, self.mask) | fill
-            if self._reaches(logical, value, bank_lo, bank_hi):
+            if self._reaches(logical, value, bank_lo, bank_hi, window):
                 return logical
             if logical >> 16 > bank_hi:
                 return None
             offset += span
         return None
 
-    def _reaches(self, logical: int, value: int, bank_lo: int, bank_hi: int) -> bool:
+    def _reaches(self, logical: int, value: int, bank_lo: int, bank_hi: int, window: tuple[int, int]) -> bool:
         """`logical` sits in this bank range and window and maps to physical `value`."""
         bank, addr = logical >> 16, logical & 0xFFFF
-        in_window = bank_lo <= bank <= bank_hi and self.window[0] <= addr <= self.window[1]
+        in_window = bank_lo <= bank <= bank_hi and window[0] <= addr <= window[1]
         return in_window and self.physical_address(logical) == value
 
 
@@ -249,12 +258,12 @@ class Bus:
     def map_region(self, identifier: str, region: BsnesRegion) -> None:
         self._check_editable()
         self.mappings[identifier] = region
-        lo, hi = region.window
         for bank_lo, bank_hi in region.ranges:
             for bank in range(bank_lo, bank_hi + 1):
-                self.windows.setdefault(bank, []).append((lo, hi, identifier))
+                for lo, hi in region.windows:
+                    self.windows.setdefault(bank, []).append((lo, hi, identifier))
                 self._whole_bank.pop(bank, None)
-                if (lo, hi) == (0x0000, 0xFFFF):
+                if region.windows == [(0x0000, 0xFFFF)]:
                     self._whole_bank[bank] = region
 
     def unmap(self, identifier: str) -> None:

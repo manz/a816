@@ -19,8 +19,8 @@ from a816.object_file import BusMapping
 
 
 def _region(address: str, mask: int = 0, base: int = 0, size: int = 0, writable: bool = False) -> BsnesRegion:
-    ranges, window = parse_bml_address(address)
-    return BsnesRegion(ranges, window, mask, base, size, writable)
+    ranges, windows = parse_bml_address(address)
+    return BsnesRegion(ranges, windows, mask, base, size, writable)
 
 
 @pytest.mark.parametrize(
@@ -51,11 +51,15 @@ def test_mirror_folds_into_size(addr: int, size: int, expected: int) -> None:
 
 
 def test_parse_bml_address_splits_banks_and_window() -> None:
-    assert parse_bml_address("00-3f,80-bf:8000-ffff") == ([(0x00, 0x3F), (0x80, 0xBF)], (0x8000, 0xFFFF))
+    assert parse_bml_address("00-3f,80-bf:8000-ffff") == ([(0x00, 0x3F), (0x80, 0xBF)], [(0x8000, 0xFFFF)])
+
+
+def test_parse_bml_address_splits_several_windows() -> None:
+    assert parse_bml_address("00-3f:6000-6bff,7000-7bff") == ([(0x00, 0x3F)], [(0x6000, 0x6BFF), (0x7000, 0x7BFF)])
 
 
 def test_parse_bml_address_accepts_single_bank() -> None:
-    assert parse_bml_address("70:0000-7fff") == ([(0x70, 0x70)], (0x0000, 0x7FFF))
+    assert parse_bml_address("70:0000-7fff") == ([(0x70, 0x70)], [(0x0000, 0x7FFF)])
 
 
 @pytest.mark.parametrize("spec", ["00-3f", "zz:0000-ffff", "3f-00:0000-ffff", "00-3f:8000-1ffff"])
@@ -98,16 +102,16 @@ _BOARD_REGIONS = [
 
 
 def _samples(region: BsnesRegion) -> list[int]:
-    lo, hi = region.window
     return [
         bank << 16 | addr
         for bank_lo, bank_hi in region.ranges
         for bank in {bank_lo, (bank_lo + bank_hi) // 2, bank_hi}
+        for lo, hi in region.windows
         for addr in {lo, (lo + hi) // 2, hi}
     ]
 
 
-@pytest.mark.parametrize("region", _BOARD_REGIONS, ids=lambda r: f"{r.ranges}:{r.window}/{r.mask:x}")
+@pytest.mark.parametrize("region", _BOARD_REGIONS, ids=lambda r: f"{r.ranges}:{r.windows}/{r.mask:x}")
 def test_inverse_round_trips_within_the_callers_bank_range(region: BsnesRegion) -> None:
     for logical in _samples(region):
         physical = region.physical_address(logical)

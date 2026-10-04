@@ -36,8 +36,8 @@ MAPPER_CLI_FLAGS: dict[str, str] = {"lorom": "low", "hirom": "high"}
 def map_on_bus(bus: Bus, mapping: BusMapping) -> None:
     """Declare one region on ``bus``: bsnes semantics for a BML region, legacy stride for a `.map`."""
     if mapping.address is not None:
-        ranges, window = parse_bml_address(mapping.address)
-        region = BsnesRegion(ranges, window, mapping.mask, mapping.base, mapping.rom_size, mapping.writeable)
+        ranges, windows = parse_bml_address(mapping.address)
+        region = BsnesRegion(ranges, windows, mapping.mask, mapping.base, mapping.rom_size, mapping.writeable)
         bus.map_region(mapping.identifier, region)
     else:
         bus.map(
