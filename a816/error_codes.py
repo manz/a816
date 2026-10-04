@@ -77,6 +77,7 @@ E_CODEGEN_DIVISION_BY_ZERO = ErrorCode("E0312", "codegen", "division or modulo b
 E_CODEGEN_BRANCH_RANGE = ErrorCode("E0315", "codegen", "branch target out of range")
 E_CODEGEN_BRANCH_UNMAPPED = ErrorCode("E0316", "codegen", "branch target has no ROM address")
 E_CODEGEN_UNMAPPED_BANK = ErrorCode("E0317", "codegen", "address in a bank no `.map` region covers")
+E_CODEGEN_POOL_OVERFLOW = ErrorCode("E0318", "codegen", "alloc does not fit in its pool")
 E_CODEGEN_MISMATCHED_TYPES = ErrorCode("E0319", "codegen", "operator applied to a string and a number")
 E_CODEGEN_NOT_TOO_WIDE = ErrorCode("E0320", "codegen", "`~` operand wider than 32 bits")
 
@@ -85,6 +86,8 @@ E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbo
 E_LINKER_UNRESOLVED_SYMBOL = ErrorCode("E0401", "linker", "unresolved external symbol")
 E_LINKER_RELOCATION_RANGE = ErrorCode("E0402", "linker", "relocation out of range")
 E_LINKER_EXPRESSION = ErrorCode("E0403", "linker", "relocation expression failed")
+E_LINKER_POOL_OVERFLOW = ErrorCode("E0404", "linker", "alloc does not fit in its pool at link time")
+E_LINKER_UNDECLARED_POOL = ErrorCode("E0405", "linker", "alloc request names a pool no object declares")
 
 # --- I/O / config (E0500..) ---
 E_IO_FILE_NOT_FOUND = ErrorCode("E0500", "io", "file not found")

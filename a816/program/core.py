@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from a816.error_codes import E_CODEGEN_POOL_OVERFLOW
 from a816.exceptions import UnmappedBankError
 from a816.object_file import ObjectFile
 from a816.parse.mzparser import A816Parser
@@ -22,7 +23,8 @@ from a816.parse.nodes import (
     LinkedModuleNode,
     SymbolNode,
 )
-from a816.parse.nodes.errors import node_file_info, unmapped_bank_error
+from a816.parse.nodes.errors import NodeError, node_file_info, unmapped_bank_error
+from a816.pool import PoolOverflowError
 from a816.program.assemble import AssembleMixin
 from a816.program.debug import DebugMixin
 from a816.program.emit import EmitMixin
@@ -192,7 +194,15 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
 
         # Run the freespace allocator between passes so .alloc / .relocate
         # blocks see their final addresses when binding labels in pass 2.
-        self.resolver.allocate_pools()
+        try:
+            self.resolver.allocate_pools()
+        except PoolOverflowError as exc:
+            raise NodeError(
+                str(exc),
+                self.resolver.alloc_sites.get((exc.pool_name, exc.alloc_name)),
+                code=str(E_CODEGEN_POOL_OVERFLOW),
+                hint=f"grow pool '{exc.pool_name}' or move code out of it",
+            ) from exc
 
         self.resolver_reset()
 

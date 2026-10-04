@@ -7,6 +7,7 @@ from a816.cpu.mapping import Address, Bus
 from a816.cpu.types import RomType
 from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import BlockAstNode
+from a816.parse.tokens import Token
 from a816.pool import Pool
 from script import Table
 
@@ -325,6 +326,9 @@ class Resolver:
         self.reloc_address: Address
         self.context = AssemblyContext()
         self.pools: dict[str, Pool] = {}
+        # (pool, alloc name) -> source token of the `.alloc` that requested
+        # the slot, so an allocator overflow can point back at it.
+        self.alloc_sites: dict[tuple[str, str], Token] = {}
         # Names registered by `_publish_pool_stats` - kept out of object-mode
         # symbol export so two `.o` files declaring the same pool don't
         # collide on `<pool>.capacity` etc. at link time.

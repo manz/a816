@@ -132,6 +132,7 @@ class AllocNode(NodeProtocol):
         pool = self.resolver.pools[self.pool_name]
         self._size = max(1, self._measure_body())
         self._alloc = pool.request(self.name, self._size, self.pinned_addr)
+        self.resolver.alloc_sites[(self.pool_name, self.name)] = self.file_info
         # Object mode defers allocator to link time. Bind the alloc's
         # symbol + body labels at the sandbox PC (pool start + cursor)
         # so they record sensible offsets; the linker rebases the body

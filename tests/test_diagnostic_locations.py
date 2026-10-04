@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from a816.exceptions import LinkerError
+from a816.linker import Linker
+from a816.object_file import ObjectFile, PoolAlloc
 from a816.parse.nodes import NodeError
 from a816.program import Program
+from a816.writers import ObjectWriter
 from tests import StubWriter
 
 _CODE_RE = re.compile(r"error\[(E\d{4})\]")
@@ -175,3 +180,65 @@ def test_include_ips_missing_file_code(tmp_path: Path) -> None:
 def test_include_ips_missing_file_caret(tmp_path: Path) -> None:
     patch = tmp_path / "absent.ips"
     assert _include_ips_error(patch).underlined == f'"{patch}"'
+
+
+_OVERFLOW_SRC = ".pool p { range 0x008000 0x008003 }\n.alloc foo in p {\n    .db 1, 2, 3, 4, 5, 6\n}\n"
+
+
+def test_pool_overflow_code() -> None:
+    assert _assemble_error(_OVERFLOW_SRC).code == "E0318"
+
+
+def test_pool_overflow_caret_on_alloc_name() -> None:
+    assert _assemble_error(_OVERFLOW_SRC).underlined == "foo"
+
+
+def test_pool_overflow_names_largest_free_chunk() -> None:
+    with pytest.raises(NodeError) as exc_info:
+        Program().assemble_string_with_emitter(_OVERFLOW_SRC, "t.s", StubWriter())
+    assert "largest free chunk is 4 bytes" in str(exc_info.value)
+
+
+def _link_error(tmp_path: Path, src: str) -> LinkerError:
+    source = tmp_path / "main.s"
+    source.write_text(src, encoding="utf-8")
+    obj = tmp_path / "main.o"
+    Program().assemble_as_object(str(source), obj)
+    linker = Linker([ObjectFile.from_file(str(obj))])
+    with pytest.raises(LinkerError) as exc_info:
+        linker.link()
+    return exc_info.value
+
+
+def test_link_pool_overflow_code(tmp_path: Path) -> None:
+    assert "[E0404]" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+
+
+def test_link_pool_overflow_names_pool(tmp_path: Path) -> None:
+    assert "pool: p" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+
+
+def test_link_pool_overflow_names_largest_free_chunk(tmp_path: Path) -> None:
+    assert "largest free chunk: 4 bytes" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+
+
+def test_link_pool_overflow_points_at_alloc_body(tmp_path: Path) -> None:
+    src = ".pool p { range 0x008000 0x008003 }\n.alloc foo in p {\n    nop\n    .db 1, 2, 3, 4, 5, 6\n}\n"
+    assert f"alloc body: {tmp_path / 'main.s'}:3" in _link_error(tmp_path, src).format()
+
+
+def test_link_alloc_into_undeclared_pool_code() -> None:
+    orphan = ObjectFile([], [], pool_allocs=[PoolAlloc(pool_name="gone", symbol_name="foo", section_idx=0, size=1)])
+    with pytest.raises(LinkerError) as exc_info:
+        Linker([orphan]).link()
+    assert "[E0405]" in exc_info.value.format()
+
+
+def test_object_mode_unmapped_alloc_code(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    source = tmp_path / "main.s"
+    source.write_text(".alloc main at 0x708000 {\n    nop\n}\n", encoding="utf-8")
+    writer = ObjectWriter(str(tmp_path / "main.o"))
+    writer.begin()
+    with caplog.at_level(logging.ERROR):
+        Program().assemble_with_object_emitter(str(source), writer)
+    assert any("[E0317]" in record.getMessage() for record in caplog.records)

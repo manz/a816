@@ -17,7 +17,17 @@ class PoolError(Exception):
 
 
 class PoolOverflowError(PoolError):
-    pass
+    """An allocation found no free chunk large enough in its pool."""
+
+    def __init__(self, pool_name: str, alloc_name: str, size: int, largest_free: int) -> None:
+        self.pool_name = pool_name
+        self.alloc_name = alloc_name
+        self.size = size
+        self.largest_free = largest_free
+        super().__init__(
+            f"alloc '{alloc_name}' ({size} bytes) does not fit in pool '{pool_name}': "
+            f"largest free chunk is {largest_free} bytes"
+        )
 
 
 class PoolOverlapError(PoolError):
@@ -149,7 +159,7 @@ class Pool:
                 len(free),
             )
         for alloc in order:
-            free = _place(alloc, free)
+            free = _place(alloc, free, self.name)
             free_total = sum(r.size for r in free)
             logger.info(
                 "  placed %s size %d at 0x%06x  (free: %d bytes across %d range(s))",
@@ -228,12 +238,13 @@ def _sort_allocations(allocs: list[Allocation], strategy: Strategy) -> list[Allo
     return sorted(allocs, key=lambda a: (-a.size, a.name))
 
 
-def _place(alloc: Allocation, free: list[PoolRange]) -> list[PoolRange]:
+def _place(alloc: Allocation, free: list[PoolRange], pool_name: str) -> list[PoolRange]:
     for idx, chunk in enumerate(free):
         if chunk.size >= alloc.size:
             alloc.addr = chunk.start
             return _shrink_chunk(free, idx, alloc.size)
-    raise PoolOverflowError(f"alloc '{alloc.name}' size {alloc.size} does not fit in any free chunk")
+    largest = max((chunk.size for chunk in free), default=0)
+    raise PoolOverflowError(pool_name, alloc.name, alloc.size, largest)
 
 
 def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:
