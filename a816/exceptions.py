@@ -192,8 +192,6 @@ class PoolOverflowLinkError(LinkerError):
 
     def __init__(self, overflow: PoolOverflowError, location: str | None = None) -> None:
         self.overflow = overflow
-        self.pool_name = overflow.pool_name
-        self.alloc_name = overflow.alloc_name
         self.location = location
         super().__init__(str(overflow))
 
@@ -202,16 +200,10 @@ class PoolOverflowLinkError(LinkerError):
         from a816.error_codes import E_LINKER_POOL_OVERFLOW
         from a816.errors import format_error_simple
 
-        overflow = self.overflow
-        details = [
-            ("pool", overflow.pool_name),
-            ("largest free chunk", f"{overflow.largest_free} bytes"),
-            ("largest range", f"{overflow.largest_range} bytes"),
-            ("free in total", f"{overflow.total_free} bytes"),
-        ]
+        details = [("pool", self.overflow.pool_name)]
         if self.location is not None:
             details.append(("alloc body", self.location))
-        details.append(("hint", overflow.hint))
+        details.append(("hint", self.overflow.hint))
         return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_POOL_OVERFLOW}]", str(self), details=details)
 
 

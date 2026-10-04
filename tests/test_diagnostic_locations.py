@@ -243,11 +243,15 @@ def test_link_pool_overflow_names_pool(tmp_path: Path) -> None:
 
 
 def test_link_pool_overflow_names_largest_free_chunk(tmp_path: Path) -> None:
-    assert "largest free chunk: 4 bytes" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+    assert "largest free chunk is 2 bytes" in _link_error(tmp_path, _EXHAUSTED_SRC).format()
 
 
-def test_link_pool_overflow_names_largest_range(tmp_path: Path) -> None:
-    assert "largest range: 4 bytes" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+def test_link_pool_overflow_states_largest_free_chunk_once(tmp_path: Path) -> None:
+    assert _link_error(tmp_path, _EXHAUSTED_SRC).format().count("largest free chunk") == 1
+
+
+def test_link_pool_overflow_states_pool_size_once(tmp_path: Path) -> None:
+    assert _link_error(tmp_path, _OVERFLOW_SRC).format().count("4 bytes") == 1
 
 
 def test_link_pool_overflow_larger_than_any_range_message(tmp_path: Path) -> None:
@@ -256,10 +260,6 @@ def test_link_pool_overflow_larger_than_any_range_message(tmp_path: Path) -> Non
 
 def test_link_pool_overflow_carries_hint(tmp_path: Path) -> None:
     assert "hint: split 'foo'" in _link_error(tmp_path, _OVERFLOW_SRC).format()
-
-
-def test_link_pool_overflow_names_total_free(tmp_path: Path) -> None:
-    assert "free in total: 2 bytes" in _link_error(tmp_path, _EXHAUSTED_SRC).format()
 
 
 def test_link_pool_overflow_points_at_alloc_body(tmp_path: Path) -> None:
