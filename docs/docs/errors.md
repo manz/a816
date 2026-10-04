@@ -86,6 +86,9 @@ separate blocks separated by a blank line.
 - `E0208` macro called with the wrong number of arguments.
 - `E0209` symbol names a block, not a value: a block argument
   (`m({ ... })`) used where an expression is expected.
+- `E0210` `:=` references a symbol not yet defined. `:=` evaluates
+  its right-hand side immediately (typed binds need the address up
+  front); use `=` for a forward reference.
 
 ### Codegen
 

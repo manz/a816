@@ -59,6 +59,7 @@ E_SYMBOL_RESERVE_UNKNOWN_TYPE = ErrorCode("E0206", "symbols", "`.reserve ... as`
 E_SYMBOL_UNKNOWN_MACRO = ErrorCode("E0207", "symbols", "macro not defined")
 E_SYMBOL_MACRO_ARITY = ErrorCode("E0208", "symbols", "macro called with the wrong number of arguments")
 E_SYMBOL_NOT_A_VALUE = ErrorCode("E0209", "symbols", "symbol names a block, not a value")
+E_SYMBOL_EAGER_FORWARD_REF = ErrorCode("E0210", "symbols", "`:=` references a symbol not yet defined")
 
 # --- Codegen (E0300..) ---
 E_CODEGEN_NODE_ERROR = ErrorCode("E0300", "codegen", "node failed during emission")
