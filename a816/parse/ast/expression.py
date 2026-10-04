@@ -205,7 +205,7 @@ def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> se
         if current.token.type != TokenType.IDENTIFIER:
             continue
         try:
-            resolver.current_scope.value_for(current.token.value)
+            _lookup(current.token.value, current.token, resolver)
         except ExternalSymbolReference as e:
             external_symbols.add(e.symbol_name)
     return external_symbols

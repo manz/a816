@@ -259,3 +259,36 @@ def test_cli_rejects_unknown_mapping_exit_code() -> None:
 def test_cli_unknown_mapping_lists_choices(capsys: pytest.CaptureFixture[str]) -> None:
     _parse_cli(["main.s", "-m", "high_rom"])
     assert "invalid choice: 'high_rom'" in capsys.readouterr().err
+
+
+def _object_mode_error(src: str, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> Rendered:
+    """Compile `src` to a `.o` (the `a816 build` path) and parse the logged error."""
+    source = tmp_path / "t.s"
+    source.write_text(src, encoding="utf-8")
+    writer = ObjectWriter(str(tmp_path / "t.o"))
+    writer.begin()
+    with caplog.at_level(logging.ERROR):
+        Program().assemble_with_object_emitter(str(source), writer)
+    messages = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
+    return parse_rendered(messages[0] if messages else "")
+
+
+@pytest.mark.parametrize(("src", "line", "token"), SYMBOL_CASES)
+def test_object_mode_undefined_symbol_caret(
+    src: str, line: int, token: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert _object_mode_error(src, tmp_path, caplog).underlined == token
+
+
+@pytest.mark.parametrize(("src", "code", "line", "token"), PLACEMENT_CASES + EMIT_CASES)
+def test_object_mode_code(
+    src: str, code: str, line: int, token: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert _object_mode_error(src, tmp_path, caplog).code == code
+
+
+@pytest.mark.parametrize(("src", "code", "line", "token"), PLACEMENT_CASES + EMIT_CASES)
+def test_object_mode_caret(
+    src: str, code: str, line: int, token: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert _object_mode_error(src, tmp_path, caplog).underlined == token
