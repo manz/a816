@@ -16,18 +16,26 @@ class PoolError(Exception):
     pass
 
 
+class OverflowKind(Enum):
+    """Why an alloc found no free chunk large enough."""
+
+    TOO_LARGE = "too_large"
+    """Larger than every range of the pool: no amount of free space helps."""
+    FRAGMENTED = "fragmented"
+    """Enough bytes free in total, but no single chunk holds them."""
+    EXHAUSTED = "exhausted"
+    """The pool is simply out of room."""
+
+
 class PoolOverflowError(PoolError):
     """An allocation found no free chunk large enough in its pool.
 
-    Three shapes, each with its own message and hint:
-
-    - the alloc is larger than every range of the pool: no amount of free
-      space helps, because a block never spans two ranges (and so never a
-      bank boundary). A single-range pool (e.g. the one synthesised for
-      `.alloc at ADDR size N`) just reports the pool size;
-    - the pool still has enough bytes in total, but no single chunk holds
-      them (fragmentation);
-    - the pool is simply out of room.
+    `kind` classifies the overflow once; message and hint both dispatch on it.
+    Ranges here are the pool's normalised ranges: adjacent same-bank ranges
+    are already merged, so a block never spans two *separate* ranges, and
+    ranges in different banks never merge, so it never spans a bank boundary.
+    A single-range pool (e.g. the one synthesised for `.alloc at ADDR size N`)
+    reports the pool size instead of the largest range.
     """
 
     def __init__(
@@ -38,7 +46,8 @@ class PoolOverflowError(PoolError):
         largest_free: int,
         largest_range: int,
         total_free: int,
-        range_count: int,
+        single_range: bool,
+        spans_banks: bool,
     ) -> None:
         self.pool_name = pool_name
         self.alloc_name = alloc_name
@@ -46,43 +55,44 @@ class PoolOverflowError(PoolError):
         self.largest_free = largest_free
         self.largest_range = largest_range
         self.total_free = total_free
-        self.range_count = range_count
+        self.single_range = single_range
+        self.spans_banks = spans_banks
         super().__init__(self._message())
 
     @property
-    def exceeds_largest_range(self) -> bool:
-        return self.size > self.largest_range
-
-    @property
-    def fragmented(self) -> bool:
-        return not self.exceeds_largest_range and self.total_free >= self.size
+    def kind(self) -> OverflowKind:
+        if self.size > self.largest_range:
+            return OverflowKind.TOO_LARGE
+        if self.total_free >= self.size:
+            return OverflowKind.FRAGMENTED
+        return OverflowKind.EXHAUSTED
 
     def _message(self) -> str:
         head = f"alloc '{self.alloc_name}' ({self.size} bytes) does not fit in pool '{self.pool_name}'"
-        if self.exceeds_largest_range and self.range_count == 1:
-            return f"{head}: larger than the pool ({self.largest_range} bytes)"
-        if self.exceeds_largest_range:
-            return (
-                f"{head}: larger than its largest range ({self.largest_range} bytes); "
-                "a block never spans a bank boundary or two ranges"
-            )
-        if self.fragmented:
+        kind = self.kind
+        if kind is OverflowKind.TOO_LARGE:
+            return f"{head}: {self._too_large_reason()}"
+        if kind is OverflowKind.FRAGMENTED:
             return (
                 f"{head}: {self.total_free} bytes free in total but fragmented; "
                 f"largest free chunk is {self.largest_free} bytes"
             )
         return f"{head}: largest free chunk is {self.largest_free} bytes"
 
+    def _too_large_reason(self) -> str:
+        if self.single_range:
+            return f"larger than the pool ({self.largest_range} bytes)"
+        rule = "a bank boundary or two separate ranges" if self.spans_banks else "two separate ranges"
+        return f"larger than its largest range ({self.largest_range} bytes); a block never spans {rule}"
+
     @property
     def hint(self) -> str:
-        if self.exceeds_largest_range:
-            target = "the pool" if self.range_count == 1 else "a range"
+        kind = self.kind
+        if kind is OverflowKind.TOO_LARGE:
+            target = "the pool" if self.single_range else "a range"
             return f"split '{self.alloc_name}' into smaller allocs or grow {target} to at least {self.size} bytes"
-        if self.fragmented:
-            return (
-                f"no single chunk of pool '{self.pool_name}' has {self.size} bytes; "
-                "split the alloc or grow one of the ranges"
-            )
+        if kind is OverflowKind.FRAGMENTED:
+            return f"split '{self.alloc_name}' or grow one of the ranges"
         return f"grow pool '{self.pool_name}' or move code out of it"
 
 
@@ -306,7 +316,8 @@ def _place(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], po
         largest_free=max((chunk.size for chunk in free), default=0),
         largest_range=max((r.size for r in ranges), default=0),
         total_free=sum(chunk.size for chunk in free),
-        range_count=len(ranges),
+        single_range=len(ranges) == 1,
+        spans_banks=len({r.start >> 16 for r in ranges}) > 1,
     )
 
 
