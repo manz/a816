@@ -68,7 +68,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("-o", "--output", type=Path, dest="output_file", default="a.out", help="Output file")
     parser.add_argument("input_files", nargs="+", type=Path, help="Input files (asm files or object files for linking)")
     parser.add_argument("-f", dest="format", default="ips", help="Output format (ips, sfc, obj)")
-    parser.add_argument("-m", dest="mapping", default="low", help="Address Mapping")
+    parser.add_argument(
+        "-m",
+        dest="mapping",
+        default="low",
+        choices=("low", "low2", "high"),
+        help="Address mapping: low (LoROM), low2 (LoROM, alternate), high (HiROM).",
+    )
     parser.add_argument(
         "--copier-header",
         action="store_true",

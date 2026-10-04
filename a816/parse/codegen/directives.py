@@ -54,7 +54,7 @@ def generate_include_ips(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    return [IncludeIpsNode(node.file_path, resolver, node.expression)]
+    return [IncludeIpsNode(node.file_path, resolver, node.expression, file_info)]
 
 
 def generate_include(
@@ -205,7 +205,7 @@ def generate_at_eq(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    return [RelocationAddressNode(ExpressionNode(node.expression, resolver, file_info), resolver)]
+    return [RelocationAddressNode(ExpressionNode(node.expression, resolver, file_info), resolver, file_info)]
 
 
 def generate_star_eq(
@@ -215,7 +215,7 @@ def generate_star_eq(
     file_info: Token,
 ) -> GenNodes:
     resolver.star_eq_cursor_active = True
-    return [CodePositionNode(ExpressionNode(node.expression, resolver, file_info), resolver)]
+    return [CodePositionNode(ExpressionNode(node.expression, resolver, file_info), resolver, file_info)]
 
 
 def generate_comment(

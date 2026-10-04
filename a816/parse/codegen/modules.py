@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
@@ -14,6 +15,7 @@ from a816.parse.ast.nodes import (
     CommentAstNode,
     CompoundAstNode,
     DocstringAstNode,
+    ExpressionAstNode,
     ExternAstNode,
     ForAstNode,
     IfAstNode,
@@ -34,7 +36,7 @@ from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, gener
 from a816.parse.codegen.structs import declare_bus_mapping
 from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
-from a816.symbols import Resolver
+from a816.symbols import Resolver, _is_exportable
 
 # Declarations whose effect must be visible to codegen of the importer
 # (struct/macro/const defs, `.map` bus layout, nested imports, pool
@@ -52,6 +54,7 @@ _INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
     PoolAstNode,
     ReclaimAstNode,
     DocstringAstNode,
+    ExpressionAstNode,
     CommentAstNode,
 )
 
@@ -127,7 +130,20 @@ def _import_from_object(
     # past the `<H>` 65535 limit within 3-4 hops. Importers must
     # `.import` direct deps explicitly; the resolver's own dedup
     # (`imported_module_paths`) handles the diamond.
-    return [ExternNode(name, resolver) for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
+    return [ExternNode(name, resolver) for name in _object_provided_names(obj_file)]
+
+
+def _object_provided_names(obj_file: ObjectFile) -> list[str]:
+    """GLOBAL symbols plus exported link-time aliases, in `.o` order.
+
+    Aliases (`sc.fd = sc.here`) live in the `.o` alias table, not the
+    symbol table; the importer still needs an extern stub to reference
+    them, since a scope alias over a scope label can't be re-derived
+    from the inlined declarations.
+    """
+    names = [name for name, _, sym_type, _ in obj_file.symbols if sym_type == SymbolType.GLOBAL]
+    names += [name for name, _ in obj_file.aliases if _is_exportable(name)]
+    return list(dict.fromkeys(names))
 
 
 def _register_imported_object_pools(obj_file: ObjectFile, resolver: Resolver) -> None:
@@ -256,7 +272,7 @@ def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
     if isinstance(node, IfAstNode):
         return _pruned_if(node, bare_names)
     if isinstance(node, ScopeAstNode):
-        body = _declarations_only(node.body.body, bare_names=False)
+        body = _drop_runtime_bound(_declarations_only(node.body.body, bare_names=False), node.body.body)
         return [ScopeAstNode(node.name, _block(body, node.body), node.file_info, node.docstring)] if body else []
     if isinstance(node, ForAstNode):
         body = _declarations_only(node.body.body, bare_names=False)
@@ -271,6 +287,48 @@ def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
     if not bare_names:
         return []
     return [ExternAstNode(name, node.file_info) for name in _runtime_extern_names(node)]
+
+
+_IDENT_HEAD_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)", re.ASCII)
+
+
+def _drop_runtime_bound(declarations: list[AstNode], scope_body: list[AstNode]) -> list[AstNode]:
+    """Drop `=` / `:=` declarations that depend on the scope's own runtime names.
+
+    The importer never sees the scope's labels (they're dropped with the
+    bytes), so `fd = here` can't be evaluated there. The owning `.o`
+    exports the result as the alias `scope.fd`, which reaches the importer
+    as an extern stub. Dependents (`gd = fd + 1`) are runtime-bound too.
+    """
+    runtime = _runtime_names_in(scope_body)
+    kept: list[AstNode] = []
+    for node in declarations:
+        if isinstance(node, SymbolAffectationAstNode | AssignAstNode) and _mentions(node.value, runtime):
+            runtime.add(node.symbol)
+            continue
+        kept.append(node)
+    return kept
+
+
+def _mentions(value: ExpressionAstNode, names: set[str]) -> bool:
+    return any(match in names for match in _IDENT_HEAD_RE.findall(value.to_canonical()))
+
+
+def _runtime_names_in(nodes: list[AstNode]) -> set[str]:
+    """Labels and other runtime names a scope body binds in its own scope,
+    including those declared in `.if` / `.else` bodies (no scope of their own)."""
+    names: set[str] = set()
+    for node in nodes:
+        if isinstance(node, LabelAstNode):
+            names.add(node.label)
+        names.update(_runtime_extern_names(node))
+        if isinstance(node, IfAstNode):
+            names |= _runtime_names_in(_if_branches(node))
+    return names
+
+
+def _if_branches(node: IfAstNode) -> list[AstNode]:
+    return node.block.body + (node.else_block.body if node.else_block else [])
 
 
 def _pruned_if(node: IfAstNode, bare_names: bool) -> list[AstNode]:

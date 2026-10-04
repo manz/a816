@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TypeGuard
 
 from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
-from a816.error_codes import E_PARSER_INVALID_EXPRESSION
+from a816.error_codes import E_PARSER_MISSING_OPERAND
 from a816.parse.ast.nodes import CodeLookupAstNode, ExpressionAstNode, OpcodeAstNode, index_map
 from a816.parse.errors import ParserSyntaxError
 from a816.parse.parser import Parser, accept_token, expect_token
@@ -66,16 +66,24 @@ def parse_opcode(p: Parser) -> OpcodeAstNode:
     )
 
 
-def _parse_immediate_operand(p: Parser) -> tuple[AddressingMode, None, ExpressionAstNode]:
-    p.next()
-    if accept_token(p.current(), TokenType.EOF):
+_OPERAND_TERMINATORS = (TokenType.RBRACE, TokenType.EOF)
+
+
+def _ensure_operand_follows(opcode: Token, p: Parser) -> None:
+    """`}` / end of input can never start an operand: report the bare opcode."""
+    if p.current().type in _OPERAND_TERMINATORS:
         raise ParserSyntaxError(
-            "unexpected end of input after `#` immediate prefix",
-            p.current(),
+            f"`{opcode.value}` needs an operand",
+            opcode,
             None,
-            code=str(E_PARSER_INVALID_EXPRESSION),
-            hint="`#` introduces an immediate operand — supply a value, e.g. `lda #0x42`",
+            code=str(E_PARSER_MISSING_OPERAND),
+            hint=f"supply an operand, e.g. `{opcode.value} #0x00` or `{opcode.value} label`",
         )
+
+
+def _parse_immediate_operand(opcode: Token, p: Parser) -> tuple[AddressingMode, None, ExpressionAstNode]:
+    p.next()
+    _ensure_operand_follows(opcode, p)
     return AddressingMode.immediate, None, parse_expression(p)
 
 
@@ -128,12 +136,13 @@ def parse_operand_and_addressing(
     addressing_mode: AddressingMode, opcode: Token, p: Parser
 ) -> tuple[AddressingMode, str | None, ExpressionAstNode | None]:
     if accept_token(p.current(), TokenType.SHARP):
-        return _parse_immediate_operand(p)
+        return _parse_immediate_operand(opcode, p)
     if accept_token(p.current(), TokenType.LPAREN):
         return _parse_paren_operand(p)
     if accept_token(p.current(), TokenType.LBRAKET):
         return _parse_indirect_long_operand(p)
     if accept_token(opcode, TokenType.OPCODE):
+        _ensure_operand_follows(opcode, p)
         return addressing_mode, None, parse_expression(p)
     return addressing_mode, None, None
 

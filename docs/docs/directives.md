@@ -65,6 +65,66 @@ into a physical ROM offset.
 .map high_rom
 ```
 
+## Expressions
+
+Every place that takes an expression (opcode operands, `name =`,
+`name :=`, `.db` / `.dw` / `.dl`, `.if`, `.for` bounds) accepts the
+same operators with the same results, and so does the linker when it
+resolves an expression that references an `.extern`.
+
+### Literals
+
+| Form       | Example        | Value |
+|------------|----------------|-------|
+| decimal    | `42`           | 42    |
+| hex        | `0x2A`         | 42    |
+| binary     | `0b101010`     | 42    |
+| octal      | `0o52`         | 42    |
+| string     | `"abc"`        | compared with `==` / `!=` only |
+
+Prefixes are lowercase. `$2A` and `%101010` are not literals.
+
+### Operators
+
+Tightest first. Binary operators of the same level are left-associative.
+
+| Level | Operators              | Meaning |
+|-------|------------------------|---------|
+| 1     | `-x` `~x`              | negate, bitwise not |
+| 2     | `*` `/` `%`            | multiply, divide, remainder |
+| 3     | `+` `-`                | add, subtract |
+| 4     | `<<` `>>`              | shift left, shift right |
+| 5     | `<` `<=` `>` `>=`      | comparison (1 or 0) |
+| 6     | `==` `!=`              | equality (1 or 0) |
+| 7     | `&`                    | bitwise and |
+| 8     | `^`                    | bitwise xor |
+| 9     | `\|`                   | bitwise or |
+
+As in C, comparisons bind tighter than `&` / `^` / `|`: write
+`(flags & MASK) == MASK`, not `flags & MASK == MASK`.
+
+### Integer semantics
+
+Values are unbounded integers; the operand or data size masks the
+result when it is emitted.
+
+- `/` truncates toward zero and `%` takes the sign of the dividend
+  (C / ca65 rules): `-7 / 2` is `-3`, `-7 % 2` is `-1`, and
+  `a == (a / b) * b + a % b` always holds.
+- `/` or `%` by zero is error `E0312`, reported at the operator.
+- `~` complements within the smallest of 8, 16 or 32 bits that holds
+  the value: `~0x0F` is `0xF0`, `~0x8000` is `0x7FFF`. Values wider
+  than 32 bits are rejected.
+- `>>` is an arithmetic shift: `-8 >> 1` is `-4`.
+
+```ca65
+TEXT_BYTES_PER_ITEM = 12
+HALF  = TEXT_BYTES_PER_ITEM / 2      ; 6
+SLOT  = (index + 1) % 8
+FLIP  = attributes ^ 0xC0
+    lda.w #(table_end - table) / 3
+```
+
 ## Symbols
 
 ### `name = expr` — constant

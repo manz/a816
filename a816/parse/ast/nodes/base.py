@@ -85,12 +85,20 @@ class CastAccessExprNode(ExprNode):
         type_name: str,
         field_path: list[str],
         close_token: Token | None = None,
+        field_tokens: list[Token] | None = None,
     ):
         super().__init__(token)
         self.inner = inner
         self.type_name = type_name
         self.field_path = field_path
         self.close_token = close_token
+        # One token per `field_path` entry; diagnostics underline the leaf.
+        self.field_tokens = field_tokens or []
+
+    @property
+    def leaf_token(self) -> Token:
+        """The last `.field` token, or the cast's `(` when none was kept."""
+        return self.field_tokens[-1] if self.field_tokens else self.token
 
     def to_canonical(self) -> str:
         suffix = ".".join(self.field_path)

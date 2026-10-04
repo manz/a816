@@ -1,16 +1,20 @@
 import re
 import struct
 from re import Match
-from typing import cast
 
 from a816.exceptions import (
     DuplicateSymbolError,
     ExpressionEvaluationError,
+    PoolOverflowLinkError,
     RelocationError,
+    UndeclaredPoolError,
     UnresolvedSymbolError,
 )
 from a816.object_file import ObjectFile, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
-from a816.pool import Pool
+from a816.parse.ast.expression import eval_constant_expression
+from a816.parse.errors import ParserSyntaxError, ScannerException
+from a816.parse.nodes.errors import NodeError
+from a816.pool import Pool, PoolOverflowError
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
@@ -95,29 +99,57 @@ class Linker:
         merged: dict[str, Pool] = {p.name: self._pool_from_decl(p) for p in self._merged_pool_decls}
         # (obj_idx, section_idx) -> Allocation, to look up alloc.addr later.
         self._section_pool_alloc: dict[tuple[int, int], object] = {}
-        # Dedupe by (pool_name, symbol_name): a `.import`ed module's
-        # alloc request gets re-emitted in every consumer's `.o`
-        # because paired-import inlines the source side. Without
-        # dedup the pool gets N copies of the same `_intro_tilemap`
-        # request and exhausts its ranges N-fold. Keep the FIRST
-        # placement; subsequent duplicates inherit the same Allocation
-        # so all importers see the same final address.
+        request_sites = self._request_pool_allocs(merged)
+        for pool in merged.values():
+            try:
+                pool.allocate()
+            except PoolOverflowError as exc:
+                site = request_sites.get((exc.pool_name, exc.alloc_name))
+                raise PoolOverflowLinkError(
+                    exc.pool_name, exc.alloc_name, exc.size, exc.largest_free, self._section_location(site)
+                ) from exc
+        self._merged_pools_after_alloc = merged
+
+    def _request_pool_allocs(self, merged: dict[str, Pool]) -> dict[tuple[str, str], tuple[int, int]]:
+        """Request every alloc from its merged pool; return each first request's site.
+
+        Dedupe by (pool_name, symbol_name): a `.import`ed module's alloc
+        request can reach several consumers' `.o`. Without dedup the pool
+        gets N copies of the same request and exhausts its ranges N-fold.
+        Keep the FIRST placement; duplicates inherit the same Allocation so
+        all importers see the same final address. The returned sites map
+        (pool, symbol) -> (obj_idx, section_idx) so an overflow can name
+        where the offending alloc body lives.
+        """
         first_placed: dict[tuple[str, str], object] = {}
+        request_sites: dict[tuple[str, str], tuple[int, int]] = {}
         for obj_idx, obj_file in enumerate(self.object_files):
             for req in obj_file.pool_allocs:
                 pool = merged.get(req.pool_name)
                 if pool is None:
-                    raise ValueError(f"pool alloc {req.symbol_name!r} references undeclared pool {req.pool_name!r}")
+                    raise UndeclaredPoolError(req.pool_name, req.symbol_name)
                 key = (req.pool_name, req.symbol_name)
                 alloc_obj = first_placed.get(key)
                 if alloc_obj is None:
                     pinned = req.pinned_addr if req.pinned_addr >= 0 else None
                     alloc_obj = pool.request(req.symbol_name, req.size, pinned)
                     first_placed[key] = alloc_obj
+                    request_sites[key] = (obj_idx, req.section_idx)
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
-        for pool in merged.values():
-            pool.allocate()
-        self._merged_pools_after_alloc = merged
+        return request_sites
+
+    def _section_location(self, site: tuple[int, int] | None) -> str | None:
+        """`file:line` of the first emitted line in a requesting section, if any."""
+        if site is None:
+            return None
+        obj_file = self.object_files[site[0]]
+        sections = obj_file.sections
+        if site[1] >= len(sections) or not sections[site[1]].lines:
+            return None
+        _offset, file_idx, line, _column, _flags = sections[site[1]].lines[0]
+        if file_idx >= len(obj_file.files):
+            return None
+        return f"{obj_file.files[file_idx]}:{line + 1}"
 
     def _pool_delta_for_symbol(self, obj_file: ObjectFile, obj_idx: int, address: int) -> int | None:
         """Return the pool section delta if `address` falls inside a pool section.
@@ -511,8 +543,10 @@ class Linker:
     def _evaluate_expression(self, expression: str, local_overlay: dict[str, int] | None = None) -> int:
         expr_to_eval = self._substitute_symbols(expression, local_overlay)
         try:
-            return cast(int, eval(expr_to_eval, {"__builtins__": {}}, {}))
-        except (SyntaxError, NameError, TypeError, ValueError) as e:
+            return eval_constant_expression(expr_to_eval)
+        except NodeError as e:
+            raise ExpressionEvaluationError(expression, e.message) from e
+        except (ScannerException, ParserSyntaxError, RuntimeError, ValueError) as e:
             raise ExpressionEvaluationError(expression, str(e)) from e
 
     def _substitute_symbols(self, expression: str, local_overlay: dict[str, int] | None = None) -> str:

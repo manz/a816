@@ -61,7 +61,7 @@ class EmitTest(unittest.TestCase):
         _, nodes = program.parser.parse("    brl 0x40000\n")
         program.resolve_labels(nodes)
         program.resolver.pc = 0
-        with self.assertRaisesRegex(RuntimeError, "signed 16-bit range"):
+        with self.assertRaisesRegex(NodeError, "signed 16-bit range"):
             nodes[-1].emit(program.resolver.reloc_address)
 
     def test_long_branch_literal_offset_and_missing_operand(self) -> None:

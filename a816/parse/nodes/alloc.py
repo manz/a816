@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from a816.cpu.mapping import Address, LinearAddress
+from a816.error_codes import E_SYMBOL_UNKNOWN_POOL
 from a816.exceptions import SymbolNotDefined
 from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.symbols import SymbolNode
@@ -29,9 +30,11 @@ class AllocNode(NodeProtocol):
         resolver: Resolver,
         file_info: Token,
         pinned_addr: int | None = None,
+        pool_token: Token | None = None,
     ) -> None:
         self.name = name
         self.pool_name = pool_name
+        self.pool_token = pool_token
         self.body = body
         self.resolver = resolver
         self.file_info = file_info
@@ -129,6 +132,7 @@ class AllocNode(NodeProtocol):
         pool = self.resolver.pools[self.pool_name]
         self._size = max(1, self._measure_body())
         self._alloc = pool.request(self.name, self._size, self.pinned_addr)
+        self.resolver.alloc_sites[(self.pool_name, self.name)] = self.file_info
         # Object mode defers allocator to link time. Bind the alloc's
         # symbol + body labels at the sandbox PC (pool start + cursor)
         # so they record sensible offsets; the linker rebases the body
@@ -206,7 +210,11 @@ class AllocNode(NodeProtocol):
         # delta in the linker.
         pool = self.resolver.pools.get(self.pool_name)
         if pool is None:
-            raise NodeError(f".alloc into unknown pool {self.pool_name!r}", self.file_info)
+            raise NodeError(
+                f".alloc into unknown pool {self.pool_name!r}",
+                self.pool_token or self.file_info,
+                code=str(E_SYMBOL_UNKNOWN_POOL),
+            )
         if self._alloc is None:
             self._request_slot()
         elif self._alloc.placed:

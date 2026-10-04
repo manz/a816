@@ -31,7 +31,8 @@ If only `.s` is available it is compiled to `.o` first, then linked.
   sees their effects (`(addr as Type).field` resolves, `MyMacro()`
   expands, pool names register).
 - **Runtime symbols** come from `module.o` (label addresses, alloc
-  placements, `.incbin` byte content). These surface as `ExternNode`
+  placements, `.incbin` byte content, link-time aliases such as
+  `sc.fd = sc.here`). These surface as `ExternNode`
   stubs in the importer's `.o`; the linker resolves each to the
   owner's single GLOBAL definition during merge.
 
@@ -91,6 +92,27 @@ The constant is recorded as a deferred alias and resolved at link time:
 font_ptr  = target + 0x40
 font_high = (target >> 16) & 0xFF
 ```
+
+The same holds inside a named scope, and for a right-hand side that
+names a label of this module or an imported runtime symbol (a label, a
+`.reserve` and its fields). The alias exports dotted, like any other
+scope member, so both the owner and its importers write `sc.name`:
+
+```ca65
+; state.s
+.reserve thing as S in st
+
+; main.s
+.import "state"
+.scope sc {
+    fd   = thing.b        ; imported .reserve field
+    next = entry + 1      ; label of this module
+}
+    lda.l sc.fd
+```
+
+Nested named scopes publish the full path (`a.b.x`). Aliases declared in
+anonymous blocks or macro bodies stay private to them.
 
 ## Workflow
 

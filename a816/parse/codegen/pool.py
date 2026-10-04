@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from a816.error_codes import E_SYMBOL_NOT_DEFINED, E_SYMBOL_RESERVE_UNKNOWN_TYPE, E_SYMBOL_UNKNOWN_POOL
 from a816.exceptions import (
     ExternalExpressionReference,
     ExternalSymbolReference,
@@ -49,7 +50,8 @@ def _eval_int(expr: ExpressionAstNode, resolver: Resolver, where: Token) -> int:
         raise NodeError(
             f"pool literal references undefined symbol {exc!s}; pool decls evaluate "
             "at code-generation time before forward refs are bound",
-            where,
+            exc.token or where,
+            code=str(E_SYMBOL_NOT_DEFINED),
         ) from exc
     if not isinstance(value, int):
         raise NodeError(
@@ -147,7 +149,7 @@ def generate_reclaim(
 ) -> GenNodes:
     pool = resolver.pools.get(node.pool_name)
     if pool is None:
-        raise NodeError(f"reclaim into unknown pool {node.pool_name!r}", file_info)
+        raise _unknown_pool_error("reclaim", node.pool_name, file_info)
     start = _eval_int(node.start, resolver, file_info)
     end = _eval_int(node.end, resolver, file_info)
     try:
@@ -173,7 +175,7 @@ def generate_alloc(
         alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
     else:
         if node.pool_name is None or node.pool_name not in resolver.pools:
-            raise NodeError(f"alloc into unknown pool {node.pool_name!r}", file_info)
+            raise _unknown_pool_error("alloc", node.pool_name, node.pool_token or file_info)
         pool_name = node.pool_name
         alloc_name = node.name or _anonymous_alloc_name(file_info, pool_name)
         if node.is_pinned and node.at_address is not None:
@@ -195,7 +197,17 @@ def generate_alloc(
     body_nodes += _code_gen_placement_body(node.body.body, resolver, macro_definitions)
     body_nodes.append(PopScopeNode(resolver, exports=True))
     resolver.restore_scope(exports=True)
-    return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info, pinned_addr=pinned_addr)]
+    return [
+        AllocNode(
+            alloc_name,
+            pool_name,
+            body_nodes,
+            resolver,
+            file_info,
+            pinned_addr=pinned_addr,
+            pool_token=node.pool_token,
+        )
+    ]
 
 
 def generate_reserve_typed(
@@ -215,7 +227,8 @@ def generate_reserve_typed(
     if node.type_name not in resolver.struct_sizes:
         raise NodeError(
             f".reserve {node.name!r} as unknown struct type {node.type_name!r}",
-            file_info,
+            node.type_token or file_info,
+            code=str(E_SYMBOL_RESERVE_UNKNOWN_TYPE),
         )
     size = resolver.struct_sizes[node.type_name]
     layout = sorted(resolver.struct_layouts[node.type_name], key=lambda field: field[1])
@@ -231,8 +244,20 @@ def generate_reserve_typed(
         body.append(ReserveAstNode(expr_to_ast(hex(size - cursor)), file_info))
 
     resolver.typed_instances[node.name] = node.type_name
-    alloc = AllocAstNode(node.name, node.pool_name, BlockAstNode(body, file_info), file_info)
+    alloc = AllocAstNode(
+        node.name, node.pool_name, BlockAstNode(body, file_info), file_info, pool_token=node.pool_token
+    )
     return generate_alloc(alloc, resolver, macro_definitions, file_info)
+
+
+def _unknown_pool_error(directive: str, pool_name: str | None, where: Token) -> NodeError:
+    """Located error for a placement directive naming an undeclared pool."""
+    return NodeError(
+        f"{directive} into unknown pool {pool_name!r}",
+        where,
+        code=str(E_SYMBOL_UNKNOWN_POOL),
+        hint="declare it with `.pool NAME { range LO HI }` before placing into it",
+    )
 
 
 _NESTED_PLACEMENT_KINDS = {
@@ -349,7 +374,7 @@ def generate_relocate(
     from a816.parse.nodes import RelocateNode
 
     if node.pool_name not in resolver.pools:
-        raise NodeError(f"relocate into unknown pool {node.pool_name!r}", file_info)
+        raise _unknown_pool_error("relocate", node.pool_name, node.pool_token or file_info)
     old_start = _eval_int(node.old_start, resolver, file_info)
     old_end = _eval_int(node.old_end, resolver, file_info)
     body_nodes = _code_gen_placement_body(node.body.body, resolver, macro_definitions)

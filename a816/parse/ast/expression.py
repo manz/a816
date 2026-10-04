@@ -2,9 +2,18 @@ import ctypes
 import re
 from collections.abc import Callable
 
-from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+from a816.error_codes import (
+    E_CODEGEN_DIVISION_BY_ZERO,
+    E_CODEGEN_MISMATCHED_TYPES,
+    E_CODEGEN_NOT_TOO_WIDE,
+    E_CODEGEN_TYPED_BIND_NON_INT,
+    E_SYMBOL_NOT_A_VALUE,
+    ErrorCode,
+)
+from a816.exceptions import A816Error, ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import (
     BinOp,
+    BlockAstNode,
     CastAccessExprNode,
     CastValueExprNode,
     ExpressionAstNode,
@@ -12,7 +21,7 @@ from a816.parse.ast.nodes import (
     Term,
     UnaryOp,
 )
-from a816.parse.tokens import TokenType
+from a816.parse.tokens import Token, TokenType
 from a816.symbols import Resolver
 
 OPERATOR_PRECEDENCE = {
@@ -87,23 +96,35 @@ def shunting_yard(expr_nodes: list[ExprNode]) -> list[ExprNode]:
     return output_queue
 
 
+_NUMBER_BASES = {"0x": 16, "0b": 2, "0o": 8}
+
+
 def eval_number(number: str) -> int:
-    if number.startswith("0x"):
-        base = 16
-    elif number.startswith("0b"):
-        base = 2
-    else:
-        base = 10
+    return int(number, _NUMBER_BASES.get(number[:2], 10))
 
-    return int(number, base)
 
+def _truncating_div(a: int, b: int) -> int:
+    """Integer division rounding toward zero (C / ca65), not Python's floor."""
+    quotient = abs(a) // abs(b)
+    return quotient if (a < 0) == (b < 0) else -quotient
+
+
+def _truncating_mod(a: int, b: int) -> int:
+    """Remainder matching `_truncating_div`: takes the sign of the dividend."""
+    return a - b * _truncating_div(a, b)
+
+
+_DIVISION_OPERATORS = frozenset({"/", "%"})
 
 _INT_BINOPS: dict[str, Callable[[int, int], int]] = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
     "*": lambda a, b: a * b,
+    "/": _truncating_div,
+    "%": _truncating_mod,
     "&": lambda a, b: a & b,
     "|": lambda a, b: a | b,
+    "^": lambda a, b: a ^ b,
     ">>": lambda a, b: a >> b,
     "<<": lambda a, b: a << b,
     ">=": lambda a, b: a >= b,
@@ -120,27 +141,48 @@ _STR_BINOPS: dict[str, Callable[[str, str], int]] = {
 }
 
 
-def _bitwise_not(value: int) -> int:
+def _expression_error(message: str, token: Token, code: ErrorCode, hint: str | None = None) -> A816Error:
+    """Located diagnostic for a user mistake found while evaluating."""
+    # Late import: `a816.parse.nodes` imports this module, so a top-level
+    # import of NodeError would be circular.
+    from a816.parse.nodes.errors import NodeError
+
+    return NodeError(message, token, code=str(code), hint=hint)
+
+
+def _bitwise_not(value: int, token: Token) -> int:
     if value.bit_length() <= 8:
         return ctypes.c_uint8(~value).value
     if value.bit_length() <= 16:
         return ctypes.c_uint16(~value).value
     if value.bit_length() <= 32:
         return ctypes.c_uint32(~value).value
-    raise RuntimeError("not only works up 32 bits integers.")
+    raise _expression_error(f"`~` operand {value:#x} is wider than 32 bits", token, E_CODEGEN_NOT_TOO_WIDE)
 
 
-def _apply_unary(op: str, value: int | str) -> int:
+def _apply_unary(op: str, value: int | str, token: Token) -> int:
     assert isinstance(value, int)
     if op == "-":
         return -value
     if op == "~":
-        return _bitwise_not(value)
+        return _bitwise_not(value, token)
     raise RuntimeError(f"Unsupported unary Operator {op}")
 
 
-def _apply_binary(op: str, v1: int | str, v2: int | str) -> int:
+def _division_by_zero(operator: Token) -> A816Error:
+    return _expression_error(
+        "division by zero",
+        operator,
+        E_CODEGEN_DIVISION_BY_ZERO,
+        hint=f"the right-hand side of `{operator.value}` evaluates to 0",
+    )
+
+
+def _apply_binary(operator: BinOp, v1: int | str, v2: int | str) -> int:
+    op = operator.token.value
     if isinstance(v1, int) and isinstance(v2, int):
+        if v2 == 0 and op in _DIVISION_OPERATORS:
+            raise _division_by_zero(operator.token)
         try:
             return _INT_BINOPS[op](v1, v2)
         except KeyError as e:
@@ -150,7 +192,11 @@ def _apply_binary(op: str, v1: int | str, v2: int | str) -> int:
             return _STR_BINOPS[op](v1, v2)
         except KeyError as e:
             raise RuntimeError("operator unknown") from e
-    raise RuntimeError("Mismatched types in expression")
+    raise _expression_error(
+        f"`{op}` cannot combine {type(v1).__name__} and {type(v2).__name__}",
+        operator.token,
+        E_CODEGEN_MISMATCHED_TYPES,
+    )
 
 
 def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> set[str]:
@@ -159,41 +205,63 @@ def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> se
         if current.token.type != TokenType.IDENTIFIER:
             continue
         try:
-            resolver.current_scope.value_for(current.token.value)
+            _lookup(current.token.value, current.token, resolver)
         except ExternalSymbolReference as e:
             external_symbols.add(e.symbol_name)
     return external_symbols
+
+
+def _lookup(name: str, token: Token, resolver: Resolver) -> int | str | BlockAstNode | None:
+    """Resolve `name`, tagging a miss with the term token that named it.
+
+    An inner miss (e.g. through an alias expression) that already carries a
+    located token keeps it: that is where the undefined name was written.
+    """
+    try:
+        return resolver.current_scope.value_for(name)
+    except SymbolNotDefined as exc:
+        if exc.token is None or exc.token.position is None:
+            exc.token = token
+        raise
 
 
 def _eval_inner(inner: list[ExprNode], resolver: Resolver) -> int | str:
     return eval_expression(ExpressionAstNode(list(inner)), resolver)
 
 
+def _eval_cast_base(current: CastAccessExprNode | CastValueExprNode, resolver: Resolver) -> int:
+    """Evaluate `inner` of `(inner as T)`; it must be an address."""
+    base = _eval_inner(current.inner, resolver)
+    if not isinstance(base, int):
+        where = current.inner[0].token if current.inner else current.token
+        raise _expression_error(
+            f"cast base does not evaluate to an address: {base!r}", where, E_CODEGEN_TYPED_BIND_NON_INT
+        )
+    return base
+
+
 def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | str]) -> None:
     if isinstance(current, CastAccessExprNode):
-        base = _eval_inner(current.inner, resolver)
-        if not isinstance(base, int):
-            raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")  # noqa: TRY004 - invariant failure, not a caller type error
+        base = _eval_cast_base(current, resolver)
         field_symbol = ".".join([current.type_name, *current.field_path])
-        offset = resolver.current_scope.value_for(field_symbol)
+        offset = _lookup(field_symbol, current.leaf_token, resolver)
         if not isinstance(offset, int):
             raise RuntimeError(f"Struct field {field_symbol!r} did not resolve to an offset")  # noqa: TRY004 - invariant failure, not a caller type error
         values_stack.append(base + offset)
         return
     if isinstance(current, CastValueExprNode):
-        base = _eval_inner(current.inner, resolver)
-        if not isinstance(base, int):
-            raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")  # noqa: TRY004 - invariant failure, not a caller type error
-        values_stack.append(base)
+        values_stack.append(_eval_cast_base(current, resolver))
         return
     if current.token.type == TokenType.NUMBER:
         values_stack.append(eval_number(current.token.value))
     elif current.token.type == TokenType.QUOTED_STRING:
         values_stack.append(current.token.value[1:-1])
     elif current.token.type == TokenType.IDENTIFIER:
-        resolved_value = resolver.current_scope.value_for(current.token.value)
+        resolved_value = _lookup(current.token.value, current.token, resolver)
         if not isinstance(resolved_value, int | str):
-            raise RuntimeError(f"Unable  to resolve {current.token.value}")
+            raise _expression_error(
+                f"`{current.token.value}` names a block, not a value", current.token, E_SYMBOL_NOT_A_VALUE
+            )
         values_stack.append(resolved_value)
 
 
@@ -214,17 +282,43 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
             expression_str = canonicalize_local_label_refs(expression_str, resolver)
             raise ExternalExpressionReference(expression_str, external_symbols)
 
+    return _fold_rpn(ordered, lambda current, stack: _push_term(current, resolver, stack))
+
+
+TermPusher = Callable[[ExprNode, list[int | str]], None]
+
+
+def _fold_rpn(ordered: list[ExprNode], push_term: TermPusher) -> int | str:
+    """Evaluate a shunting-yard output queue; `push_term` resolves operands."""
     values_stack: list[int | str] = []
     for current in ordered:
         if isinstance(current, UnaryOp):
-            values_stack.append(_apply_unary(current.token.value, values_stack.pop()))
+            values_stack.append(_apply_unary(current.token.value, values_stack.pop(), current.token))
         elif isinstance(current, BinOp):
             v2 = values_stack.pop()
             v1 = values_stack.pop()
-            values_stack.append(_apply_binary(current.token.value, v1, v2))
+            values_stack.append(_apply_binary(current, v1, v2))
         else:
-            _push_term(current, resolver, values_stack)
+            push_term(current, values_stack)
     return values_stack.pop()
+
+
+def _push_number(current: ExprNode, values_stack: list[int | str]) -> None:
+    if current.token.type != TokenType.NUMBER:
+        raise ValueError(f"cannot resolve `{current.token.value}` at link time")
+    values_stack.append(eval_number(current.token.value))
+
+
+def eval_constant_expression(expr_str: str) -> int:
+    """Evaluate a symbol-free expression string with the assembler's semantics.
+
+    The linker calls this once every symbol in a relocation expression has
+    been substituted by its address. Raises `ValueError` for a leftover
+    identifier, `ScannerException` / `ParserSyntaxError` for malformed text
+    and `NodeError` for a division by zero or an over-wide `~` operand.
+    """
+    ordered = shunting_yard(expr_to_ast(expr_str).tokens)
+    return int(_fold_rpn(ordered, _push_number))
 
 
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
@@ -286,10 +380,12 @@ def expr_to_ast(expr_str: str) -> ExpressionAstNode:
     from a816.parse.parser import Parser
     from a816.parse.parser_states import parse_expression_ep
     from a816.parse.scanner import Scanner
-    from a816.parse.scanner_states import lex_expression
+    from a816.parse.scanner_states import lex_standalone_expression
 
-    scanner = Scanner(lex_expression)
+    scanner = Scanner(lex_standalone_expression)
     tokens = scanner.scan("memory", expr_str)
+    if scanner.errors:
+        raise scanner.errors[0]
     parser = Parser(tokens, parse_expression_ep)
     nodes = parser.parse()
     first_node = nodes[0]

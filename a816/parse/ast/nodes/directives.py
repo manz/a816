@@ -208,11 +208,23 @@ class ReserveTypedAstNode(AstNode):
     type_name: str
     pool_name: str
 
-    def __init__(self, name: str, type_name: str, pool_name: str, file_info: Token):
+    def __init__(
+        self,
+        name: str,
+        type_name: str,
+        pool_name: str,
+        file_info: Token,
+        *,
+        type_token: Token | None = None,
+        pool_token: Token | None = None,
+    ):
         super().__init__("reserve_typed", file_info)
         self.name = name
         self.type_name = type_name
         self.pool_name = pool_name
+        # Source tokens of TYPE / POOL; diagnostics underline the bad one.
+        self.type_token = type_token
+        self.pool_token = pool_token
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.type_name, self.pool_name

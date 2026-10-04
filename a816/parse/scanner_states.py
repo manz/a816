@@ -14,6 +14,7 @@ from a816.parse.tokens import EOF, TokenType
 
 opcodes = snes_opcode_table.keys()
 opcodes_without_operand = get_opcodes_with_addressing(AddressingMode.none)
+implied_only_opcodes = {name for name in opcodes_without_operand if len(snes_opcode_table[name]) == 1}
 
 # Character sets for identifier parsing
 IDENTIFIER_START_CHARS = "_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -122,42 +123,64 @@ def _lex_postfix_dot_chain(s: "Scanner") -> None:
         s.emit(TokenType.IDENTIFIER)
 
 
+# Longest match first: two-char operators shadow their one-char prefixes.
+EXPRESSION_OPERATORS: tuple[str, ...] = (
+    "<<",
+    ">>",
+    "==",
+    "!=",
+    ">=",
+    "<=",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "&",
+    "|",
+    "^",
+    "~",
+    "<",
+    ">",
+)
+
+
+def lex_expression_operator(s: "Scanner") -> bool:
+    """Emit one expression operator token. Shared by every expression context.
+
+    `/*` opens a block comment, not a division, so it is left to the caller.
+    """
+    if s.peek() == "/" and s.peek(1) == "*":
+        return False
+    for operator in EXPRESSION_OPERATORS:
+        if s.accept_prefix(operator):
+            s.emit(TokenType.OPERATOR)
+            return True
+    return False
+
+
 def lex_expression(s: "Scanner") -> None:
     while s.pos < len(s.input):
         s.ignore_run(" ")
-        if s.accept("0123456789"):
-            lex_number(s)
-        elif s.accept(IDENTIFIER_START_CHARS):
-            lex_identifier(s)
-        elif s.peek() == '"' and s.peek(1) == '"' and s.peek(2) == '"':
-            s.pos += 3
-            lex_docstring(s, '"')
-        elif s.peek() == "'" and s.peek(1) == "'" and s.peek(2) == "'":
-            s.pos += 3
-            lex_docstring(s, "'")
-        elif s.accept("'"):
-            lex_quoted_string(s)
-        elif s.accept('"'):
-            lex_double_quoted_string(s)
-        elif (
-            s.accept("+-*/&|~")
-            or s.accept_prefix("<<")
-            or s.accept_prefix(">>")
-            or s.accept_prefix("!=")
-            or s.accept_prefix("==")
-            or s.accept_prefix(">=")
-            or s.accept_prefix("<=")
-            or s.accept_prefix(">")
-            or s.accept_prefix("<")
-        ):
-            s.emit(TokenType.OPERATOR)
-        elif s.accept("("):
-            s.emit(TokenType.LPAREN)
-        elif s.accept(")"):
-            s.emit(TokenType.RPAREN)
-            _lex_postfix_dot_chain(s)
-        else:
+        if not any(handler(s) for handler in _EXPRESSION_HANDLERS):
             break
+
+
+def lex_standalone_expression(s: "Scanner") -> None:
+    """Scanner entry state for a bare expression string (linker, pool specs).
+
+    Unlike `lex_expression` inside an operand, nothing follows the
+    expression, so a character it cannot consume is an error rather than
+    the start of the next token.
+    """
+    lex_expression(s)
+    if s.pos < len(s.input):
+        s.next()
+        raise ScannerException(
+            f"invalid character `{s.input[s.start]}` in expression",
+            s.get_position(),
+            code=str(E_SCANNER_INVALID_INPUT),
+        )
 
 
 def lex_operand(s: "Scanner") -> None:
@@ -229,24 +252,48 @@ def lex_opcode_size(s: "Scanner") -> None:
         )
 
 
+def _ends_statement(s: "Scanner") -> bool:
+    """True when only blanks / a comment separate the cursor from a line end,
+    end of input, or a closing `}` (`{ inc }` on one line)."""
+    saved_pos = s.pos
+    s.accept_run(" \t")
+    if s.accept(";"):
+        s.accept_run("\n\0", negate=True)
+    ended = s.peek() in ("\n", "}", EOF)
+    s.pos = saved_pos
+    return ended
+
+
+def _next_word_is_opcode(s: "Scanner") -> bool:
+    """True when the next word on the line is a mnemonic (`nop nop`)."""
+    saved_pos = s.pos
+    s.accept_run(" \t")
+    word_start = s.pos
+    s.accept_run(IDENTIFIER_CHARS)
+    word = s.input[word_start : s.pos].lower()
+    s.pos = saved_pos
+    return word in opcodes
+
+
+def _is_naked_opcode(s: "Scanner", opcode_candidate: str) -> bool:
+    """An operand-less opcode with nothing after it (no `.size` suffix).
+
+    Implied-only mnemonics (`rts`, `nop`) never take an operand, so a
+    following mnemonic starts a new statement (`{ nop nop }`).
+    """
+    if opcode_candidate not in opcodes_without_operand or s.peek() == ".":
+        return False
+    if _ends_statement(s):
+        return True
+    return opcode_candidate in implied_only_opcodes and _next_word_is_opcode(s)
+
+
 def lex_opcode(s: "Scanner") -> None:
     opcode_candidate = s.input[s.start : s.pos].lower()
-    if opcode_candidate in opcodes_without_operand and s.peek() != ".":
-        saved_pos = s.pos
-
-        s.accept_run(" \t")
-        if s.accept(";"):
-            s.accept_run("\n\0", negate=True)
-
-        if s.peek() == "\n" or s.peek() == EOF:
-            s.pos = saved_pos
-            s.emit(TokenType.OPCODE_NAKED)
-            return
-        else:
-            s.pos = saved_pos
-            s.emit(TokenType.OPCODE)
-    else:
-        s.emit(TokenType.OPCODE)
+    if _is_naked_opcode(s, opcode_candidate):
+        s.emit(TokenType.OPCODE_NAKED)
+        return
+    s.emit(TokenType.OPCODE)
 
     if s.accept("."):
         lex_opcode_size(s)
@@ -334,7 +381,7 @@ KEYWORDS = DIRECTIVE_NAMES
 
 
 def lex_number(s: Scanner) -> None:
-    acceptable_values = {"b": "01", "o": "012345678", "x": "0123456789ABCDEFabcdef"}
+    acceptable_values = {"b": "01", "o": "01234567", "x": "0123456789ABCDEFabcdef"}
 
     s.backup()
 
@@ -357,15 +404,10 @@ def lex_number(s: Scanner) -> None:
     s.emit(TokenType.NUMBER)
 
 
-_MULTI_CHAR_OPERATORS: tuple[tuple[str, TokenType], ...] = (
-    ("==", TokenType.OPERATOR),
-    ("!=", TokenType.OPERATOR),
-    (">>", TokenType.OPERATOR),
-    ("<<", TokenType.OPERATOR),
-    (">=", TokenType.OPERATOR),
-    ("<=", TokenType.OPERATOR),
+_ASSIGNMENT_OPERATORS: tuple[tuple[str, TokenType], ...] = (
     (":=", TokenType.ASSIGN),
     ("@=", TokenType.AT_EQ),
+    ("*=", TokenType.STAR_EQ),
 )
 
 _SINGLE_CHAR_TOKENS: dict[str, TokenType] = {
@@ -394,26 +436,12 @@ def _lex_number(s: Scanner) -> bool:
     return True
 
 
-def _lex_simple_operator(s: Scanner) -> bool:
-    if not s.accept("+-&"):
-        return False
-    s.emit(TokenType.OPERATOR)
-    return True
-
-
-def _lex_multi_char_operator(s: Scanner) -> bool:
-    for prefix, kind in _MULTI_CHAR_OPERATORS:
+def _lex_assignment_operator(s: Scanner) -> bool:
+    for prefix, kind in _ASSIGNMENT_OPERATORS:
         if s.accept_prefix(prefix):
             s.emit(kind)
             return True
     return False
-
-
-def _lex_relational(s: Scanner) -> bool:
-    if not (s.accept_prefix(">") or s.accept_prefix("<")):
-        return False
-    s.emit(TokenType.OPERATOR)
-    return True
 
 
 def _lex_identifier_or_opcode(s: Scanner) -> bool:
@@ -431,16 +459,6 @@ def _lex_dot_keyword(s: Scanner) -> bool:
     if not s.accept("."):
         return False
     lex_keyword(s)
-    return True
-
-
-def _lex_star(s: Scanner) -> bool:
-    if not s.accept("*"):
-        return False
-    if s.accept("="):
-        s.emit(TokenType.STAR_EQ)
-    else:
-        s.emit(TokenType.OPERATOR)
     return True
 
 
@@ -492,18 +510,46 @@ def _lex_single_char_token(s: Scanner) -> bool:
     return True
 
 
-# Order matters: triple-quote before single-quote, multi-char operators
-# before their single-char prefixes, line comment (`;`) before any other
-# punctuation handler. Each helper returns True when it consumed input.
+def _lex_identifier(s: Scanner) -> bool:
+    if not s.accept(IDENTIFIER_START_CHARS):
+        return False
+    lex_identifier(s)
+    return True
+
+
+def _lex_paren(s: Scanner) -> bool:
+    if s.accept("("):
+        s.emit(TokenType.LPAREN)
+        return True
+    if s.accept(")"):
+        s.emit(TokenType.RPAREN)
+        _lex_postfix_dot_chain(s)
+        return True
+    return False
+
+
+# Expression tokens inside an opcode operand: no opcodes, directives or
+# assignment tokens. Each helper returns True when it consumed input.
+_EXPRESSION_HANDLERS = (
+    _lex_number,
+    _lex_identifier,
+    _lex_triple_quoted_docstring,
+    _lex_quoted_string,
+    lex_expression_operator,
+    _lex_paren,
+)
+
+# Order matters: triple-quote before single-quote, `:=` / `@=` / `*=`
+# before the expression operators that share their first char, line
+# comment (`;`) before any other punctuation handler. Each helper returns
+# True when it consumed input.
 _LEX_HANDLERS = (
     _lex_line_comment,
     _lex_number,
-    _lex_multi_char_operator,
-    _lex_simple_operator,
-    _lex_relational,
+    _lex_assignment_operator,
+    lex_expression_operator,
     _lex_identifier_or_opcode,
     _lex_dot_keyword,
-    _lex_star,
     _lex_triple_quoted_docstring,
     _lex_quoted_string,
     _lex_brace,

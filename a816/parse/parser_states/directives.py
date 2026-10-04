@@ -513,7 +513,7 @@ def parse_alloc(p: Parser) -> AllocAstNode:
         pool_token = p.next()
         expect_token(pool_token, TokenType.IDENTIFIER)
         body = _parse_alloc_body(p, parse_block)
-        return AllocAstNode(None, pool_token.value, body, keyword)
+        return AllocAstNode(None, pool_token.value, body, keyword, pool_token=pool_token)
 
     # `.alloc NAME ...` — pooled or named-pinned.
     name = first.value
@@ -522,7 +522,7 @@ def parse_alloc(p: Parser) -> AllocAstNode:
         pool_token = p.next()
         expect_token(pool_token, TokenType.IDENTIFIER)
         body = _parse_alloc_body(p, parse_block)
-        return AllocAstNode(name, pool_token.value, body, keyword)
+        return AllocAstNode(name, pool_token.value, body, keyword, pool_token=pool_token)
 
     return _parse_pinned_alloc_tail(p, parse_block, keyword, name=name)
 
@@ -563,7 +563,14 @@ def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
         _expect_contextual_keyword(p, "in")
         pool_token = p.next()
         expect_token(pool_token, TokenType.IDENTIFIER)
-        return ReserveTypedAstNode(name_token.value, type_token.value, pool_token.value, keyword)
+        return ReserveTypedAstNode(
+            name_token.value,
+            type_token.value,
+            pool_token.value,
+            keyword,
+            type_token=type_token,
+            pool_token=pool_token,
+        )
 
     size_expr = parse_expression(p)
     # Optional `at ADDR` pin between SIZE and `in POOL`.
@@ -575,7 +582,7 @@ def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
     pool_token = p.next()
     expect_token(pool_token, TokenType.IDENTIFIER)
     body = BlockAstNode([ReserveAstNode(size_expr, keyword)], keyword)
-    return AllocAstNode(name_token.value, pool_token.value, body, keyword, at_address=at_address)
+    return AllocAstNode(name_token.value, pool_token.value, body, keyword, at_address=at_address, pool_token=pool_token)
 
 
 def _parse_alloc_body(p: Parser, parse_block: ParseBlockFn) -> BlockAstNode:
@@ -628,6 +635,7 @@ def parse_relocate(p: Parser) -> RelocateAstNode:
         pool_token.value,
         body,
         keyword,
+        pool_token=pool_token,
     )
 
 

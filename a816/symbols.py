@@ -7,6 +7,7 @@ from a816.cpu.mapping import Address, Bus
 from a816.cpu.types import RomType
 from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import BlockAstNode
+from a816.parse.tokens import Token
 from a816.pool import Pool
 from script import Table
 
@@ -53,14 +54,24 @@ def _bubble_names[V: (int, int | str)](source: dict[str, V], target: dict[str, V
 
 
 def _publish_named_dotted(scope: "NamedScope", parent: "Scope") -> None:
-    """Promote `Name.label` and `Name.symbol` into the parent scope.
+    """Promote `Name.label`, `Name.symbol` and `Name.alias` into the parent scope.
 
     Both labels and symbols carry the dotted prefix so the object writer
     can distinguish CODE labels (need link-time rebasing) from DATA
-    constants without re-walking scopes.
+    constants without re-walking scopes. Link-time aliases (`fd = label`
+    in object mode) are re-registered under the dotted name and exported
+    so importers resolve `Name.alias` through the owner's `.o`.
     """
     parent.symbols |= {f"{scope.name}.{k}": v for k, v in scope.symbols.items() if _is_exportable(k)}
     parent.labels |= {f"{scope.name}.{k}": v for k, v in scope.labels.items() if _is_exportable(k)}
+    writer = scope.resolver.context.object_writer
+    for name, expression in scope.external_aliases.items():
+        if not _is_exportable(name):
+            continue
+        dotted = f"{scope.name}.{name}"
+        parent.add_external_alias(dotted, expression)
+        if writer is not None:
+            writer.add_alias(dotted, expression)
 
 
 logger = logging.getLogger("a816")
@@ -325,6 +336,9 @@ class Resolver:
         self.reloc_address: Address
         self.context = AssemblyContext()
         self.pools: dict[str, Pool] = {}
+        # (pool, alloc name) -> source token of the `.alloc` that requested
+        # the slot, so an allocator overflow can point back at it.
+        self.alloc_sites: dict[tuple[str, str], Token] = {}
         # Names registered by `_publish_pool_stats` - kept out of object-mode
         # symbol export so two `.o` files declaring the same pool don't
         # collide on `<pool>.capacity` etc. at link time.
@@ -541,6 +555,20 @@ class Resolver:
         if mangle_nested and idx > 0 and not isinstance(scope, NamedScope):
             return f"__sc{idx}__{name}"
         return name
+
+    def register_external_alias(self, name: str, expression: str) -> None:
+        """Bind `name` in the current scope to a link-time `expression`.
+
+        The object writer gets the alias under its exported name (see
+        :meth:`_export_name`) so a NamedScope member surfaces as `Scope.name`
+        and an anonymous-scope alias stays private behind the `__sc<idx>__`
+        mangle instead of leaking as a bare global.
+        """
+        scope = self.current_scope
+        scope.add_external_alias(name, expression)
+        writer = self.context.object_writer
+        if writer is not None:
+            writer.add_alias(self._export_name(name, scope, self.scopes.index(scope), mangle_nested=True), expression)
 
     def exported_label_name(self, name: str) -> str:
         """Exported name for a label *reference* as seen from the current scope.

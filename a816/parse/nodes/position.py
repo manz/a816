@@ -5,16 +5,20 @@ from __future__ import annotations
 import struct
 
 from a816.cpu.mapping import Address
+from a816.error_codes import E_IO_FILE_NOT_FOUND, E_IO_NOT_IPS
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import ExpressionAstNode
+from a816.parse.nodes.errors import NodeError
+from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol, ValueNodeProtocol
 from a816.symbols import Resolver
 
 
 class CodePositionNode(NodeProtocol):
-    def __init__(self, value_node: ValueNodeProtocol, resolver: Resolver):
+    def __init__(self, value_node: ValueNodeProtocol, resolver: Resolver, file_info: Token | None = None):
         self.value_node = value_node
         self.resolver: Resolver = resolver
+        self.file_info = file_info
 
     def pc_after(self, current_pc: Address) -> Address:
         self.resolver.reloc = False
@@ -31,9 +35,10 @@ class CodePositionNode(NodeProtocol):
 
 
 class RelocationAddressNode(NodeProtocol):
-    def __init__(self, pc_value_node: ValueNodeProtocol, resolver: Resolver) -> None:
+    def __init__(self, pc_value_node: ValueNodeProtocol, resolver: Resolver, file_info: Token | None = None) -> None:
         self.pc_value_node = pc_value_node
         self.resolver = resolver
+        self.file_info = file_info
 
     def pc_after(self, current_pc: Address) -> Address:
         self.resolver.reloc = True
@@ -53,13 +58,27 @@ class IncludeIpsNode(NodeProtocol):
         file_path: str,
         resolver: Resolver,
         delta_expression: ExpressionAstNode | None = None,
+        file_info: Token | None = None,
     ) -> None:
         self.ips_file_path = file_path
+        self.file_info = file_info
         self.delta = eval_expression(delta_expression, resolver) if delta_expression else 0
         self.blocks: list[tuple[int, bytes]] = []
-        with open(self.ips_file_path, "rb") as ips_file:
+        try:
+            ips_file = open(self.ips_file_path, "rb")  # noqa: SIM115 - closed by the `with` below
+        except OSError as exc:
+            raise NodeError(
+                f"cannot read IPS patch {self.ips_file_path!r}: {exc.strerror}",
+                file_info,
+                code=str(E_IO_FILE_NOT_FOUND),
+            ) from exc
+        with ips_file:
             if ips_file.read(5) != b"PATCH":
-                raise RuntimeError(f'{self.ips_file_path} is missing "PATCH" header')
+                raise NodeError(
+                    f'{self.ips_file_path} is missing "PATCH" header',
+                    file_info,
+                    code=str(E_IO_NOT_IPS),
+                )
 
             while ips_file.peek(3)[:3] != b"EOF":
                 block_addr_bytes = struct.unpack(">BH", ips_file.read(3))

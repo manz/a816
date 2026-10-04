@@ -31,6 +31,17 @@ logger = logging.getLogger("a816")
 _ASSEMBLY_FAILED_MSG = "Assembly failed: %s"
 
 
+def _log_internal_failure(exc: RuntimeError) -> None:
+    """Log an internal pipeline failure: message at ERROR, traceback at DEBUG.
+
+    User mistakes surface as located `NodeError`s; what still reaches the
+    RuntimeError handlers is an assembler invariant breaking. The CLI
+    user gets the one-line message; `--verbose` brings the traceback.
+    """
+    logger.error(_ASSEMBLY_FAILED_MSG, exc)  # NOSONAR python:S8572 - traceback is logged at DEBUG below
+    logger.debug("Assembly failure traceback", exc_info=exc)
+
+
 class AssembleMixin:
     """Pipeline entry points. Mixed into `Program`."""
 
@@ -94,7 +105,7 @@ class AssembleMixin:
         Returns:
           0   on success
           128 on `A816Error` (covers both `AssemblyError` and `NodeError`)
-          -1  on `RuntimeError` (mapping / bus failures bubbling up)
+          -1  on `RuntimeError` (an internal assembler invariant broke)
         """
         warnings.warn(
             "Direct assembly mode is deprecated; the build path is object "
@@ -132,8 +143,8 @@ class AssembleMixin:
                     logger.error(str(e))  # NOSONAR python:S8572
                     return 128
 
-        except RuntimeError:
-            self.logger.exception(_ASSEMBLY_FAILED_MSG)
+        except RuntimeError as e:
+            _log_internal_failure(e)
             return -1
         finally:
             self.resolver.context.mode = previous_mode
@@ -168,8 +179,8 @@ class AssembleMixin:
             exit_code = self.assemble_with_object_emitter(asm_file, object_writer)
             object_writer.end()
             return exit_code
-        except RuntimeError:
-            self.logger.exception(_ASSEMBLY_FAILED_MSG)
+        except RuntimeError as e:
+            _log_internal_failure(e)
             return -1
 
     def _classify_object_symbol(
@@ -267,8 +278,8 @@ class AssembleMixin:
                 logger.error(str(e))  # NOSONAR python:S8572
                 logger.debug("Object emit failure traceback", exc_info=True)
                 return -1
-        except RuntimeError:
-            self.logger.exception(_ASSEMBLY_FAILED_MSG)
+        except RuntimeError as e:
+            _log_internal_failure(e)
             return -1
         finally:
             self.resolver.context.mode = previous_mode

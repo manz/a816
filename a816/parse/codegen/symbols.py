@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+from a816.error_codes import E_SYMBOL_EAGER_FORWARD_REF
+from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.expression import canonicalize_local_label_refs, eval_expression
 from a816.parse.ast.nodes import (
     AssignAstNode,
@@ -30,10 +31,7 @@ def _try_eager_register_alias(node: SymbolAffectationAstNode, resolver: Resolver
     except (ExternalExpressionReference, ExternalSymbolReference) as e:
         expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
         canonical = canonicalize_local_label_refs(expr_str, resolver)
-        resolver.current_scope.add_external_alias(node.symbol, canonical)
-        object_writer = resolver.context.object_writer
-        if object_writer is not None:
-            object_writer.add_alias(node.symbol, canonical)
+        resolver.register_external_alias(node.symbol, canonical)
 
 
 def _try_eager_constant_bind(node: SymbolAffectationAstNode, resolver: Resolver) -> bool:
@@ -94,6 +92,19 @@ def generate_extern(
     return [ExternNode(node.symbol, resolver)]
 
 
+def _eager_eval(node: AssignAstNode, expr: ExpressionAstNode, resolver: Resolver, file_info: Token) -> int | str:
+    """Evaluate a `:=` RHS now; an undefined symbol is a forward reference."""
+    try:
+        return eval_expression(expr, resolver)
+    except SymbolNotDefined as e:
+        raise NodeError(
+            f"`{e.name}` is not defined yet; `{node.symbol} :=` needs its value now",
+            e.token or file_info,
+            code=str(E_SYMBOL_EAGER_FORWARD_REF),
+            hint="`:=` evaluates immediately; use `=` for a forward reference",
+        ) from e
+
+
 def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -> bool:
     """If RHS is `(expr as T)`, eager-expand the instance's flat field symbols.
 
@@ -112,7 +123,7 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
             f"Typed bind {node.symbol!r}: unknown struct type {type_name!r}.",
             file_info,
         )
-    base = eval_expression(ExpressionAstNode(list(cast.inner)), resolver)
+    base = _eager_eval(node, ExpressionAstNode(list(cast.inner)), resolver, file_info)
     if not isinstance(base, int):
         raise NodeError(
             f"Typed bind {node.symbol!r}: base expression must evaluate to an integer address.",
@@ -150,7 +161,7 @@ def generate_assign(
         return []
 
     try:
-        value = eval_expression(node.value, resolver)
+        value = _eager_eval(node, node.value, resolver, file_info)
         resolver.current_scope.add_symbol(node.symbol, value)
     except (ExternalExpressionReference, ExternalSymbolReference) as e:
         if not resolver.context.is_object_mode:
@@ -161,10 +172,7 @@ def generate_assign(
             ) from e
         expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
         canonical = canonicalize_local_label_refs(expr_str, resolver)
-        resolver.current_scope.add_external_alias(node.symbol, canonical)
-        object_writer = resolver.context.object_writer
-        if object_writer is not None:
-            object_writer.add_alias(node.symbol, canonical)
+        resolver.register_external_alias(node.symbol, canonical)
 
     return []
 
