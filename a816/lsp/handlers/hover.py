@@ -140,7 +140,7 @@ class HoverMixin:
         return line[start:end]
 
     def _hover_for_struct_field(self, word: str) -> Hover | None:
-        """Auto-doc for `Type.field`, `Type.field.mask`, `Type.field.shift`.
+        """Auto-doc for `Type.field`, `Type.field.mask`, `.shift`, `.__size`.
 
         Reaches into the workspace-shared struct registry built during AST
         indexing. Bit-field aux symbols get computed mask / shift values
@@ -160,6 +160,9 @@ class HoverMixin:
                 f"Pre-shifted bit-mask for the `{field}` field "
                 f"({bit_width}-bit, shift {shift}). Use as an immediate operand."
             )
+            return self._markdown_hover(body)
+        if aux == "__size":
+            body = f"**`{struct}.{field}.__size`**\n\nTotal byte size of the `{field_type}` array field `{field}`."
             return self._markdown_hover(body)
         if aux == "shift":
             body = (
@@ -182,7 +185,7 @@ class HoverMixin:
         parts = word.split(".")
         if len(parts) == 2:
             return parts[0], parts[1], None
-        if len(parts) == 3 and parts[2] in ("mask", "shift"):
+        if len(parts) == 3 and parts[2] in ("mask", "shift", "__size"):
             return parts[0], parts[1], parts[2]
         return None, None, None
 

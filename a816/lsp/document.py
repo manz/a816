@@ -293,6 +293,7 @@ class A816Document:
         # nested struct field types — also goto-def's to the declaration.
         self.symbols[node.name] = (pos, file_uri)
         bit_field_re = _re.compile(r"u\d+")
+        array_re = _re.compile(r"\w+\[\w+\]", _re.ASCII)
         for field_name, field_type in node.fields:
             self.symbols[f"{node.name}.{field_name}"] = (pos, file_uri)
             if bit_field_re.fullmatch(field_type):
@@ -300,6 +301,9 @@ class A816Document:
                 # mirror them here so `Type.field.mask` is also goto-def'able.
                 self.symbols[f"{node.name}.{field_name}.mask"] = (pos, file_uri)
                 self.symbols[f"{node.name}.{field_name}.shift"] = (pos, file_uri)
+            elif array_re.fullmatch(field_type):
+                # `T[N]` fields publish their total byte size the same way.
+                self.symbols[f"{node.name}.{field_name}.__size"] = (pos, file_uri)
         self.symbols[f"{node.name}.__size"] = (pos, file_uri)
 
     def _visit_include(self, node: IncludeAstNode) -> None:
