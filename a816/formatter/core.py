@@ -460,24 +460,26 @@ class A816Formatter:
         in_docstring = False
         istruct_ws: int | None = None
         for line in lines:
-            stripped = line.strip()
             if istruct_ws is not None:
                 istruct_ws = self._append_istruct_line(line, istruct_ws, levels, indented)
-                continue
-            if not stripped:
-                indented.append("")
-                continue
-            triple_count = stripped.count('"""')
-            if in_docstring or triple_count:
-                indented.append(line.rstrip())
-                if triple_count % 2 == 1:
-                    in_docstring = not in_docstring
-                continue
-            if self._opens_istruct_block(stripped):
+            elif not in_docstring and self._opens_istruct_block(line.strip()):
                 istruct_ws = self._append_istruct_line(line, len(line) - len(line.lstrip()), levels, indented)
-                continue
-            indented.append(stripped if self._stays_flush_left(stripped) else self._indent(line, levels))
+            else:
+                in_docstring = self._append_block_line(line, levels, in_docstring, indented)
         return indented
+
+    def _append_block_line(self, line: str, levels: int, in_docstring: bool, out: list[str]) -> bool:
+        """Indent one block line; returns whether a docstring is still open after it."""
+        stripped = line.strip()
+        if not stripped:
+            out.append("")
+            return in_docstring
+        triple_count = stripped.count('"""')
+        if in_docstring or triple_count:
+            out.append(line.rstrip())
+            return in_docstring != (triple_count % 2 == 1)
+        out.append(stripped if self._stays_flush_left(stripped) else self._indent(line, levels))
+        return in_docstring
 
     @staticmethod
     def _stays_flush_left(stripped: str) -> bool:
