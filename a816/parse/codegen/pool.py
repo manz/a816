@@ -95,6 +95,7 @@ def generate_pool(
                 and existing.fill == pool.fill
                 and existing.strategy == pool.strategy
                 and existing.bss == pool.bss
+                and _declared_contexts(node.pool_name, resolver) == sorted(node.contexts)
             )
             if not same_shape:
                 raise NodeError(f"pool {node.pool_name!r} already declared with different shape", file_info)
@@ -106,8 +107,35 @@ def generate_pool(
         raise
     except Exception as exc:  # PoolError, PoolInvalidRangeError, PoolOverlapError
         raise NodeError(f"pool {node.pool_name!r}: {exc}", file_info) from exc
-    resolver.pools[node.pool_name] = pool
-    _publish_pool_stats(node.pool_name, pool, resolver)
+    _register_pool(pool, resolver)
+    # Each context is its own allocator over the pool's memory: `POOL.CTX`.
+    # Contexts of one pool never live at the same time, so the linker lets
+    # their reservations share bytes (and nothing else).
+    for context in node.contexts:
+        _register_pool(
+            Pool(
+                name=f"{node.pool_name}.{context}",
+                ranges=[PoolRange(start=r.start, end=r.end) for r in ranges],
+                fill=fill_value,
+                strategy=Strategy(node.strategy),
+                bss=True,
+                context=context,
+            ),
+            resolver,
+        )
+    return []
+
+
+def _declared_contexts(pool_name: str, resolver: Resolver) -> list[str]:
+    """Contexts already registered for `pool_name` (its `POOL.CTX` siblings)."""
+    return sorted(
+        p.context for p in resolver.pools.values() if p.context is not None and p.name == f"{pool_name}.{p.context}"
+    )
+
+
+def _register_pool(pool: Pool, resolver: Resolver) -> None:
+    resolver.pools[pool.name] = pool
+    _publish_pool_stats(pool.name, pool, resolver)
     if resolver.context.is_object_mode and resolver.context.object_writer is not None:
         from a816.object_file import PoolDecl
 
@@ -118,9 +146,9 @@ def generate_pool(
                 fill=pool.fill,
                 strategy=pool.strategy.value,
                 bss=pool.bss,
+                context=pool.context,
             )
         )
-    return []
 
 
 def _publish_pool_stats(name: str, pool: Pool, resolver: Resolver) -> None:

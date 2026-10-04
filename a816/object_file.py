@@ -79,6 +79,8 @@ class PoolDecl:
     """Byte-less pool: reservations emit nothing into the image. Must round-trip
     through the object format, else an imported bss pool deserializes as bss=False
     and `generate_pool`'s shape-check rejects the inline (bss=True) re-declaration."""
+    context: str | None = None
+    """Lifetime of a bss pool (`context NAME`); empty in the object format means none."""
 
 
 @dataclass
@@ -144,11 +146,14 @@ class PoolAlloc:
     """Fixed address for a `.reserve NAME SIZE at ADDR in POOL` request; -1
     when the allocator is free to pick. Round-trips so the linker honors the
     pin across modules."""
+    source: str = ""
+    """`file:line` of the request, for link-time diagnostics: bss bodies emit no
+    bytes, so their section carries no line table to point at."""
 
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x000D  # Version 13: bus mappings carry BML regions (address/base/rom_size).
+    VERSION = 0x000E  # Version 14: pool decls carry a bss context; allocs carry their source.
 
     def __init__(
         self,
@@ -247,6 +252,9 @@ class ObjectFile:
             f.write(struct.pack("<B", len(strategy_bytes)))
             f.write(strategy_bytes)
             f.write(struct.pack("<B", 1 if decl.bss else 0))
+            context_bytes = (decl.context or "").encode("utf-8")
+            f.write(struct.pack("<B", len(context_bytes)))
+            f.write(context_bytes)
             f.write(struct.pack("<BH", decl.fill, len(decl.ranges)))
             for start, end in decl.ranges:
                 f.write(struct.pack("<II", start, end))
@@ -261,6 +269,9 @@ class ObjectFile:
             f.write(struct.pack("<B", len(sym_bytes)))
             f.write(sym_bytes)
             f.write(struct.pack("<IIi", alloc.section_idx, alloc.size, alloc.pinned_addr))
+            source_bytes = alloc.source.encode("utf-8")
+            f.write(struct.pack("<H", len(source_bytes)))
+            f.write(source_bytes)
 
     def _write_bus_mappings(self, f: IO[bytes]) -> None:
         f.write(struct.pack("<H", len(self.bus_mappings)))
@@ -427,12 +438,16 @@ class ObjectFile:
             (strategy_len,) = struct.unpack("<B", f.read(1))
             strategy = f.read(strategy_len).decode("utf-8")
             (bss_flag,) = struct.unpack("<B", f.read(1))
+            (context_len,) = struct.unpack("<B", f.read(1))
+            context = f.read(context_len).decode("utf-8") or None
             fill, range_count = struct.unpack("<BH", f.read(3))
             ranges: list[tuple[int, int]] = []
             for _ in range(range_count):
                 start, end = struct.unpack("<II", f.read(8))
                 ranges.append((start, end))
-            out.append(PoolDecl(name=name, ranges=ranges, fill=fill, strategy=strategy, bss=bool(bss_flag)))
+            out.append(
+                PoolDecl(name=name, ranges=ranges, fill=fill, strategy=strategy, bss=bool(bss_flag), context=context)
+            )
         return out
 
     @staticmethod
@@ -480,6 +495,8 @@ class ObjectFile:
             (sym_len,) = struct.unpack("<B", f.read(1))
             sym_name = f.read(sym_len).decode("utf-8")
             section_idx, size, pinned_addr = struct.unpack("<IIi", f.read(12))
+            (source_len,) = struct.unpack("<H", f.read(2))
+            source = f.read(source_len).decode("utf-8")
             out.append(
                 PoolAlloc(
                     pool_name=pool_name,
@@ -487,6 +504,7 @@ class ObjectFile:
                     section_idx=section_idx,
                     size=size,
                     pinned_addr=pinned_addr,
+                    source=source,
                 )
             )
         return out

@@ -29,6 +29,7 @@ class PoolAstNode(AstNode):
         file_info: Token,
         bss: bool = False,
         close_token: Token | None = None,
+        contexts: list[str] | None = None,
     ) -> None:
         super().__init__("pool", file_info)
         # Closing `}`: a trailing comment on its line folds onto the brace.
@@ -38,6 +39,8 @@ class PoolAstNode(AstNode):
         self.fill = fill
         self.strategy = strategy
         self.bss = bss
+        # Mutually exclusive users of a bss pool's memory (`contexts A, B`).
+        self.contexts = contexts or []
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.pool_name, len(self.ranges), self.strategy
@@ -46,6 +49,8 @@ class PoolAstNode(AstNode):
         lines = [f".pool {self.pool_name} {{"]
         if self.bss:
             lines.append("    bss")
+        if self.contexts:
+            lines.append(f"    contexts {', '.join(self.contexts)}")
         for start, end in self.ranges:
             lines.append(f"    range {start.to_canonical()} {end.to_canonical()}")
         lines.append(f"    fill {self.fill.to_canonical()}")

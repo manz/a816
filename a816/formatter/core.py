@@ -386,6 +386,8 @@ class A816Formatter:
         lines = [f".pool {ast.pool_name} {{"]
         if ast.bss:
             lines.append("    bss")
+        if ast.contexts:
+            lines.append(f"    contexts {', '.join(ast.contexts)}")
         for lo, hi in ast.ranges:
             lines.append(f"    range {lo.to_canonical()} {hi.to_canonical()}")
         fill_canonical = ast.fill.to_canonical()
