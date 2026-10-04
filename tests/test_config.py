@@ -110,28 +110,10 @@ def test_map_integer_identifier_matches_directive_spelling(tmp_path: Path) -> No
     assert _load(tmp_path, body).bus_map[0].identifier == "66"
 
 
-def test_mapper_lorom_expands_to_default_bus(tmp_path: Path) -> None:
-    shapes = [m.shape() for m in _load(tmp_path, 'mapper = "lorom"\n').bus_map]
-    assert shapes == [
-        ("1", (0x00, 0x6F), (0x8000, 0xFFFF), 0x8000, False, (0x80, 0xCF), None, 0, 0),
-        ("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x10000, True, None, None, 0, 0),
-    ]
-
-
-def test_mapper_hirom_expands_to_default_bus(tmp_path: Path) -> None:
-    shapes = [m.shape() for m in _load(tmp_path, 'mapper = "hirom"\n').bus_map]
-    assert shapes == [
-        ("1", (0x40, 0x7F), (0x0000, 0xFFFF), 0x10000, False, (0xC0, 0xFF), None, 0, 0),
-        ("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x10000, True, None, None, 0, 0),
-    ]
-
-
-def test_mapper_recorded(tmp_path: Path) -> None:
-    assert _load(tmp_path, 'mapper = "hirom"\n').mapper == "hirom"
-
-
-def test_mapper_and_map_are_mutually_exclusive(tmp_path: Path) -> None:
-    assert _config_error_code(tmp_path, 'mapper = "lorom"\n' + _SRAM_MAP) == "E0507"
+@pytest.mark.parametrize(("mapper", "board"), [("lorom", "SHVC-1A0N-30"), ("hirom", "SHVC-1J0N-20")])
+def test_removed_mapper_names_the_board_to_write(tmp_path: Path, mapper: str, board: str) -> None:
+    message = _config_error_message(tmp_path, f'mapper = "{mapper}"\n')
+    assert message == f"`mapper` is no longer supported: write `board = {board!r}` and `rom_size`"
 
 
 def test_unknown_mapper_is_rejected(tmp_path: Path) -> None:

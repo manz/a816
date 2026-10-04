@@ -133,10 +133,6 @@ def test_board_must_be_a_string(tmp_path: Path) -> None:
     assert _error_code(tmp_path, "board = 1\n") == "E0509"
 
 
-def test_mapper_excludes_board(tmp_path: Path) -> None:
-    assert _error_code(tmp_path, 'mapper = "lorom"\nboard = "SHVC-1A3M-30"\n') == "E0507"
-
-
 def _ips_records(path: Path) -> list[tuple[int, bytes]]:
     data = path.read_bytes()
     out, i = [], 5

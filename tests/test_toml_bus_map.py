@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from a816.cli import _apply_a816_toml, _build_arg_parser, _run_assemble
-from a816.exceptions import A816ConfigError
 from a816.fluff.cli import fluff_main
 from a816.module_builder import BuildResult, ModuleBuilder, build_with_imports
 from a816.object_file import BusMapping, ObjectFile
@@ -147,12 +146,6 @@ def test_cli_reads_bus_map_from_toml(tmp_path: Path) -> None:
     assert args.bus_map == [_ROM_BML]
 
 
-def test_cli_mapper_selects_the_matching_rom_type(tmp_path: Path) -> None:
-    args = _args(tmp_path, 'mapper = "hirom"\n')
-    _apply_a816_toml(args)
-    assert args.mapping == "high"
-
-
 def test_cli_defaults_to_low_without_mapper(tmp_path: Path) -> None:
     args = _args(tmp_path, _ROM_TOML)
     _apply_a816_toml(args)
@@ -164,18 +157,6 @@ def test_cli_defaults_to_low_without_toml(tmp_path: Path) -> None:
     args = _build_arg_parser().parse_args([str(tmp_path / "main.s")])
     _apply_a816_toml(args)
     assert args.mapping == "low"
-
-
-def test_cli_accepts_agreeing_m_flag(tmp_path: Path) -> None:
-    args = _args(tmp_path, 'mapper = "lorom"\n', "-m", "low2")
-    _apply_a816_toml(args)
-    assert args.mapping == "low2"
-
-
-def test_cli_rejects_m_flag_disagreeing_with_mapper(tmp_path: Path) -> None:
-    args = _args(tmp_path, 'mapper = "lorom"\n', "-m", "high")
-    with pytest.raises(A816ConfigError, match="disagrees"):
-        _apply_a816_toml(args)
 
 
 def test_cli_build_uses_toml_map(tmp_path: Path) -> None:

@@ -43,9 +43,9 @@ def test_api_build_can_opt_out_of_the_toml(tmp_path: Path) -> None:
     assert result.exit_code != 0, "without the toml map, bank $F0 is unmapped"
 
 
-def test_api_build_rejects_mapping_that_disagrees_with_toml_mapper(tmp_path: Path) -> None:
+def test_api_build_rejects_the_removed_mapper_key(tmp_path: Path) -> None:
     with pytest.raises(A816ConfigError):
-        _build(tmp_path, 'mapper = "hirom"\n', mapping="low")
+        _build(tmp_path, 'mapper = "hirom"\nrom_size = 0x400000\n', mapping="low")
 
 
 def _config(tmp_path: Path, **fields: object) -> A816Config:
@@ -77,13 +77,3 @@ def test_merge_unions_experimental_flags(tmp_path: Path) -> None:
     config = _config(tmp_path, experimental={"track_register_size": True, "off_flag": False})
     settings = merge_build_settings(config, experimental=["cli_flag"])
     assert settings.experimental == ["cli_flag", "track_register_size"]
-
-
-def test_merge_takes_the_mapping_from_the_toml_mapper(tmp_path: Path) -> None:
-    settings = merge_build_settings(_config(tmp_path, mapper="hirom"))
-    assert settings.mapping == "high"
-
-
-def test_merge_keeps_a_mapping_that_agrees_with_the_toml_mapper(tmp_path: Path) -> None:
-    settings = merge_build_settings(_config(tmp_path, mapper="lorom"), mapping="low2")
-    assert settings.mapping == "low2"

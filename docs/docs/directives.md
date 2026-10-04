@@ -66,7 +66,7 @@ translate into a physical ROM offset and which banks are writable.
 
 Without any region the bus follows `-m` (LoROM when `-m` is absent).
 The layout is usually project-wide: declare it once in `a816.toml`
-(`mapper` or `[map.N]`) instead of repeating it in every module.
+(`board` and `[map.N]`) instead of repeating it in every module.
 
 ## Expressions
 

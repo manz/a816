@@ -106,11 +106,9 @@ E_IO_FILE_NOT_FOUND = ErrorCode("E0500", "io", "file not found")
 E_CONFIG_INVALID = ErrorCode("E0501", "config", "invalid project config")
 E_IO_NOT_IPS = ErrorCode("E0502", "io", "`.include_ips` file is not an IPS patch")
 E_CONFIG_BAD_EXPERIMENTAL = ErrorCode("E0503", "config", "`[experimental]` flag is not true or false")
-E_CONFIG_UNKNOWN_MAPPER = ErrorCode("E0504", "config", "`mapper` names no supported cartridge mapper")
+E_CONFIG_UNKNOWN_MAPPER = ErrorCode("E0504", "config", "`mapper` is no longer supported; name a `board`")
 E_CONFIG_BAD_MAP_ENTRY = ErrorCode("E0505", "config", "malformed `[map.N]` entry")
 E_CONFIG_BAD_MAP_VALUE = ErrorCode("E0506", "config", "`[map.N]` value of the wrong type")
-E_CONFIG_MAPPER_AND_MAP = ErrorCode("E0507", "config", "`mapper` excludes `board` and `[map.N]`")
-E_CONFIG_MAPPER_MISMATCH = ErrorCode("E0508", "config", "`-m` disagrees with the a816.toml `mapper`")
 E_CONFIG_UNKNOWN_BOARD = ErrorCode("E0509", "config", "`board` names no known cartridge board")
 
 

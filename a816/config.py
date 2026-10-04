@@ -19,14 +19,12 @@ from a816.error_codes import (
     E_CONFIG_BAD_MAP_ENTRY,
     E_CONFIG_BAD_MAP_VALUE,
     E_CONFIG_INVALID,
-    E_CONFIG_MAPPER_AND_MAP,
-    E_CONFIG_MAPPER_MISMATCH,
     E_CONFIG_UNKNOWN_BOARD,
     E_CONFIG_UNKNOWN_MAPPER,
     ErrorCode,
 )
 from a816.exceptions import A816ConfigError
-from a816.mappers import CLI_MAPPERS, MAPPER_CLI_FLAGS, MAPPERS
+from a816.mappers import MAPPER_BOARDS
 from a816.object_file import BusMapping
 
 CONFIG_FILENAME = "a816.toml"
@@ -47,10 +45,7 @@ class A816Config:
     # `--experimental NAME` (and `--no-experimental NAME` for explicit
     # off). Mirrors the [experimental] table in `a816.toml`.
     experimental: dict[str, bool] = field(default_factory=dict)
-    # Cartridge preset named by `mapper = ...`, kept so the CLI can check
-    # it against `-m`; its regions are already expanded into `bus_map`.
-    mapper: str | None = None
-    # Every bus region the project declares: the `mapper` preset first,
+    # Every bus region the project declares: the `board` regions first,
     # or the `[map.N]` tables (never both). Seeded onto every translation unit's bus.
     bus_map: list[BusMapping] = field(default_factory=list)
 
@@ -78,29 +73,31 @@ def _resolve_paths(root: Path, raw: list[str]) -> list[Path]:
 
 
 class _BusMapParser:
-    """Turn the `mapper` key and `[map.N]` tables into `BusMapping`s."""
+    """Turn `board` and the `[map.N]` tables into `BusMapping`s."""
 
     def __init__(self, config_path: Path) -> None:
         self.config_path = config_path
 
-    def parse(self, data: dict[str, object]) -> tuple[str | None, list[BusMapping]]:
-        mapper = self._mapper(data.get("mapper"))
+    def parse(self, data: dict[str, object]) -> list[BusMapping]:
+        self._reject_mapper(data.get("mapper"))
         board = self._board(data.get("board"))
         raw = data.get("map", {})
         if not isinstance(raw, dict):
             raise self._error(E_CONFIG_BAD_MAP_ENTRY, "`map` must be a table of regions (`[map.N]`)")
-        if mapper is not None and (raw or board is not None):
-            raise self._error(
-                E_CONFIG_MAPPER_AND_MAP, "`mapper` excludes `board` and `[map.N]`: use the preset or list the regions"
-            )
-        if mapper is not None:
-            return mapper, list(MAPPERS[mapper])
         rom_size = self._rom_size(data.get("rom_size"))
         entries = [self._entry(key, item, rom_size) for key, item in raw.items()]
         self._reject_aliased_keys(entries)
         regions = self._board_regions(board, rom_size) + entries
         self._require_rom_size(regions, rom_size)
-        return None, regions
+        return regions
+
+    def _reject_mapper(self, value: object) -> None:
+        """`mapper` existed only during the 1.1.0 alpha; point at the board it meant."""
+        if value is None:
+            return
+        board = MAPPER_BOARDS.get(value) if isinstance(value, str) else None
+        instead = f"write `board = {board!r}`" if board else "name the cartridge `board`"
+        raise self._error(E_CONFIG_UNKNOWN_MAPPER, f"`mapper` is no longer supported: {instead} and `rom_size`")
 
     def _board(self, value: object) -> str | None:
         if value is None:
@@ -142,14 +139,6 @@ class _BusMapParser:
 
     def _error(self, code: ErrorCode, message: str) -> A816ConfigError:
         return A816ConfigError(code, message, self.config_path)
-
-    def _mapper(self, value: object) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str) or value not in MAPPERS:
-            supported = ", ".join(sorted(MAPPERS))
-            raise self._error(E_CONFIG_UNKNOWN_MAPPER, f"unknown mapper {value!r} (supported: {supported})")
-        return value
 
     def _entry(self, key: str, item: object, rom_size: int) -> BusMapping:
         where = f"[map.{key}]"
@@ -232,7 +221,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
 
     Raises:
         A816ConfigError: the file is not valid TOML, or `[experimental]` /
-            `mapper` / `[map.N]` is invalid.
+            `board` / `rom_size` / `[map.N]` is invalid.
     """
     try:
         with config_path.open("rb") as handle:
@@ -245,14 +234,13 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
     entry = data.get("entrypoint")
     entry_path = (root / entry).resolve() if isinstance(entry, str) else None
     experimental = _experimental(data.get("experimental", {}), config_path)
-    mapper, bus_map = _BusMapParser(config_path).parse(data)
+    bus_map = _BusMapParser(config_path).parse(data)
     return A816Config(
         config_path=config_path,
         entrypoint=entry_path,
         include_paths=_resolve_paths(root, data.get("include-paths", []) or []),
         module_paths=_resolve_paths(root, data.get("module-paths", []) or []),
         experimental=experimental,
-        mapper=mapper,
         bus_map=bus_map,
     )
 
@@ -290,12 +278,8 @@ def merge_build_settings(
     Shared by the CLI and `build_with_imports` so both entry points build
     the same thing. A value the caller gives (non-empty) wins over the
     file; the file fills the rest. Experimental flags are the union of
-    both. `mapping` (the `-m` flag) must agree with the toml `mapper`:
-    the toml regions are seeded into every object, so letting one side
-    silently win would build a bus that matches neither.
-
-    Raises:
-        A816ConfigError: `mapping` disagrees with the toml `mapper`.
+    both. `mapping` (the `-m` flag) only picks the default bus a project
+    without regions uses, so it passes through.
     """
     flags = list(experimental or [])
     if config is None:
@@ -304,23 +288,9 @@ def merge_build_settings(
         if enabled and flag not in flags:
             flags.append(flag)
     return BuildSettings(
-        mapping=_merge_mapping(mapping, config),
+        mapping=mapping,
         bus_map=list(bus_map) if bus_map else list(config.bus_map),
         include_paths=list(include_paths) if include_paths else list(config.include_paths),
         module_paths=list(module_paths) if module_paths else list(config.module_paths),
         experimental=flags,
     )
-
-
-def _merge_mapping(mapping: str | None, config: A816Config) -> str | None:
-    if config.mapper is None:
-        return mapping
-    if mapping is None:
-        return MAPPER_CLI_FLAGS[config.mapper]
-    if CLI_MAPPERS[mapping] != config.mapper:
-        raise A816ConfigError(
-            E_CONFIG_MAPPER_MISMATCH,
-            f"`-m {mapping}` disagrees with `mapper = {config.mapper!r}`; drop one of them",
-            config.config_path,
-        )
-    return mapping

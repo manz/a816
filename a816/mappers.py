@@ -1,10 +1,8 @@
-"""Fixed cartridge mappers: the bus layouts behind `-m` and `mapper = ...`.
+"""Fixed cartridge mappers: the default bus layouts behind `-m low/low2/high`.
 
-Each preset is the exact region list of the matching default bus, so
-`mapper = "lorom"` in `a816.toml` and `-m low` describe the same bus.
-Only layouts `a816.cpu.mapping.Mapping` can express are listed: a
-region's physical offset always starts at zero, so a mapper that splits
-one ROM image across two bank windows (ExHiROM) has no preset.
+`MAPPERS` holds the exact region lists of those default buses.
+`MAPPER_BOARDS` only remembers which ares board the removed a816.toml
+`mapper = "lorom"/"hirom"` meant, so its error can name the replacement.
 """
 
 from __future__ import annotations
@@ -25,12 +23,12 @@ MAPPERS: dict[str, tuple[BusMapping, ...]] = {
     ),
 }
 
+#: Removed a816.toml `mapper = ...` -> the ares board to write instead.
+MAPPER_BOARDS: dict[str, str] = {"lorom": "SHVC-1A0N-30", "hirom": "SHVC-1J0N-20"}
+
 #: `-m` spelling -> mapper preset. `low2` addresses the same LoROM bus
 #: through its $80+ mirror, so it agrees with `lorom`.
 CLI_MAPPERS: dict[str, str] = {"low": "lorom", "low2": "lorom", "high": "hirom"}
-
-#: Mapper preset -> the `-m` spelling it implies when `-m` is absent.
-MAPPER_CLI_FLAGS: dict[str, str] = {"lorom": "low", "hirom": "high"}
 
 
 def map_on_bus(bus: Bus, mapping: BusMapping) -> None:
