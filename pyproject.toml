@@ -88,7 +88,7 @@ diffcov = [
 ]
 
 tests = "pytest tests"
-check = ["ruff check a816 script tests", "ruff format --check script tests"]
+check = ["ruff check a816 script tests", "ruff format --check a816 script tests"]
 format = [
     "ruff check --fix a816 script tests",
     "ruff format a816 script tests",
