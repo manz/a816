@@ -45,9 +45,11 @@ class A816Parser:
     def __init__(self, resolver: Resolver) -> None:
         self.resolver = resolver
 
-    def parse(self, program: str, filename: str = "") -> tuple[str | None, list[NodeProtocol]]:
+    def parse(
+        self, program: str, filename: str = "", parsed: "ParserResult | None" = None
+    ) -> tuple[str | None, list[NodeProtocol]]:
         include_paths = self.resolver.context.include_paths
-        ast = self.parse_as_ast(program, filename, include_paths=include_paths, verbose_errors=True)
+        ast = parsed or self.parse_as_ast(program, filename, include_paths=include_paths, verbose_errors=True)
         self.resolver.current_scope.add_symbol("BUILD_DATE", strftime("%Y-%m-%d %H:%M:%S", gmtime()))
         seed_bus_map(self.resolver)
         return ast.error, code_gen(ast.nodes, self.resolver)

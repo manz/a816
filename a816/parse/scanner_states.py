@@ -145,14 +145,21 @@ EXPRESSION_OPERATORS: tuple[str, ...] = (
 )
 
 
+# First char -> candidate operators starting with it, longest first.
+_OPERATORS_BY_FIRST_CHAR: dict[str, tuple[str, ...]] = {}
+for _operator in EXPRESSION_OPERATORS:
+    _OPERATORS_BY_FIRST_CHAR[_operator[0]] = (*_OPERATORS_BY_FIRST_CHAR.get(_operator[0], ()), _operator)
+
+
 def lex_expression_operator(s: "Scanner") -> bool:
     """Emit one expression operator token. Shared by every expression context.
 
     `/*` opens a block comment, not a division, so it is left to the caller.
     """
-    if s.peek() == "/" and s.peek(1) == "*":
+    ch = s.peek()
+    if ch == "/" and s.peek(1) == "*":
         return False
-    for operator in EXPRESSION_OPERATORS:
+    for operator in _OPERATORS_BY_FIRST_CHAR.get(ch, ()):
         if s.accept_prefix(operator):
             s.emit(TokenType.OPERATOR)
             return True
@@ -162,7 +169,10 @@ def lex_expression_operator(s: "Scanner") -> bool:
 def lex_expression(s: "Scanner") -> None:
     while s.pos < len(s.input):
         s.ignore_run(" ")
-        if not any(handler(s) for handler in _EXPRESSION_HANDLERS):
+        for handler in _EXPRESSION_HANDLERS:
+            if handler(s):
+                break
+        else:
             break
 
 

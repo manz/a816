@@ -207,3 +207,12 @@ class ScannerTest(TestCase):
         # Scanner now collects errors instead of raising — recovery mode.
         assert scanner.errors, "expected at least one collected ScannerException"
         self.assertIn("unterminated", str(scanner.errors[0]))
+
+    def test_token_after_recovered_error_has_correct_position(self) -> None:
+        """Error recovery skips to the next line without counting that newline twice."""
+        scanner = Scanner(lex_initial)
+        tokens = scanner.scan("test.s", ".MEMORYMAP\n  DEFAULTSLOT 0\n")
+        assert scanner.errors, "expected the unknown directive to be collected"
+        ident = next(t for t in tokens if t.value == "DEFAULTSLOT")
+        assert ident.position is not None
+        self.assertEqual((ident.position.line, ident.position.column), (1, 2))

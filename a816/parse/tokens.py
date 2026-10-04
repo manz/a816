@@ -79,10 +79,45 @@ class TokenType(Enum):
 
 
 class Token:
+    """A scanned token. Its location is stored flat; `position` builds a `Position` on demand.
+
+    A build keeps hundreds of thousands of tokens alive (the AST and nodes hold
+    them as `file_info`); storing line/column/file inline instead of a separate
+    `Position` per token halves the long-lived objects the cyclic GC re-walks.
+    """
+
+    __slots__ = ("_column", "_file", "_line", "type", "value")
+    _line: int
+    _column: int
+    _file: File | None
+
     def __init__(self, type_: TokenType, value: str, position: Position | None = None) -> None:
         self.type: TokenType = type_
         self.value: str = value
-        self.position: Position | None = position
+        self._locate(position)
+
+    @classmethod
+    def located(cls, type_: TokenType, value: str, line: int, column: int, file: File) -> "Token":
+        """Build a token at `line`/`column` of `file` without allocating a `Position`."""
+        token = cls.__new__(cls)
+        token.type = type_
+        token.value = value
+        token._line = line
+        token._column = column
+        token._file = file
+        return token
+
+    @property
+    def position(self) -> Position | None:
+        if self._file is None:
+            return None
+        return Position(self._line, self._column, self._file)
+
+    def _locate(self, position: Position | None) -> None:
+        if position is None:
+            self._line, self._column, self._file = 0, 0, None
+        else:
+            self._line, self._column, self._file = position.line, position.column, position.file
 
     @property
     def end_position(self) -> Position | None:

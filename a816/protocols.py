@@ -72,3 +72,38 @@ class OpcodeProtocol(Protocol):
         resolver: "Resolver | None" = None,
     ) -> int:
         """Return the expected byte length of this opcode."""
+
+
+class NodeBase:
+    """Nominal base for executable nodes.
+
+    Implementations satisfy `NodeProtocol` structurally; subclassing the
+    Protocol itself would give them `_ProtocolMeta`, which routes every
+    `isinstance` on a node through a Python-level check on the hot path.
+    """
+
+    def emit(self, current_addr: Address) -> bytes:
+        raise NotImplementedError
+
+    def pc_after(self, current_pc: Address) -> Address:
+        raise NotImplementedError
+
+
+class OpcodeBase:
+    """Nominal base for opcode emitters; see `NodeBase` for why not `OpcodeProtocol`."""
+
+    def emit(
+        self,
+        value_node: "ValueNodeProtocol | None",
+        resolver: "Resolver",
+        size: ValueSize | None = None,
+    ) -> bytes:
+        raise NotImplementedError
+
+    def supposed_length(
+        self,
+        value_node: "ValueNodeProtocol | None",
+        size: ValueSize | None = None,
+        resolver: "Resolver | None" = None,
+    ) -> int:
+        raise NotImplementedError

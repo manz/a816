@@ -8,11 +8,11 @@ from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.nodes.errors import NodeError
 from a816.parse.tokens import Token
-from a816.protocols import NodeProtocol
+from a816.protocols import NodeBase
 from a816.symbols import Resolver
 
 
-class LabelNode(NodeProtocol):
+class LabelNode(NodeBase):
     def __init__(self, symbol_name: str, resolver: Resolver) -> None:
         self.symbol_name = symbol_name
         self.resolver = resolver
@@ -31,7 +31,7 @@ class LabelNode(NodeProtocol):
         return f"LabelNode({self.symbol_name})"
 
 
-class LabelDeclNode(NodeProtocol):
+class LabelDeclNode(NodeBase):
     """`.label NAME = ADDR` — register NAME as a label at constant address ADDR.
 
     Position counter is untouched. The address binds via
@@ -86,7 +86,7 @@ class LabelDeclNode(NodeProtocol):
         return f"LabelDeclNode({self.symbol_name}, {self.expression})"
 
 
-class SymbolNode(NodeProtocol):
+class SymbolNode(NodeBase):
     def __init__(
         self,
         symbol_name: str,
@@ -157,7 +157,7 @@ class SymbolNode(NodeProtocol):
         return f"SymbolNode({self.symbol_name}, {self.expression})"
 
 
-class ExternNode(NodeProtocol):
+class ExternNode(NodeBase):
     def __init__(self, symbol_name: str, resolver: Resolver) -> None:
         self.symbol_name = symbol_name
         self.resolver = resolver

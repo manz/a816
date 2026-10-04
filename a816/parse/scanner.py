@@ -1,8 +1,18 @@
+import re
+from bisect import bisect_right
 from collections.abc import Callable
+from functools import cache
 from typing import Optional
 
 from a816.parse.errors import ScannerException
 from a816.parse.tokens import EOF, File, Position, Token, TokenType
+
+
+@cache
+def _run_pattern(candidates: str, negate: bool) -> re.Pattern[str]:
+    """Compiled `[candidates]*` (or `[^candidates]*`) for `accept_run`."""
+    body = "".join(re.escape(ch) for ch in candidates)
+    return re.compile(f"[{'^' if negate else ''}{body}]*")
 
 
 class Scanner:
@@ -19,10 +29,7 @@ class Scanner:
     def __init__(self, initial_state: "ScannerStateFunc") -> None:
         self.initial_state = initial_state
         self.tokens: list[Token] = []
-        self.line_offset = 0
-        self.current_line = 0
-        self.start_line = 0
-        self.start_column = 0
+        self._line_starts: list[int] = [0]
         # Per-line recovery: collected `ScannerException`s. Callers (mzparser)
         # surface these as multi-error diagnostics; scan() never raises on
         # the first failure anymore. An aborted scan with no usable tokens
@@ -38,6 +45,11 @@ class Scanner:
         # lines already consumed up to the failure point would be available).
         self.file.lines = input_.split("\n")
         self.input = input_
+        self._line_starts = [0]
+        offset = 0
+        for line in self.file.lines[:-1]:
+            offset += len(line) + 1
+            self._line_starts.append(offset)
         self.state = self.initial_state
         self.tokens = []
         self.errors = []
@@ -53,85 +65,69 @@ class Scanner:
                 self.accept_run("\n\0", negate=True)
                 if self.peek() == "\n":
                     self.next()
-                self._handle_line()
                 self._sync_start()
         self.emit(TokenType.EOF)
-        self._handle_line()
         return self.tokens
 
-    def _handle_line(self) -> None:
-        # `scan()` now pre-splits the input into `file.lines`, so the only
-        # work left is bookkeeping for the rolling line-start cursor.
-        if self.line_offset <= self.pos:
-            self.line_offset = self.pos + 1
-            self.current_line += 1
-
     def next(self) -> str | None:
-        if self.pos < len(self.input):
-            data = self.input[self.pos]
-            if data == "\n":
-                self._handle_line()
-            self.pos += 1
-
-            return data
-        else:
-            return None
+        pos = self.pos
+        if pos < len(self.input):
+            self.pos = pos + 1
+            return self.input[pos]
+        return None
 
     def backup(self) -> None:
         self.pos -= 1
 
     def peek(self, k: int = 0) -> str:
-        try:
-            ch = self.input[self.pos + k]
-            return ch
-        except IndexError:
-            return EOF
+        i = self.pos + k
+        return self.input[i] if i < len(self.input) else EOF
 
     def accept(self, candidates: str, negate: bool = False) -> bool:
-        ch = self.peek()
-        result = ch in candidates
-        if negate:
-            result = not result
-
-        if result is True:  # and not negate:
-            self.next()
-        return result
+        pos = self.pos
+        ch = self.input[pos] if pos < len(self.input) else EOF
+        if (ch in candidates) != negate:
+            if pos < len(self.input):
+                self.pos = pos + 1
+            return True
+        return False
 
     def accept_prefix(self, prefix: str) -> bool:
-        if self.input[self.pos : self.pos + len(prefix)] == prefix:
+        if self.input.startswith(prefix, self.pos):
             self.pos += len(prefix)
             return True
         return False
 
     def accept_run(self, candidates: str, negate: bool = False) -> None:
-        while self.accept(candidates, negate):
-            # Accepts candidates until a non-matching char is found.
-            pass
+        match = _run_pattern(candidates, negate).match(self.input, self.pos)
+        if match is not None:
+            self.pos = match.end()
 
     def ignore(self) -> None:
         self._sync_start()
 
     def ignore_run(self, candidates: str) -> None:
         self.accept_run(candidates)
-        self.ignore()
+        self.start = self.pos
 
     def current_token_text(self) -> str:
         return self.input[self.start : self.pos]
 
     def get_token(self, token_type: TokenType) -> Token:
-        return Token(token_type, self.current_token_text(), self.get_position())
+        line = bisect_right(self._line_starts, self.start) - 1
+        column = self.start - self._line_starts[line]
+        return Token.located(token_type, self.input[self.start : self.pos], line, column, self.file)
 
     def get_position(self) -> Position:
-        return Position(self.start_line, self.start_column, self.file)
+        line = bisect_right(self._line_starts, self.start) - 1
+        return Position(line, self.start - self._line_starts[line], self.file)
 
     def emit(self, token_type: TokenType) -> None:
         self.tokens.append(self.get_token(token_type))
-        self._sync_start()
+        self.start = self.pos
 
     def _sync_start(self) -> None:
         self.start = self.pos
-        self.start_line = self.current_line
-        self.start_column = self.pos - self.line_offset
 
 
 ScannerStateFunc = Callable[[Scanner], None]

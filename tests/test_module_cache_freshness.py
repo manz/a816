@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from a816.module_builder import ModuleBuilder
 
 # Parked-in-the-past object mtime; a rebuild moves it to wall-clock now.
@@ -154,3 +156,76 @@ def test_edited_import_recompiles_importer(tmp_path: Path) -> None:
     _build(tmp_path, main)
     assert _rebuilt(lib_obj), "edited import source must recompile the import itself"
     assert _rebuilt(main_obj), "edited import must propagate to the importer (baked constants)"
+
+
+def _write_lib_and_main(tmpdir: Path, main_body: str) -> Path:
+    (tmpdir / "lib.s").write_text("*= 0x009000\nlib_func:\n    rts\n")
+    main = tmpdir / "main.s"
+    main.write_text(main_body)
+    return main
+
+
+def _park_all(tmpdir: Path) -> None:
+    """Sources in the past, objects at the sentinel: everything is fresh."""
+    for src in tmpdir.glob("*.s"):
+        _set_mtime(src, _OLDER)
+    for obj in (tmpdir / "obj").glob("*.o"):
+        _set_mtime(obj, _SENTINEL)
+
+
+def test_warm_build_reuses_cached_imports_without_parsing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from a816.parse.mzparser import A816Parser
+
+    main = _write_lib_and_main(tmp_path, '.import "lib"\n*= 0x008000\nmain:\n    jsr.w lib_func\n    rts\n')
+    _build(tmp_path, main)
+    _park_all(tmp_path)
+
+    parsed: list[str] = []
+    original = A816Parser.parse_as_ast
+
+    def counting(program: str, filename: str = "memory.s", *args: object, **kwargs: object) -> object:
+        parsed.append(filename)
+        return original(program, filename, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(A816Parser, "parse_as_ast", staticmethod(counting))
+    _build(tmp_path, main)
+    assert parsed == [], "a fully cached build must rebuild the import graph from .deps"
+
+
+def test_import_added_to_edited_module_is_discovered(tmp_path: Path) -> None:
+    main = _write_lib_and_main(tmp_path, "*= 0x008000\nmain:\n    rts\n")
+    _build(tmp_path, main)
+    _park_all(tmp_path)
+
+    main.write_text('.import "lib"\n*= 0x008000\nmain:\n    jsr.w lib_func\n    rts\n')
+    _set_mtime(main, _NEWER)
+    _build(tmp_path, main)
+    assert _obj(tmp_path, "lib").exists(), "the new import must be discovered and compiled"
+
+
+def test_import_added_through_edited_include_is_discovered(tmp_path: Path) -> None:
+    inc = tmp_path / "imports.i"
+    inc.write_text("; no imports yet\n")
+    main = _write_lib_and_main(tmp_path, '.include "imports.i"\n*= 0x008000\nmain:\n    rts\n')
+    _build(tmp_path, main)
+    _park_all(tmp_path)
+    _set_mtime(inc, _OLDER)
+
+    inc.write_text('.import "lib"\n')
+    _set_mtime(inc, _NEWER)
+    _build(tmp_path, main)
+    assert _obj(tmp_path, "lib").exists(), "an import added via an edited include must be discovered"
+
+
+def test_sidecar_without_imports_line_falls_back_to_parsing(tmp_path: Path) -> None:
+    main = _write_lib_and_main(tmp_path, '.import "lib"\n*= 0x008000\nmain:\n    jsr.w lib_func\n    rts\n')
+    _build(tmp_path, main)
+    deps = _obj(tmp_path, "__main__").with_suffix(".deps")
+    deps.write_text(
+        "".join(line for line in deps.read_text().splitlines(keepends=True) if not line.startswith("imports:"))
+    )
+    _park_all(tmp_path)
+    (tmp_path / "obj" / "lib.o").unlink()
+
+    _build(tmp_path, main)
+    assert _obj(tmp_path, "lib").exists(), "a pre-cache sidecar must still discover imports by parsing"
