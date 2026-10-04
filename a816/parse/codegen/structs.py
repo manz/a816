@@ -187,13 +187,15 @@ def generate_map(
         writeable=attributes.get("writable", False),
         mirror_bank_range=attributes.get("mirror_bank_range"),
     )
-    declared = declare_bus_mapping(resolver, mapping, file_info)
+    if _is_redeclaration(resolver.bus, mapping, file_info):
+        return []
+    _map_on_bus(resolver.bus, mapping)
     # OBJECT mode: serialize so the linker replays the mapping on its
     # own resolver bus. Without this, custom cartridge mappings
     # (SA-1, ExHiROM, anything beyond the default low_rom) silently
     # vanish at link time and downstream addresses resolve wrong.
     writer = resolver.context.object_writer
-    if declared and writer is not None and resolver.context.mode == AssemblyMode.OBJECT:
+    if writer is not None and resolver.context.mode == AssemblyMode.OBJECT:
         writer.bus_mappings.append(mapping)
     return []
 
@@ -213,19 +215,24 @@ def _declared_bus_mapping(bus: Bus, identifier: str) -> BusMapping | None:
     )
 
 
-def declare_bus_mapping(resolver: Resolver, mapping: BusMapping, file_info: Token) -> bool:
+def declare_bus_mapping(resolver: Resolver, mapping: BusMapping, file_info: Token) -> None:
     """Apply a `.map` declaration to the resolver bus.
 
     A `.map` reaches the bus once per declaring module, and `.import`
     brings the imported module's declarations along. Re-declaring an
-    identifier identically is a no-op (returns False); a different
-    shape under the same identifier is a conflict, matching the
-    linker's cross-module check.
+    identifier identically is a no-op; a different shape under the same
+    identifier is a conflict, matching the linker's cross-module check.
     """
-    existing = _declared_bus_mapping(resolver.bus, mapping.identifier)
-    if existing == mapping:
+    if not _is_redeclaration(resolver.bus, mapping, file_info):
+        _map_on_bus(resolver.bus, mapping)
+
+
+def _is_redeclaration(bus: Bus, mapping: BusMapping, file_info: Token) -> bool:
+    """True when ``mapping`` is already declared identically; raise on a conflicting shape."""
+    existing = _declared_bus_mapping(bus, mapping.identifier)
+    if existing is None:
         return False
-    if existing is not None:
+    if existing != mapping:
         raise NodeError(
             f"conflicting `.map {mapping.identifier!r}` declaration",
             file_info,
@@ -233,7 +240,11 @@ def declare_bus_mapping(resolver: Resolver, mapping: BusMapping, file_info: Toke
             hint="every module declaring this identifier must use the same bank_range, "
             "addr_range, mask, writable and mirror_bank_range",
         )
-    resolver.bus.map(
+    return True
+
+
+def _map_on_bus(bus: Bus, mapping: BusMapping) -> None:
+    bus.map(
         mapping.identifier,
         mapping.bank_range,
         mapping.addr_range,
@@ -241,7 +252,6 @@ def declare_bus_mapping(resolver: Resolver, mapping: BusMapping, file_info: Toke
         writeable=mapping.writeable,
         mirror_bank_range=mapping.mirror_bank_range,
     )
-    return True
 
 
 generators["struct"] = generate_struct
