@@ -187,7 +187,9 @@ def test_direct_mode_internal_failure_message_is_formatted(
 ) -> None:
     monkeypatch.setattr(Program, "resolve_labels", _boom)
     _tmp, asm = _write("nop\n")
+    program = Program()
+    writer = StubWriter()
     with caplog.at_level(logging.DEBUG), pytest.warns(DeprecationWarning):
-        Program().assemble_with_emitter(str(asm), StubWriter())
+        program.assemble_with_emitter(str(asm), writer)
     errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
     assert errors == ["Assembly failed: boom"]

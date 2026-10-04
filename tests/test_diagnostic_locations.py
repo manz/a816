@@ -253,8 +253,9 @@ def test_object_mode_unmapped_alloc_code(tmp_path: Path, caplog: pytest.LogCaptu
 def _parse_cli(argv: list[str]) -> int | str | None:
     from a816.cli import _build_arg_parser
 
+    parser = _build_arg_parser()
     with pytest.raises(SystemExit) as exc_info:
-        _build_arg_parser().parse_args(argv)
+        parser.parse_args(argv)
     return exc_info.value.code
 
 
