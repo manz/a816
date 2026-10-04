@@ -3,8 +3,9 @@
 The prelude is the leading run of top-level docstrings, comments,
 `.import`, `.include`, `.extern`, constant declarations (`NAME = x`,
 `NAME := x`, `.label NAME = x`) and file-level configuration (`.table`,
-`.map`). The first other statement ends it;
-any `.import` after that point, or nested in a block, is flagged.
+`.map`), plus `.if` blocks whose branches hold only such material.
+The first other statement ends it; any `.import` after that point, or
+nested in a block that ended it, is flagged.
 """
 
 from __future__ import annotations
@@ -38,6 +39,17 @@ class TestImportInPrelude:
         )
         assert _st002_lines(src) == []
 
+    def test_conditional_imports_right_after_imports_pass(self) -> None:
+        src = '"""m."""\n.import "a"\n.if FLAG {\n    .import "x"\n} else {\n    .import "y"\n}\n*=0x008000\n    nop\n'
+        assert _st002_lines(src) == []
+
+    def test_nested_conditional_prelude_material_passes(self) -> None:
+        src = (
+            '"""m."""\n.if A {\n    ; feature deps\n    .if B {\n        .import "x"\n        .extern ext\n    }\n'
+            '    LIMIT := 4\n}\n.import "z"\n*=0x008000\n    nop\n'
+        )
+        assert _st002_lines(src) == []
+
     def test_file_without_imports_passes(self) -> None:
         assert _st002_lines('"""m."""\n*=0x008000\n    nop\n') == []
 
@@ -60,9 +72,13 @@ class TestImportOutsidePrelude:
         src = '"""m."""\n.import "a"\n.alloc at 0x008000 {\n    .import "b"\n}\n'
         assert _st002_lines(src) == [4]
 
-    def test_import_inside_conditional_is_flagged(self) -> None:
-        src = '"""m."""\nDEBUG = 1\n.if DEBUG {\n    .import "dbg"\n}\n'
-        assert _st002_lines(src) == [4]
+    def test_import_in_conditional_after_code_is_flagged(self) -> None:
+        src = '"""m."""\nDEBUG = 1\n*=0x008000\n.if DEBUG {\n    .import "dbg"\n}\n'
+        assert _st002_lines(src) == [5]
+
+    def test_conditional_with_code_ends_the_prelude(self) -> None:
+        src = '"""m."""\n.if 1 {\n    .import "a"\n    nop\n}\n.import "b"\n'
+        assert _st002_lines(src) == [3, 6]
 
     def test_every_late_import_is_flagged(self) -> None:
         src = '"""m."""\n.import "a"\n*=0x008000\n.import "b"\n    nop\n.import "c"\n'

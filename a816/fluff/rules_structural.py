@@ -25,6 +25,7 @@ from a816.parse.ast.nodes import (
     CommentAstNode,
     DocstringAstNode,
     ExternAstNode,
+    IfAstNode,
     ImportAstNode,
     IncludeAstNode,
     LabelDeclAstNode,
@@ -97,8 +98,9 @@ class ImportOutsidePrelude(Rule):
         "The prelude is the leading run of top-level docstrings, "
         "comments, `.import`, `.include`, `.extern`, constant "
         "declarations (`NAME = x`, `NAME := x`, `.label NAME = x`) and "
-        "file-level configuration (`.table`, `.map`). The first other "
-        "statement ends it. An `.import` further down reads "
+        "file-level configuration (`.table`, `.map`), plus `.if` blocks "
+        "holding only such material. The first other statement ends "
+        "it. An `.import` further down reads "
         "as if the module landed at that point; it never does, because "
         "modules own their placement (`.alloc at` / `.alloc in POOL`). "
         "After `*=` or inside an `.alloc` body the assembler rejects it "
@@ -122,6 +124,21 @@ class ImportOutsidePrelude(Rule):
 def _prelude_end(nodes: list[AstNode]) -> int:
     """Index of the first top-level statement that is not prelude material."""
     for idx, node in enumerate(nodes):
-        if not isinstance(node, _PRELUDE_TYPES):
+        if not _is_prelude(node):
             return idx
     return len(nodes)
+
+
+def _is_prelude(node: AstNode) -> bool:
+    """Prelude material, or an `.if` whose every branch holds only prelude material.
+
+    Feature-flagged dependencies (`.if BATTLE { .import "battle" }`)
+    belong with the other imports; an `.if` that emits or places
+    anything ends the prelude like any other statement.
+    """
+    if isinstance(node, _PRELUDE_TYPES):
+        return True
+    if not isinstance(node, IfAstNode):
+        return False
+    branches = [node.block] if node.else_block is None else [node.block, node.else_block]
+    return all(_is_prelude(child) for branch in branches for child in branch.body)
