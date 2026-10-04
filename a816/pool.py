@@ -17,17 +17,73 @@ class PoolError(Exception):
 
 
 class PoolOverflowError(PoolError):
-    """An allocation found no free chunk large enough in its pool."""
+    """An allocation found no free chunk large enough in its pool.
 
-    def __init__(self, pool_name: str, alloc_name: str, size: int, largest_free: int) -> None:
+    Three shapes, each with its own message and hint:
+
+    - the alloc is larger than every range of the pool: no amount of free
+      space helps, because a block never spans two ranges (and so never a
+      bank boundary). A single-range pool (e.g. the one synthesised for
+      `.alloc at ADDR size N`) just reports the pool size;
+    - the pool still has enough bytes in total, but no single chunk holds
+      them (fragmentation);
+    - the pool is simply out of room.
+    """
+
+    def __init__(
+        self,
+        pool_name: str,
+        alloc_name: str,
+        size: int,
+        largest_free: int,
+        largest_range: int,
+        total_free: int,
+        range_count: int,
+    ) -> None:
         self.pool_name = pool_name
         self.alloc_name = alloc_name
         self.size = size
         self.largest_free = largest_free
-        super().__init__(
-            f"alloc '{alloc_name}' ({size} bytes) does not fit in pool '{pool_name}': "
-            f"largest free chunk is {largest_free} bytes"
-        )
+        self.largest_range = largest_range
+        self.total_free = total_free
+        self.range_count = range_count
+        super().__init__(self._message())
+
+    @property
+    def exceeds_largest_range(self) -> bool:
+        return self.size > self.largest_range
+
+    @property
+    def fragmented(self) -> bool:
+        return not self.exceeds_largest_range and self.total_free >= self.size
+
+    def _message(self) -> str:
+        head = f"alloc '{self.alloc_name}' ({self.size} bytes) does not fit in pool '{self.pool_name}'"
+        if self.exceeds_largest_range and self.range_count == 1:
+            return f"{head}: larger than the pool ({self.largest_range} bytes)"
+        if self.exceeds_largest_range:
+            return (
+                f"{head}: larger than its largest range ({self.largest_range} bytes); "
+                "a block never spans a bank boundary or two ranges"
+            )
+        if self.fragmented:
+            return (
+                f"{head}: {self.total_free} bytes free in total but fragmented; "
+                f"largest free chunk is {self.largest_free} bytes"
+            )
+        return f"{head}: largest free chunk is {self.largest_free} bytes"
+
+    @property
+    def hint(self) -> str:
+        if self.exceeds_largest_range:
+            target = "the pool" if self.range_count == 1 else "a range"
+            return f"split '{self.alloc_name}' into smaller allocs or grow {target} to at least {self.size} bytes"
+        if self.fragmented:
+            return (
+                f"no single chunk of pool '{self.pool_name}' has {self.size} bytes; "
+                "split the alloc or grow one of the ranges"
+            )
+        return f"grow pool '{self.pool_name}' or move code out of it"
 
 
 class PoolOverlapError(PoolError):
@@ -159,7 +215,7 @@ class Pool:
                 len(free),
             )
         for alloc in order:
-            free = _place(alloc, free, self.name)
+            free = _place(alloc, free, self.ranges, self.name)
             free_total = sum(r.size for r in free)
             logger.info(
                 "  placed %s size %d at 0x%06x  (free: %d bytes across %d range(s))",
@@ -238,13 +294,20 @@ def _sort_allocations(allocs: list[Allocation], strategy: Strategy) -> list[Allo
     return sorted(allocs, key=lambda a: (-a.size, a.name))
 
 
-def _place(alloc: Allocation, free: list[PoolRange], pool_name: str) -> list[PoolRange]:
+def _place(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:
     for idx, chunk in enumerate(free):
         if chunk.size >= alloc.size:
             alloc.addr = chunk.start
             return _shrink_chunk(free, idx, alloc.size)
-    largest = max((chunk.size for chunk in free), default=0)
-    raise PoolOverflowError(pool_name, alloc.name, alloc.size, largest)
+    raise PoolOverflowError(
+        pool_name,
+        alloc.name,
+        alloc.size,
+        largest_free=max((chunk.size for chunk in free), default=0),
+        largest_range=max((r.size for r in ranges), default=0),
+        total_free=sum(chunk.size for chunk in free),
+        range_count=len(ranges),
+    )
 
 
 def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from a816.parse.tokens import Token
+    from a816.pool import PoolOverflowError
 
 
 class A816Error(Exception):
@@ -189,32 +190,28 @@ class ExpressionEvaluationError(LinkerError):
 class PoolOverflowLinkError(LinkerError):
     """Raised when the link-time allocator cannot fit an alloc in its pool."""
 
-    def __init__(
-        self,
-        pool_name: str,
-        alloc_name: str,
-        size: int,
-        largest_free: int,
-        location: str | None = None,
-    ) -> None:
-        self.pool_name = pool_name
-        self.alloc_name = alloc_name
-        self.size = size
-        self.largest_free = largest_free
+    def __init__(self, overflow: PoolOverflowError, location: str | None = None) -> None:
+        self.overflow = overflow
+        self.pool_name = overflow.pool_name
+        self.alloc_name = overflow.alloc_name
         self.location = location
-        super().__init__(f"alloc '{alloc_name}' ({size} bytes) does not fit in pool '{pool_name}'")
+        super().__init__(str(overflow))
 
     def format(self) -> str:
         # Late import: intentional to avoid circular dependency with errors module
         from a816.error_codes import E_LINKER_POOL_OVERFLOW
         from a816.errors import format_error_simple
 
+        overflow = self.overflow
         details = [
-            ("pool", self.pool_name),
-            ("largest free chunk", f"{self.largest_free} bytes"),
+            ("pool", overflow.pool_name),
+            ("largest free chunk", f"{overflow.largest_free} bytes"),
+            ("largest range", f"{overflow.largest_range} bytes"),
+            ("free in total", f"{overflow.total_free} bytes"),
         ]
         if self.location is not None:
             details.append(("alloc body", self.location))
+        details.append(("hint", overflow.hint))
         return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_POOL_OVERFLOW}]", str(self), details=details)
 
 

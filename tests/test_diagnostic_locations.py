@@ -196,12 +196,31 @@ def test_pool_overflow_caret_on_alloc_name() -> None:
     assert _assemble_error(_OVERFLOW_SRC).underlined == "foo"
 
 
-def test_pool_overflow_names_largest_free_chunk() -> None:
+def _direct_overflow(src: str) -> NodeError:
     program = Program()
     writer = StubWriter()
     with pytest.raises(NodeError) as exc_info:
-        program.assemble_string_with_emitter(_OVERFLOW_SRC, "t.s", writer)
-    assert "largest free chunk is 4 bytes" in str(exc_info.value)
+        program.assemble_string_with_emitter(src, "t.s", writer)
+    return exc_info.value
+
+
+_EXHAUSTED_SRC = (
+    ".pool p { range 0x008000 0x008007 }\n"
+    ".alloc a in p {\n    .db 1, 2, 3, 4, 5, 6\n}\n"
+    ".alloc b in p {\n    .db 1, 2, 3, 4\n}\n"
+)
+
+
+def test_pool_overflow_names_largest_free_chunk() -> None:
+    assert "largest free chunk is 2 bytes" in str(_direct_overflow(_EXHAUSTED_SRC))
+
+
+def test_pool_overflow_larger_than_any_range_names_the_range_limit() -> None:
+    assert "larger than the pool (4 bytes)" in str(_direct_overflow(_OVERFLOW_SRC))
+
+
+def test_pool_overflow_larger_than_any_range_hint_suggests_splitting() -> None:
+    assert "split 'foo'" in (_direct_overflow(_OVERFLOW_SRC).hint or "")
 
 
 def _link_error(tmp_path: Path, src: str) -> LinkerError:
@@ -225,6 +244,22 @@ def test_link_pool_overflow_names_pool(tmp_path: Path) -> None:
 
 def test_link_pool_overflow_names_largest_free_chunk(tmp_path: Path) -> None:
     assert "largest free chunk: 4 bytes" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+
+
+def test_link_pool_overflow_names_largest_range(tmp_path: Path) -> None:
+    assert "largest range: 4 bytes" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+
+
+def test_link_pool_overflow_larger_than_any_range_message(tmp_path: Path) -> None:
+    assert "larger than the pool (4 bytes)" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+
+
+def test_link_pool_overflow_carries_hint(tmp_path: Path) -> None:
+    assert "hint: split 'foo'" in _link_error(tmp_path, _OVERFLOW_SRC).format()
+
+
+def test_link_pool_overflow_names_total_free(tmp_path: Path) -> None:
+    assert "free in total: 2 bytes" in _link_error(tmp_path, _EXHAUSTED_SRC).format()
 
 
 def test_link_pool_overflow_points_at_alloc_body(tmp_path: Path) -> None:

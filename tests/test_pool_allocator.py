@@ -264,3 +264,88 @@ class TestAllocationDataclass:
         alloc = Allocation(name="x", size=0x100)
         alloc.addr = 0x028000
         assert alloc.placed
+
+
+def _two_bank_pool() -> Pool:
+    """16 bytes at the end of bank $01 + 16 bytes at the start of bank $02."""
+    return _pool(_range(0x01FFF0, 0x01FFFF), _range(0x028000, 0x02800F), name="slack")
+
+
+def _overflow(pool: Pool) -> PoolOverflowError:
+    with pytest.raises(PoolOverflowError) as exc_info:
+        pool.allocate()
+    return exc_info.value
+
+
+def _larger_than_any_range() -> PoolOverflowError:
+    pool = _two_bank_pool()
+    pool.request("big", 20)
+    return _overflow(pool)
+
+
+def _fragmented() -> PoolOverflowError:
+    pool = _two_bank_pool()
+    pool.request("a", 12)
+    pool.request("b", 12)
+    pool.request("c", 8)
+    return _overflow(pool)
+
+
+def _exhausted() -> PoolOverflowError:
+    pool = _two_bank_pool()
+    pool.request("a", 12)
+    pool.request("b", 12)
+    pool.request("c", 10)
+    return _overflow(pool)
+
+
+class TestOverflowMessages:
+    def test_larger_than_any_range_names_the_range_limit(self) -> None:
+        assert "larger than its largest range (16 bytes)" in str(_larger_than_any_range())
+
+    def test_larger_than_any_range_names_the_alloc(self) -> None:
+        assert str(_larger_than_any_range()).startswith("alloc 'big' (20 bytes)")
+
+    def test_larger_than_any_range_explains_bank_rule(self) -> None:
+        assert "a block never spans a bank boundary" in str(_larger_than_any_range())
+
+    def test_larger_than_any_range_carries_largest_range(self) -> None:
+        assert _larger_than_any_range().largest_range == 16
+
+    def test_larger_than_any_range_hint_suggests_splitting(self) -> None:
+        assert "split 'big'" in _larger_than_any_range().hint
+
+    def test_fragmented_says_total_free_suffices(self) -> None:
+        assert "8 bytes free in total but fragmented" in str(_fragmented())
+
+    def test_fragmented_names_largest_free_chunk(self) -> None:
+        assert "largest free chunk is 4 bytes" in str(_fragmented())
+
+    def test_fragmented_carries_total_free(self) -> None:
+        assert _fragmented().total_free == 8
+
+    def test_fragmented_hint_mentions_fragmentation(self) -> None:
+        assert "no single chunk" in _fragmented().hint
+
+    def test_exhausted_names_largest_free_chunk(self) -> None:
+        assert "largest free chunk is 4 bytes" in str(_exhausted())
+
+    def test_exhausted_is_not_reported_as_fragmented(self) -> None:
+        assert "fragmented" not in str(_exhausted())
+
+    def test_exhausted_hint_suggests_growing_the_pool(self) -> None:
+        assert "grow pool 'slack'" in _exhausted().hint
+
+    def test_larger_than_any_range_hint_suggests_growing_a_range(self) -> None:
+        assert "grow a range to at least 20 bytes" in _larger_than_any_range().hint
+
+    def test_larger_than_single_range_pool_reports_pool_size(self) -> None:
+        pool = _pool(_range(0x008000, 0x008001), name="slot")
+        pool.request("blob", 3)
+        expected = "alloc 'blob' (3 bytes) does not fit in pool 'slot': larger than the pool (2 bytes)"
+        assert str(_overflow(pool)) == expected
+
+    def test_larger_than_single_range_pool_hint_suggests_growing_the_pool(self) -> None:
+        pool = _pool(_range(0x008000, 0x008001), name="slot")
+        pool.request("blob", 3)
+        assert "grow the pool to at least 3 bytes" in _overflow(pool).hint

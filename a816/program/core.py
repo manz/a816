@@ -201,7 +201,7 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
                 str(exc),
                 self.resolver.alloc_sites.get((exc.pool_name, exc.alloc_name)),
                 code=str(E_CODEGEN_POOL_OVERFLOW),
-                hint=f"grow pool '{exc.pool_name}' or move code out of it",
+                hint=exc.hint,
             ) from exc
 
         self.resolver_reset()
