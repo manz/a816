@@ -50,6 +50,8 @@ E_PARSER_POOL_NO_RANGES = ErrorCode("E0107", "parser", "pool declares no ranges"
 E_PARSER_UNKNOWN_POOL_STRATEGY = ErrorCode("E0108", "parser", "unknown pool strategy")
 E_PARSER_INCLUDE_FAILED = ErrorCode("E0109", "parser", "include file unreadable")
 E_PARSER_MISSING_OPERAND = ErrorCode("E0115", "parser", "opcode needs an operand")
+E_PARSER_STRUCT_ARRAY_COUNT = ErrorCode("E0120", "parser", "struct array count must be a positive integer")
+E_PARSER_STRUCT_BITFIELD_ARRAY = ErrorCode("E0121", "parser", "bit-field struct fields cannot be arrays")
 
 # --- Symbol resolution (E0200..) ---
 E_SYMBOL_NOT_DEFINED = ErrorCode("E0200", "symbols", "symbol not defined in scope")

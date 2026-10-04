@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,11 +14,14 @@ from typing import Literal, cast
 
 from a816.error_codes import (
     E_PARSER_POOL_NO_RANGES,
+    E_PARSER_STRUCT_ARRAY_COUNT,
+    E_PARSER_STRUCT_BITFIELD_ARRAY,
     E_PARSER_STRUCT_DUPLICATE_FIELD,
     E_PARSER_UNEXPECTED_TOKEN,
     E_PARSER_UNKNOWN_DIRECTIVE_ATTR,
     E_PARSER_UNKNOWN_POOL_STRATEGY,
 )
+from a816.parse.ast.expression import eval_number
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AstNode,
@@ -179,14 +183,18 @@ def parse_for(p: Parser) -> ForAstNode:
 # codegen time against registered struct types so nested layouts compose.
 STRUCT_FIELD_TYPES = {"byte", "word", "long", "dword"}
 
+_BIT_FIELD_TYPE_RE = re.compile(r"u\d+", re.ASCII)
+
 
 def parse_struct(p: Parser) -> StructAstNode:
     """Parse a `.struct Name { ... }` body.
 
-    Field shape is always `type name`. Primitive types are
+    Field shape is `type name` or `type[N] name`. Primitive types are
     `byte/word/long/dword`; `uN` (any positive `N`) declares a
     bit-field of `N` bits packed into the surrounding byte run; any
-    other identifier references a previously declared `.struct`.
+    other identifier references a previously declared `.struct`. The
+    `[N]` suffix declares an array of `N` consecutive elements and
+    travels in the type string (`byte[21]`), like the bit width of `uN`.
     """
     current = p.current()
 
@@ -197,36 +205,63 @@ def parse_struct(p: Parser) -> StructAstNode:
     fields: list[tuple[str, str]] = []
     seen: set[str] = set()
     while p.current().type != TokenType.EOF:
-        if p.current().type == TokenType.COMMENT:
-            p.next()
-            continue
-        if p.current().type == TokenType.COMMA:
+        if p.current().type in (TokenType.COMMENT, TokenType.COMMA):
             p.next()
             continue
         if p.current().type == TokenType.RBRACE:
             break
-
-        type_token = p.current()
-        expect_token(type_token, TokenType.IDENTIFIER)
-        p.next()
-
-        name_token = p.current()
-        expect_token(name_token, TokenType.IDENTIFIER)
-        if name_token.value in seen:
-            raise ParserSyntaxError(
-                f"Duplicate struct field `{name_token.value}`",
-                name_token,
-                TokenType.IDENTIFIER,
-                code=str(E_PARSER_STRUCT_DUPLICATE_FIELD),
-                hint="each field name must be unique within a `.struct` block",
-            )
-        seen.add(name_token.value)
-        p.next()
-        fields.append((name_token.value, type_token.value))
+        fields.append(_parse_struct_field(p, seen))
 
     expect_token(p.next(), TokenType.RBRACE)
 
     return StructAstNode(variable.value, fields, current)
+
+
+def _parse_struct_field(p: Parser, seen: set[str]) -> tuple[str, str]:
+    """Parse one `type name` / `type[N] name` field; return `(name, type)`."""
+    type_token = p.current()
+    expect_token(type_token, TokenType.IDENTIFIER)
+    p.next()
+    field_type = type_token.value
+    if p.current().type == TokenType.LBRAKET:
+        field_type += _parse_struct_array_suffix(p, type_token)
+
+    name_token = p.current()
+    expect_token(name_token, TokenType.IDENTIFIER)
+    if name_token.value in seen:
+        raise ParserSyntaxError(
+            f"Duplicate struct field `{name_token.value}`",
+            name_token,
+            TokenType.IDENTIFIER,
+            code=str(E_PARSER_STRUCT_DUPLICATE_FIELD),
+            hint="each field name must be unique within a `.struct` block",
+        )
+    seen.add(name_token.value)
+    p.next()
+    return name_token.value, field_type
+
+
+def _parse_struct_array_suffix(p: Parser, type_token: Token) -> str:
+    """Consume `[N]` after a field type; return it verbatim for the type string."""
+    if _BIT_FIELD_TYPE_RE.fullmatch(type_token.value):
+        raise ParserSyntaxError(
+            f"bit-field `{type_token.value}` cannot be an array",
+            type_token,
+            code=str(E_PARSER_STRUCT_BITFIELD_ARRAY),
+            hint="declare one `uN` field per bit run, or use a `byte[N]` array",
+        )
+    p.next()
+    count_token = p.next()
+    expect_token(count_token, TokenType.NUMBER)
+    if eval_number(count_token.value) < 1:
+        raise ParserSyntaxError(
+            f"struct array count must be a positive integer, found `{count_token.value}`",
+            count_token,
+            code=str(E_PARSER_STRUCT_ARRAY_COUNT),
+            hint="write the element count as a literal, e.g. `byte[21] title`",
+        )
+    expect_token(p.next(), TokenType.RBRAKET)
+    return f"[{count_token.value}]"
 
 
 def parse_directive_with_quoted_string(p: Parser) -> str:

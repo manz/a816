@@ -69,6 +69,9 @@ separate blocks separated by a blank line.
 - `E0109` include file unreadable — the path resolution failed.
 - `E0115` opcode needs an operand. The opcode is followed by `}` or
   the end of input where its operand should be (`{ lda }`).
+- `E0120` struct array count must be a positive integer
+  (`byte[0] x`); the caret sits on the count.
+- `E0121` bit-field struct fields cannot be arrays (`u4[2] x`).
 
 ### Symbols
 
