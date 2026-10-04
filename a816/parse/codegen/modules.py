@@ -289,7 +289,7 @@ def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
     return [ExternAstNode(name, node.file_info) for name in _runtime_extern_names(node)]
 
 
-_IDENT_HEAD_RE = re.compile(r"(?<![0-9A-Za-z_.])([A-Za-z_][A-Za-z0-9_]*)")
+_IDENT_HEAD_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)", re.ASCII)
 
 
 def _drop_runtime_bound(declarations: list[AstNode], scope_body: list[AstNode]) -> list[AstNode]:
