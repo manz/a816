@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from functools import cache
 from importlib.resources import files
@@ -39,7 +38,7 @@ def _parse_line(text: str) -> _Node:
     head, _, rest = text.partition(" ")
     if head.endswith(":"):
         return _Node(head[:-1], rest.strip(), {})
-    attrs = dict(token.split("=", 1) for token in rest.split() if "=" in token)
+    attrs = {key: value for key, _, value in (token.partition("=") for token in rest.split()) if value}
     return _Node(head, "", attrs)
 
 
@@ -62,10 +61,10 @@ def _parse_bml(text: str) -> list[_Node]:
 
 def _expand_names(name: str) -> list[str]:
     """`SHVC-1A3M-(10,20)` -> `SHVC-1A3M-10`, `SHVC-1A3M-20`; other names as they are."""
-    match = re.fullmatch(r"(.*)\(([^)]*)\)(.*)", name)
-    if match is None:
+    prefix, opened, rest = name.partition("(")
+    variants, closed, suffix = rest.partition(")")
+    if not (opened and closed):
         return [name]
-    prefix, variants, suffix = match.groups()
     return [f"{prefix}{variant.strip()}{suffix}" for variant in variants.split(",")]
 
 
