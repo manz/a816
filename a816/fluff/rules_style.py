@@ -31,8 +31,10 @@ from a816.parse.ast.nodes import (
     LabelDeclAstNode,
     OpcodeAstNode,
     StructAstNode,
+    StructInstanceAstNode,
     SymbolAffectationAstNode,
 )
+from a816.parse.ast.nodes.struct_instance import value_expressions
 from a816.parse.mzparser import A816Parser
 
 
@@ -77,6 +79,8 @@ def _expressions_in_node(node: AstNode) -> Iterable[ExpressionAstNode]:
         case IncludeIpsAstNode():
             if isinstance(node.expression, ExpressionAstNode):
                 yield node.expression
+        case StructInstanceAstNode():
+            yield from value_expressions(node.init)
 
 
 def _walk_cast_nodes(
@@ -251,7 +255,7 @@ def _is_typed_bind_owner(
 
 class UnknownStructTypeCast(Rule):
     code = "S001"
-    description = "cast references an undeclared struct type"
+    description = "cast or `.istruct` references an undeclared struct type"
     rationale = (
         "`(expr as T).field` and `p := (expr as T)` resolve `T` against the "
         "structs declared in the current translation unit. Casting to a "
@@ -270,6 +274,9 @@ class UnknownStructTypeCast(Rule):
                     parent,
                     f"cast targets unknown struct type '{cast.type_name}'",
                 )
+        for node in ctx.flat_nodes:
+            if isinstance(node, StructInstanceAstNode) and node.type_name not in known:
+                yield self.diagnose(ctx, node, f"`.istruct` of unknown struct type '{node.type_name}'")
 
 
 class RedundantTypedCast(Rule):

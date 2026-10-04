@@ -69,6 +69,13 @@ separate blocks separated by a blank line.
 - `E0109` include file unreadable — the path resolution failed.
 - `E0115` opcode needs an operand. The opcode is followed by `}` or
   the end of input where its operand should be (`{ lda }`).
+- `E0120` struct array count must be a positive integer
+  (`byte[0] x`); the caret sits on the count.
+- `E0121` bit-field struct fields cannot be arrays (`u4[2] x`).
+- `E0122` field initialized twice in one `.istruct` (or nested `{ }`)
+  initializer; the caret sits on the second entry.
+- `E0123` string inside a `[...]` initializer list. A byte array takes
+  the string itself: `name = "TEXT"`.
 
 ### Symbols
 
@@ -130,6 +137,16 @@ separate blocks separated by a blank line.
   largest free chunk; the caret sits on the `.alloc` name.
 - `E0319` operator applied to a string and a number.
 - `E0320` `~` operand wider than 32 bits.
+- `E0330` `.istruct` names a struct type that is not declared (or
+  imported) yet; the caret sits on the type.
+- `E0331` `.istruct` initializer names a field the struct does not
+  have; the hint lists the struct's fields.
+- `E0332` initializer value does not fit the field: scalars take an
+  expression, byte arrays a string or `[...]`, other arrays `[...]`,
+  struct fields `{ ... }`.
+- `E0333` string or list initializer longer than its array field.
+- `E0334` non-ASCII character in a string initializer.
+- `E0335` initialized bit-field run wider than 32 bits.
 
 ### Linker
 

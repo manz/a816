@@ -535,6 +535,8 @@ class Linker:
                 if not -0x800000 <= evaluated_value <= 0xFFFFFF:
                     raise ExpressionEvaluationError(expression, f"result {evaluated_value:#x} is out of 24-bit range")
                 self._write_le24(code, offset, evaluated_value & 0xFFFFFF)
+            elif size_bytes == 4:
+                struct.pack_into("<I", code, offset, evaluated_value & 0xFFFFFFFF)
             else:
                 raise ExpressionEvaluationError(expression, f"unsupported operand size: {size_bytes} bytes")
 

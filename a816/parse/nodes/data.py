@@ -99,7 +99,7 @@ class BinaryNode(NodeProtocol):
 class _SizedValueNode(NodeProtocol):
     """Emit `SIZE` little-endian bytes from a value node.
 
-    Concrete subclasses set `SIZE` (1, 2, or 3). Deferred expressions
+    Concrete subclasses set `SIZE` (1, 2, 3 or 4). Deferred expressions
     on the value node register an expression relocation of the same
     width so the linker can fill it in once cross-module names resolve.
     """
@@ -126,6 +126,10 @@ class _SizedValueNode(NodeProtocol):
         return current_pc + self.SIZE
 
 
+class DwordNode(_SizedValueNode):
+    SIZE = 4
+
+
 class LongNode(_SizedValueNode):
     SIZE = 3
 
@@ -136,6 +140,20 @@ class WordNode(_SizedValueNode):
 
 class ByteNode(_SizedValueNode):
     SIZE = 1
+
+
+class BytesNode(NodeProtocol):
+    """Emit a fixed byte string (zero fill, encoded string initializers)."""
+
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    def emit(self, current_address: Address) -> bytes:
+        del current_address
+        return self.data
+
+    def pc_after(self, current_pc: Address) -> Address:
+        return current_pc + len(self.data)
 
 
 class DebugNode(NodeProtocol):
