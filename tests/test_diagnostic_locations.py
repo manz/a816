@@ -135,6 +135,7 @@ EMIT_CASES = [
     pytest.param("*=0x708000\n    nop\n", "E0317", 1, "0x708000", id="unmapped-bank"),
     pytest.param('*=0x8000\n    lda.w #"a" + 1\n', "E0319", 2, "+", id="mismatched-types"),
     pytest.param("*=0x8000\n    lda.w #~0x100000000\n", "E0320", 2, "~", id="bitwise-not-too-wide"),
+    pytest.param("*=0x8000\n.dw ~0x100000000\n", "E0320", 2, "~", id="bitwise-not-too-wide-data"),
     pytest.param(_STRUCT_S + '*=0x8000\n    lda.w ("x" as S).x\n', "E0305", 5, '"x"', id="cast-base-not-address"),
     pytest.param(
         ".macro m(b) {\n    lda.w b\n}\n*=0x8000\n    m({\n    nop\n})\n", "E0209", 2, "b", id="block-used-as-value"
