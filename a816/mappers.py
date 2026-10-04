@@ -29,6 +29,9 @@ MAPPERS: dict[str, tuple[BusMapping, ...]] = {
 #: through its $80+ mirror, so it agrees with `lorom`.
 CLI_MAPPERS: dict[str, str] = {"low": "lorom", "low2": "lorom", "high": "hirom"}
 
+#: Mapper preset -> the `-m` spelling it implies when `-m` is absent.
+MAPPER_CLI_FLAGS: dict[str, str] = {"lorom": "low", "hirom": "high"}
+
 
 def map_on_bus(bus: Bus, mapping: BusMapping) -> None:
     """Declare one region on ``bus``."""

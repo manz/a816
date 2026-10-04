@@ -32,7 +32,7 @@ from a816.config import A816Config, discover_a816_config
 from a816.error_codes import E_CONFIG_MAPPER_MISMATCH
 from a816.exceptions import A816ConfigError, A816Error, LinkerError
 from a816.linker import Linker
-from a816.mappers import CLI_MAPPERS
+from a816.mappers import CLI_MAPPERS, MAPPER_CLI_FLAGS
 from a816.module_builder import apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
@@ -54,7 +54,7 @@ def _apply_a816_toml(args: argparse.Namespace) -> None:
     config = _discover_config(args)
     if config is not None:
         _merge_config(args, config)
-    if getattr(args, "mapping", None) is None:
+    if args.mapping is None:
         args.mapping = _DEFAULT_MAPPING
 
 
@@ -68,9 +68,9 @@ def _discover_config(args: argparse.Namespace) -> A816Config | None:
 def _merge_mapper(args: argparse.Namespace, config: A816Config) -> None:
     if config.mapper is None:
         return
-    cli_mapping = getattr(args, "mapping", None)
+    cli_mapping = args.mapping
     if cli_mapping is None:
-        args.mapping = next(flag for flag, mapper in CLI_MAPPERS.items() if mapper == config.mapper)
+        args.mapping = MAPPER_CLI_FLAGS[config.mapper]
         return
     if CLI_MAPPERS[cli_mapping] != config.mapper:
         raise A816ConfigError(
