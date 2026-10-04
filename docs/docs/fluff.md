@@ -169,8 +169,8 @@ include-paths = ["src/include"]
 
 This means a project that already configures the LSP via `a816.toml`
 gets the same module / include resolution from fluff with no extra
-flags. The `entrypoint` and `module-paths` fields are read but only
-consumed by the LSP today.
+flags. `module-paths` lets struct-type rules follow `.import` chains;
+`entrypoint` is only used by the LSP.
 
 ## Editor integration
 

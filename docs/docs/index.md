@@ -238,14 +238,68 @@ cross-TU usage, error model, and migration from the manual pattern.
 
 ## Project configuration (`a816.toml`)
 
-Drop an `a816.toml` at the project root to declare the entrypoint and
-search paths. Currently consumed by the LSP server; see [LSP](lsp.md).
+Drop an `a816.toml` at the project root. `a816 build` (and the bare
+`a816 <file>` form) finds it by walking up from the first input file;
+the LSP and fluff read the same file.
 
 ```toml
 entrypoint    = "src/main.s"
 include-paths = ["src/include"]
 module-paths  = ["src/modules"]
+mapper        = "hirom"
+
+[[map]]
+identifier = 3
+bank_range = [0x70, 0x7d]
+addr_range = [0x0000, 0x7fff]
+mask       = 0x8000
+writable   = true
+
+[experimental]
+track_register_size = true
 ```
+
+| Key | Read by | Meaning |
+|-----|---------|---------|
+| `entrypoint` | LSP | root file the server indexes from |
+| `include-paths` | build, LSP, fluff | directories searched by `.include` |
+| `module-paths` | build, LSP, fluff | directories searched by `.import` |
+| `mapper` | build | fixed cartridge preset: `"lorom"` or `"hirom"` |
+| `[[map]]` | build | one bus region, same keys as `.map` |
+| `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
+
+`--include-path` / `-I` replace the file's `include-paths` /
+`module-paths`; `--experimental` flags add to `[experimental]`.
+
+### Bus map: `mapper` and `[[map]]`
+
+The cartridge layout belongs to the project, not to each module. The
+regions declared here are put on the bus of every translation unit
+before its own `.map` lines run, so a module with no local `.map` still
+places code in the project's banks. In object mode they are written
+into each `.o` like a source `.map`; the linker keeps one copy.
+
+- `mapper` expands to the regions of the matching default bus:
+  `lorom` is identifier 1 (`$00-$6F:$8000-$FFFF`, mirrored at
+  `$80-$CF`) plus identifier 2 (WRAM `$7E-$7F`, writable); `hirom` is
+  identifier 1 (`$40-$7F:$0000-$FFFF`, mirrored at `$C0-$FF`) plus the
+  same WRAM region. ExHiROM has no preset: a region always starts at
+  physical offset 0, so it cannot express a ROM split across two bank
+  windows. Declare such layouts with `[[map]]`.
+- Each `[[map]]` table takes `identifier` (integer), `bank_range`,
+  `addr_range`, `mask`, and optionally `writable` (boolean) and
+  `mirror_bank_range`. They come after the `mapper` regions; an
+  identifier used twice is an error (`E0507`).
+- A source `.map` with the same identifier and the same shape as a
+  toml region is accepted and does nothing; a different shape fails
+  with `E0308` on the source line.
+- Declaring any region replaces the `-m` default bus, exactly as a
+  source `.map` does. With `mapper` absent, list every region the
+  project uses.
+- `-m` and `mapper` must agree (`low` / `low2` with `lorom`, `high`
+  with `hirom`), otherwise the build stops with `E0508`. Without `-m`,
+  `mapper` selects it. Without either, `-m low` applies.
+- Changing the bus map rebuilds every cached object.
 
 ## LSP
 

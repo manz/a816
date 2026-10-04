@@ -106,8 +106,9 @@ separate blocks separated by a blank line.
 - `E0306` operand size mismatch.
 - `E0307` addressing mode not supported by opcode.
 - `E0308` conflicting `.map` declaration. Two modules (or a module
-  and one it `.import`s) declare the same identifier with different
-  ranges, mask, writable flag or mirror.
+  and one it `.import`s, or a module and the `a816.toml` bus map)
+  declare the same identifier with different ranges, mask, writable
+  flag or mirror.
 - `E0309` byte immediate does not fit in 8 bits: an explicit `.b`
   immediate whose value exceeds `0xFF`.
 - `E0310` code emitted outside any placement. Under `a816 build`,
@@ -150,6 +151,16 @@ separate blocks separated by a blank line.
 - `E0501` invalid project config.
 - `E0502` `.include_ips` file is not an IPS patch (no `PATCH`
   header). An unreadable `.include_ips` path reports `E0500`.
+- `E0504` `mapper` in `a816.toml` names no supported preset
+  (`lorom`, `hirom`).
+- `E0505` malformed `[[map]]` entry: not a table, an unknown key, or a
+  missing `identifier` / `bank_range` / `addr_range` / `mask`.
+- `E0506` a `[[map]]` key holds the wrong type: ranges are
+  `[start, end]` integer pairs, `identifier` and `mask` integers,
+  `writable` a boolean.
+- `E0507` a bus-map identifier is declared twice in `a816.toml`
+  (including a `[[map]]` reusing a `mapper` region's identifier).
+- `E0508` `-m` disagrees with the `a816.toml` `mapper`.
 
 ## LSP integration
 
