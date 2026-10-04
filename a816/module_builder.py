@@ -23,7 +23,7 @@ from a816.parse.ast.nodes import (
     AstNode,
     ImportAstNode,
 )
-from a816.parse.mzparser import A816Parser
+from a816.parse.mzparser import A816Parser, ParserResult
 
 logger = logging.getLogger("a816.module_builder")
 
@@ -128,6 +128,9 @@ class ModuleBuilder:
         self.bus_map: list[BusMapping] = list(bus_map or [])
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
+        # Discovery parses every module with the same inputs compile uses,
+        # so compile reuses the AST instead of scanning + parsing twice.
+        self._parsed: dict[str, ParserResult] = {}
 
     def discover_imports(self, source_file: Path, parsed_nodes: list[AstNode] | None = None) -> None:
         """Recursively discover all imports starting from a source file.
@@ -153,7 +156,14 @@ class ModuleBuilder:
                 nodes = parsed_nodes
             else:
                 content = source_path.read_text(encoding="utf-8")
-                nodes = A816Parser.parse_as_ast(content, str(source_path)).nodes
+                parsed = A816Parser.parse_as_ast(
+                    content,
+                    str(source_path),
+                    include_paths=list(dict.fromkeys(self.include_paths)),
+                    verbose_errors=True,
+                )
+                self._parsed[module_name] = parsed
+                nodes = parsed.nodes
 
             imports = self._collect_imports(nodes)
 
@@ -312,7 +322,7 @@ class ModuleBuilder:
             # re-publish them here - otherwise every downstream `.o` gains
             # a duplicate GLOBAL and the linker rejects the build.
             program.resolver.imported_symbol_names.add(name)
-        result = program.assemble_as_object(str(source_path), obj_path)
+        result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
         if result != 0:
             raise RuntimeError(f"Failed to compile module '{module_name}'")
         return set(program.resolver.dependency_files)
@@ -440,9 +450,6 @@ def build_with_imports(
     if main_source.parent not in paths:
         paths = [main_source.parent] + paths
 
-    parse_result = A816Parser.parse_as_ast(main_source.read_text(encoding="utf-8"), str(main_source))
-    main_nodes = parse_result.nodes
-
     try:
         builder = ModuleBuilder(
             module_paths=paths,
@@ -453,7 +460,7 @@ def build_with_imports(
             bus_map=bus_map,
         )
 
-        linked = builder.build(main_source, parsed_main_nodes=main_nodes)
+        linked = builder.build(main_source)
 
         # Output the final file
         from a816.program import Program

@@ -18,7 +18,7 @@ from a816.context import AssemblyMode
 from a816.cpu.cpu_65c816 import RomType
 from a816.exceptions import AssemblyError
 from a816.object_file import SymbolSection, SymbolType
-from a816.parse.mzparser import A816Parser
+from a816.parse.mzparser import A816Parser, ParserResult
 from a816.parse.nodes import NodeError
 from a816.protocols import NodeProtocol
 from a816.writers import IPSWriter, ObjectWriter, OverlapError, SFCWriter, WriteAuditor, Writer
@@ -165,7 +165,7 @@ class AssembleMixin:
         self._flush_emit_trace(sfc_file)
         return exit_code
 
-    def assemble_as_object(self, asm_file: str, output_file: Path) -> int:
+    def assemble_as_object(self, asm_file: str, output_file: Path, parsed: ParserResult | None = None) -> int:
         """
         Compile assembly file to object file for later linking.
         :param asm_file: Input assembly file
@@ -176,7 +176,7 @@ class AssembleMixin:
         object_writer.begin()
 
         try:
-            exit_code = self.assemble_with_object_emitter(asm_file, object_writer)
+            exit_code = self.assemble_with_object_emitter(asm_file, object_writer, parsed)
             object_writer.end()
             return exit_code
         except RuntimeError as e:
@@ -248,7 +248,9 @@ class AssembleMixin:
         # contributed by an inlined `.import`; owner's `.o` is the sole source
         return name in self.resolver.imported_symbol_names
 
-    def assemble_with_object_emitter(self, asm_file: str, object_writer: ObjectWriter) -> int:
+    def assemble_with_object_emitter(
+        self, asm_file: str, object_writer: ObjectWriter, parsed: ParserResult | None = None
+    ) -> int:
         """Assemble with object file emission, collecting symbols and relocations."""
         previous_mode = self.resolver.context.mode
         previous_writer = self.resolver.context.object_writer
@@ -260,7 +262,7 @@ class AssembleMixin:
                 input_program = f.read()
 
             try:
-                error, nodes = self.parser.parse(input_program, asm_file)
+                error, nodes = self.parser.parse(input_program, asm_file, parsed=parsed)
                 if error is not None:
                     self.logger.error(error)
                     return -1
