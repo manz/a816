@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from a816.module_builder import ModuleBuilder
 
 # Parked-in-the-past object mtime; a rebuild moves it to wall-clock now.
@@ -171,7 +173,7 @@ def _park_all(tmpdir: Path) -> None:
         _set_mtime(obj, _SENTINEL)
 
 
-def test_warm_build_reuses_cached_imports_without_parsing(tmp_path: Path, monkeypatch) -> None:
+def test_warm_build_reuses_cached_imports_without_parsing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from a816.parse.mzparser import A816Parser
 
     main = _write_lib_and_main(tmp_path, '.import "lib"\n*= 0x008000\nmain:\n    jsr.w lib_func\n    rts\n')
