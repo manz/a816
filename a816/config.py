@@ -17,11 +17,12 @@ from a816.error_codes import (
     E_CONFIG_BAD_MAP_VALUE,
     E_CONFIG_INVALID,
     E_CONFIG_MAPPER_AND_MAP,
+    E_CONFIG_MAPPER_MISMATCH,
     E_CONFIG_UNKNOWN_MAPPER,
     ErrorCode,
 )
 from a816.exceptions import A816ConfigError
-from a816.mappers import MAPPERS
+from a816.mappers import CLI_MAPPERS, MAPPER_CLI_FLAGS, MAPPERS
 from a816.object_file import BusMapping
 
 CONFIG_FILENAME = "a816.toml"
@@ -212,3 +213,64 @@ def discover_a816_config(start: Path) -> A816Config | None:
     if found is None:
         return None
     return load_a816_toml(found)
+
+
+@dataclass(frozen=True)
+class BuildSettings:
+    """Build inputs after merging caller values over `a816.toml`."""
+
+    mapping: str | None
+    bus_map: list[BusMapping]
+    include_paths: list[Path]
+    module_paths: list[Path]
+    experimental: list[str]
+
+
+def merge_build_settings(
+    config: A816Config | None,
+    *,
+    mapping: str | None = None,
+    bus_map: list[BusMapping] | None = None,
+    include_paths: list[Path] | None = None,
+    module_paths: list[Path] | None = None,
+    experimental: list[str] | None = None,
+) -> BuildSettings:
+    """Merge caller-supplied build inputs over a project's `a816.toml`.
+
+    Shared by the CLI and `build_with_imports` so both entry points build
+    the same thing. A value the caller gives (non-empty) wins over the
+    file; the file fills the rest. Experimental flags are the union of
+    both. `mapping` (the `-m` flag) must agree with the toml `mapper`:
+    the toml regions are seeded into every object, so letting one side
+    silently win would build a bus that matches neither.
+
+    Raises:
+        A816ConfigError: `mapping` disagrees with the toml `mapper`.
+    """
+    flags = list(experimental or [])
+    if config is None:
+        return BuildSettings(mapping, list(bus_map or []), list(include_paths or []), list(module_paths or []), flags)
+    for flag, enabled in config.experimental.items():
+        if enabled and flag not in flags:
+            flags.append(flag)
+    return BuildSettings(
+        mapping=_merge_mapping(mapping, config),
+        bus_map=list(bus_map) if bus_map else list(config.bus_map),
+        include_paths=list(include_paths) if include_paths else list(config.include_paths),
+        module_paths=list(module_paths) if module_paths else list(config.module_paths),
+        experimental=flags,
+    )
+
+
+def _merge_mapping(mapping: str | None, config: A816Config) -> str | None:
+    if config.mapper is None:
+        return mapping
+    if mapping is None:
+        return MAPPER_CLI_FLAGS[config.mapper]
+    if CLI_MAPPERS[mapping] != config.mapper:
+        raise A816ConfigError(
+            E_CONFIG_MAPPER_MISMATCH,
+            f"`-m {mapping}` disagrees with `mapper = {config.mapper!r}`; drop one of them",
+            config.config_path,
+        )
+    return mapping

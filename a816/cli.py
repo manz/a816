@@ -28,11 +28,10 @@ import logging
 import sys
 from pathlib import Path
 
-from a816.config import A816Config, discover_a816_config
-from a816.error_codes import E_CONFIG_MAPPER_MISMATCH
-from a816.exceptions import A816ConfigError, A816Error, LinkerError
+from a816.config import A816Config, discover_a816_config, merge_build_settings
+from a816.exceptions import A816Error, LinkerError
 from a816.linker import Linker
-from a816.mappers import CLI_MAPPERS, MAPPER_CLI_FLAGS
+from a816.mappers import CLI_MAPPERS
 from a816.module_builder import apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
@@ -47,15 +46,21 @@ _DEFAULT_MAPPING = "low"
 def _apply_a816_toml(args: argparse.Namespace) -> None:
     """Merge `a816.toml` settings into `args` (CLI flags win over file).
 
-    `-m` and the toml `mapper` must agree: the toml regions are seeded
-    into every object, so letting `-m` silently win would build a bus
-    that matches neither. Without `-m`, the toml `mapper` picks it.
+    `-m` and the toml `mapper` must agree (see `merge_build_settings`).
+    Without either, the default mapping applies.
     """
-    config = _discover_config(args)
-    if config is not None:
-        _merge_config(args, config)
-    if args.mapping is None:
-        args.mapping = _DEFAULT_MAPPING
+    settings = merge_build_settings(
+        _discover_config(args),
+        mapping=args.mapping,
+        include_paths=[Path(p) for p in args.include_paths],
+        module_paths=[Path(p) for p in args.module_paths],
+        experimental=list(args.experimental or []),
+    )
+    args.mapping = settings.mapping or _DEFAULT_MAPPING
+    args.bus_map = settings.bus_map
+    args.include_paths = [str(p) for p in settings.include_paths]
+    args.module_paths = [str(p) for p in settings.module_paths]
+    args.experimental = settings.experimental
 
 
 def _discover_config(args: argparse.Namespace) -> A816Config | None:
@@ -63,36 +68,6 @@ def _discover_config(args: argparse.Namespace) -> A816Config | None:
         return None
     start = args.input_files[0]
     return discover_a816_config(start if start.is_file() else start.parent)
-
-
-def _merge_mapper(args: argparse.Namespace, config: A816Config) -> None:
-    if config.mapper is None:
-        return
-    cli_mapping = args.mapping
-    if cli_mapping is None:
-        args.mapping = MAPPER_CLI_FLAGS[config.mapper]
-        return
-    if CLI_MAPPERS[cli_mapping] != config.mapper:
-        raise A816ConfigError(
-            E_CONFIG_MAPPER_MISMATCH,
-            f"`-m {cli_mapping}` disagrees with `mapper = {config.mapper!r}`; drop one of them",
-            config.config_path,
-        )
-
-
-def _merge_config(args: argparse.Namespace, config: A816Config) -> None:
-    _merge_mapper(args, config)
-    args.bus_map = list(config.bus_map)
-    if config.include_paths and not args.include_paths:
-        args.include_paths = [str(p) for p in config.include_paths]
-    if config.module_paths and not args.module_paths:
-        args.module_paths = [str(p) for p in config.module_paths]
-    # Mirror [experimental] from a816.toml. CLI --experimental wins
-    # on overlap (already in args.experimental as a list of flag names).
-    cli_flags = set(args.experimental or [])
-    for flag, enabled in config.experimental.items():
-        if enabled and flag not in cli_flags:
-            args.experimental = (args.experimental or []) + [flag]
 
 
 _ASM_SUFFIXES = (".s", ".asm")
@@ -206,6 +181,7 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         experimental=list(args.experimental or []),
         mapping=args.mapping,
         bus_map=list(args.bus_map),
+        use_a816_toml=False,
     )
     return result.exit_code
 
