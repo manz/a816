@@ -94,7 +94,7 @@ class Token:
     def __init__(self, type_: TokenType, value: str, position: Position | None = None) -> None:
         self.type: TokenType = type_
         self.value: str = value
-        self.position = position
+        self._locate(position)
 
     @classmethod
     def located(cls, type_: TokenType, value: str, line: int, column: int, file: File) -> "Token":
@@ -113,8 +113,7 @@ class Token:
             return None
         return Position(self._line, self._column, self._file)
 
-    @position.setter
-    def position(self, position: Position | None) -> None:
+    def _locate(self, position: Position | None) -> None:
         if position is None:
             self._line, self._column, self._file = 0, 0, None
         else:
