@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from a816.object_file import BusMapping
     from a816.program import Program
 
+from a816.config import discover_a816_config, merge_build_settings
 from a816.exceptions import A816Error
 from a816.linker import Linker
 from a816.module_loader import resolve_module
@@ -121,7 +122,10 @@ class ModuleBuilder:
             symbols: Predefined symbols (e.g., LANG=1) for conditional compilation.
             include_paths: Directories to search for .include files.
             experimental: Experimental feature flags applied to every module compile.
-            bus_map: `a816.toml` bus regions seeded onto every module's bus.
+            bus_map: Bus regions seeded onto every module's bus.
+        use_a816_toml: Merge the nearest `a816.toml` above `main_source`
+            under the arguments above (`merge_build_settings`), so an API
+            build matches `a816 build`. Pass False for a bare build.
         """
         self.module_paths = module_paths or []
         self.output_dir = output_dir or Path("build/obj")
@@ -439,6 +443,7 @@ def build_with_imports(
     experimental: list[str] | None = None,
     mapping: str | None = None,
     bus_map: "list[BusMapping] | None" = None,
+    use_a816_toml: bool = True,
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
@@ -462,6 +467,19 @@ def build_with_imports(
     """
     main_source = Path(main_source)
     output_file = Path(output_file)
+
+    if use_a816_toml:
+        settings = merge_build_settings(
+            discover_a816_config(main_source.parent),
+            mapping=mapping,
+            bus_map=bus_map,
+            include_paths=include_paths,
+            module_paths=module_paths,
+            experimental=experimental,
+        )
+        mapping, bus_map = settings.mapping, settings.bus_map
+        include_paths, module_paths = settings.include_paths, settings.module_paths
+        experimental = settings.experimental
 
     paths = module_paths or []
     if main_source.parent not in paths:
