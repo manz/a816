@@ -139,17 +139,27 @@ def _item_has_comment(item: _Item) -> bool:
 
 
 def render_value(value: InitValue) -> list[str]:
-    """Render a value: one line when it holds no comments, else a block."""
+    """Render a value on one line, or as a block when it holds comments
+    or the author spread it over several lines."""
     if isinstance(value, StructInitAstNode):
-        return _render_aggregate(value.items, "{", "}", separator="")
+        return _render_aggregate(value, "{", "}", separator="")
     if isinstance(value, ListInitAstNode):
-        return _render_aggregate(value.items, "[", "]", separator=",")
+        return _render_aggregate(value, "[", "]", separator=",")
     return [value.to_canonical()]
 
 
-def _render_aggregate(items: Sequence[_Item], opener: str, closer: str, separator: str) -> list[str]:
+def _spans_lines(value: StructInitAstNode | ListInitAstNode) -> bool:
+    opened = value.file_info.position
+    closed = value.close_token.position if value.close_token is not None else None
+    return opened is not None and closed is not None and opened.line != closed.line
+
+
+def _render_aggregate(
+    value: StructInitAstNode | ListInitAstNode, opener: str, closer: str, separator: str
+) -> list[str]:
+    items: Sequence[_Item] = value.items
     entries = [item for item in items if not isinstance(item, InitCommentAstNode)]
-    if not any(_item_has_comment(item) for item in items):
+    if not _spans_lines(value) and not any(_item_has_comment(item) for item in items):
         inline = ", ".join(_render_entry(entry)[0] for entry in entries)
         if opener == "{":
             return [f"{{ {inline} }}"] if inline else ["{}"]

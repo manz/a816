@@ -96,3 +96,8 @@ def test_list_init_canonical() -> None:
 def test_struct_init_canonical() -> None:
     node = _instance(".istruct A { pos = { x = 1 } }\n")
     assert node.init.to_canonical() == "{ pos = { x = 1 } }"
+
+
+def test_formatter_keeps_multi_line_nested_value_multi_line() -> None:
+    src = ".istruct A {\n    pos = {\n        x = 1\n        y = 2\n    }\n    pts = [\n        { x = 1 },\n        {}\n    ]\n}\n"
+    assert _format(_DECLS + src) == _DECLS + src
