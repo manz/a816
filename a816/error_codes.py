@@ -49,6 +49,7 @@ E_PARSER_UNKNOWN_DIRECTIVE_ATTR = ErrorCode("E0106", "parser", "unknown directiv
 E_PARSER_POOL_NO_RANGES = ErrorCode("E0107", "parser", "pool declares no ranges")
 E_PARSER_UNKNOWN_POOL_STRATEGY = ErrorCode("E0108", "parser", "unknown pool strategy")
 E_PARSER_INCLUDE_FAILED = ErrorCode("E0109", "parser", "include file unreadable")
+E_PARSER_MISSING_OPERAND = ErrorCode("E0115", "parser", "opcode needs an operand")
 
 # --- Symbol resolution (E0200..) ---
 E_SYMBOL_NOT_DEFINED = ErrorCode("E0200", "symbols", "symbol not defined in scope")

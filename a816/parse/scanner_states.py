@@ -14,6 +14,7 @@ from a816.parse.tokens import EOF, TokenType
 
 opcodes = snes_opcode_table.keys()
 opcodes_without_operand = get_opcodes_with_addressing(AddressingMode.none)
+implied_only_opcodes = {name for name in opcodes_without_operand if len(snes_opcode_table[name]) == 1}
 
 # Character sets for identifier parsing
 IDENTIFIER_START_CHARS = "_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -251,24 +252,48 @@ def lex_opcode_size(s: "Scanner") -> None:
         )
 
 
+def _ends_statement(s: "Scanner") -> bool:
+    """True when only blanks / a comment separate the cursor from a line end,
+    end of input, or a closing `}` (`{ inc }` on one line)."""
+    saved_pos = s.pos
+    s.accept_run(" \t")
+    if s.accept(";"):
+        s.accept_run("\n\0", negate=True)
+    ended = s.peek() in ("\n", "}", EOF)
+    s.pos = saved_pos
+    return ended
+
+
+def _next_word_is_opcode(s: "Scanner") -> bool:
+    """True when the next word on the line is a mnemonic (`nop nop`)."""
+    saved_pos = s.pos
+    s.accept_run(" \t")
+    word_start = s.pos
+    s.accept_run(IDENTIFIER_CHARS)
+    word = s.input[word_start : s.pos].lower()
+    s.pos = saved_pos
+    return word in opcodes
+
+
+def _is_naked_opcode(s: "Scanner", opcode_candidate: str) -> bool:
+    """An operand-less opcode with nothing after it (no `.size` suffix).
+
+    Implied-only mnemonics (`rts`, `nop`) never take an operand, so a
+    following mnemonic starts a new statement (`{ nop nop }`).
+    """
+    if opcode_candidate not in opcodes_without_operand or s.peek() == ".":
+        return False
+    if _ends_statement(s):
+        return True
+    return opcode_candidate in implied_only_opcodes and _next_word_is_opcode(s)
+
+
 def lex_opcode(s: "Scanner") -> None:
     opcode_candidate = s.input[s.start : s.pos].lower()
-    if opcode_candidate in opcodes_without_operand and s.peek() != ".":
-        saved_pos = s.pos
-
-        s.accept_run(" \t")
-        if s.accept(";"):
-            s.accept_run("\n\0", negate=True)
-
-        if s.peek() == "\n" or s.peek() == EOF:
-            s.pos = saved_pos
-            s.emit(TokenType.OPCODE_NAKED)
-            return
-        else:
-            s.pos = saved_pos
-            s.emit(TokenType.OPCODE)
-    else:
-        s.emit(TokenType.OPCODE)
+    if _is_naked_opcode(s, opcode_candidate):
+        s.emit(TokenType.OPCODE_NAKED)
+        return
+    s.emit(TokenType.OPCODE)
 
     if s.accept("."):
         lex_opcode_size(s)

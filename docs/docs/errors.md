@@ -67,6 +67,8 @@ separate blocks separated by a blank line.
   one `range LO HI`.
 - `E0108` unknown pool strategy — accepted values: `pack`, `order`.
 - `E0109` include file unreadable — the path resolution failed.
+- `E0115` opcode needs an operand. The opcode is followed by `}` or
+  the end of input where its operand should be (`{ lda }`).
 
 ### Symbols
 
