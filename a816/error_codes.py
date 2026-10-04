@@ -95,6 +95,11 @@ E_LINKER_UNDECLARED_POOL = ErrorCode("E0405", "linker", "alloc request names a p
 E_IO_FILE_NOT_FOUND = ErrorCode("E0500", "io", "file not found")
 E_CONFIG_INVALID = ErrorCode("E0501", "config", "invalid project config")
 E_IO_NOT_IPS = ErrorCode("E0502", "io", "`.include_ips` file is not an IPS patch")
+E_CONFIG_UNKNOWN_MAPPER = ErrorCode("E0504", "config", "`mapper` names no supported cartridge mapper")
+E_CONFIG_BAD_MAP_ENTRY = ErrorCode("E0505", "config", "malformed `[[map]]` entry")
+E_CONFIG_BAD_MAP_VALUE = ErrorCode("E0506", "config", "`[[map]]` key holds a value of the wrong type")
+E_CONFIG_DUPLICATE_MAP = ErrorCode("E0507", "config", "`[[map]]` identifier declared twice")
+E_CONFIG_MAPPER_MISMATCH = ErrorCode("E0508", "config", "`-m` disagrees with the a816.toml `mapper`")
 
 
 _BY_CODE: dict[str, ErrorCode] = {obj.code: obj for obj in globals().values() if isinstance(obj, ErrorCode)}

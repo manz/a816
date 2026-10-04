@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from a816.error_codes import ErrorCode
     from a816.parse.tokens import Token
 
 
@@ -64,6 +67,23 @@ class UnableToEvaluateSize(A816Error):
 
 class FormattingError(A816Error):
     """Raised when the formatter cannot process the input."""
+
+
+class A816ConfigError(A816Error):
+    """Raised when `a816.toml` holds a value the assembler cannot use."""
+
+    def __init__(self, code: ErrorCode, message: str, config_path: Path | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.config_path = config_path
+
+    def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.errors import format_error_simple
+
+        details = [("config", str(self.config_path))] if self.config_path is not None else None
+        return format_error_simple(f"config error[{self.code}]", self.message, details=details)
 
 
 # =============================================================================

@@ -6,6 +6,7 @@ from a816.context import AssemblyContext
 from a816.cpu.mapping import Address, Bus
 from a816.cpu.types import RomType
 from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
+from a816.mappers import build_mapper_bus
 from a816.parse.ast.nodes import BlockAstNode
 from a816.parse.tokens import Token
 from a816.pool import Pool
@@ -255,19 +256,8 @@ class NamedScope(Scope):
         self.name = name
 
 
-low_rom_bus = Bus("low_rom_default_mapping")
-
-low_rom_bus.map("1", (0x00, 0x6F), (0x8000, 0xFFFF), mask=0x8000, mirror_bank_range=(0x80, 0xCF))
-low_rom_bus.map("2", (0x7E, 0x7F), (0, 0xFFFF), mask=0x1_0000, writeable=True)
-
-low_rom_bus.editable = False
-
-high_rom_bus = Bus("high_rom_default_mapping")
-
-high_rom_bus.map("1", (0x40, 0x7F), (0, 0xFFFF), mask=0x1_0000, mirror_bank_range=(0xC0, 0xFF))
-high_rom_bus.map("2", (0x7E, 0x7F), (0, 0xFFFF), mask=0x1_0000, writeable=True)
-
-high_rom_bus.editable = False
+low_rom_bus = build_mapper_bus("low_rom_default_mapping", "lorom")
+high_rom_bus = build_mapper_bus("high_rom_default_mapping", "hirom")
 
 BUS_MAPPING = {RomType.low_rom: low_rom_bus, RomType.high_rom: high_rom_bus}
 
