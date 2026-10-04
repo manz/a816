@@ -412,6 +412,17 @@ class Resolver:
         for pool in self.pools.values():
             pool.allocate()
 
+    def reset_register_sizes(self) -> None:
+        """Back to the power-on 8-bit A/X sizes, before each label pass and emission.
+
+        Labels bind from one walk and bytes come from another; both must
+        start from the same state or a trailing `rep` / `.a16` from the
+        previous walk resizes opcodes ahead of it.
+        """
+        self.a_size = 8
+        self.i_size = 8
+        self.forget_register_sizes()
+
     def forget_register_sizes(self) -> None:
         """Mark A/X sizes unknown (new placement block, `plp`, ...)."""
         self.a_size_known = False

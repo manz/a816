@@ -40,7 +40,7 @@ class ObjectEmitMixin:
         # If the source begins with `*=`, that emit immediately closes this
         # placeholder section and opens a new explicit one.
         object_writer.start_section(self.resolver.reloc_address.logical_value, explicit=False)
-        self.resolver.forget_register_sizes()
+        self.resolver.reset_register_sizes()
         # Without `require_placement` the implicit section is a legitimate
         # home: the `.o` stays relocatable and the linker places it.
         state = ObjectEmitState(current_block=b"", placed=not self.resolver.context.require_placement)

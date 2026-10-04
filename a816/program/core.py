@@ -127,11 +127,13 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
     def resolver_reset(self) -> None:
         """Reset the resolver state to initial values.
 
-        Resets PC, scope tracking, and current scope pointer for a fresh pass.
+        Resets PC, scope tracking, current scope pointer and A/X sizes for
+        a fresh pass.
         """
         self.resolver.pc = 0x000000
         self.resolver.last_used_scope = 0
         self.resolver.current_scope = self.resolver.scopes[0]
+        self.resolver.reset_register_sizes()
 
     @staticmethod
     def _mark_import_winners(program_nodes: list[NodeProtocol]) -> None:
@@ -180,6 +182,7 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
             program_nodes: List of executable nodes from parsing.
         """
         self.resolver.last_used_scope = 0
+        self.resolver.reset_register_sizes()
 
         previous_pc = self.resolver.reloc_address
 
