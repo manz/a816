@@ -80,10 +80,13 @@ class AllocAstNode(AstNode):
         *,
         at_address: ExpressionAstNode | None = None,
         at_size: ExpressionAstNode | None = None,
+        pool_token: Token | None = None,
     ) -> None:
         super().__init__("alloc", file_info)
         self.name = name
         self.pool_name = pool_name
+        # Source token of POOL; unknown-pool diagnostics underline it.
+        self.pool_token = pool_token
         self.body = body
         self.at_address = at_address
         self.at_size = at_size
@@ -131,12 +134,14 @@ class RelocateAstNode(AstNode):
         pool_name: str,
         body: BlockAstNode,
         file_info: Token,
+        pool_token: Token | None = None,
     ) -> None:
         super().__init__("relocate", file_info)
         self.symbol = symbol
         self.old_start = old_start
         self.old_end = old_end
         self.pool_name = pool_name
+        self.pool_token = pool_token
         self.body = body
 
     def to_representation(self) -> tuple[Any, ...]:

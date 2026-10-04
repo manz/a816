@@ -87,3 +87,33 @@ def test_undefined_symbol_line(src: str, line: int, token: str) -> None:
 @pytest.mark.parametrize(("src", "line", "token"), SYMBOL_CASES)
 def test_undefined_symbol_caret(src: str, line: int, token: str) -> None:
     assert _assemble_error(src).underlined == token
+
+
+_BSS_POOL = ".pool st { range 0x7e2000 0x7e2fff bss }\n"
+
+PLACEMENT_CASES = [
+    pytest.param(".alloc foo in NOPE {\n    nop\n}\n", "E0205", 1, "NOPE", id="alloc-unknown-pool"),
+    pytest.param(".alloc in NOPE {\n    nop\n}\n", "E0205", 1, "NOPE", id="anon-alloc-unknown-pool"),
+    pytest.param(".reserve thing 4 in nopool\n", "E0205", 1, "nopool", id="reserve-unknown-pool"),
+    pytest.param(_STRUCT_S + ".reserve thing as S in nopool\n", "E0205", 4, "nopool", id="typed-reserve-unknown-pool"),
+    pytest.param(_BSS_POOL + ".reserve thing as Nope in st\n", "E0206", 2, "Nope", id="typed-reserve-unknown-type"),
+    pytest.param(
+        ".relocate sym 0x8000 0x8010 into gone {\n    nop\n}\n", "E0205", 1, "gone", id="relocate-unknown-pool"
+    ),
+    pytest.param(".reclaim gone 0x8000 0x8010\n", "E0205", 1, "gone", id="reclaim-unknown-pool"),
+]
+
+
+@pytest.mark.parametrize(("src", "code", "line", "token"), PLACEMENT_CASES)
+def test_placement_code(src: str, code: str, line: int, token: str) -> None:
+    assert _assemble_error(src).code == code
+
+
+@pytest.mark.parametrize(("src", "code", "line", "token"), PLACEMENT_CASES)
+def test_placement_line(src: str, code: str, line: int, token: str) -> None:
+    assert _assemble_error(src).line == line
+
+
+@pytest.mark.parametrize(("src", "code", "line", "token"), PLACEMENT_CASES)
+def test_placement_caret(src: str, code: str, line: int, token: str) -> None:
+    assert _assemble_error(src).underlined == token

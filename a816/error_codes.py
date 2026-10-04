@@ -54,6 +54,8 @@ E_PARSER_INCLUDE_FAILED = ErrorCode("E0109", "parser", "include file unreadable"
 E_SYMBOL_NOT_DEFINED = ErrorCode("E0200", "symbols", "symbol not defined in scope")
 E_SYMBOL_EXTERNAL_NOT_ALLOWED = ErrorCode("E0201", "symbols", "external reference outside object mode")
 E_SYMBOL_UNRESOLVABLE_EXPRESSION = ErrorCode("E0202", "symbols", "expression failed to evaluate")
+E_SYMBOL_UNKNOWN_POOL = ErrorCode("E0205", "symbols", "placement into an undeclared pool")
+E_SYMBOL_RESERVE_UNKNOWN_TYPE = ErrorCode("E0206", "symbols", "`.reserve ... as` names an unknown struct type")
 
 # --- Codegen (E0300..) ---
 E_CODEGEN_NODE_ERROR = ErrorCode("E0300", "codegen", "node failed during emission")

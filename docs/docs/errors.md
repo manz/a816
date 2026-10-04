@@ -74,6 +74,11 @@ separate blocks separated by a blank line.
 - `E0201` external reference outside object mode.
 - `E0202` expression failed to evaluate — likely a forward
   reference the resolver couldn't bind.
+- `E0205` placement into an undeclared pool. `.alloc`, `.reserve`,
+  `.relocate` and `.reclaim` name a pool that no `.pool` declared
+  before them. The caret sits on the pool name.
+- `E0206` `.reserve NAME as TYPE in POOL` names a struct type that
+  isn't declared. The caret sits on the type name.
 
 ### Codegen
 
