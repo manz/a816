@@ -132,8 +132,9 @@ def test_modules_must_agree_on_a_pools_contexts() -> None:
         ]
         return ObjectFile([], [], pool_decls=decls)
 
+    linker = Linker([module(["a", "b"]), module(["a", "c"])])
     with pytest.raises(ValueError, match="conflicting contexts"):
-        Linker([module(["a", "b"]), module(["a", "c"])]).link()
+        linker.link()
 
 
 def test_context_and_source_round_trip_through_the_object_file(tmp_path: Path) -> None:
