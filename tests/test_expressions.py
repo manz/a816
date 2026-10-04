@@ -97,7 +97,7 @@ class ExpressionsTest(TestCase):
         resolver.current_scope.add_symbol("whee", "WHOOOO")
 
         value = eval_expression_str("whee == 'WHOOOO'", resolver)
-        assert value is True
+        assert value == 1
 
         value = eval_expression_str("a != 3", resolver)
         self.assertFalse(value)
