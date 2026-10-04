@@ -96,6 +96,10 @@ class Parser:
         self.pos += 1
         return token
 
+    def previous(self) -> Token:
+        """The token most recently consumed by `next()`."""
+        return self.tokens[self.pos - 1]
+
     def backup(self) -> Token:
         token = self.current()
         self.pos -= 1

@@ -37,6 +37,7 @@ from a816.parse.ast.nodes import (
     PoolAstNode,
     ReclaimAstNode,
     RelocateAstNode,
+    ReserveAstNode,
     ScopeAstNode,
     StructAstNode,
     StructInstanceAstNode,
@@ -343,6 +344,8 @@ class A816Formatter:
         round-trip back to `*= ADDR` followed by the body un-wrapped,
         so source files using legacy `*=` syntax keep that shape
         across `a816 format` runs."""
+        if ast.reserve:
+            return [self._format_reserve(ast)]
         name_part = f" {ast.name}" if ast.name else ""
         if ast.is_pinned:
             addr = ast.at_address.to_canonical() if ast.at_address else "?"
@@ -354,6 +357,14 @@ class A816Formatter:
         lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
         lines.append("}")
         return lines
+
+    @staticmethod
+    def _format_reserve(ast: AllocAstNode) -> str:
+        """Format the alloc a `.reserve NAME SIZE [at ADDR] in POOL` desugared to."""
+        (res,) = ast.body.body
+        assert isinstance(res, ReserveAstNode)
+        at_part = f" at {ast.at_address.to_canonical()}" if ast.at_address is not None else ""
+        return f".reserve {ast.name} {res.size.to_canonical()}{at_part} in {ast.pool_name}"
 
     def _format_relocate(self, ast: RelocateAstNode) -> list[str]:
         """Format `.relocate SYMBOL OLD_START OLD_END into POOL { body }`."""
@@ -373,6 +384,8 @@ class A816Formatter:
         want `fill 0` in the source will see it round-tripped to nothing,
         but the semantics are identical."""
         lines = [f".pool {ast.pool_name} {{"]
+        if ast.bss:
+            lines.append("    bss")
         for lo, hi in ast.ranges:
             lines.append(f"    range {lo.to_canonical()} {hi.to_canonical()}")
         fill_canonical = ast.fill.to_canonical()
@@ -733,7 +746,12 @@ class A816Formatter:
                 formatted,
                 state.prev_was_label,
             )
-            if node_line is not None:
+            # A braced node ends on its closing `}`: a comment trailing that
+            # brace folds onto it rather than starting a line of its own.
+            close_line = self._close_line_num(node)
+            if close_line is not None:
+                state.last_emitted_line_num = close_line
+            elif node_line is not None:
                 state.last_emitted_line_num = node_line
             state.prev_was_label = isinstance(node, LabelAstNode)
 

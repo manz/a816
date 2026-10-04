@@ -203,7 +203,6 @@ def finalize_formatting(lines: list[str], options: FormattingOptions) -> str:
     # re-insert a blank between `*=` / `@=` and the next label.
     lines = strip_blanks_after_position_directive(lines)
     align_inline_comments(lines, options)
-    content = "\n".join(lines)
-    if content and not content.endswith("\n"):
-        content += "\n"
-    return content
+    # Trailing blank lines would survive one pass but not the next.
+    content = "\n".join(lines).rstrip("\n")
+    return f"{content}\n" if content else content
