@@ -13,7 +13,7 @@ from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
 
 
-class AllocNode(NodeProtocol):
+class AllocNode:
     """Emits `body` at an address picked by the named pool's allocator.
 
     `pc_after` runs once per resolver pass; the pool allocator is invoked

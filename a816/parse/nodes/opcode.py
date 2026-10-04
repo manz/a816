@@ -16,7 +16,7 @@ from a816.exceptions import BranchOutOfRangeError, BranchTargetUnmappedError, Sy
 from a816.parse.nodes.errors import NodeError, format_node_warning
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
-from a816.protocols import NodeProtocol, OpcodeProtocol, ValueNodeProtocol
+from a816.protocols import OpcodeProtocol, ValueNodeProtocol
 from a816.symbols import Resolver
 
 logger = logging.getLogger("a816")
@@ -27,7 +27,7 @@ logger = logging.getLogger("a816")
 _FORGETS_REGISTER_SIZES = frozenset({"plp", "bra", "brl", "jmp", "jml", "rts", "rtl", "rti"})
 
 
-class OpcodeNode(NodeProtocol):
+class OpcodeNode:
     def __init__(
         self,
         opcode: str,

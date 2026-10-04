@@ -10,11 +10,11 @@ from a816.parse.ast.expression import eval_expression_str
 from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
-from a816.protocols import NodeProtocol, ValueNodeProtocol
+from a816.protocols import ValueNodeProtocol
 from a816.symbols import Resolver
 
 
-class RegisterSizeNode(NodeProtocol):
+class RegisterSizeNode:
     """Node for register size directives (.a8, .a16, .i8, .i16)"""
 
     def __init__(self, register: str, size: int, resolver: Resolver) -> None:
@@ -48,7 +48,7 @@ class RegisterSizeNode(NodeProtocol):
         return f"RegisterSizeNode({self.register}{self.size})"
 
 
-class ReserveNode(NodeProtocol):
+class ReserveNode:
     """`.res N`: reserve N bytes of address space, emitting none.
 
     Advances the PC by N so surrounding labels bind to real addresses, but
@@ -77,7 +77,7 @@ class ReserveNode(NodeProtocol):
         return b""
 
 
-class BinaryNode(NodeProtocol):
+class BinaryNode:
     def __init__(self, path: str, resolver: Resolver) -> None:
         from a816.util import resolve_asset_path
 
@@ -99,7 +99,7 @@ class BinaryNode(NodeProtocol):
         return retval
 
 
-class _SizedValueNode(NodeProtocol):
+class _SizedValueNode:
     """Emit `SIZE` little-endian bytes from a value node.
 
     Concrete subclasses set `SIZE` (1, 2, 3 or 4). Deferred expressions
@@ -145,7 +145,7 @@ class ByteNode(_SizedValueNode):
     SIZE = 1
 
 
-class BytesNode(NodeProtocol):
+class BytesNode:
     """Emit a fixed byte string (zero fill, encoded string initializers)."""
 
     def __init__(self, data: bytes) -> None:
@@ -159,7 +159,7 @@ class BytesNode(NodeProtocol):
         return current_pc + len(self.data)
 
 
-class DebugNode(NodeProtocol):
+class DebugNode:
     def __init__(self, message: str, resolver: Resolver) -> None:
         self.message = message
         self.resolver = resolver

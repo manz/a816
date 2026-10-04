@@ -32,7 +32,7 @@ class NoOpcodeForOperandSize(Exception):
     """
 
 
-class OpcodeWithoutOperand(OpcodeProtocol):
+class OpcodeWithoutOperand:
     def __init__(self, opcode: int) -> None:
         self.opcode = opcode
 
@@ -127,7 +127,7 @@ def guess_value_size(
     return value_node.get_operand_size()
 
 
-class Opcode(OpcodeProtocol):
+class Opcode:
     def __init__(self, opcode_def: list[int | None], is_a: bool = False, is_x: bool = False, alias: bool = False):
         self.opcode_def = opcode_def
         self.is_a = is_a
@@ -240,7 +240,7 @@ class LongOpcode(Opcode):
         return super().supposed_length(value_node, "l", resolver)
 
 
-class BlockMoveOpcode(OpcodeProtocol):
+class BlockMoveOpcode:
     """`mvn` / `mvp` block move: two bank operands.
 
     Source order is `mvn srcbank, destbank`, but the encoded operand bytes are
