@@ -21,13 +21,44 @@ _PAREN_WRAP_RE: re.Pattern[str] = re.compile(
 )
 
 
+def docstring_mask(lines: list[str]) -> list[bool]:
+    """Mark the lines that belong to a docstring, `\"\"\"` delimiters included.
+
+    Docstring text is prose: the line passes below must not treat a `;` in it
+    as a comment, a trailing `:` as a label, or its blank lines as spacing.
+    """
+    mask: list[bool] = []
+    inside = False
+    for line in lines:
+        delimiters = line.count('"""')
+        mask.append(inside or delimiters > 0)
+        if delimiters % 2:
+            inside = not inside
+    return mask
+
+
+def comment_start(line: str) -> int:
+    """Index of the `;` that starts a comment, or -1. A `;` inside a string literal is text."""
+    quote: str | None = None
+    for index, char in enumerate(line):
+        if quote is not None:
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char == ";":
+            return index
+    return -1
+
+
 def collapse_empty_lines(lines: list[str], options: FormattingOptions) -> list[str]:
+    mask = docstring_mask(lines)
     if not options.preserve_empty_lines:
-        return [line for line in lines if line.strip()]
+        return [line for line, in_doc in zip(lines, mask, strict=True) if in_doc or line.strip()]
     result: list[str] = []
     empty_count = 0
-    for line in lines:
-        if line.strip():
+    for line, in_doc in zip(lines, mask, strict=True):
+        if in_doc or line.strip():
             empty_count = 0
             result.append(line)
         else:
@@ -48,7 +79,10 @@ def separate_labels(lines: list[str]) -> list[str]:
     """
     adjusted: list[str] = []
     depth = 0
-    for line in lines:
+    for line, in_doc in zip(lines, docstring_mask(lines), strict=True):
+        if in_doc:
+            adjusted.append(line)
+            continue
         stripped = line.strip()
         is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
         at_top_level = depth == 0
@@ -62,10 +96,10 @@ def separate_labels(lines: list[str]) -> list[str]:
 
 def _collect_inline_comment_groups(lines: list[str]) -> dict[int, list[tuple[int, str, str]]]:
     groups: dict[int, list[tuple[int, str, str]]] = {}
-    for index, line in enumerate(lines):
-        if ";" not in line or line.lstrip().startswith(";"):
+    for index, (line, in_doc) in enumerate(zip(lines, docstring_mask(lines), strict=True)):
+        if in_doc or line.lstrip().startswith(";"):
             continue
-        semicolon_index = line.find(";")
+        semicolon_index = comment_start(line)
         if semicolon_index <= 0:
             continue
         indent = len(line) - len(line.lstrip())
@@ -111,8 +145,8 @@ def wrap_long_paren_lines(lines: list[str], options: FormattingOptions) -> list[
     """
     limit = options.max_line_length
     out: list[str] = []
-    for line in lines:
-        if len(line) <= limit:
+    for line, in_doc in zip(lines, docstring_mask(lines), strict=True):
+        if in_doc or len(line) <= limit:
             out.append(line)
             continue
         match = _PAREN_WRAP_RE.match(line)
