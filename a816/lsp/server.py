@@ -7,11 +7,6 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    tomllib = None  # type: ignore[assignment]
-
 from lsprotocol.types import (
     CodeAction,
     CodeActionKind,
