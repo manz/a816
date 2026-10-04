@@ -226,6 +226,36 @@ case the nested layout flattens into dotted offsets
 ;   Outer.flags = 5, Outer.__size = 6
 ```
 
+#### Array fields: `TYPE[N] name`
+
+Any primitive or struct field type takes an `[N]` suffix to declare `N`
+consecutive elements. `N` is an integer literal (`21`, `0x15`) of at
+least 1; bit fields (`uN`) cannot be arrays.
+
+```ca65
+.struct Path {
+    byte count
+    Inner[3] points
+    byte[21] title
+}
+; → Path.points          = 1   (offset of element 0)
+;   Path.points.x        = 1   (element 0's sub-fields)
+;   Path.points.y        = 3
+;   Path.points.__size   = 12  (whole array, in bytes)
+;   Path.title           = 13
+;   Path.title.__size    = 21
+;   Path.__size          = 34
+```
+
+`Name.field` is the offset of element 0, and an array field publishes
+its total byte size as `Name.field.__size`, mirroring `Name.__size`.
+There is no indexing syntax: brackets already mean indirect-long
+addressing (`lda [dp]`), so element `i` is plain arithmetic,
+`Path.points + i * Inner.__size`, or an indexed operand
+(`lda path.title, x`). Typed binds and `.reserve NAME as TYPE` honour
+array fields the same way: the field symbol points at element 0 and
+the reservation spans the whole array.
+
 #### Typed access: `as` casts and `:=` binds
 
 A `(expr as T)` cast tags an address with a struct type so a postfix
