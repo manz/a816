@@ -5,7 +5,9 @@ from re import Match
 from a816.exceptions import (
     DuplicateSymbolError,
     ExpressionEvaluationError,
+    PlacedSpan,
     PoolOverflowLinkError,
+    PoolOverlapLinkError,
     RelocationError,
     UndeclaredPoolError,
     UnresolvedSymbolError,
@@ -108,7 +110,40 @@ class Linker:
             except PoolOverflowError as exc:
                 site = request_sites.get((exc.pool_name, exc.alloc_name))
                 raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
+        self._check_cross_pool_overlaps(merged, self._alloc_sources)
         self._merged_pools_after_alloc = merged
+
+    @staticmethod
+    def _check_cross_pool_overlaps(merged: "dict[str, Pool]", sources: dict[tuple[str, str], str]) -> None:
+        """Reject bss reservations from different pools that share bytes.
+
+        Each pool overlap-checks its own allocations, and emitted bytes meet
+        the writer's overlap check; bss reservations emit nothing, so two bss
+        pools over the same memory linked silently. Pool *ranges* may still
+        overlap: a pool nobody allocates from (a window over others, read for
+        its `.capacity`) cannot collide. Only placed reservations count.
+        """
+        spans = sorted(
+            (
+                PlacedSpan(
+                    pool.name, alloc.name, alloc.addr, alloc.addr + alloc.size, sources.get((pool.name, alloc.name), "")
+                )
+                for pool in merged.values()
+                if pool.bss
+                for alloc in pool.allocations
+                if alloc.placed and alloc.size > 0
+            ),
+            key=lambda span: (span.start, span.end),
+        )
+        clashes: list[tuple[PlacedSpan, PlacedSpan]] = []
+        for i, span in enumerate(spans):
+            for other in spans[i + 1 :]:
+                if other.start >= span.end:
+                    break
+                if other.pool != span.pool and not _may_share(merged[span.pool], merged[other.pool]):
+                    clashes.append((span, other))
+        if clashes:
+            raise PoolOverlapLinkError(clashes)
 
     def _request_pool_allocs(self, merged: dict[str, Pool]) -> dict[tuple[str, str], tuple[int, int]]:
         """Request every alloc from its merged pool; return each first request's site.
@@ -123,6 +158,7 @@ class Linker:
         """
         first_placed: dict[tuple[str, str], object] = {}
         request_sites: dict[tuple[str, str], tuple[int, int]] = {}
+        self._alloc_sources: dict[tuple[str, str], str] = {}
         for obj_idx, obj_file in enumerate(self.object_files):
             for req in obj_file.pool_allocs:
                 pool = merged.get(req.pool_name)
@@ -135,6 +171,7 @@ class Linker:
                     alloc_obj = pool.request(req.symbol_name, req.size, pinned)
                     first_placed[key] = alloc_obj
                     request_sites[key] = (obj_idx, req.section_idx)
+                    self._alloc_sources[key] = req.source
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
         return request_sites
 
@@ -186,6 +223,7 @@ class Linker:
             fill=decl.fill,
             strategy=Strategy(decl.strategy),
             bss=decl.bss,
+            context=decl.context,
         )
 
     def _merge_bus_mappings(self) -> None:
@@ -222,9 +260,11 @@ class Linker:
         from a816.object_file import PoolDecl
 
         merged: dict[str, Pool] = {}
+        contexts_by_pool: dict[str, list[str]] = {}
         for obj_file in self.object_files:
             for decl in obj_file.pool_decls:
                 self._merge_one_pool_decl(merged, decl)
+            self._check_contexts_agree(obj_file.pool_decls, contexts_by_pool)
         self._merged_pool_decls = [
             PoolDecl(
                 name=p.name,
@@ -232,9 +272,28 @@ class Linker:
                 fill=p.fill,
                 strategy=p.strategy.value,
                 bss=p.bss,
+                context=p.context,
             )
             for p in merged.values()
         ]
+
+    @staticmethod
+    def _check_contexts_agree(decls: list[PoolDecl], seen: dict[str, list[str]]) -> None:
+        """Every module declaring a pool must list the same `contexts`.
+
+        Contexts reach the linker as sibling decls (`POOL.CTX`), which merge
+        like any pool; without this check two modules listing different
+        contexts would silently union them.
+        """
+        for decl in decls:
+            if decl.context is not None:
+                continue
+            contexts = sorted(
+                d.context for d in decls if d.context is not None and d.name == f"{decl.name}.{d.context}"
+            )
+            previous = seen.setdefault(decl.name, contexts)
+            if previous != contexts:
+                raise ValueError(f"pool {decl.name!r} declared with conflicting contexts: {previous} vs {contexts}")
 
     @staticmethod
     def _merge_one_pool_decl(merged: "dict[str, Pool]", decl: PoolDecl) -> None:
@@ -255,6 +314,10 @@ class Linker:
             )
         if existing.bss != decl.bss:
             raise ValueError(f"pool {decl.name!r} declared with conflicting bss flags: {existing.bss} vs {decl.bss}")
+        if existing.context != decl.context:
+            raise ValueError(
+                f"pool {decl.name!r} declared with conflicting contexts: {existing.context!r} vs {decl.context!r}"
+            )
         # Dedupe identical ranges: a prelude-declared pool replicates
         # across every module's .o, and reclaiming the same bytes twice
         # is an error. Skip ranges already covered; only contribute
@@ -572,3 +635,15 @@ class Linker:
                 (value >> 16) & 0xFF,
             )
         )
+
+
+def _may_share(first: "Pool", second: "Pool") -> bool:
+    """Two contexts of the same pool (`POOL.A`, `POOL.B`) never live at the
+    same time, so their reservations may hold the same memory. Nothing else may."""
+    if first.context is None or second.context is None or first.context == second.context:
+        return False
+    return _context_owner(first) == _context_owner(second)
+
+
+def _context_owner(pool: "Pool") -> str:
+    return pool.name.removesuffix(f".{pool.context}")

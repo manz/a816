@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -225,6 +226,43 @@ class PoolOverflowLinkError(LinkerError):
             details.append(("alloc body", self.location))
         details.append(("hint", self.overflow.hint))
         return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_POOL_OVERFLOW}]", str(self), details=details)
+
+
+@dataclass(frozen=True)
+class PlacedSpan:
+    """One placed allocation, as the cross-pool overlap check sees it."""
+
+    pool: str
+    alloc: str
+    start: int
+    end: int  # exclusive
+    source: str = ""  # `file:line` of the request, when known
+
+
+class PoolOverlapLinkError(LinkerError):
+    """Raised when allocations from two pools that may not share bytes overlap."""
+
+    def __init__(self, clashes: list[tuple[PlacedSpan, PlacedSpan]]) -> None:
+        self.clashes = clashes
+        first, second = clashes[0]
+        super().__init__(
+            f"{_describe_span(first)} overlaps {_describe_span(second)}"
+            + (f" (+{len(clashes) - 1} more)" if len(clashes) > 1 else "")
+        )
+
+    def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.error_codes import E_LINKER_POOL_OVERLAP
+        from a816.errors import format_error_simple
+
+        details = [("overlap", f"{_describe_span(a)} x {_describe_span(b)}") for a, b in self.clashes]
+        details.append(("hint", "memory used in turns belongs in one pool: `contexts A, B` and `in POOL.A`"))
+        return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_POOL_OVERLAP}]", str(self), details)
+
+
+def _describe_span(span: PlacedSpan) -> str:
+    where = f" at {span.source}" if span.source else ""
+    return f"`{span.alloc}` in pool `{span.pool}` (0x{span.start:06x}..0x{span.end - 1:06x}){where}"
 
 
 class UndeclaredPoolError(LinkerError):

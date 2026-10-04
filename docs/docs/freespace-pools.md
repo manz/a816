@@ -90,6 +90,44 @@ arithmetic resolves at code-generation time. Constants declared
 earlier in the same source bind eagerly so `range BASE BASE + 0xff`
 works.
 
+#### Memory pools: `bss` and `contexts`
+
+`bss` makes a pool byte-less: it lays out RAM (WRAM, SRAM, VRAM),
+reserves addresses with `.reserve` / `.res`, and emits nothing into
+the image.
+
+Reservations in two different bss pools may not share memory; the
+linker rejects it with `E0406`, naming both reservations. Emitted
+bytes are already covered by the writer's overlap check, so this
+closes the gap for memory. Pool *ranges* may still overlap: a pool
+nobody reserves in (a window over other pools, read for its
+`.capacity`) cannot collide.
+
+Memory used in turns, by screens or modes that never run at the
+same time, belongs in one pool that lists them as `contexts`:
+
+```ca65
+.pool menu_ram { bss  range 0x7e9800 0x7e990f  contexts field_menu, treasure, battle }
+
+.reserve field_hdma    0x40 in menu_ram.field_menu
+.reserve field_shadow  0x40 in menu_ram.field_menu   ; after field_hdma
+.reserve treasure_hdma 0x40 in menu_ram.treasure     ; same bytes as field_hdma
+```
+
+Each context is its own allocator over the pool's ranges
+(`POOL.CONTEXT`, usable anywhere a pool name is), so reservations
+inside one context still never overlap, while different contexts of
+the same pool may. The pool's footprint is its largest context.
+Contexts are mutually exclusive only within the pool that lists
+them; anything else that overlaps is an error, including a
+reservation made directly in the pool next to its contexts.
+`contexts` is only allowed on a `bss` pool: emitted bytes have one
+owner.
+
+Addresses are compared as written: a reservation reached through a
+mirror (WRAM `$00:0000` for `$7E:0000`) is not matched against the
+same bytes at their canonical address.
+
 ### `.alloc NAME in POOL { body }`
 
 ```ca65

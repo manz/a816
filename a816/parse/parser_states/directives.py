@@ -8,7 +8,7 @@ import ast
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
@@ -555,6 +555,13 @@ class _PoolAttrs:
     fill: ExpressionAstNode
     strategy: str
     bss: bool = False
+    contexts: list[Token] = field(default_factory=list)
+
+
+def _expect_identifier(p: Parser) -> Token:
+    token = p.next()
+    expect_token(token, TokenType.IDENTIFIER)
+    return token
 
 
 def _parse_pool_attr(p: Parser, key_token: Token, attrs: _PoolAttrs) -> None:
@@ -569,12 +576,19 @@ def _parse_pool_attr(p: Parser, key_token: Token, attrs: _PoolAttrs) -> None:
         attrs.strategy = _parse_pool_strategy(p)
     elif key == "bss":
         attrs.bss = True  # bare flag: byte-less (WRAM/SRAM/custom-RAM) pool
+    elif key == "contexts":
+        # `contexts A, B, ...`: mutually exclusive users of a bss pool's
+        # memory. Each gets its own allocator (`POOL.A`) over the same ranges.
+        attrs.contexts.append(_expect_identifier(p))
+        while p.current().type == TokenType.COMMA:
+            p.next()
+            attrs.contexts.append(_expect_identifier(p))
     else:
         raise ParserSyntaxError(
             f"unknown `.pool` attribute `{key}`",
             key_token,
             code=str(E_PARSER_UNKNOWN_DIRECTIVE_ATTR),
-            hint="expected one of: range, fill, strategy, bss",
+            hint="expected one of: range, fill, strategy, bss, contexts",
         )
 
 
@@ -607,6 +621,13 @@ def parse_pool(p: Parser) -> PoolAstNode:
             code=str(E_PARSER_POOL_NO_RANGES),
             hint="add at least one `range LO HI` line so the allocator has space to work with",
         )
+    if attrs.contexts and not attrs.bss:
+        raise ParserSyntaxError(
+            f"pool `{name_token.value}` has contexts but is not `bss`",
+            attrs.contexts[0],
+            code=str(E_PARSER_UNKNOWN_DIRECTIVE_ATTR),
+            hint="only memory can be shared between contexts; emitted bytes have one owner",
+        )
     return PoolAstNode(
         name_token.value,
         attrs.ranges,
@@ -615,6 +636,7 @@ def parse_pool(p: Parser) -> PoolAstNode:
         keyword,
         bss=attrs.bss,
         close_token=close_token,
+        contexts=[token.value for token in attrs.contexts],
     )
 
 
