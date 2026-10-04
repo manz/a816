@@ -165,6 +165,10 @@ class Pool:
     """Byte-less pool: allocations reserve + overlap-check address space (WRAM,
     SRAM, custom RAM maps) but emit nothing into the image. Bodies may only
     reserve (`.res`) / label / assign; emitting a byte is an error."""
+    context: str | None = None
+    """Lifetime of a bss pool. Reservations in pools with different contexts
+    may share memory (screens that never coexist); a pool without a context is
+    live everywhere and shares memory with no one."""
     allocations: list[Allocation] = field(default_factory=list)
     _allocated: bool = field(default=False, init=False)
 

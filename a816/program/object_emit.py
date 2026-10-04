@@ -147,6 +147,7 @@ class ObjectEmitMixin:
                 section_idx=actual_idx,
                 size=node._size,
                 pinned_addr=node.pinned_addr if node.pinned_addr is not None else -1,
+                source=_source_of(node),
             )
         )
 
@@ -203,3 +204,11 @@ def _unplaced_code_error(node: NodeProtocol) -> NodeError:
         hint="give these bytes a home: wrap them in `.alloc NAME in POOL { ... }` / "
         "`.alloc at ADDR { ... }`, or set the position with `*= ADDR` first",
     )
+
+
+def _source_of(node: object) -> str:
+    """`file:line` (1-based) of a node's token, or "" when it has none."""
+    position = getattr(getattr(node, "file_info", None), "position", None)
+    if position is None or position.file is None:
+        return ""
+    return f"{position.file.filename}:{position.line + 1}"
