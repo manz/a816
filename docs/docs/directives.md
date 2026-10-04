@@ -304,7 +304,7 @@ the user probably wants.
 
 Lint hooks:
 
-- `S001` — cast targets a struct type the file never declared.
+- `S001`: a cast or `.istruct` targets a struct type the file never declared.
 - `S003` — `(p as T).field` when `p` is already bound as `T`.
 - `S004` — same `(expr as T)` repeated more than once; promote to `:=`.
 
@@ -414,6 +414,62 @@ Emit raw bytes / words / 24-bit longs / 32-bit dwords.
 .dw 0x2000, 0x2500
 .dl 0x010000
 ```
+
+### `.istruct Type { field = value, ... }`
+
+Emits one instance of a `.struct` as data: every field in declaration
+order, little-endian, unset fields zero-filled. Entries are separated
+by commas and/or newlines.
+
+```ca65
+.struct Pt {
+    word x
+    word y
+}
+.struct Sprite {
+    byte[8] name
+    Pt pos
+    Pt[2] path
+    word[3] frames
+    u4 palette
+    u4 priority
+}
+
+player:
+    .istruct Sprite {
+        name = "HERO"                         ; padded with 0 to 8 bytes
+        pos = { x = 0x80, y = 0x60 }          ; nested struct
+        path = [{ x = 1 }, { x = 2, y = 3 }]  ; array of structs
+        frames = [frame_a, frame_b]           ; third word stays 0
+        palette = 3                           ; bit fields pack per run
+    }
+```
+
+Value shapes by field type:
+
+| Field | Value |
+|-------|-------|
+| `byte` / `word` / `long` / `dword`, `uN` | expression |
+| `byte[N]` | `"string"` (ASCII, zero-padded) or `[expr, ...]` |
+| other `T[N]` | `[...]` of element values |
+| struct `T` | `{ field = value, ... }` |
+
+Values mask to the field width exactly like `.db` / `.dw` / `.dl`
+(`word w = 0x12345` emits `45 23`); a `uN` value masks to `N` bits.
+Lists and strings longer than the array are errors, shorter ones
+zero-pad. In object mode a field expression naming an `.extern` symbol
+becomes an expression relocation, resolved at link time.
+
+`.istruct` emits bytes, so it goes where `.db` goes: after a label, in a
+`*=` section or an `.alloc` body. A preceding label binds the
+instance's start address; there is no per-field label (use
+`label + Type.field`).
+
+Errors: `E0122` field initialized twice, `E0123` string inside a list,
+`E0330` unknown struct type, `E0331` unknown field, `E0332` value shape
+does not match the field, `E0333` initializer longer than the array,
+`E0334` non-ASCII string, `E0335` initialized bit-field run wider than
+32 bits.
 
 ### `.text "..."` and `.table "path"`
 
