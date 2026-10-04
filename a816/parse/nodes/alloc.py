@@ -79,10 +79,13 @@ class AllocNode(NodeProtocol):
         return isinstance(node, SymbolNode)
 
     def _measure_body(self) -> int:
-        # The body runs in the same M/X stream as the code around it, in
-        # source order (that is the order emission walks): it starts
-        # from the current sizes, and its `.a16` / tracked `rep` carry
-        # into whatever follows, top-level code or the next alloc.
+        """Byte size of the body, walked in the surrounding A/X size stream.
+
+        Every walk (this measure, the label binds, emission) visits the
+        body in source order from the same reset, so it starts from the
+        live sizes and its `.a16` / tracked `rep` carry into whatever
+        follows, top-level code or the next alloc.
+        """
         start = self._sandbox_pc()
         pc = start
         for node in self.body:
@@ -122,10 +125,12 @@ class AllocNode(NodeProtocol):
             )
 
     def _bind_body_labels_at(self, target: Address) -> None:
-        # Mirror `_measure_body`: walk from the measured entry sizes so
-        # `OpcodeNode.pc_after` sizes opcodes the same way emission will,
-        # and body labels (e.g. `_draw_string_loop:`) bind at the right
-        # offsets.
+        """Bind the alloc name and body labels from `target`.
+
+        Walks from the live A/X sizes like `_measure_body`, so
+        `OpcodeNode.pc_after` sizes opcodes the way emission will and
+        body labels (e.g. `_draw_string_loop:`) bind at their bytes.
+        """
         self.resolver.current_scope.add_label(self.name, target)
         pc = target
         saved_current_scope = self.resolver.current_scope
@@ -216,7 +221,8 @@ class AllocNode(NodeProtocol):
         attributed: list[tuple[NodeProtocol, int, bytes]] = []
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
-        # Each alloc body is its own routine: drop asserted A/X sizes.
+        # The body keeps the running A/X sizes, but it is entered by a call
+        # from elsewhere: they are assumed, not asserted, so no width warning.
         self.resolver.forget_register_sizes()
         try:
             self.resolver.set_position(alloc.addr)

@@ -105,7 +105,8 @@ class ObjectEmitMixin:
         saved_reloc = self.resolver.reloc_address
         pool = self.resolver.pools.get(node.pool_name)
         is_bss = bool(pool and pool.bss)
-        # Each alloc body is its own routine: drop asserted A/X sizes.
+        # Same rule as `AllocNode.emit_attributed_blocks`: sizes carry in,
+        # the known flags do not.
         self.resolver.forget_register_sizes()
         try:
             self.resolver.set_position(sandbox_logical)
