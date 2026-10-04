@@ -152,6 +152,8 @@ separate blocks separated by a blank line.
   repeated `[map.N]` table is one way to get there).
 - `E0502` `.include_ips` file is not an IPS patch (no `PATCH`
   header). An unreadable `.include_ips` path reports `E0500`.
+- `E0503` `[experimental]` in `a816.toml` is not a table, or one of
+  its flags is not `true` / `false`.
 - `E0504` `mapper` in `a816.toml` names no supported preset
   (`lorom`, `hirom`).
 - `E0505` malformed `[map.N]` entry: not a table, an unknown key, a

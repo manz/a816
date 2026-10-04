@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from a816.error_codes import (
+    E_CONFIG_BAD_EXPERIMENTAL,
     E_CONFIG_BAD_MAP_ENTRY,
     E_CONFIG_BAD_MAP_VALUE,
     E_CONFIG_INVALID,
@@ -161,11 +162,26 @@ class _BusMapParser:
             seen.add(region.identifier)
 
 
+def _experimental(raw: object, config_path: Path) -> dict[str, bool]:
+    """The `[experimental]` table: flag name -> true / false, nothing else."""
+    if not isinstance(raw, dict):
+        raise A816ConfigError(E_CONFIG_BAD_EXPERIMENTAL, "`experimental` must be a table of flags", config_path)
+    for name, value in raw.items():
+        if not isinstance(value, bool):
+            raise A816ConfigError(
+                E_CONFIG_BAD_EXPERIMENTAL,
+                f"[experimental] {name} must be true or false, got {value!r}",
+                config_path,
+            )
+    return {str(name): value for name, value in raw.items()}
+
+
 def load_a816_toml(config_path: Path) -> A816Config | None:
     """Parse the project config. Return None when the file can't be read.
 
     Raises:
-        A816ConfigError: the file is not valid TOML, or `mapper` / `[map.N]` is invalid.
+        A816ConfigError: the file is not valid TOML, or `[experimental]` /
+            `mapper` / `[map.N]` is invalid.
     """
     try:
         with config_path.open("rb") as handle:
@@ -177,8 +193,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
     root = config_path.parent
     entry = data.get("entrypoint")
     entry_path = (root / entry).resolve() if isinstance(entry, str) else None
-    raw_experimental = data.get("experimental", {}) or {}
-    experimental = {str(k): bool(v) for k, v in raw_experimental.items() if isinstance(v, bool)}
+    experimental = _experimental(data.get("experimental", {}), config_path)
     mapper, bus_map = _BusMapParser(config_path).parse(data)
     return A816Config(
         config_path=config_path,

@@ -150,6 +150,19 @@ def test_map_unknown_key_message_names_only_unknown_keys(tmp_path: Path) -> None
     assert message == "[map.3]: unknown keys bogus"
 
 
+def test_experimental_flag_must_be_boolean(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, '[experimental]\ntrack_register_size = "yes"\n') == "E0503"
+
+
+def test_experimental_must_be_a_table(tmp_path: Path) -> None:
+    assert _config_error_code(tmp_path, "experimental = 1\n") == "E0503"
+
+
+def test_experimental_flags_are_loaded(tmp_path: Path) -> None:
+    body = "[experimental]\ntrack_register_size = true\nother = false\n"
+    assert _load(tmp_path, body).experimental == {"track_register_size": True, "other": False}
+
+
 def test_map_range_needs_two_integers(tmp_path: Path) -> None:
     assert _config_error_code(tmp_path, _SRAM_MAP.replace("[0x70, 0x7d]", "[0x70]")) == "E0506"
 
