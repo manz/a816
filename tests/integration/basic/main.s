@@ -1,6 +1,7 @@
 """
 Top-level entry: imports the split modules, declares the reset
-routine, and pins the SNES vector table at `$00:FFE0`.
+routine, and pins the SNES cartridge header (`$00:FFB0`) and vector
+table (`$00:FFE0`).
 
 Layout (one concern per module, all share `layout.s`):
   * `layout.s`     — pools, WRAM map, named constants.
@@ -20,6 +21,7 @@ shadow the dirty flag advertises.
 .import "@std/snes/ppu"
 .import "@std/snes/cpu"
 .import "@std/snes/dma"
+.import "@std/snes/header"
 .import "preamble"
 .import "data"
 .import "ppu_tools"
@@ -109,27 +111,37 @@ _idle:
     bra _idle
 }
 
+; --- Cartridge header (LoROM, $00:FFB0..$00:FFDF) ------------------------
+; Checksum fields stay 0: no post-link checksum step yet.
+.alloc snes_header at SNES_HEADER_BASE size SnesHeader.__size {
+    .istruct SnesHeader {
+        title = "A816 BASIC ROM       "
+        map_mode = 0x20  ; LoROM, SlowROM
+        rom_size = 0x08  ; 256 KiB
+        destination = 0x01  ; North America
+    }
+}
+
 ; --- Vectors (LoROM, $00:FFE0..$00:FFFF) ----------------------------------
-; Pinned at the hardware-mandated SNES vector address. `size 0x20`
-; bounds the body so a stray `.dw` past the table fails the build
-; instead of trampling the rest of the bank.
-.alloc vector_table at 0x00FFE0 size 0x20 {
-    .dw 0  ; $FFE0 reserved
-    .dw 0  ; $FFE2 reserved
-    .dw brk_handler  ; $FFE4 native COP
-    .dw brk_handler  ; $FFE6 native BRK -> STP
-    .dw brk_handler  ; $FFE8 native ABORT
-    .dw nmi_handler  ; $FFEA native NMI
-    .dw 0  ; $FFEC native reserved
-    .dw brk_handler  ; $FFEE native IRQ
-    .dw 0  ; $FFF0 reserved
-    .dw 0  ; $FFF2 reserved
-    .dw brk_handler  ; $FFF4 emulation COP
-    .dw 0  ; $FFF6 reserved
-    .dw brk_handler  ; $FFF8 emulation ABORT
-    .dw 0  ; $FFFA emulation NMI
-    .dw reset  ; $FFFC emulation reset
-    .dw brk_handler  ; $FFFE emulation IRQ/BRK
+; Pinned at the hardware-mandated SNES vector address. `size` bounds the
+; body so a stray field past the table fails the build instead of
+; trampling the rest of the bank. Unset vectors stay 0.
+.alloc vector_table at SNES_VECTORS_BASE size SnesVectors.__size {
+    .istruct SnesVectors {
+        native = {
+            coprocessor = brk_handler
+            break = brk_handler  ; -> STP
+            abort = brk_handler
+            nmi = nmi_handler
+            irq = brk_handler
+        }
+        emulation = {
+            coprocessor = brk_handler
+            abort = brk_handler
+            reset = reset
+            irq_brk = brk_handler
+        }
+    }
 }
 
 ; --- Pad ROM to 256KB (kintsuki refuses sub-power-of-two LoROM) -----------
