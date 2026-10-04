@@ -10,11 +10,11 @@ from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import ExpressionAstNode
 from a816.parse.nodes.errors import NodeError
 from a816.parse.tokens import Token
-from a816.protocols import ValueNodeProtocol
+from a816.protocols import NodeBase, ValueNodeProtocol
 from a816.symbols import Resolver
 
 
-class CodePositionNode:
+class CodePositionNode(NodeBase):
     def __init__(self, value_node: ValueNodeProtocol, resolver: Resolver, file_info: Token | None = None):
         self.value_node = value_node
         self.resolver: Resolver = resolver
@@ -34,7 +34,7 @@ class CodePositionNode:
         return f"CodePositionNode({self.value_node.get_value()})"
 
 
-class RelocationAddressNode:
+class RelocationAddressNode(NodeBase):
     def __init__(self, pc_value_node: ValueNodeProtocol, resolver: Resolver, file_info: Token | None = None) -> None:
         self.pc_value_node = pc_value_node
         self.resolver = resolver
@@ -52,7 +52,7 @@ class RelocationAddressNode:
         return f"RelocationAddressNode({self.pc_value_node.get_value()})"
 
 
-class IncludeIpsNode:
+class IncludeIpsNode(NodeBase):
     def __init__(
         self,
         file_path: str,
@@ -99,7 +99,7 @@ class IncludeIpsNode:
         return b""
 
 
-class ScopeNode:
+class ScopeNode(NodeBase):
     """Enter the scope this node was created in.
 
     Captures `resolver.current_scope` at codegen time (when the scope
@@ -124,7 +124,7 @@ class ScopeNode:
         return b""
 
 
-class PopScopeNode:
+class PopScopeNode(NodeBase):
     """Restore the parent scope captured at codegen time.
 
     Idempotent for the same reason as `ScopeNode`: direct assignment

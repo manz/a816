@@ -8,12 +8,12 @@ import struct
 from a816.cpu.mapping import Address
 from a816.parse.nodes.errors import NodeError
 from a816.parse.tokens import Token
-from a816.protocols import ValueNodeProtocol
+from a816.protocols import NodeBase, ValueNodeProtocol
 from a816.symbols import Resolver
 from script import Table
 
 
-class TableNode:
+class TableNode(NodeBase):
     def __init__(self, path: str, resolver: Resolver) -> None:
         import os
 
@@ -31,7 +31,7 @@ class TableNode:
         return b""
 
 
-class AbstractTextNode:
+class AbstractTextNode(NodeBase):
     def __init__(self, text: str, resolver: Resolver) -> None:
         self.text = text
         self.resolver = resolver
@@ -92,7 +92,7 @@ class AsciiNode(AbstractTextNode):
         return self.text.encode("ascii", errors="ignore")
 
 
-class PointerNode:
+class PointerNode(NodeBase):
     def __init__(self, value_node: ValueNodeProtocol) -> None:
         self.value_node = value_node
 

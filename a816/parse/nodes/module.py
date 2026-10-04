@@ -8,12 +8,13 @@ from a816.cpu.mapping import Address
 from a816.exceptions import SymbolNotDefined
 from a816.object_file import Section
 from a816.parse.nodes.errors import NodeError
+from a816.protocols import NodeBase
 from a816.symbols import Resolver, Scope
 
 logger = logging.getLogger("a816.nodes")
 
 
-class LinkedModuleNode:
+class LinkedModuleNode(NodeBase):
     """Emits a compiled module's sections and binds its symbols.
 
     Each section has a compile-time `base_address` (from `*=`) and a code

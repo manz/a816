@@ -9,11 +9,11 @@ from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.symbols import SymbolNode
 from a816.parse.tokens import Token
 from a816.pool import Allocation
-from a816.protocols import NodeProtocol
+from a816.protocols import NodeBase, NodeProtocol
 from a816.symbols import Resolver
 
 
-class AllocNode:
+class AllocNode(NodeBase):
     """Emits `body` at an address picked by the named pool's allocator.
 
     `pc_after` runs once per resolver pass; the pool allocator is invoked
