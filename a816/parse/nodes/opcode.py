@@ -100,7 +100,7 @@ class OpcodeNode(NodeProtocol):
         except SymbolNotDefined as e:
             raise NodeError(
                 f"`{e}` is not defined in the current scope",
-                self.file_info,
+                e.token or self.file_info,
                 code=str(_E_SYMBOL_NOT_DEFINED),
                 hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
             ) from e

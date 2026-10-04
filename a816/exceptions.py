@@ -1,6 +1,13 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from a816.parse.tokens import Token
+
+
 class A816Error(Exception):
     """Base exception class for all assembler errors."""
-
 
 
 class AssemblyError(A816Error):
@@ -21,8 +28,17 @@ class AssemblyError(A816Error):
 
 
 class SymbolNotDefined(A816Error):
-    """Raised when a symbol is not found in the current scope."""
+    """Raised when a symbol is not found in the current scope.
 
+    `token` is the expression term that named the symbol, set by the
+    expression evaluator so the diagnostic can put its caret under the
+    identifier instead of the enclosing opcode or directive.
+    """
+
+    def __init__(self, name: str, token: Token | None = None) -> None:
+        super().__init__(name)
+        self.name = name
+        self.token = token
 
 
 class ExternalSymbolReference(A816Error):
@@ -46,10 +62,8 @@ class UnableToEvaluateSize(A816Error):
     """Raised during size evaluation failures."""
 
 
-
 class FormattingError(A816Error):
     """Raised when the formatter cannot process the input."""
-
 
 
 # =============================================================================
@@ -235,7 +249,6 @@ class UnmappedBankError(A816Error):
 
 class OpcodeError(A816Error):
     """Base class for opcode-related errors."""
-
 
 
 class MissingOperandError(OpcodeError):

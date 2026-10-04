@@ -4,9 +4,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from a816.error_codes import E_CODEGEN_DIVISION_BY_ZERO
-from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import (
     BinOp,
+    BlockAstNode,
     CastAccessExprNode,
     CastValueExprNode,
     ExpressionAstNode,
@@ -197,6 +198,20 @@ def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> se
     return external_symbols
 
 
+def _lookup(name: str, token: Token, resolver: Resolver) -> int | str | BlockAstNode | None:
+    """Resolve `name`, tagging a miss with the term token that named it.
+
+    An inner miss (e.g. through an alias expression) that already carries a
+    located token keeps it: that is where the undefined name was written.
+    """
+    try:
+        return resolver.current_scope.value_for(name)
+    except SymbolNotDefined as exc:
+        if exc.token is None or exc.token.position is None:
+            exc.token = token
+        raise
+
+
 def _eval_inner(inner: list[ExprNode], resolver: Resolver) -> int | str:
     return eval_expression(ExpressionAstNode(list(inner)), resolver)
 
@@ -207,7 +222,7 @@ def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | s
         if not isinstance(base, int):
             raise RuntimeError(f"Cast base does not evaluate to an address: {base!r}")  # noqa: TRY004 - invariant failure, not a caller type error
         field_symbol = ".".join([current.type_name, *current.field_path])
-        offset = resolver.current_scope.value_for(field_symbol)
+        offset = _lookup(field_symbol, current.leaf_token, resolver)
         if not isinstance(offset, int):
             raise RuntimeError(f"Struct field {field_symbol!r} did not resolve to an offset")  # noqa: TRY004 - invariant failure, not a caller type error
         values_stack.append(base + offset)
@@ -223,7 +238,7 @@ def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | s
     elif current.token.type == TokenType.QUOTED_STRING:
         values_stack.append(current.token.value[1:-1])
     elif current.token.type == TokenType.IDENTIFIER:
-        resolved_value = resolver.current_scope.value_for(current.token.value)
+        resolved_value = _lookup(current.token.value, current.token, resolver)
         if not isinstance(resolved_value, int | str):
             raise RuntimeError(f"Unable  to resolve {current.token.value}")
         values_stack.append(resolved_value)

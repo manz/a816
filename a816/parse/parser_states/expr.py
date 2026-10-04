@@ -43,14 +43,14 @@ def parse_expression_ep(p: Parser) -> list[AstNode]:
     return [parse_expression(p)]
 
 
-def _consume_dot_field_path(p: Parser) -> list[str]:
+def _consume_dot_field_path(p: Parser) -> list[Token]:
     """Consume a `.IDENT(.IDENT)*` postfix from the token stream."""
-    path: list[str] = []
+    path: list[Token] = []
     while p.current().type == TokenType.DOT:
         p.next()
         field_token = p.next()
         expect_token(field_token, TokenType.IDENTIFIER)
-        path.append(field_token.value)
+        path.append(field_token)
     return path
 
 
@@ -73,10 +73,11 @@ def _parse_lparen_expression(p: Parser, lparen: Token) -> list[ExprNode]:
     expect_token(p.current(), TokenType.RPAREN)
     rparen = p.next()  # consume RPAREN
 
-    field_path = _consume_dot_field_path(p)
+    field_tokens = _consume_dot_field_path(p)
+    field_path = [token.value for token in field_tokens]
 
     if type_name is not None and field_path:
-        return [CastAccessExprNode(lparen, inner, type_name, field_path, close_token=rparen)]
+        return [CastAccessExprNode(lparen, inner, type_name, field_path, close_token=rparen, field_tokens=field_tokens)]
     if type_name is not None:
         return [CastValueExprNode(lparen, inner, type_name, close_token=rparen)]
     if field_path:

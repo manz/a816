@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from a816.error_codes import E_SYMBOL_NOT_DEFINED
 from a816.exceptions import (
     ExternalExpressionReference,
     ExternalSymbolReference,
@@ -49,7 +50,8 @@ def _eval_int(expr: ExpressionAstNode, resolver: Resolver, where: Token) -> int:
         raise NodeError(
             f"pool literal references undefined symbol {exc!s}; pool decls evaluate "
             "at code-generation time before forward refs are bound",
-            where,
+            exc.token or where,
+            code=str(E_SYMBOL_NOT_DEFINED),
         ) from exc
     if not isinstance(value, int):
         raise NodeError(
