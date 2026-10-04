@@ -1,5 +1,5 @@
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import IO
 
@@ -149,11 +149,15 @@ class PoolAlloc:
     source: str = ""
     """`file:line` of the request, for link-time diagnostics: bss bodies emit no
     bytes, so their section carries no line table to point at."""
+    labels: list[str] = field(default_factory=list)
+    """Exported names of the symbols bound in this alloc's section. The linker
+    rebases them by this section's placement; looking the section up by address
+    is ambiguous when pools share memory (contexts)."""
 
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x000E  # Version 14: pool decls carry a bss context; allocs carry their source.
+    VERSION = 0x000F  # Version 15: pool allocs list the labels bound in their section.
 
     def __init__(
         self,
@@ -272,6 +276,11 @@ class ObjectFile:
             source_bytes = alloc.source.encode("utf-8")
             f.write(struct.pack("<H", len(source_bytes)))
             f.write(source_bytes)
+            f.write(struct.pack("<H", len(alloc.labels)))
+            for label in alloc.labels:
+                label_bytes = label.encode("utf-8")
+                f.write(struct.pack("<H", len(label_bytes)))
+                f.write(label_bytes)
 
     def _write_bus_mappings(self, f: IO[bytes]) -> None:
         f.write(struct.pack("<H", len(self.bus_mappings)))
@@ -497,6 +506,11 @@ class ObjectFile:
             section_idx, size, pinned_addr = struct.unpack("<IIi", f.read(12))
             (source_len,) = struct.unpack("<H", f.read(2))
             source = f.read(source_len).decode("utf-8")
+            (label_count,) = struct.unpack("<H", f.read(2))
+            labels: list[str] = []
+            for _ in range(label_count):
+                (label_len,) = struct.unpack("<H", f.read(2))
+                labels.append(f.read(label_len).decode("utf-8"))
             out.append(
                 PoolAlloc(
                     pool_name=pool_name,
@@ -505,6 +519,7 @@ class ObjectFile:
                     size=size,
                     pinned_addr=pinned_addr,
                     source=source,
+                    labels=labels,
                 )
             )
         return out

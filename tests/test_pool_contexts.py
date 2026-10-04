@@ -4,11 +4,16 @@ contexts a pool declares mutually exclusive (`contexts A, B`).
 Emitted bytes already meet the writer's overlap check; bss reservations emit
 nothing, so before this check two bss pools over the same memory linked
 silently: the hand-assigned-WRAM collision class bss pools exist to end.
+
+Also: labels bound in a pool alloc ride that alloc's section. The linker used
+to find the section by sandbox address, which contexts make ambiguous and
+which missed end-of-body labels altogether.
 """
 
 from __future__ import annotations
 
 import tempfile
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -18,6 +23,7 @@ from a816.formatter import A816Formatter
 from a816.linker import Linker
 from a816.object_file import ObjectFile, PoolAlloc, PoolDecl
 from a816.parse.mzparser import A816Parser
+from a816.pool import Pool, PoolOverlapError
 from a816.program import Program
 from tests.test_reserve import _PREAMBLE, _link, _symbols
 
@@ -153,3 +159,107 @@ def test_context_and_source_round_trip_through_the_object_file(tmp_path: Path) -
 
 def test_formatter_keeps_contexts() -> None:
     assert "    contexts field_menu, treasure, battle\n" in A816Formatter().format_text(_MENU_RAM)
+
+
+def test_pinned_reservations_overlapping_inside_one_context_are_rejected() -> None:
+    src = (
+        _MENU_RAM
+        + """
+.reserve a 0x40 at 0x7e9800 in menu_ram.field_menu
+.reserve b 2 at 0x7e9802 in menu_ram.field_menu
+"""
+    )
+    with pytest.raises(PoolOverlapError, match="pinned alloc 'b'"):
+        _link_src(src)
+
+
+def test_pinned_reservations_in_two_contexts_may_overlap() -> None:
+    syms = _link_src(
+        _MENU_RAM
+        + """
+.reserve a 0x40 at 0x7e9800 in menu_ram.field_menu
+.reserve b 2 at 0x7e9802 in menu_ram.treasure
+"""
+    )
+    assert (syms["a"], syms["b"]) == (0x7E9800, 0x7E9802)
+
+
+def _compile_pair(tmp: Path, preamble: str, main: str) -> list[ObjectFile]:
+    """Compile `preamble.s`, then a `main.s` that imports it; return both objects."""
+    (tmp / "preamble.s").write_text(_PREAMBLE + preamble)
+    (tmp / "main.s").write_text('.import "preamble"\n' + main)
+    assert Program().assemble_as_object(str(tmp / "preamble.s"), tmp / "preamble.o") == 0
+    importer = Program()
+    importer.add_module_path(tmp)
+    assert importer.assemble_as_object(str(tmp / "main.s"), tmp / "main.o") == 0
+    return [ObjectFile.from_file(str(tmp / "preamble.o")), ObjectFile.from_file(str(tmp / "main.o"))]
+
+
+def test_contexts_survive_an_import() -> None:
+    """Regression: an imported `POOL.CTX` decl lost its context, so the importer
+    saw the pool without contexts and failed 'already declared with different shape'."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        objects = _compile_pair(
+            Path(tmpdir),
+            _MENU_RAM + ".reserve field_hdma 0x40 in menu_ram.field_menu\n",
+            ".reserve treasure_hdma 0x40 in menu_ram.treasure\n",
+        )
+        syms = _symbols(Linker(objects).link(base_address=0x8000))
+    assert syms["field_hdma"] == syms["treasure_hdma"] == 0x7E9800
+
+
+def test_pinned_reservations_overlapping_in_one_context_across_modules_are_rejected() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        objects = _compile_pair(
+            Path(tmpdir),
+            _MENU_RAM + ".reserve a 0x40 at 0x7e9800 in menu_ram.field_menu\n",
+            ".reserve b 2 at 0x7e9802 in menu_ram.field_menu\n",
+        )
+        linker = Linker(objects)
+        with pytest.raises(PoolOverlapError, match="pinned alloc 'b'"):
+            linker.link(base_address=0x8000)
+
+
+def test_body_labels_in_contexts_land_in_their_own_section() -> None:
+    """Both bodies sit at sandbox $7E9800 in main.o; only `f1` moves (behind the
+    preamble's 0x40 in the same context). Sections found by sandbox address
+    gave `f1` the treasure section's delta."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        objects = _compile_pair(
+            Path(tmpdir),
+            _MENU_RAM + ".reserve field_hdma 0x40 in menu_ram.field_menu\n",
+            ".alloc in menu_ram.treasure {\nt1:\n    .res 2\n}\n.alloc in menu_ram.field_menu {\nf1:\n    .res 2\n}\n",
+        )
+        syms = _symbols(Linker(objects).link(base_address=0x8000))
+    assert (syms["t1"], syms["f1"]) == (0x7E9800, 0x7E9840)
+
+
+def test_end_marker_label_rides_its_alloc_section() -> None:
+    """A label right after the body's last byte sits one past the section's span,
+    so the address lookup missed it and gave it the module delta: ff4's
+    `gils_window_tilemap_4_end` landed before its start and a length operand
+    computed 45528 instead of 152."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        objects = _compile_pair(
+            Path(tmpdir),
+            ".alloc first in code {\n    .db 0, 0, 0, 0\n}\n",
+            ".alloc table in code {\n    .db 1, 2, 3\ntable_end:\n}\n",
+        )
+        syms = _symbols(Linker(objects).link(base_address=0x8000))
+    assert syms["table_end"] - syms["table"] == 3
+
+
+def test_pool_from_decl_carries_every_decl_field() -> None:
+    """Every `PoolDecl` field must survive `Pool.from_decl`: three hand-copied
+    conversions each dropped a field (`bss`, then `context`) before there was one."""
+    decl = PoolDecl(name="ram.a", ranges=[(0x7E0000, 0x7E00FF)], fill=0xEA, strategy="order", bss=True, context="a")
+    pool = Pool.from_decl(decl)
+    rebuilt = {
+        "name": pool.name,
+        "ranges": [(r.start, r.end) for r in pool.ranges],
+        "fill": pool.fill,
+        "strategy": pool.strategy.value,
+        "bss": pool.bss,
+        "context": pool.context,
+    }
+    assert rebuilt == {f.name: getattr(decl, f.name) for f in fields(PoolDecl)}

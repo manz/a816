@@ -13,7 +13,7 @@ All integers are little-endian.
 
 ```
 magic   : u32 = 0x41383136 ('A816')
-version : u16 = current 14
+version : u16 = current 15
 flags   : u8  bit 0 = relocatable (1 when produced by --compile-only)
 ```
 
@@ -177,7 +177,16 @@ per entry:
     pinned_addr     : i32   fixed address (`.reserve … at ADDR`), -1 = allocator picks
     source_len      : u16
     source          : utf-8[source_len]   `file:line` of the request, for diagnostics
+    label_count     : u16
+    per label:
+        label_len   : u16
+        label       : utf-8[label_len]    exported name of a symbol bound in this section
 ```
+
+`labels` names every symbol the alloc binds (its own name, its body
+labels, end markers included). The linker rebases those by this
+section's placement instead of guessing the section from the symbol's
+address, which is ambiguous when pools share memory.
 
 Each entry binds one `.alloc NAME in POOL { ... }` to the section
 holding its body bytes. The link-time cross-module pool allocator
@@ -188,7 +197,8 @@ list, then rewrites the owning section's base address before emit.
 
 The format version is bumped on every breaking change. Past versions:
 
-- v14 (current): pool decls carry `bss` and a context name; pool allocs
+- v15 (current): pool allocs list the labels bound in their section.
+- v14: pool decls carry `bss` and a context name; pool allocs
   carry `pinned_addr` and their source location. (v7 to v13 are not
   listed here.)
 - v6: section-aware code layout. `*=` produces a new section,
