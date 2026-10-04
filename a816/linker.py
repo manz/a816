@@ -104,6 +104,7 @@ class Linker:
         # (obj_idx, section_idx) -> Allocation, to look up alloc.addr later.
         self._section_pool_alloc: dict[tuple[int, int], object] = {}
         request_sites = self._request_pool_allocs(merged)
+        self._index_alloc_labels()
         for pool in merged.values():
             try:
                 pool.allocate()
@@ -159,12 +160,8 @@ class Linker:
         first_placed: dict[tuple[str, str], object] = {}
         request_sites: dict[tuple[str, str], tuple[int, int]] = {}
         self._alloc_sources: dict[tuple[str, str], str] = {}
-        # (obj_idx, symbol) -> (obj_idx, section_idx) of the alloc that bound it.
-        self._label_sections: dict[tuple[int, str], tuple[int, int]] = {}
         for obj_idx, obj_file in enumerate(self.object_files):
             for req in obj_file.pool_allocs:
-                for label in req.labels:
-                    self._label_sections[(obj_idx, label)] = (obj_idx, req.section_idx)
                 pool = merged.get(req.pool_name)
                 if pool is None:
                     raise UndeclaredPoolError(req.pool_name, req.symbol_name)
@@ -178,6 +175,16 @@ class Linker:
                     self._alloc_sources[key] = req.source
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
         return request_sites
+
+    def _index_alloc_labels(self) -> None:
+        """Map each symbol a pool alloc binds to that alloc's section:
+        (obj_idx, symbol) -> (obj_idx, section_idx)."""
+        self._label_sections: dict[tuple[int, str], tuple[int, int]] = {
+            (obj_idx, label): (obj_idx, req.section_idx)
+            for obj_idx, obj_file in enumerate(self.object_files)
+            for req in obj_file.pool_allocs
+            for label in req.labels
+        }
 
     def _section_location(self, site: tuple[int, int] | None) -> str | None:
         """`file:line` of the first emitted line in a requesting section, if any."""
