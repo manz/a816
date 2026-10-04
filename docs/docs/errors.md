@@ -69,6 +69,13 @@ separate blocks separated by a blank line.
 - `E0109` include file unreadable — the path resolution failed.
 - `E0115` opcode needs an operand. The opcode is followed by `}` or
   the end of input where its operand should be (`{ lda }`).
+- `E0120` struct array count must be a positive integer
+  (`byte[0] x`); the caret sits on the count.
+- `E0121` bit-field struct fields cannot be arrays (`u4[2] x`).
+- `E0122` field initialized twice in one `.istruct` (or nested `{ }`)
+  initializer; the caret sits on the second entry.
+- `E0123` string inside a `[...]` initializer list. A byte array takes
+  the string itself: `name = "TEXT"`.
 
 ### Symbols
 
@@ -106,8 +113,9 @@ separate blocks separated by a blank line.
 - `E0306` operand size mismatch.
 - `E0307` addressing mode not supported by opcode.
 - `E0308` conflicting `.map` declaration. Two modules (or a module
-  and one it `.import`s) declare the same identifier with different
-  ranges, mask, writable flag or mirror.
+  and one it `.import`s, or a module and the `a816.toml` bus map)
+  declare the same identifier with different ranges, mask, writable
+  flag or mirror.
 - `E0309` byte immediate does not fit in 8 bits: an explicit `.b`
   immediate whose value exceeds `0xFF`.
 - `E0310` code emitted outside any placement. Under `a816 build`,
@@ -126,10 +134,21 @@ separate blocks separated by a blank line.
   computed in ROM space; a RAM target cannot be reached.
 - `E0317` address in a bank no `.map` region covers (and the
   configured ROM type doesn't back). The hint lists the mapped banks.
-- `E0318` alloc does not fit in its pool. Names the pool and its
-  largest free chunk; the caret sits on the `.alloc` name.
+- `E0318` alloc does not fit in its pool. Says whether the alloc is
+  larger than any range, the pool is fragmented or out of room, with
+  a matching hint; the caret sits on the `.alloc` name.
 - `E0319` operator applied to a string and a number.
 - `E0320` `~` operand wider than 32 bits.
+- `E0330` `.istruct` names a struct type that is not declared (or
+  imported) yet; the caret sits on the type.
+- `E0331` `.istruct` initializer names a field the struct does not
+  have; the hint lists the struct's fields.
+- `E0332` initializer value does not fit the field: scalars take an
+  expression, byte arrays a string or `[...]`, other arrays `[...]`,
+  struct fields `{ ... }`.
+- `E0333` string or list initializer longer than its array field.
+- `E0334` non-ASCII character in a string initializer.
+- `E0335` initialized bit-field run wider than 32 bits.
 
 ### Linker
 
@@ -139,17 +158,31 @@ separate blocks separated by a blank line.
 - `E0403` relocation expression failed.
 - `E0404` alloc does not fit in its pool at link time (the pool is
   shared across modules, so the allocator only runs once every `.o`
-  is in). Reports the pool, its largest free chunk and, when the body
-  emitted code, the `file:line` of its first instruction.
+  is in). Same message and hint as `E0318`, plus the pool and, when
+  the body emitted code, the `file:line` of its first instruction.
 - `E0405` an alloc request names a pool that no linked object
   declares.
 
 ### I/O / config
 
 - `E0500` file not found.
-- `E0501` invalid project config.
+- `E0501` invalid project config: `a816.toml` is not valid TOML (a
+  repeated `[map.N]` table is one way to get there).
 - `E0502` `.include_ips` file is not an IPS patch (no `PATCH`
   header). An unreadable `.include_ips` path reports `E0500`.
+- `E0503` `[experimental]` in `a816.toml` is not a table, or one of
+  its flags is not `true` / `false`.
+- `E0504` `mapper` in `a816.toml` names no supported preset
+  (`lorom`, `hirom`).
+- `E0505` malformed `[map.N]` entry: not a table, an unknown key, a
+  missing `bank_range` / `addr_range` / `mask`, or two keys spelling
+  the same number (`[map.1]` and `[map.0x1]`).
+- `E0506` a `[map.N]` value has the wrong type: `N` and `mask` are
+  integers, ranges are `[start, end]` integer pairs, `writable` a
+  boolean.
+- `E0507` `mapper` and `[map.N]` are both set; they are mutually
+  exclusive.
+- `E0508` `-m` disagrees with the `a816.toml` `mapper`.
 
 ## LSP integration
 

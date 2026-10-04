@@ -82,3 +82,28 @@ def test_basic_rom_clears_force_blank(tmp_path: Path) -> None:
         pytest.skip("kintsuki build does not expose PpuState.inidisp")
     assert (inidisp & 0x80) == 0, "force-blank should be OFF after boot"
     assert (inidisp & 0x0F) == 0x0F, "brightness should be at max"
+
+
+# LoROM: CPU $00:FFB0 sits at file offset 0x7FB0.
+HEADER_FILE_OFFSET = 0x7FB0
+HEADER_TITLE = b"A816 BASIC ROM".ljust(21, b" ")
+
+
+def _rom_header(tmp_path: Path) -> bytes:
+    sfc = assemble_sfc(BASIC_DIR / "main.s", tmp_path / "basic.sfc")
+    return sfc.read_bytes()[HEADER_FILE_OFFSET : HEADER_FILE_OFFSET + 0x50]
+
+
+def test_basic_rom_header_title(tmp_path: Path) -> None:
+    """The `@std/snes/header` instance lands the title at $FFC0."""
+    assert _rom_header(tmp_path)[0x10:0x25] == HEADER_TITLE
+
+
+def test_basic_rom_header_layout_bytes(tmp_path: Path) -> None:
+    """Map mode, cartridge type, ROM/SRAM size, destination, old maker, version."""
+    assert _rom_header(tmp_path)[0x25:0x2C] == bytes([0x20, 0x00, 0x08, 0x00, 0x01, 0x00, 0x00])
+
+
+def test_basic_rom_reset_vector_points_at_reset(tmp_path: Path) -> None:
+    """Emulation RESET ($FFFC) still targets bank-0 ROM ($8000+)."""
+    assert int.from_bytes(_rom_header(tmp_path)[0x4C:0x4E], "little") >= 0x8000

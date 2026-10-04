@@ -50,6 +50,10 @@ E_PARSER_POOL_NO_RANGES = ErrorCode("E0107", "parser", "pool declares no ranges"
 E_PARSER_UNKNOWN_POOL_STRATEGY = ErrorCode("E0108", "parser", "unknown pool strategy")
 E_PARSER_INCLUDE_FAILED = ErrorCode("E0109", "parser", "include file unreadable")
 E_PARSER_MISSING_OPERAND = ErrorCode("E0115", "parser", "opcode needs an operand")
+E_PARSER_STRUCT_ARRAY_COUNT = ErrorCode("E0120", "parser", "struct array count must be a positive integer")
+E_PARSER_STRUCT_BITFIELD_ARRAY = ErrorCode("E0121", "parser", "bit-field struct fields cannot be arrays")
+E_PARSER_ISTRUCT_DUPLICATE_FIELD = ErrorCode("E0122", "parser", "field initialized twice in `.istruct`")
+E_PARSER_ISTRUCT_STRING_IN_LIST = ErrorCode("E0123", "parser", "string inside an initializer list")
 
 # --- Symbol resolution (E0200..) ---
 E_SYMBOL_NOT_DEFINED = ErrorCode("E0200", "symbols", "symbol not defined in scope")
@@ -82,6 +86,12 @@ E_CODEGEN_UNMAPPED_BANK = ErrorCode("E0317", "codegen", "address in a bank no `.
 E_CODEGEN_POOL_OVERFLOW = ErrorCode("E0318", "codegen", "alloc does not fit in its pool")
 E_CODEGEN_MISMATCHED_TYPES = ErrorCode("E0319", "codegen", "operator applied to a string and a number")
 E_CODEGEN_NOT_TOO_WIDE = ErrorCode("E0320", "codegen", "`~` operand wider than 32 bits")
+E_CODEGEN_ISTRUCT_UNKNOWN_TYPE = ErrorCode("E0330", "codegen", "`.istruct` names an unknown struct type")
+E_CODEGEN_ISTRUCT_UNKNOWN_FIELD = ErrorCode("E0331", "codegen", "initializer names a field the struct lacks")
+E_CODEGEN_ISTRUCT_VALUE_KIND = ErrorCode("E0332", "codegen", "initializer value does not fit the field's type")
+E_CODEGEN_ISTRUCT_TOO_LONG = ErrorCode("E0333", "codegen", "initializer longer than its array field")
+E_CODEGEN_ISTRUCT_NON_ASCII = ErrorCode("E0334", "codegen", "non-ASCII character in a string initializer")
+E_CODEGEN_ISTRUCT_BIT_RUN_TOO_WIDE = ErrorCode("E0335", "codegen", "initialized bit-field run wider than 32 bits")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")
@@ -95,6 +105,12 @@ E_LINKER_UNDECLARED_POOL = ErrorCode("E0405", "linker", "alloc request names a p
 E_IO_FILE_NOT_FOUND = ErrorCode("E0500", "io", "file not found")
 E_CONFIG_INVALID = ErrorCode("E0501", "config", "invalid project config")
 E_IO_NOT_IPS = ErrorCode("E0502", "io", "`.include_ips` file is not an IPS patch")
+E_CONFIG_BAD_EXPERIMENTAL = ErrorCode("E0503", "config", "`[experimental]` flag is not true or false")
+E_CONFIG_UNKNOWN_MAPPER = ErrorCode("E0504", "config", "`mapper` names no supported cartridge mapper")
+E_CONFIG_BAD_MAP_ENTRY = ErrorCode("E0505", "config", "malformed `[map.N]` entry")
+E_CONFIG_BAD_MAP_VALUE = ErrorCode("E0506", "config", "`[map.N]` value of the wrong type")
+E_CONFIG_MAPPER_AND_MAP = ErrorCode("E0507", "config", "`mapper` and `[map.N]` are mutually exclusive")
+E_CONFIG_MAPPER_MISMATCH = ErrorCode("E0508", "config", "`-m` disagrees with the a816.toml `mapper`")
 
 
 _BY_CODE: dict[str, ErrorCode] = {obj.code: obj for obj in globals().values() if isinstance(obj, ErrorCode)}

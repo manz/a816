@@ -13,7 +13,8 @@ class StructAstNode(AstNode):
         super().__init__("struct", file_info)
         self.name = name
         # Insertion-ordered `(name, type)` entries. Bit-field widths live in
-        # the type string itself (`uN`); the codegen extracts the digits.
+        # the type string itself (`uN`), as do array counts (`byte[21]`);
+        # the codegen extracts the digits.
         # List instead of dict so downstream consumers can rely on the
         # declared order without poking at dict semantics, and so duplicate
         # names get caught at parse time.

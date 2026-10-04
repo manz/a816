@@ -50,7 +50,10 @@ from a816.parse.ast.nodes import (
     RegisterSizeAstNode,
     RelocateAstNode,
     ScopeAstNode,
+    StringInitAstNode,
     StructAstNode,
+    StructFieldInitAstNode,
+    StructInstanceAstNode,
     SymbolAffectationAstNode,
     TableAstNode,
     Term,
@@ -85,6 +88,7 @@ class TokensMixin:
         ExternAstNode,
         ImportAstNode,
         StructAstNode,
+        StructInstanceAstNode,
         DataNode,
         AsciiAstNode,
         TextAstNode,
@@ -180,8 +184,10 @@ class TokensMixin:
             return 0  # keyword (opcode)
         if isinstance(node, CommentAstNode):
             return 2  # comment
-        if isinstance(node, DocstringAstNode):
+        if isinstance(node, DocstringAstNode | StringInitAstNode):
             return 4  # string
+        if isinstance(node, StructFieldInitAstNode):
+            return 6  # variable (initialized field name)
         if isinstance(node, (IncludeAstNode, *TokensMixin._DIRECTIVE_TYPES)):
             return 7  # macro (directive)
         return None
@@ -191,7 +197,12 @@ class TokensMixin:
         return isinstance(node, DocstringAstNode | IncludeAstNode)
 
     def _visit_token_children(self, node: AstNode, tokens: list[dict[str, Any]], doc: A816Document) -> None:
-        for attr in ("body", "block", "else_block", "value", "expression", "min_value", "max_value"):
+        if isinstance(node, StructInstanceAstNode) and node.type_token.position is not None:
+            position = node.type_token.position
+            tokens.append(
+                {"line": position.line, "char": position.column, "length": len(node.type_token.value), "type": 8}
+            )
+        for attr in ("body", "block", "else_block", "value", "expression", "min_value", "max_value", "items"):
             child = getattr(node, attr, None)
             if isinstance(child, list):
                 for entry in child:

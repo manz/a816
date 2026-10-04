@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from a816.error_codes import ErrorCode
     from a816.parse.tokens import Token
+    from a816.pool import PoolOverflowError
 
 
 class A816Error(Exception):
@@ -64,6 +68,23 @@ class UnableToEvaluateSize(A816Error):
 
 class FormattingError(A816Error):
     """Raised when the formatter cannot process the input."""
+
+
+class A816ConfigError(A816Error):
+    """Raised when `a816.toml` holds a value the assembler cannot use."""
+
+    def __init__(self, code: ErrorCode, message: str, config_path: Path | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.config_path = config_path
+
+    def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.errors import format_error_simple
+
+        details = [("config", str(self.config_path))] if self.config_path is not None else None
+        return format_error_simple(f"config error[{self.code}]", self.message, details=details)
 
 
 # =============================================================================
@@ -189,32 +210,20 @@ class ExpressionEvaluationError(LinkerError):
 class PoolOverflowLinkError(LinkerError):
     """Raised when the link-time allocator cannot fit an alloc in its pool."""
 
-    def __init__(
-        self,
-        pool_name: str,
-        alloc_name: str,
-        size: int,
-        largest_free: int,
-        location: str | None = None,
-    ) -> None:
-        self.pool_name = pool_name
-        self.alloc_name = alloc_name
-        self.size = size
-        self.largest_free = largest_free
+    def __init__(self, overflow: PoolOverflowError, location: str | None = None) -> None:
+        self.overflow = overflow
         self.location = location
-        super().__init__(f"alloc '{alloc_name}' ({size} bytes) does not fit in pool '{pool_name}'")
+        super().__init__(str(overflow))
 
     def format(self) -> str:
         # Late import: intentional to avoid circular dependency with errors module
         from a816.error_codes import E_LINKER_POOL_OVERFLOW
         from a816.errors import format_error_simple
 
-        details = [
-            ("pool", self.pool_name),
-            ("largest free chunk", f"{self.largest_free} bytes"),
-        ]
+        details = [("pool", self.overflow.pool_name)]
         if self.location is not None:
             details.append(("alloc body", self.location))
+        details.append(("hint", self.overflow.hint))
         return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_POOL_OVERFLOW}]", str(self), details=details)
 
 

@@ -37,12 +37,15 @@ include-paths = ["src/include"]
 module-paths  = ["src/modules"]
 ```
 
-- `entrypoint` — the file the server compiles for diagnostics.
-- `include-paths` — directories searched by `.include`.
-- `module-paths` — directories searched by `.import`.
+- `entrypoint`: the root file the server indexes from.
+- `include-paths`: directories searched by `.include`.
+- `module-paths`: directories searched by `.import`.
 
-Fluff (`a816 check` / `a816 format`) reads the same config — see
-[Fluff (lint + format)](fluff.md#a816toml-discovery).
+Fluff (`a816 check` / `a816 format`) and `a816 build` read the same
+config. See [Fluff (lint + format)](fluff.md#a816toml-discovery) and
+[Project configuration](index.md#project-configuration-a816toml). The
+server finds it by walking up from the workspace root; an invalid file
+is logged and ignored.
 
 Without `a816.toml` the server falls back to same-directory lookup.
 

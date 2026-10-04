@@ -56,14 +56,17 @@ WARNING write at $000004..$00000b overlaps previous write at
 
 ### `.map` — memory map
 
-Selects the cartridge address mapping. Affects how `*=` translates
-into a physical ROM offset.
+Declares one bus region. Affects how `*=` / `.alloc` addresses
+translate into a physical ROM offset and which banks are writable.
 
 ```ca65
-.map low_rom
-.map low_rom_2
-.map high_rom
+.map identifier=1 bank_range=0xc0, 0xfd addr_range=0x0000, 0xffff mask=0x10000 mirror_bank_range=0x40, 0x7d
+.map identifier=3 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=1
 ```
+
+Without any region the bus follows `-m` (LoROM when `-m` is absent).
+The layout is usually project-wide: declare it once in `a816.toml`
+(`mapper` or `[map.N]`) instead of repeating it in every module.
 
 ## Expressions
 
@@ -226,6 +229,36 @@ case the nested layout flattens into dotted offsets
 ;   Outer.flags = 5, Outer.__size = 6
 ```
 
+#### Array fields: `TYPE[N] name`
+
+Any primitive or struct field type takes an `[N]` suffix to declare `N`
+consecutive elements. `N` is an integer literal (`21`, `0x15`) of at
+least 1; bit fields (`uN`) cannot be arrays.
+
+```ca65
+.struct Path {
+    byte count
+    Inner[3] points
+    byte[21] title
+}
+; → Path.points          = 1   (offset of element 0)
+;   Path.points.x        = 1   (element 0's sub-fields)
+;   Path.points.y        = 3
+;   Path.points.__size   = 12  (whole array, in bytes)
+;   Path.title           = 13
+;   Path.title.__size    = 21
+;   Path.__size          = 34
+```
+
+`Name.field` is the offset of element 0, and an array field publishes
+its total byte size as `Name.field.__size`, mirroring `Name.__size`.
+There is no indexing syntax: brackets already mean indirect-long
+addressing (`lda [dp]`), so element `i` is plain arithmetic,
+`Path.points + i * Inner.__size`, or an indexed operand
+(`lda path.title, x`). Typed binds and `.reserve NAME as TYPE` honour
+array fields the same way: the field symbol points at element 0 and
+the reservation spans the whole array.
+
 #### Typed access: `as` casts and `:=` binds
 
 A `(expr as T)` cast tags an address with a struct type so a postfix
@@ -274,7 +307,7 @@ the user probably wants.
 
 Lint hooks:
 
-- `S001` — cast targets a struct type the file never declared.
+- `S001`: a cast or `.istruct` targets a struct type the file never declared.
 - `S003` — `(p as T).field` when `p` is already bound as `T`.
 - `S004` — same `(expr as T)` repeated more than once; promote to `:=`.
 
@@ -384,6 +417,62 @@ Emit raw bytes / words / 24-bit longs / 32-bit dwords.
 .dw 0x2000, 0x2500
 .dl 0x010000
 ```
+
+### `.istruct Type { field = value, ... }`
+
+Emits one instance of a `.struct` as data: every field in declaration
+order, little-endian, unset fields zero-filled. Entries are separated
+by commas and/or newlines.
+
+```ca65
+.struct Pt {
+    word x
+    word y
+}
+.struct Sprite {
+    byte[8] name
+    Pt pos
+    Pt[2] path
+    word[3] frames
+    u4 palette
+    u4 priority
+}
+
+player:
+    .istruct Sprite {
+        name = "HERO"                         ; padded with 0 to 8 bytes
+        pos = { x = 0x80, y = 0x60 }          ; nested struct
+        path = [{ x = 1 }, { x = 2, y = 3 }]  ; array of structs
+        frames = [frame_a, frame_b]           ; third word stays 0
+        palette = 3                           ; bit fields pack per run
+    }
+```
+
+Value shapes by field type:
+
+| Field | Value |
+|-------|-------|
+| `byte` / `word` / `long` / `dword`, `uN` | expression |
+| `byte[N]` | `"string"` (ASCII, zero-padded) or `[expr, ...]` |
+| other `T[N]` | `[...]` of element values |
+| struct `T` | `{ field = value, ... }` |
+
+Values mask to the field width exactly like `.db` / `.dw` / `.dl`
+(`word w = 0x12345` emits `45 23`); a `uN` value masks to `N` bits.
+Lists and strings longer than the array are errors, shorter ones
+zero-pad. In object mode a field expression naming an `.extern` symbol
+becomes an expression relocation, resolved at link time.
+
+`.istruct` emits bytes, so it goes where `.db` goes: after a label, in a
+`*=` section or an `.alloc` body. A preceding label binds the
+instance's start address; there is no per-field label (use
+`label + Type.field`).
+
+Errors: `E0122` field initialized twice, `E0123` string inside a list,
+`E0330` unknown struct type, `E0331` unknown field, `E0332` value shape
+does not match the field, `E0333` initializer longer than the array,
+`E0334` non-ASCII string, `E0335` initialized bit-field run wider than
+32 bits.
 
 ### `.text "..."` and `.table "path"`
 
