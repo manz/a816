@@ -115,6 +115,42 @@ def test_anonymous_scope_alias_does_not_publish(tmp_path: Path) -> None:
     assert all(name != "fd" for name, _ in obj.aliases)
 
 
+_SCOPE_LABEL_OWNER = _LO_MAP + "*=0x009000\n.scope sc {\nhere:\n    rts\n    fd = here\n    gd = fd + 1\n}\n"
+
+
+def test_importer_of_scope_alias_to_scope_label_builds(tmp_path: Path) -> None:
+    main = _LO_MAP + '.import "owner"\n*=0x008000\n    rts\n'
+    result = _build(tmp_path, main, {"owner": _SCOPE_LABEL_OWNER})
+    assert result.exit_code == 0, result.diagnostics
+
+
+def test_importer_resolves_scope_alias_to_scope_label(tmp_path: Path) -> None:
+    main = _LO_MAP + '.import "owner"\n*=0x008000\n    lda.l sc.fd\n'
+    _build(tmp_path, main, {"owner": _SCOPE_LABEL_OWNER})
+    assert _lda_long(0x009000) in _ips(tmp_path)
+
+
+def test_importer_resolves_chained_scope_alias(tmp_path: Path) -> None:
+    main = _LO_MAP + '.import "owner"\n*=0x008000\n    lda.l sc.gd\n'
+    _build(tmp_path, main, {"owner": _SCOPE_LABEL_OWNER})
+    assert _lda_long(0x009001) in _ips(tmp_path)
+
+
+def test_importer_does_not_redefine_scope_label_alias(tmp_path: Path) -> None:
+    main = _LO_MAP + '.import "owner"\n*=0x008000\n    rts\n'
+    _build(tmp_path, main, {"owner": _SCOPE_LABEL_OWNER})
+    assert _main_object(tmp_path).aliases == []
+
+
+def test_importer_drops_alias_over_label_in_if_body(tmp_path: Path) -> None:
+    owner = (
+        _LO_MAP + "*=0x009000\n.scope sc {\n    .if 0 {\n    } else {\nhere:\n        rts\n    }\n    fd = here\n}\n"
+    )
+    main = _LO_MAP + '.import "owner"\n*=0x008000\n    lda.l sc.fd\n'
+    _build(tmp_path, main, {"owner": owner})
+    assert _lda_long(0x009000) in _ips(tmp_path)
+
+
 def test_private_scoped_alias_is_not_reachable_outside_its_scope(tmp_path: Path) -> None:
     main = _LO_MAP + "*=0x008000\nhere:\n    nop\n.scope sc {\n    _fd = here\n}\n    lda.l sc._fd\n"
     result = _build(tmp_path, main)
