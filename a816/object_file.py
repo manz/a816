@@ -98,6 +98,19 @@ class BusMapping:
     mask: int
     writeable: bool = False
     mirror_bank_range: tuple[int, int] | None = None
+    # A BML region (`a816.toml` `[map.N]`): `address` is the bsnes
+    # `00-7d,80-ff:8000-ffff` spelling and `mask`/`base`/`rom_size` follow
+    # bsnes semantics; the legacy range fields are unused. None for `.map`.
+    address: str | None = None
+    base: int = 0
+    rom_size: int = 0
+
+    @classmethod
+    def bml(
+        cls, identifier: str, address: str, mask: int = 0, base: int = 0, rom_size: int = 0, writeable: bool = False
+    ) -> "BusMapping":
+        """A bsnes-semantics region, as written in `boards.bml` / `a816.toml`."""
+        return cls(identifier, (0, 0), (0, 0), mask, writeable, None, address, base, rom_size)
 
     def shape(self) -> tuple[object, ...]:
         """Every field as a plain tuple, for comparing declarations and cache keys."""
@@ -108,6 +121,9 @@ class BusMapping:
             self.mask,
             self.writeable,
             self.mirror_bank_range,
+            self.address,
+            self.base,
+            self.rom_size,
         )
 
 
@@ -132,7 +148,7 @@ class PoolAlloc:
 
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x000C  # Version 12: PoolAlloc carries pinned_addr (fixed-address reserves).
+    VERSION = 0x000D  # Version 13: bus mappings carry BML regions (address/base/rom_size).
 
     def __init__(
         self,
@@ -267,6 +283,13 @@ class ObjectFile:
                 f.write(struct.pack("<B", 0))
             else:
                 f.write(struct.pack("<BHH", 1, mapping.mirror_bank_range[0], mapping.mirror_bank_range[1]))
+            if mapping.address is None:
+                f.write(struct.pack("<B", 0))
+            else:
+                address = mapping.address.encode("utf-8")
+                f.write(struct.pack("<BB", 1, len(address)))
+                f.write(address)
+                f.write(struct.pack("<II", mapping.base, mapping.rom_size))
 
     def _write_header(self, f: IO[bytes]) -> None:
         flags = 0x01 if self.relocatable else 0x00
@@ -425,6 +448,13 @@ class ObjectFile:
             if has_mirror:
                 m_lo, m_hi = struct.unpack("<HH", f.read(4))
                 mirror = (m_lo, m_hi)
+            (has_bml,) = struct.unpack("<B", f.read(1))
+            address: str | None = None
+            base = rom_size = 0
+            if has_bml:
+                (address_len,) = struct.unpack("<B", f.read(1))
+                address = f.read(address_len).decode("utf-8")
+                base, rom_size = struct.unpack("<II", f.read(8))
             out.append(
                 BusMapping(
                     identifier=identifier,
@@ -433,6 +463,9 @@ class ObjectFile:
                     mask=mask,
                     writeable=bool(writeable_byte),
                     mirror_bank_range=mirror,
+                    address=address,
+                    base=base,
+                    rom_size=rom_size,
                 )
             )
         return out

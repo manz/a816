@@ -285,12 +285,7 @@ def _declare_owned_mapping(resolver: Resolver, mapping: BusMapping, file_info: T
 
 def _bus_shape(bus: Bus, identifier: str) -> tuple[object, ...] | None:
     """The declared shape of ``identifier`` on ``bus``, comparable with `BusMapping.shape`."""
-    declared = bus.mappings.get(identifier)
-    if declared is None:
-        return None
-    mirror = bus.mappings.get(f"{identifier}_mirror")
-    mirror_range = mirror.bank_range if mirror is not None else None
-    return (identifier, declared.bank_range, declared.address_range, declared.mask, declared.writable, mirror_range)
+    return bus.declared.get(identifier)
 
 
 _MODULE_CONFLICT_HINT = (
