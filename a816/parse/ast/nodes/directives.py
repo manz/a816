@@ -97,7 +97,7 @@ class CodeRelocationAstNode(AstNode):
 
 class MapArgs(TypedDict, total=False):
     identifier: str | int
-    writable: bool
+    writable: int
     bank_range: tuple[int, int]
     addr_range: tuple[int, int]
     mask: int

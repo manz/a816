@@ -22,10 +22,13 @@ from a816.parse.ast.nodes.directives import (
     IncludeIpsAstNode,
     MapAstNode,
     RegisterSizeAstNode,
+    ReserveAstNode,
+    ReserveTypedAstNode,
     TableAstNode,
     TextAstNode,
 )
 from a816.parse.ast.nodes.opcode import OpcodeAstNode
+from a816.parse.ast.nodes.pool import AllocAstNode, PoolAstNode, ReclaimAstNode, RelocateAstNode
 from a816.parse.ast.nodes.struct import StructAstNode
 from a816.parse.ast.nodes.struct_instance import StructInstanceAstNode
 from a816.parse.ast.nodes.symbols import (
@@ -59,6 +62,12 @@ KeywordAstNode = (
     | DebugAstNode
     | RegisterSizeAstNode
     | LabelDeclAstNode
+    | PoolAstNode
+    | AllocAstNode
+    | RelocateAstNode
+    | ReclaimAstNode
+    | ReserveAstNode
+    | ReserveTypedAstNode
 )
 
 DeclAstNode = (
@@ -72,5 +81,5 @@ DeclAstNode = (
     | MacroApplyAstNode
     | SymbolAffectationAstNode
     | IfAstNode
-    | CommentAstNode,
+    | CommentAstNode
 )

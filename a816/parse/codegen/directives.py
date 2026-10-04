@@ -13,7 +13,6 @@ from a816.parse.ast.nodes import (
     DebugAstNode,
     DocstringAstNode,
     ExpressionAstNode,
-    FileInfoAstNode,
     IncludeAstNode,
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
@@ -219,14 +218,14 @@ def generate_star_eq(
 
 
 def generate_comment(
-    node: CommentAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: FileInfoAstNode
+    node: CommentAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
 ) -> list[NodeProtocol]:
     # Comments don't generate executable code, so return empty list
     return []
 
 
 def generate_debug(
-    node: DebugAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: FileInfoAstNode
+    node: DebugAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
 ) -> list[NodeProtocol]:
     return [DebugNode(node.message, resolver)]
 

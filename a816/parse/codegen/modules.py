@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import overload
 
 from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
 from a816.module_loader import resolve_module
@@ -340,8 +341,14 @@ def _pruned_if(node: IfAstNode, bare_names: bool) -> list[AstNode]:
     return [IfAstNode(node.expression, _block(then_body, node.block), else_block, node.file_info)]
 
 
-def _block[B: (BlockAstNode, CompoundAstNode)](body: list[AstNode], original: B) -> B:
-    return type(original)(body, original.file_info)
+@overload
+def _block(body: list[AstNode], original: BlockAstNode) -> BlockAstNode: ...
+@overload
+def _block(body: list[AstNode], original: CompoundAstNode) -> CompoundAstNode: ...
+def _block(body: list[AstNode], original: BlockAstNode | CompoundAstNode) -> BlockAstNode | CompoundAstNode:
+    if isinstance(original, CompoundAstNode):
+        return CompoundAstNode(body, original.file_info)
+    return BlockAstNode(body, original.file_info)
 
 
 def _runtime_extern_names(node: object) -> list[str]:

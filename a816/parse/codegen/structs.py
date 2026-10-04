@@ -248,7 +248,7 @@ def generate_map(
         bank_range=attributes["bank_range"],
         addr_range=attributes["addr_range"],
         mask=attributes["mask"],
-        writeable=attributes.get("writable", False),
+        writeable=bool(attributes.get("writable", False)),
         mirror_bank_range=attributes.get("mirror_bank_range"),
     )
     seeded = {seed.identifier for seed in resolver.context.bus_map}
