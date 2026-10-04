@@ -16,13 +16,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import NamedTuple
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    tomllib = None  # type: ignore[assignment]
-
 from lsprotocol.types import Diagnostic, DiagnosticSeverity, Location, Position, Range
 
+from a816.config import A816Config, discover_a816_config
+from a816.exceptions import A816ConfigError
 from a816.lsp.document import A816Document
 from a816.stdlib import resolve_stdlib_module
 from a816.util import uri_to_path
@@ -62,6 +59,12 @@ def _index_workers() -> int:
     return max(1, min(MAX_INDEX_WORKERS, available))
 
 
+def _merge_paths(target: list[Path], paths: list[Path]) -> None:
+    for path in paths:
+        if path not in target:
+            target.append(path)
+
+
 class WorkspaceIndex:
     """Indexes workspace files to provide cross-file symbol resolution."""
 
@@ -70,6 +73,8 @@ class WorkspaceIndex:
     def __init__(self, root_path: Path | str | None):
         self.root_path = Path(root_path).resolve() if root_path else None
         self.entrypoint: Path | None = None
+        # The project's `a816.toml`, shared with the CLI and fluff loaders.
+        self.config: A816Config | None = None
         self.include_paths: list[Path] = []
         self.module_paths: list[Path] = []
         self.documents: dict[str, A816Document] = {}
@@ -147,6 +152,7 @@ class WorkspaceIndex:
         `a816.toml` and at most a pragma scan, so it stays in the tens of
         milliseconds."""
         self.clear()
+        self.config = self._load_config()
         self.entrypoint = self._detect_entrypoint()
         self.prepared = True
 
@@ -266,45 +272,27 @@ class WorkspaceIndex:
                 return path.resolve()
         return None
 
-    def _find_a816_toml(self) -> Path | None:
+    def _load_config(self) -> A816Config | None:
+        """Load the nearest `a816.toml` and adopt its search paths.
+
+        An invalid config is logged and ignored so the editor keeps
+        indexing; the CLI reports the same error as a hard failure.
+        """
         if self.root_path is None:
             return None
-        current = self.root_path
-        while True:
-            candidate = current / "a816.toml"
-            if candidate.exists():
-                return candidate
-            if current.parent == current:
-                return None
-            current = current.parent
-
-    def _merge_path_list(self, target: list[Path], config_root: Path, paths: list[str]) -> None:
-        for p in paths:
-            resolved = (config_root / p).resolve()
-            if resolved not in target:
-                target.append(resolved)
+        try:
+            config = discover_a816_config(self.root_path)
+        except A816ConfigError as exc:
+            logger.warning("WorkspaceIndex: ignoring a816.toml: %s [%s]", exc.message, exc.code)
+            return None
+        if config is not None:
+            _merge_paths(self.include_paths, config.include_paths)
+            _merge_paths(self.module_paths, config.module_paths)
+        return config
 
     def _entry_from_config(self) -> Path | None:
-        if tomllib is None:
-            return None
-        config_file = self._find_a816_toml()
-        if config_file is None:
-            return None
-        try:
-            with config_file.open("rb") as handle:
-                data = tomllib.load(handle)
-        except (OSError, tomllib.TOMLDecodeError):
-            return None
-
-        config_root = config_file.parent
-        self._merge_path_list(self.include_paths, config_root, data.get("include-paths", []))
-        self._merge_path_list(self.module_paths, config_root, data.get("module-paths", []))
-
-        entry = data.get("entrypoint")
-        if not entry:
-            return None
-        result = (config_root / entry).resolve()
-        return result if result.exists() else None
+        entry = self.config.entrypoint if self.config is not None else None
+        return entry if entry is not None and entry.exists() else None
 
     def _fallback_entrypoint(self) -> Path | None:
         if not self.root_path:

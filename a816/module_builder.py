@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from a816.object_file import BusMapping
     from a816.program import Program
 
 from a816.exceptions import A816Error
@@ -26,8 +27,11 @@ from a816.parse.mzparser import A816Parser
 
 logger = logging.getLogger("a816.module_builder")
 
-# `.deps` sidecar line recording the experimental flags an object was built with.
+# `.deps` sidecar lines recording the experimental flags / a816.toml bus
+# regions an object was built with.
 _EXPERIMENTAL_PREFIX = "experimental:"
+_BUS_MAP_PREFIX = "bus-map:"
+_CONFIG_PREFIXES = (_EXPERIMENTAL_PREFIX, _BUS_MAP_PREFIX)
 
 
 @dataclass
@@ -104,6 +108,7 @@ class ModuleBuilder:
         symbols: dict[str, int | str] | None = None,
         include_paths: list[Path] | None = None,
         experimental: list[str] | None = None,
+        bus_map: "list[BusMapping] | None" = None,
     ) -> None:
         """Initialize the module builder.
 
@@ -113,12 +118,14 @@ class ModuleBuilder:
             symbols: Predefined symbols (e.g., LANG=1) for conditional compilation.
             include_paths: Directories to search for .include files.
             experimental: Experimental feature flags applied to every module compile.
+            bus_map: `a816.toml` bus regions seeded onto every module's bus.
         """
         self.module_paths = module_paths or []
         self.output_dir = output_dir or Path("build/obj")
         self.symbols: dict[str, int | str] = symbols or {}
         self.include_paths: list[Path] = include_paths or []
         self.experimental: list[str] = sorted(set(experimental or []))
+        self.bus_map: list[BusMapping] = list(bus_map or [])
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
 
@@ -216,10 +223,10 @@ class ModuleBuilder:
             return True
 
         lines = [line for line in deps_path.read_text(encoding="utf-8").splitlines() if line]
-        flags = [line for line in lines if line.startswith(_EXPERIMENTAL_PREFIX)]
-        if flags != self._experimental_lines():
+        config = [line for line in lines if line.startswith(_CONFIG_PREFIXES)]
+        if config != self._config_lines():
             return True
-        deps = [line for line in lines if not line.startswith(_EXPERIMENTAL_PREFIX)]
+        deps = [line for line in lines if not line.startswith(_CONFIG_PREFIXES)]
         # The source that built this object is recorded in its sidecar; if the
         # current source path isn't there, the object belongs to a different
         # file that mapped to the same module name, so rebuild.
@@ -258,16 +265,20 @@ class ModuleBuilder:
         deps = {os.path.abspath(str(source_path))}
         deps.update(os.path.abspath(f) for f in obj.files)
         deps.update(asset_files)
-        lines = self._experimental_lines() + sorted(deps)
+        lines = self._config_lines() + sorted(deps)
         self._deps_path(module_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def _experimental_lines(self) -> list[str]:
-        """Sidecar lines pinning the experimental flags the `.o` was built with.
+    def _config_lines(self) -> list[str]:
+        """Sidecar lines pinning the build settings the `.o` was compiled under.
 
-        Flags change codegen (e.g. `track_register_size` widens immediates),
-        so toggling one must invalidate every cached object.
+        Experimental flags change codegen (e.g. `track_register_size` widens
+        immediates) and the a816.toml bus regions are serialized into every
+        `.o`, so changing either must invalidate every cached object.
         """
-        return [_EXPERIMENTAL_PREFIX + ",".join(self.experimental)] if self.experimental else []
+        lines = [_EXPERIMENTAL_PREFIX + ",".join(self.experimental)] if self.experimental else []
+        if self.bus_map:
+            lines.append(_BUS_MAP_PREFIX + ";".join(repr(m.shape()) for m in self.bus_map))
+        return lines
 
     def _compile_module(
         self, module_name: str, source_path: Path, obj_path: Path, constants: dict[str, int]
@@ -284,6 +295,7 @@ class ModuleBuilder:
         program = Program()
         apply_experimental_flags(program, self.experimental)
         program.resolver.context.require_placement = True
+        program.resolver.context.bus_map = list(self.bus_map)
         program.add_module_path(self.output_dir)
         for path in self.module_paths:
             program.add_module_path(path)
@@ -399,6 +411,7 @@ def build_with_imports(
     overlap_mode: str | None = None,
     experimental: list[str] | None = None,
     mapping: str | None = None,
+    bus_map: "list[BusMapping] | None" = None,
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
@@ -414,6 +427,8 @@ def build_with_imports(
         include_paths: Additional directories to search for .include files.
         overlap_mode: How to handle overlapping writes (error/warn/off).
         experimental: List of experimental feature flags to enable.
+        mapping: `-m` ROM type used to translate addresses at link time.
+        bus_map: `a816.toml` bus regions seeded onto every module's bus.
 
     Returns:
         BuildResult with exit_code, symbol_map, diagnostics, and program.
@@ -435,6 +450,7 @@ def build_with_imports(
             symbols=symbols,
             include_paths=include_paths,
             experimental=experimental,
+            bus_map=bus_map,
         )
 
         linked = builder.build(main_source, parsed_main_nodes=main_nodes)

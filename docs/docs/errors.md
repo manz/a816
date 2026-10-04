@@ -113,8 +113,9 @@ separate blocks separated by a blank line.
 - `E0306` operand size mismatch.
 - `E0307` addressing mode not supported by opcode.
 - `E0308` conflicting `.map` declaration. Two modules (or a module
-  and one it `.import`s) declare the same identifier with different
-  ranges, mask, writable flag or mirror.
+  and one it `.import`s, or a module and the `a816.toml` bus map)
+  declare the same identifier with different ranges, mask, writable
+  flag or mirror.
 - `E0309` byte immediate does not fit in 8 bits: an explicit `.b`
   immediate whose value exceeds `0xFF`.
 - `E0310` code emitted outside any placement. Under `a816 build`,
@@ -165,9 +166,23 @@ separate blocks separated by a blank line.
 ### I/O / config
 
 - `E0500` file not found.
-- `E0501` invalid project config.
+- `E0501` invalid project config: `a816.toml` is not valid TOML (a
+  repeated `[map.N]` table is one way to get there).
 - `E0502` `.include_ips` file is not an IPS patch (no `PATCH`
   header). An unreadable `.include_ips` path reports `E0500`.
+- `E0503` `[experimental]` in `a816.toml` is not a table, or one of
+  its flags is not `true` / `false`.
+- `E0504` `mapper` in `a816.toml` names no supported preset
+  (`lorom`, `hirom`).
+- `E0505` malformed `[map.N]` entry: not a table, an unknown key, a
+  missing `bank_range` / `addr_range` / `mask`, or two keys spelling
+  the same number (`[map.1]` and `[map.0x1]`).
+- `E0506` a `[map.N]` value has the wrong type: `N` and `mask` are
+  integers, ranges are `[start, end]` integer pairs, `writable` a
+  boolean.
+- `E0507` `mapper` and `[map.N]` are both set; they are mutually
+  exclusive.
+- `E0508` `-m` disagrees with the `a816.toml` `mapper`.
 
 ## LSP integration
 

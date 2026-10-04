@@ -11,7 +11,22 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from a816.error_codes import (
+    E_CONFIG_BAD_EXPERIMENTAL,
+    E_CONFIG_BAD_MAP_ENTRY,
+    E_CONFIG_BAD_MAP_VALUE,
+    E_CONFIG_INVALID,
+    E_CONFIG_MAPPER_AND_MAP,
+    E_CONFIG_UNKNOWN_MAPPER,
+    ErrorCode,
+)
+from a816.exceptions import A816ConfigError
+from a816.mappers import MAPPERS
+from a816.object_file import BusMapping
+
 CONFIG_FILENAME = "a816.toml"
+_MAP_REQUIRED_KEYS = ("bank_range", "addr_range", "mask")
+_MAP_KEYS = frozenset(_MAP_REQUIRED_KEYS + ("writable", "mirror_bank_range"))
 
 
 @dataclass(frozen=True)
@@ -27,6 +42,12 @@ class A816Config:
     # `--experimental NAME` (and `--no-experimental NAME` for explicit
     # off). Mirrors the [experimental] table in `a816.toml`.
     experimental: dict[str, bool] = field(default_factory=dict)
+    # Cartridge preset named by `mapper = ...`, kept so the CLI can check
+    # it against `-m`; its regions are already expanded into `bus_map`.
+    mapper: str | None = None
+    # Every bus region the project declares: the `mapper` preset first,
+    # or the `[map.N]` tables (never both). Seeded onto every translation unit's bus.
+    bus_map: list[BusMapping] = field(default_factory=list)
 
     @property
     def root(self) -> Path:
@@ -51,24 +72,137 @@ def _resolve_paths(root: Path, raw: list[str]) -> list[Path]:
     return [(root / item).resolve() for item in raw]
 
 
+class _BusMapParser:
+    """Turn the `mapper` key and `[map.N]` tables into `BusMapping`s."""
+
+    def __init__(self, config_path: Path) -> None:
+        self.config_path = config_path
+
+    def parse(self, data: dict[str, object]) -> tuple[str | None, list[BusMapping]]:
+        mapper = self._mapper(data.get("mapper"))
+        raw = data.get("map", {})
+        if not isinstance(raw, dict):
+            raise self._error(E_CONFIG_BAD_MAP_ENTRY, "`map` must be a table of regions (`[map.N]`)")
+        if mapper is not None and raw:
+            raise self._error(
+                E_CONFIG_MAPPER_AND_MAP, "`mapper` and `[map.N]` are mutually exclusive: use one or the other"
+            )
+        if mapper is not None:
+            return mapper, list(MAPPERS[mapper])
+        regions = [self._entry(key, item) for key, item in raw.items()]
+        self._reject_aliased_keys(regions)
+        return None, regions
+
+    def _error(self, code: ErrorCode, message: str) -> A816ConfigError:
+        return A816ConfigError(code, message, self.config_path)
+
+    def _mapper(self, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or value not in MAPPERS:
+            supported = ", ".join(sorted(MAPPERS))
+            raise self._error(E_CONFIG_UNKNOWN_MAPPER, f"unknown mapper {value!r} (supported: {supported})")
+        return value
+
+    def _entry(self, key: str, item: object) -> BusMapping:
+        where = f"[map.{key}]"
+        if not isinstance(item, dict):
+            raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"{where} must be a table")
+        self._check_keys(item, where)
+        mirror = item.get("mirror_bank_range")
+        return BusMapping(
+            identifier=self._identifier(key, where),
+            bank_range=self._pair(item["bank_range"], f"{where} bank_range"),
+            addr_range=self._pair(item["addr_range"], f"{where} addr_range"),
+            mask=self._int(item["mask"], f"{where} mask"),
+            writeable=self._bool(item.get("writable", False), f"{where} writable"),
+            mirror_bank_range=None if mirror is None else self._pair(mirror, f"{where} mirror_bank_range"),
+        )
+
+    def _check_keys(self, item: dict[str, object], where: str) -> None:
+        unknown = sorted(set(item) - _MAP_KEYS)
+        missing = [name for name in _MAP_REQUIRED_KEYS if name not in item]
+        problems = [
+            f"{label} {', '.join(names)}"
+            for label, names in (("unknown keys", unknown), ("missing keys", missing))
+            if names
+        ]
+        if problems:
+            raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"{where}: {'; '.join(problems)}")
+
+    def _identifier(self, key: str, where: str) -> str:
+        """`.map identifier=N` only takes a number; keep the same keyspace so
+        a source `.map` and a toml region with the same N are comparable."""
+        try:
+            return str(int(key, 0))
+        except ValueError:
+            raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where}: the region key must be an integer") from None
+
+    def _int(self, value: object, where: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where} must be an integer, got {value!r}")
+        return value
+
+    def _bool(self, value: object, where: str) -> bool:
+        if not isinstance(value, bool):
+            raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where} must be true or false, got {value!r}")
+        return value
+
+    def _pair(self, value: object, where: str) -> tuple[int, int]:
+        if not isinstance(value, list) or len(value) != 2:
+            raise self._error(E_CONFIG_BAD_MAP_VALUE, f"{where} must be a [start, end] pair, got {value!r}")
+        return self._int(value[0], where), self._int(value[1], where)
+
+    def _reject_aliased_keys(self, regions: list[BusMapping]) -> None:
+        """TOML rejects a repeated `[map.N]`; this catches spellings of one number (`[map.1]`, `[map.0x1]`)."""
+        seen: set[str] = set()
+        for region in regions:
+            if region.identifier in seen:
+                raise self._error(E_CONFIG_BAD_MAP_ENTRY, f"map identifier {region.identifier} is declared twice")
+            seen.add(region.identifier)
+
+
+def _experimental(raw: object, config_path: Path) -> dict[str, bool]:
+    """The `[experimental]` table: flag name -> true / false, nothing else."""
+    if not isinstance(raw, dict):
+        raise A816ConfigError(E_CONFIG_BAD_EXPERIMENTAL, "`experimental` must be a table of flags", config_path)
+    for name, value in raw.items():
+        if not isinstance(value, bool):
+            raise A816ConfigError(
+                E_CONFIG_BAD_EXPERIMENTAL,
+                f"[experimental] {name} must be true or false, got {value!r}",
+                config_path,
+            )
+    return {str(name): value for name, value in raw.items()}
+
+
 def load_a816_toml(config_path: Path) -> A816Config | None:
-    """Parse the project config. Return None on read / decode errors."""
+    """Parse the project config. Return None when the file can't be read.
+
+    Raises:
+        A816ConfigError: the file is not valid TOML, or `[experimental]` /
+            `mapper` / `[map.N]` is invalid.
+    """
     try:
         with config_path.open("rb") as handle:
             data = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except OSError:
         return None
+    except tomllib.TOMLDecodeError as exc:
+        raise A816ConfigError(E_CONFIG_INVALID, f"not valid TOML: {exc}", config_path) from None
     root = config_path.parent
     entry = data.get("entrypoint")
     entry_path = (root / entry).resolve() if isinstance(entry, str) else None
-    raw_experimental = data.get("experimental", {}) or {}
-    experimental = {str(k): bool(v) for k, v in raw_experimental.items() if isinstance(v, bool)}
+    experimental = _experimental(data.get("experimental", {}), config_path)
+    mapper, bus_map = _BusMapParser(config_path).parse(data)
     return A816Config(
         config_path=config_path,
         entrypoint=entry_path,
         include_paths=_resolve_paths(root, data.get("include-paths", []) or []),
         module_paths=_resolve_paths(root, data.get("module-paths", []) or []),
         experimental=experimental,
+        mapper=mapper,
+        bus_map=bus_map,
     )
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
 from a816.cpu.cpu_65c816 import RomType
+from a816.mappers import map_on_bus
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.writers import IPSWriter, SFCWriter, Writer
 
@@ -59,14 +60,7 @@ class LinkMixin:
         for mapping in linked_obj.bus_mappings:
             if mapping.identifier in self.resolver.bus.mappings:
                 continue
-            self.resolver.bus.map(
-                mapping.identifier,
-                mapping.bank_range,
-                mapping.addr_range,
-                mapping.mask,
-                writeable=mapping.writeable,
-                mirror_bank_range=mapping.mirror_bank_range,
-            )
+            map_on_bus(self.resolver.bus, mapping)
 
     def write_debug_info_for_linked(self, linked_obj: ObjectFile, output_path: Path) -> Path | None:
         """Write a `.adbg` next to a linked output. Returns the written path."""

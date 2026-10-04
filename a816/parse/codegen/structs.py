@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from a816.context import AssemblyMode
 from a816.cpu.mapping import Bus
 from a816.error_codes import E_CODEGEN_MAP_CONFLICT
+from a816.mappers import map_on_bus
 from a816.object_file import BusMapping
 from a816.parse.ast.expression import eval_number
 from a816.parse.ast.nodes import MapAstNode, StructAstNode
@@ -250,31 +251,56 @@ def generate_map(
         writeable=attributes.get("writable", False),
         mirror_bank_range=attributes.get("mirror_bank_range"),
     )
-    if _is_redeclaration(resolver.bus, mapping, file_info):
-        return []
-    _map_on_bus(resolver.bus, mapping)
-    # OBJECT mode: serialize so the linker replays the mapping on its
-    # own resolver bus. Without this, custom cartridge mappings
-    # (SA-1, ExHiROM, anything beyond the default low_rom) silently
-    # vanish at link time and downstream addresses resolve wrong.
-    writer = resolver.context.object_writer
-    if writer is not None and resolver.context.mode == AssemblyMode.OBJECT:
-        writer.bus_mappings.append(mapping)
+    seeded = {seed.identifier for seed in resolver.context.bus_map}
+    hint = _TOML_CONFLICT_HINT if mapping.identifier in seeded else _MODULE_CONFLICT_HINT
+    _declare_owned_mapping(resolver, mapping, file_info, hint)
     return []
 
 
+def seed_bus_map(resolver: Resolver) -> None:
+    """Declare the project's `a816.toml` regions before the unit's own `.map` lines.
+
+    Runs once per translation unit (and is idempotent on a re-parse). In
+    object mode each region is serialized like a source `.map`, so the
+    linker replays it; identical regions from several `.o`s dedupe there.
+    """
+    for mapping in resolver.context.bus_map:
+        _declare_owned_mapping(resolver, mapping, None, _TOML_CONFLICT_HINT)
+
+
+def _declare_owned_mapping(resolver: Resolver, mapping: BusMapping, file_info: Token | None, hint: str) -> None:
+    """Map a region this unit declares and, in OBJECT mode, serialize it.
+
+    Without serialization, custom cartridge mappings (SA-1, ExHiROM,
+    anything beyond the default low_rom) silently vanish at link time
+    and downstream addresses resolve wrong.
+    """
+    if _is_redeclaration(resolver.bus, mapping, file_info, hint):
+        return
+    map_on_bus(resolver.bus, mapping)
+    writer = resolver.context.object_writer
+    if writer is not None and resolver.context.mode == AssemblyMode.OBJECT:
+        writer.bus_mappings.append(mapping)
+
+
 def _bus_shape(bus: Bus, identifier: str) -> tuple[object, ...] | None:
-    """The declared shape of ``identifier`` on ``bus``, comparable with `_mapping_shape`."""
+    """The declared shape of ``identifier`` on ``bus``, comparable with `BusMapping.shape`."""
     declared = bus.mappings.get(identifier)
     if declared is None:
         return None
     mirror = bus.mappings.get(f"{identifier}_mirror")
     mirror_range = mirror.bank_range if mirror is not None else None
-    return (declared.bank_range, declared.address_range, declared.mask, declared.writable, mirror_range)
+    return (identifier, declared.bank_range, declared.address_range, declared.mask, declared.writable, mirror_range)
 
 
-def _mapping_shape(mapping: BusMapping) -> tuple[object, ...]:
-    return (mapping.bank_range, mapping.addr_range, mapping.mask, mapping.writeable, mapping.mirror_bank_range)
+_MODULE_CONFLICT_HINT = (
+    "every module declaring this identifier must use the same bank_range, "
+    "addr_range, mask, writable and mirror_bank_range"
+)
+_TOML_CONFLICT_HINT = (
+    "a816.toml declares this identifier for every module; match its "
+    "bank_range, addr_range, mask, writable and mirror_bank_range or drop this `.map`"
+)
 
 
 def declare_bus_mapping(resolver: Resolver, mapping: BusMapping, file_info: Token) -> None:
@@ -285,35 +311,23 @@ def declare_bus_mapping(resolver: Resolver, mapping: BusMapping, file_info: Toke
     identifier identically is a no-op; a different shape under the same
     identifier is a conflict, matching the linker's cross-module check.
     """
-    if not _is_redeclaration(resolver.bus, mapping, file_info):
-        _map_on_bus(resolver.bus, mapping)
+    if not _is_redeclaration(resolver.bus, mapping, file_info, _MODULE_CONFLICT_HINT):
+        map_on_bus(resolver.bus, mapping)
 
 
-def _is_redeclaration(bus: Bus, mapping: BusMapping, file_info: Token) -> bool:
+def _is_redeclaration(bus: Bus, mapping: BusMapping, file_info: Token | None, hint: str) -> bool:
     """True when ``mapping`` is already declared identically; raise on a conflicting shape."""
     existing = _bus_shape(bus, mapping.identifier)
     if existing is None:
         return False
-    if existing != _mapping_shape(mapping):
+    if existing != mapping.shape():
         raise NodeError(
             f"conflicting `.map {mapping.identifier!r}` declaration",
             file_info,
             code=str(E_CODEGEN_MAP_CONFLICT),
-            hint="every module declaring this identifier must use the same bank_range, "
-            "addr_range, mask, writable and mirror_bank_range",
+            hint=hint,
         )
     return True
-
-
-def _map_on_bus(bus: Bus, mapping: BusMapping) -> None:
-    bus.map(
-        mapping.identifier,
-        mapping.bank_range,
-        mapping.addr_range,
-        mapping.mask,
-        writeable=mapping.writeable,
-        mirror_bank_range=mapping.mirror_bank_range,
-    )
 
 
 generators["struct"] = generate_struct

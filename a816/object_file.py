@@ -99,6 +99,17 @@ class BusMapping:
     writeable: bool = False
     mirror_bank_range: tuple[int, int] | None = None
 
+    def shape(self) -> tuple[object, ...]:
+        """Every field as a plain tuple, for comparing declarations and cache keys."""
+        return (
+            self.identifier,
+            self.bank_range,
+            self.addr_range,
+            self.mask,
+            self.writeable,
+            self.mirror_bank_range,
+        )
+
 
 @dataclass
 class PoolAlloc:

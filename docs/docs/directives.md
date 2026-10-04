@@ -56,14 +56,17 @@ WARNING write at $000004..$00000b overlaps previous write at
 
 ### `.map` — memory map
 
-Selects the cartridge address mapping. Affects how `*=` translates
-into a physical ROM offset.
+Declares one bus region. Affects how `*=` / `.alloc` addresses
+translate into a physical ROM offset and which banks are writable.
 
 ```ca65
-.map low_rom
-.map low_rom_2
-.map high_rom
+.map identifier=1 bank_range=0xc0, 0xfd addr_range=0x0000, 0xffff mask=0x10000 mirror_bank_range=0x40, 0x7d
+.map identifier=3 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=1
 ```
+
+Without any region the bus follows `-m` (LoROM when `-m` is absent).
+The layout is usually project-wide: declare it once in `a816.toml`
+(`mapper` or `[map.N]`) instead of repeating it in every module.
 
 ## Expressions
 
