@@ -7,8 +7,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from a816.context import AssemblyMode
 from a816.program import Program
+from tests import StubWriter
 
 
 def _resolve_symbols(src: str) -> dict[str, int]:
@@ -153,3 +156,71 @@ class _NoopEmitter:
     def write_block_header(self, *_: object, **__: object) -> None: ...
 
     def write_block(self, *_: object, **__: object) -> None: ...
+
+
+@pytest.mark.parametrize(
+    ("name", "offset"),
+    [
+        ("SnesHeader.maker_code", 0x00),
+        ("SnesHeader.game_code", 0x02),
+        ("SnesHeader.reserved", 0x06),
+        ("SnesHeader.expansion_flash_size", 0x0C),
+        ("SnesHeader.expansion_ram_size", 0x0D),
+        ("SnesHeader.special_version", 0x0E),
+        ("SnesHeader.cartridge_subtype", 0x0F),
+        ("SnesHeader.title", 0x10),
+        ("SnesHeader.title.__size", 21),
+        ("SnesHeader.map_mode", 0x25),
+        ("SnesHeader.cartridge_type", 0x26),
+        ("SnesHeader.rom_size", 0x27),
+        ("SnesHeader.sram_size", 0x28),
+        ("SnesHeader.destination", 0x29),
+        ("SnesHeader.old_maker_code", 0x2A),
+        ("SnesHeader.version", 0x2B),
+        ("SnesHeader.checksum_complement", 0x2C),
+        ("SnesHeader.checksum", 0x2E),
+        ("SnesHeader.__size", 0x30),
+        ("SnesNativeVectors.coprocessor", 0x04),
+        ("SnesNativeVectors.break", 0x06),
+        ("SnesNativeVectors.abort", 0x08),
+        ("SnesNativeVectors.nmi", 0x0A),
+        ("SnesNativeVectors.irq", 0x0E),
+        ("SnesEmulationVectors.coprocessor", 0x04),
+        ("SnesEmulationVectors.abort", 0x08),
+        ("SnesEmulationVectors.nmi", 0x0A),
+        ("SnesEmulationVectors.reset", 0x0C),
+        ("SnesEmulationVectors.irq_brk", 0x0E),
+        ("SnesVectors.native.nmi", 0x0A),
+        ("SnesVectors.emulation.reset", 0x1C),
+        ("SnesVectors.__size", 0x20),
+    ],
+)
+def test_snes_header_layout(name: str, offset: int) -> None:
+    assert _resolve_symbols('.import "@std/snes/header"\n')[name] == offset
+
+
+@pytest.mark.parametrize(
+    ("expr", "address"),
+    [
+        ("SNES_HEADER_BASE + SnesHeader.title", 0xFFC0),
+        ("SNES_HEADER_BASE + SnesHeader.map_mode", 0xFFD5),
+        ("SNES_HEADER_BASE + SnesHeader.checksum", 0xFFDE),
+        ("SNES_VECTORS_BASE", 0xFFE0),
+        ("SNES_VECTORS_BASE + SnesVectors.emulation.reset", 0xFFFC),
+    ],
+)
+def test_snes_header_lands_at_hardware_addresses(expr: str, address: int) -> None:
+    assert _resolve_symbols(f'.import "@std/snes/header"\nprobe = {expr}\n')["probe"] == address
+
+
+def test_snes_header_istruct_emits_48_bytes() -> None:
+    src = (
+        '.import "@std/snes/header"\n*=0x008000\n'
+        '.istruct SnesHeader { title = "A816", map_mode = 0x20, old_maker_code = 0x33 }\n'
+    )
+    writer = StubWriter()
+    program = Program()
+    program.resolver.context.mode = AssemblyMode.DIRECT
+    program.assemble_string_with_emitter(src, "main.s", writer)
+    data = b"".join(writer.data)
+    assert data == bytes(16) + b"A816" + bytes(17) + b"\x20" + bytes(4) + b"\x33" + bytes(5)
