@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from a816.context import AssemblyMode
 from a816.cpu.mapping import Bus
 from a816.error_codes import E_CODEGEN_MAP_CONFLICT
 from a816.object_file import BusMapping
@@ -191,8 +192,9 @@ def generate_map(
     # own resolver bus. Without this, custom cartridge mappings
     # (SA-1, ExHiROM, anything beyond the default low_rom) silently
     # vanish at link time and downstream addresses resolve wrong.
-    if declared and resolver.context.is_object_mode and resolver.context.object_writer is not None:
-        resolver.context.object_writer.bus_mappings.append(mapping)
+    writer = resolver.context.object_writer
+    if declared and writer is not None and resolver.context.mode == AssemblyMode.OBJECT:
+        writer.bus_mappings.append(mapping)
     return []
 
 

@@ -125,4 +125,5 @@ class TestUnresolvedRepSep:
 def test_source_location_tolerates_missing_line() -> None:
     token = Token(TokenType.IDENTIFIER, "lda", Position(3, 0, File("gone.s")))
     location = node_source_location(token)
-    assert location is not None and location.source_line == ""
+    assert location is not None
+    assert location.source_line == ""

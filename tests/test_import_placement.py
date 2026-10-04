@@ -56,7 +56,8 @@ def test_import_after_star_eq_message_points_at_the_prelude() -> None:
 def test_import_after_star_eq_caret_sits_on_the_import_keyword() -> None:
     error = _assemble_error('*=0x008000\n.import "@std/snes/ppu"\n')
     token = error.file_info
-    assert token is not None and token.position is not None
+    assert token is not None
+    assert token.position is not None
     assert (token.value, token.position.line) == ("import", 1)
 
 
@@ -112,9 +113,10 @@ def test_import_after_star_eq_is_rejected_in_object_mode(tmp_path: Path, caplog:
 def test_alloc_depth_unwinds_after_a_rejected_import() -> None:
     program = Program()
     program.resolver.context.mode = AssemblyMode.DIRECT
+    emitter = _NoopEmitter()
     with pytest.raises(NodeError):
         program.assemble_string_with_emitter(
-            '.alloc at 0x008000 {\n    .import "@std/snes/ppu"\n}\n', "main.s", _NoopEmitter()
+            '.alloc at 0x008000 {\n    .import "@std/snes/ppu"\n}\n', "main.s", emitter
         )
     assert program.resolver.placement_body_depth == 0
 

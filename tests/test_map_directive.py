@@ -22,7 +22,8 @@ def test_map_stops_at_end_of_line_before_assign() -> None:
 def test_map_keeps_its_attributes_when_next_line_is_identifier() -> None:
     result = A816Parser.parse_as_ast(_MAP_LINE + "ppu := 0x2100\n")
     map_node = result.nodes[0]
-    assert isinstance(map_node, MapAstNode) and map_node.args["mask"] == 0x8000
+    assert isinstance(map_node, MapAstNode)
+    assert map_node.args["mask"] == 0x8000
 
 
 def test_map_next_line_assign_is_its_own_node() -> None:
@@ -32,7 +33,8 @@ def test_map_next_line_assign_is_its_own_node() -> None:
 
 def test_map_still_rejects_unknown_attribute_on_same_line() -> None:
     result = A816Parser.parse_as_ast(".map identifier=1 bogus=2\n")
-    assert result.error is not None and "bogus" in result.error
+    assert result.error is not None
+    assert "bogus" in result.error
 
 
 _PREAMBLE = (

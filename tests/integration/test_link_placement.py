@@ -74,14 +74,16 @@ def test_overlap_warn_mode_logs_and_builds(tmp_path: Path, caplog: pytest.LogCap
     main = _write_project(tmp_path, _OVERLAPPING_MODULES)
     with caplog.at_level(logging.WARNING, logger="a816.writers"):
         result = _build(main, overlap_mode="warn")
-    assert result.exit_code == 0 and any("overlaps" in r.message for r in caplog.records)
+    assert result.exit_code == 0
+    assert any("overlaps" in r.message for r in caplog.records)
 
 
 def test_overlap_off_mode_builds_silently(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     main = _write_project(tmp_path, _OVERLAPPING_MODULES)
     with caplog.at_level(logging.WARNING, logger="a816.writers"):
         result = _build(main, overlap_mode="off")
-    assert result.exit_code == 0 and not caplog.records
+    assert result.exit_code == 0
+    assert not caplog.records
 
 
 def test_adjacent_modules_do_not_trip_the_auditor(tmp_path: Path) -> None:
@@ -99,13 +101,15 @@ def test_cli_build_overlap_mode_warn_builds(tmp_path: Path) -> None:
     main = _write_project(tmp_path, {"main.s": "*= 0x008000\n    nop\n    nop\n*= 0x008001\n    rts\n"})
     out = tmp_path / "out.ips"
     rc, _ = _run_cli(["build", str(main), "-o", str(out), "--obj-dir", str(tmp_path / "obj"), "--overlap-mode", "warn"])
-    assert rc == 0 and out.exists()
+    assert rc == 0
+    assert out.exists()
 
 
 def test_cli_explicit_link_rejects_overlap(tmp_path: Path) -> None:
     _write_project(tmp_path, _OVERLAPPING_MODULES)
     rc, stderr = _run_cli(["build", str(tmp_path / "a.s"), str(tmp_path / "b.s"), "-o", str(tmp_path / "out.ips")])
-    assert rc != 0 and "overlaps" in stderr
+    assert rc != 0
+    assert "overlaps" in stderr
 
 
 def _build_logged(main: Path, caplog: pytest.LogCaptureFixture) -> tuple[BuildResult, str]:
@@ -124,7 +128,9 @@ def test_unplaced_imported_module_is_a_located_error(tmp_path: Path, caplog: pyt
         },
     )
     result, log = _build_logged(main, caplog)
-    assert result.exit_code != 0 and "error[E0310]" in log and f"{tmp_path / 'vwf.s'}:3:5" in log
+    assert result.exit_code != 0
+    assert "error[E0310]" in log
+    assert f"{tmp_path / 'vwf.s'}:3:5" in log
 
 
 def test_unplaced_error_carets_the_first_unplaced_statement(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -142,7 +148,8 @@ def test_unplaced_data_directive_is_located(tmp_path: Path, caplog: pytest.LogCa
 def test_code_after_alloc_without_position_is_unplaced(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     main = _write_project(tmp_path, {"main.s": ".alloc head at 0x008000 {\n    nop\n}\n    rts\n"})
     result, log = _build_logged(main, caplog)
-    assert result.exit_code != 0 and f"{tmp_path / 'main.s'}:4:5" in log
+    assert result.exit_code != 0
+    assert f"{tmp_path / 'main.s'}:4:5" in log
 
 
 def test_code_after_alloc_continues_an_earlier_position(tmp_path: Path) -> None:
