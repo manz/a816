@@ -22,24 +22,26 @@ class RegisterSizeNode(NodeProtocol):
         self.size = size  # 8 or 16
         self.resolver = resolver
 
-    def _apply(self) -> None:
+    def _apply(self, mark_known: bool) -> None:
         if self.register == "a":
             self.resolver.a_size = self.size
+            if mark_known:
+                self.resolver.a_size_known = True
         else:
             self.resolver.i_size = self.size
+            if mark_known:
+                self.resolver.i_size_known = True
 
     def emit(self, current_addr: Address) -> bytes:
-        self._apply()
-        if self.register == "a":
-            self.resolver.a_size_known = True
-        else:
-            self.resolver.i_size_known = True
+        self._apply(mark_known=True)
         return b""
 
     def pc_after(self, current_pc: Address) -> Address:
-        # Size the following opcodes exactly as `emit` will, or every
-        # label after a widened immediate lands short of its bytes.
-        self._apply()
+        """Size the following opcodes exactly as `emit` will.
+
+        Otherwise every label after a widened immediate lands short of its bytes.
+        """
+        self._apply(mark_known=False)
         return current_pc
 
     def __str__(self) -> str:
