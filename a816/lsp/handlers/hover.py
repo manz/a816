@@ -15,7 +15,15 @@ from typing import TYPE_CHECKING, ClassVar
 from lsprotocol.types import Hover, HoverParams, MarkupContent, MarkupKind
 
 from a816.cpu.cpu_65c816 import snes_opcode_table
-from a816.parse.ast.nodes import StructAstNode
+from a816.parse.ast.nodes import (
+    ListInitAstNode,
+    StructAstNode,
+    StructInitAstNode,
+    StructInstanceAstNode,
+)
+from a816.parse.ast.nodes.struct_instance import InitValue
+from a816.parse.ast.visitor import walk
+from a816.parse.codegen.structs import STRUCT_FIELD_SIZES, split_array_type
 from a816.parse.scanner_states import KEYWORDS
 
 if TYPE_CHECKING:
@@ -113,6 +121,9 @@ class HoverMixin:
         word = raw_word.lower()
         base_word = word.split(".")[0] if "." in word else word
 
+        istruct_hover = self._hover_for_istruct_field(doc, line_num, params.position.character)
+        if istruct_hover:
+            return istruct_hover
         opcode_or_keyword = self._hover_for_opcode_or_keyword(base_word, word)
         if opcode_or_keyword:
             return opcode_or_keyword
@@ -178,6 +189,41 @@ class HoverMixin:
         else:
             body = f"**`{struct}.{field}`** — `{field_type}` field of struct `{struct}`."
         return self._markdown_hover(body)
+
+    def _hover_for_istruct_field(self, doc: A816Document, line: int, column: int) -> Hover | None:
+        """Hover on a field name inside an `.istruct` initializer shows that field."""
+        for node in walk(doc.ast_nodes):
+            if not isinstance(node, StructInstanceAstNode):
+                continue
+            path = self._istruct_field_at(node.type_name, node.init, line, column)
+            if path is not None:
+                return self._hover_for_struct_field(path)
+        return None
+
+    def _istruct_field_at(self, type_name: str, init: StructInitAstNode, line: int, column: int) -> str | None:
+        """`Type.field` for the initializer entry whose name sits at (line, column)."""
+        for entry in init.fields:
+            position = entry.file_info.position
+            if position is not None and position.line == line and 0 <= column - position.column < len(entry.name):
+                return f"{type_name}.{entry.name}"
+            nested_type = self._nested_struct_type(type_name, entry.name)
+            if nested_type is None:
+                continue
+            for nested in _nested_struct_inits(entry.value):
+                found = self._istruct_field_at(nested_type, nested, line, column)
+                if found is not None:
+                    return found
+        return None
+
+    def _nested_struct_type(self, struct_name: str, field_name: str) -> str | None:
+        """Element struct type of `struct_name.field_name`, None for primitives."""
+        meta = self._struct_field_meta(struct_name, field_name)
+        if meta is None:
+            return None
+        element_type, _count = split_array_type(meta[0])
+        if element_type in STRUCT_FIELD_SIZES or meta[1] is not None:
+            return None
+        return element_type
 
     @staticmethod
     def _parse_struct_field_path(word: str) -> tuple[str | None, str | None, str | None]:
@@ -258,3 +304,12 @@ class HoverMixin:
         if not docstring:
             return None
         return self._markdown_hover(f"**{label}**\n\n{docstring}")
+
+
+def _nested_struct_inits(value: InitValue) -> list[StructInitAstNode]:
+    """Struct initializers directly inside `value` (itself, or a list's elements)."""
+    if isinstance(value, StructInitAstNode):
+        return [value]
+    if isinstance(value, ListInitAstNode):
+        return [item for item in value.values if isinstance(item, StructInitAstNode)]
+    return []
