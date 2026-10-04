@@ -86,29 +86,29 @@ class OpcodeNode(NodeProtocol):
             )
         try:
             emitted = opcode_emitter.emit(self.value_node, self.resolver, self.size)
-        except NoOpcodeForOperandSize as e:
+        except NoOpcodeForOperandSize as size_error:
             assert self.value_node is not None
             guessed_size = guess_value_size(self.value_node, self.size)
             raise NodeError(
                 f"{self.opcode} does not supports size ({guessed_size}).",
                 self.file_info,
-            ) from e
-        except SymbolNotDefined as e:
+            ) from size_error
+        except SymbolNotDefined as undefined:
             raise NodeError(
-                f"`{e}` is not defined in the current scope",
-                e.token or self.file_info,
+                f"`{undefined}` is not defined in the current scope",
+                undefined.token or self.file_info,
                 code=str(_E_SYMBOL_NOT_DEFINED),
-                hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
-            ) from e
-        except BranchOutOfRangeError as e:
+                hint=_did_you_mean_hint(str(undefined), self.resolver.current_scope),
+            ) from undefined
+        except BranchOutOfRangeError as out_of_range:
             raise NodeError(
-                str(e),
+                str(out_of_range),
                 self._operand_token(),
                 code=str(E_CODEGEN_BRANCH_RANGE),
                 hint="use `brl` (16-bit offset) or `jmp` to reach a distant target",
-            ) from e
-        except BranchTargetUnmappedError as e:
-            raise NodeError(str(e), self._operand_token(), code=str(E_CODEGEN_BRANCH_UNMAPPED)) from e
+            ) from out_of_range
+        except BranchTargetUnmappedError as unmapped:
+            raise NodeError(str(unmapped), self._operand_token(), code=str(E_CODEGEN_BRANCH_UNMAPPED)) from unmapped
         self._check_byte_immediate_overflow(opcode_emitter)
         self._warn_on_immediate_width_mismatch(opcode_emitter)
         return emitted
