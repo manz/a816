@@ -133,8 +133,9 @@ separate blocks separated by a blank line.
   computed in ROM space; a RAM target cannot be reached.
 - `E0317` address in a bank no `.map` region covers (and the
   configured ROM type doesn't back). The hint lists the mapped banks.
-- `E0318` alloc does not fit in its pool. Names the pool and its
-  largest free chunk; the caret sits on the `.alloc` name.
+- `E0318` alloc does not fit in its pool. Says whether the alloc is
+  larger than any range, the pool is fragmented or out of room, with
+  a matching hint; the caret sits on the `.alloc` name.
 - `E0319` operator applied to a string and a number.
 - `E0320` `~` operand wider than 32 bits.
 - `E0330` `.istruct` names a struct type that is not declared (or
@@ -156,8 +157,8 @@ separate blocks separated by a blank line.
 - `E0403` relocation expression failed.
 - `E0404` alloc does not fit in its pool at link time (the pool is
   shared across modules, so the allocator only runs once every `.o`
-  is in). Reports the pool, its largest free chunk and, when the body
-  emitted code, the `file:line` of its first instruction.
+  is in). Same message and hint as `E0318`, plus the pool and, when
+  the body emitted code, the `file:line` of its first instruction.
 - `E0405` an alloc request names a pool that no linked object
   declares.
 

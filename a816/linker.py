@@ -105,9 +105,7 @@ class Linker:
                 pool.allocate()
             except PoolOverflowError as exc:
                 site = request_sites.get((exc.pool_name, exc.alloc_name))
-                raise PoolOverflowLinkError(
-                    exc.pool_name, exc.alloc_name, exc.size, exc.largest_free, self._section_location(site)
-                ) from exc
+                raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
         self._merged_pools_after_alloc = merged
 
     def _request_pool_allocs(self, merged: dict[str, Pool]) -> dict[tuple[str, str], tuple[int, int]]:
