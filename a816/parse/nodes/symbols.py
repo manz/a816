@@ -111,10 +111,7 @@ class SymbolNode(NodeProtocol):
         from a816.parse.ast.expression import canonicalize_local_label_refs
 
         canonical = canonicalize_local_label_refs(expr_str, self.resolver)
-        self.resolver.current_scope.add_external_alias(self.symbol_name, canonical)
-        object_writer = self.resolver.context.object_writer
-        if object_writer is not None:
-            object_writer.add_alias(self.symbol_name, canonical)
+        self.resolver.register_external_alias(self.symbol_name, canonical)
 
     def pc_after(self, current_pc: Address) -> Address:
         # SymbolNode emits no bytes; current_pc is returned unchanged. The
