@@ -215,16 +215,9 @@ class Linker:
 
     @staticmethod
     def _pool_from_decl(decl: "PoolDecl") -> "Pool":
-        from a816.pool import Pool, PoolRange, Strategy
+        from a816.pool import Pool
 
-        return Pool(
-            name=decl.name,
-            ranges=[PoolRange(start=s, end=e, allow_bank_cross=(s >> 16) != (e >> 16)) for s, e in decl.ranges],
-            fill=decl.fill,
-            strategy=Strategy(decl.strategy),
-            bss=decl.bss,
-            context=decl.context,
-        )
+        return Pool.from_decl(decl)
 
     def _merge_bus_mappings(self) -> None:
         """Collect `.map` declarations across input modules.

@@ -88,20 +88,12 @@ class LinkedModuleNode(NodeBase):
         self._pools_registered = True
         if not self.imported_pool_decls:
             return
-        from a816.pool import Pool, PoolRange, Strategy
+        from a816.pool import Pool
 
         for decl in self.imported_pool_decls:
             if decl.name in self.resolver.pools:
                 continue
-            self.resolver.pools[decl.name] = Pool(
-                name=decl.name,
-                ranges=[
-                    PoolRange(start=lo, end=hi, allow_bank_cross=(lo >> 16) != (hi >> 16)) for lo, hi in decl.ranges
-                ],
-                fill=decl.fill,
-                strategy=Strategy(decl.strategy),
-                bss=decl.bss,
-            )
+            self.resolver.pools[decl.name] = Pool.from_decl(decl)
 
     def _compute_delta_and_base(self, current_pc: Address) -> None:
         if self.sections:
