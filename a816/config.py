@@ -7,10 +7,12 @@ schema lives in one place.
 
 from __future__ import annotations
 
+import difflib
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from a816.boards import boards
 from a816.cpu.mapping import parse_bml_address
 from a816.error_codes import (
     E_CONFIG_BAD_EXPERIMENTAL,
@@ -19,6 +21,7 @@ from a816.error_codes import (
     E_CONFIG_INVALID,
     E_CONFIG_MAPPER_AND_MAP,
     E_CONFIG_MAPPER_MISMATCH,
+    E_CONFIG_UNKNOWN_BOARD,
     E_CONFIG_UNKNOWN_MAPPER,
     ErrorCode,
 )
@@ -82,20 +85,43 @@ class _BusMapParser:
 
     def parse(self, data: dict[str, object]) -> tuple[str | None, list[BusMapping]]:
         mapper = self._mapper(data.get("mapper"))
+        board = self._board(data.get("board"))
         raw = data.get("map", {})
         if not isinstance(raw, dict):
             raise self._error(E_CONFIG_BAD_MAP_ENTRY, "`map` must be a table of regions (`[map.N]`)")
-        if mapper is not None and raw:
+        if mapper is not None and (raw or board is not None):
             raise self._error(
-                E_CONFIG_MAPPER_AND_MAP, "`mapper` and `[map.N]` are mutually exclusive: use one or the other"
+                E_CONFIG_MAPPER_AND_MAP, "`mapper` excludes `board` and `[map.N]`: use the preset or list the regions"
             )
         if mapper is not None:
             return mapper, list(MAPPERS[mapper])
         rom_size = self._rom_size(data.get("rom_size"))
-        regions = [self._entry(key, item, rom_size) for key, item in raw.items()]
-        self._reject_aliased_keys(regions)
+        entries = [self._entry(key, item, rom_size) for key, item in raw.items()]
+        self._reject_aliased_keys(entries)
+        regions = self._board_regions(board, rom_size) + entries
         self._require_rom_size(regions, rom_size)
         return None, regions
+
+    def _board(self, value: object) -> str | None:
+        if value is None:
+            return None
+        known = boards()
+        if isinstance(value, str) and value in known:
+            return value
+        close = difflib.get_close_matches(str(value), list(known), n=3)
+        hint = f" (did you mean {', '.join(close)}?)" if close else ""
+        raise self._error(E_CONFIG_UNKNOWN_BOARD, f"unknown board {value!r}{hint}")
+
+    @staticmethod
+    def _board_regions(board: str | None, rom_size: int) -> list[BusMapping]:
+        """The board's ROM/RAM regions plus the console's WRAM, which no board lists."""
+        if board is None:
+            return []
+        regions = [
+            BusMapping.bml(f"board.{index}", r.address, r.mask, r.base, 0 if r.writable else rom_size, r.writable)
+            for index, r in enumerate(boards()[board])
+        ]
+        return regions + [BusMapping.bml("board.wram", "7e-7f:0000-ffff", writeable=True)]
 
     def _rom_size(self, value: object) -> int:
         if value is None:
@@ -111,7 +137,7 @@ class _BusMapParser:
             return
         raise self._error(
             E_CONFIG_BAD_MAP_VALUE,
-            "`rom_size` is required when `[map.N]` declares a read-only (ROM) region",
+            "`rom_size` is required once `board` or `[map.N]` declares a read-only (ROM) region",
         )
 
     def _error(self, code: ErrorCode, message: str) -> A816ConfigError:

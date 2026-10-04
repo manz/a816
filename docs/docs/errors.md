@@ -181,9 +181,10 @@ separate blocks separated by a blank line.
   integers, `address` is a `BANKS:WINDOW` hex string
   (`"00-3f,80-bf:8000-ffff"`), `writable` a boolean; or `rom_size` is
   missing (with a read-only region), not an integer, or not positive.
-- `E0507` `mapper` and `[map.N]` are both set; they are mutually
-  exclusive.
+- `E0507` `mapper` is set together with `board` or `[map.N]`.
 - `E0508` `-m` disagrees with the `a816.toml` `mapper`.
+- `E0509` `board` names no board in `boards.bml`; the message
+  suggests close names.
 
 ## LSP integration
 

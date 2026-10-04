@@ -246,7 +246,8 @@ the LSP and fluff read the same file.
 entrypoint    = "src/main.s"
 include-paths = ["src/include"]
 module-paths  = ["src/modules"]
-mapper        = "hirom"     # or explicit [map.N] regions, not both
+board         = "SHVC-1A3M-30"  # a real cartridge board (or mapper / [map.N])
+rom_size      = 0x400000
 
 [experimental]
 track_register_size = true
@@ -257,6 +258,7 @@ track_register_size = true
 | `entrypoint` | LSP | root file the server indexes from |
 | `include-paths` | build, LSP, fluff | directories searched by `.include` |
 | `module-paths` | build, LSP, fluff | directories searched by `.import` |
+| `board` | build | cartridge board from ares' `boards.bml` (`"SHVC-1A3M-30"`) |
 | `mapper` | build | fixed cartridge preset: `"lorom"` or `"hirom"` |
 | `[map.N]` | build | bus region `N`, in bsnes/`boards.bml` form |
 | `rom_size` | build | ROM image size in bytes; required with read-only `[map.N]` regions |
@@ -265,7 +267,7 @@ track_register_size = true
 `--include-path` / `-I` replace the file's `include-paths` /
 `module-paths`; `--experimental` flags add to `[experimental]`.
 
-### Bus map: `mapper` or `[map.N]`
+### Bus map: `board`, `mapper` or `[map.N]`
 
 The cartridge layout belongs to the project, not to each module. The
 regions declared here are put on the bus of every translation unit
@@ -273,6 +275,14 @@ before its own `.map` lines run, so a module with no local `.map` still
 places code in the project's banks. In object mode they are written
 into each `.o` like a source `.map`; the linker keeps one copy.
 
+- `board` names a real cartridge board from ares' `boards.bml`
+  (vendored, ares revision pinned in `a816.boards.ARES_REVISION`, ISC):
+  `"SHVC-1A3M-30"` (LoROM + SRAM), `"SHVC-1J3M-20"` (HiROM + SRAM),
+  `"SHVC-LJ3M-01"` (ExHiROM), `"SHVC-1L5B-20"` (SA-1), and every other
+  board in the file. It expands to that board's ROM and RAM `map`
+  lines (coprocessor MMIO and cartridge slots are left out) plus the
+  console's WRAM (`7e-7f:0000-ffff`), which no board lists. Boards
+  with ROM need `rom_size`. `[map.N]` tables add to a board.
 - `mapper` expands to the regions of the matching default bus:
   `lorom` is identifier 1 (`$00-$6F:$8000-$FFFF`, mirrored at
   `$80-$CF`) plus identifier 2 (WRAM `$7E-$7F`, writable); `hirom` is
@@ -307,8 +317,8 @@ into each `.o` like a source `.map`; the linker keeps one copy.
   required as soon as one region is read-only. Writable regions have
   no file offset.
 
-- `mapper` and `[map.N]` are mutually exclusive (`E0507`): use the
-  preset, or list every region yourself.
+- `mapper` excludes `board` and `[map.N]` (`E0507`): use the preset,
+  or name the board / list the regions yourself.
 - A source `.map` with the same identifier and the same shape as a
   toml region is accepted and does nothing; a different shape fails
   with `E0308` on the source line.

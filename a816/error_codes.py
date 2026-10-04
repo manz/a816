@@ -109,8 +109,9 @@ E_CONFIG_BAD_EXPERIMENTAL = ErrorCode("E0503", "config", "`[experimental]` flag 
 E_CONFIG_UNKNOWN_MAPPER = ErrorCode("E0504", "config", "`mapper` names no supported cartridge mapper")
 E_CONFIG_BAD_MAP_ENTRY = ErrorCode("E0505", "config", "malformed `[map.N]` entry")
 E_CONFIG_BAD_MAP_VALUE = ErrorCode("E0506", "config", "`[map.N]` value of the wrong type")
-E_CONFIG_MAPPER_AND_MAP = ErrorCode("E0507", "config", "`mapper` and `[map.N]` are mutually exclusive")
+E_CONFIG_MAPPER_AND_MAP = ErrorCode("E0507", "config", "`mapper` excludes `board` and `[map.N]`")
 E_CONFIG_MAPPER_MISMATCH = ErrorCode("E0508", "config", "`-m` disagrees with the a816.toml `mapper`")
+E_CONFIG_UNKNOWN_BOARD = ErrorCode("E0509", "config", "`board` names no known cartridge board")
 
 
 _BY_CODE: dict[str, ErrorCode] = {obj.code: obj for obj in globals().values() if isinstance(obj, ErrorCode)}
