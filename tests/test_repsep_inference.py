@@ -4,6 +4,9 @@ after every register-size change."""
 
 from __future__ import annotations
 
+import pytest
+
+from a816.parse.nodes import NodeError
 from a816.program import Program
 from tests import StubWriter
 
@@ -69,12 +72,19 @@ class TestExplicitDirectiveStillWins:
 
 class TestForwardReferenceImmediate:
     def test_rep_with_forward_referenced_constant_still_resolves(self) -> None:
-        # Pass 1 hits `rep #FLAGS` before `FLAGS = 0x30` is bound.
-        # SymbolNotDefined is swallowed; pass 2 picks up the value
-        # and widens `lda #imm`.
+        # A constant assignment binds at codegen time, so `FLAGS` is
+        # already known when pass 1 reaches the `rep`.
         src = "*=0x008000\nrep #FLAGS\nlda #0xbeef\nFLAGS = 0x30\n"
         writer = _assemble(src)
         assert _emitted_bytes(writer) == b"\xc2\x30\xa9\xef\xbe"
+
+    def test_rep_with_forward_label_operand_is_an_error(self) -> None:
+        # Labels bind on the first pass only, so a `rep` that cannot be
+        # evaluated there would size the code after it at the old width
+        # and every later label would drift off its bytes. Stay loud.
+        src = "*=0x008000\nrep.b #flags & 0x30\nlda #0x12\n*=0x008020\nflags:\n"
+        with pytest.raises(NodeError, match="E0200"):
+            _assemble(src)
 
 
 class TestSymbolicImmediateStillUpdatesSize:

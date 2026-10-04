@@ -49,12 +49,6 @@ class AllocNode(NodeProtocol):
         # chosen address directly. Object-emit reads it; reading in
         # any other path is a bug, so keep the optional shape loud.
         self._sandbox_base: int | None = None
-        # Snapshot of the A/X size that the body should assume on
-        # entry - captured once in `_measure_body` from the running
-        # `alloc_carry_*` channel, then reused by `_bind_body_labels_at`
-        # so label placement matches the measured-size pass.
-        self._entry_a_size: int = 8
-        self._entry_i_size: int = 8
 
     def _sandbox_pc(self) -> Address:
         pool = self.resolver.pools[self.pool_name]
@@ -85,39 +79,19 @@ class AllocNode(NodeProtocol):
         return isinstance(node, SymbolNode)
 
     def _measure_body(self) -> int:
-        # Mirror `RegisterSizeNode.emit`'s mutation across the body walk
-        # so `OpcodeNode.pc_after` sees the A/X size that emission will
-        # see. Inherit the size state from whichever alloc was measured
-        # immediately before this one (stashed on the resolver under
-        # `_alloc_carry_a_size`/`_alloc_carry_i_size`) - matches runtime,
-        # where the CPU's M/X flags carry across `jsr` calls. Restore
-        # the live resolver state on exit so top-level passes (which
-        # historically treat `.a8`/`.a16` as no-ops) stay unaffected.
-        from a816.parse.nodes.data import RegisterSizeNode
+        """Byte size of the body, walked in the surrounding A/X size stream.
 
+        Every walk (this measure, the label binds, emission) visits the
+        body in source order from the same reset, so it starts from the
+        live sizes and its `.a16` / tracked `rep` carry into whatever
+        follows, top-level code or the next alloc.
+        """
         start = self._sandbox_pc()
         pc = start
-        saved_a = self.resolver.a_size
-        saved_i = self.resolver.i_size
-        self._entry_a_size = self.resolver.alloc_carry_a_size
-        self._entry_i_size = self.resolver.alloc_carry_i_size
-        self.resolver.a_size = self._entry_a_size
-        self.resolver.i_size = self._entry_i_size
-        try:
-            for node in self.body:
-                if self._skip_in_pass1(node):
-                    continue
-                if isinstance(node, RegisterSizeNode):
-                    if node.register == "a":
-                        self.resolver.a_size = node.size
-                    else:
-                        self.resolver.i_size = node.size
-                pc = node.pc_after(pc)
-            self.resolver.alloc_carry_a_size = self.resolver.a_size
-            self.resolver.alloc_carry_i_size = self.resolver.i_size
-        finally:
-            self.resolver.a_size = saved_a
-            self.resolver.i_size = saved_i
+        for node in self.body:
+            if self._skip_in_pass1(node):
+                continue
+            pc = node.pc_after(pc)
         # Use physical-address diff so bank-edge allocs measure
         # correctly. `pc.logical_value - start.logical_value` jumps
         # `0x8020` for a 32-byte alloc that ends at `$00:FFFF` because
@@ -151,27 +125,17 @@ class AllocNode(NodeProtocol):
             )
 
     def _bind_body_labels_at(self, target: Address) -> None:
-        # Mirror `_measure_body`: walk with the inherited A/X carry so
-        # `OpcodeNode.pc_after` sizes opcodes the same way emission will,
-        # and body labels (e.g. `_draw_string_loop:`) bind at the right
-        # offsets. Restore live resolver state on exit so top-level
-        # passes stay clean.
-        from a816.parse.nodes.data import RegisterSizeNode
+        """Bind the alloc name and body labels from `target`.
 
+        Walks from the live A/X sizes like `_measure_body`, so
+        `OpcodeNode.pc_after` sizes opcodes the way emission will and
+        body labels (e.g. `_draw_string_loop:`) bind at their bytes.
+        """
         self.resolver.current_scope.add_label(self.name, target)
         pc = target
-        saved_a = self.resolver.a_size
-        saved_i = self.resolver.i_size
         saved_current_scope = self.resolver.current_scope
-        self.resolver.a_size = self._entry_a_size
-        self.resolver.i_size = self._entry_i_size
         try:
             for node in self.body:
-                if isinstance(node, RegisterSizeNode):
-                    if node.register == "a":
-                        self.resolver.a_size = node.size
-                    else:
-                        self.resolver.i_size = node.size
                 try:
                     pc = node.pc_after(pc)
                 except (NodeError, SymbolNotDefined):
@@ -187,8 +151,6 @@ class AllocNode(NodeProtocol):
                     # once forward refs resolve.
                     pass
         finally:
-            self.resolver.a_size = saved_a
-            self.resolver.i_size = saved_i
             self.resolver.current_scope = saved_current_scope
 
     def _bind_body_labels(self) -> None:
@@ -259,7 +221,8 @@ class AllocNode(NodeProtocol):
         attributed: list[tuple[NodeProtocol, int, bytes]] = []
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
-        # Each alloc body is its own routine: drop asserted A/X sizes.
+        # The body keeps the running A/X sizes, but it is entered by a call
+        # from elsewhere: they are assumed, not asserted, so no width warning.
         self.resolver.forget_register_sizes()
         try:
             self.resolver.set_position(alloc.addr)

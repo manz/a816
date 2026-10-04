@@ -285,14 +285,6 @@ class Resolver:
         self.reloc = False
         self.a_size: int = 8  # Accumulator size: 8 or 16 bits
         self.i_size: int = 8  # Index register size: 8 or 16 bits
-        # Carried A/X size between `.alloc` body measurements: each
-        # alloc starts measuring with the prior alloc's exit state so
-        # `ldx #0` in a callee sees the caller's `rep #$10`. Tracked
-        # separately from live `a_size`/`i_size` so top-level resolver
-        # passes (which treat `.a8`/`.a16` as no-ops in `pc_after`)
-        # stay unaffected.
-        self.alloc_carry_a_size: int = 8
-        self.alloc_carry_i_size: int = 8
         # Opt-in rep/sep -> a_size/i_size inference. Off by default
         # because pre-existing sources (ff4 master, similar) were
         # written assuming value-driven width inference only - a
@@ -408,6 +400,17 @@ class Resolver:
             return
         for pool in self.pools.values():
             pool.allocate()
+
+    def reset_register_sizes(self) -> None:
+        """Back to the power-on 8-bit A/X sizes, before each label pass and emission.
+
+        Labels bind from one walk and bytes come from another; both must
+        start from the same state or a trailing `rep` / `.a16` from the
+        previous walk resizes opcodes ahead of it.
+        """
+        self.a_size = 8
+        self.i_size = 8
+        self.forget_register_sizes()
 
     def forget_register_sizes(self) -> None:
         """Mark A/X sizes unknown (new placement block, `plp`, ...)."""
