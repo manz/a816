@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Literal, cast
 
 from a816.error_codes import (
+    E_PARSER_ISTRUCT_DUPLICATE_FIELD,
+    E_PARSER_ISTRUCT_STRING_IN_LIST,
     E_PARSER_POOL_NO_RANGES,
     E_PARSER_STRUCT_ARRAY_COUNT,
     E_PARSER_STRUCT_BITFIELD_ARRAY,
@@ -36,7 +38,10 @@ from a816.parse.ast.nodes import (
     ImportAstNode,
     IncludeAstNode,
     IncludeIpsAstNode,
+    InitCommentAstNode,
+    InitValue,
     LabelDeclAstNode,
+    ListInitAstNode,
     MacroAstNode,
     MapArgs,
     MapAstNode,
@@ -47,7 +52,11 @@ from a816.parse.ast.nodes import (
     ReserveAstNode,
     ReserveTypedAstNode,
     ScopeAstNode,
+    StringInitAstNode,
     StructAstNode,
+    StructFieldInitAstNode,
+    StructInitAstNode,
+    StructInstanceAstNode,
     Term,
 )
 from a816.parse.errors import ParserSyntaxError
@@ -262,6 +271,102 @@ def _parse_struct_array_suffix(p: Parser, type_token: Token) -> str:
         )
     expect_token(p.next(), TokenType.RBRAKET)
     return f"[{count_token.value}]"
+
+
+def parse_istruct(p: Parser, keyword: Token) -> StructInstanceAstNode:
+    """Parse `.istruct TYPE { field = value, ... }`.
+
+    Fields are separated by commas and/or newlines. A value is a quoted
+    string, a `[ ... ]` list, a nested `{ ... }` or an expression; the
+    codegen checks each against the field's declared type.
+    """
+    type_token = p.next()
+    expect_token(type_token, TokenType.IDENTIFIER)
+    open_token = p.next()
+    expect_token(open_token, TokenType.LBRACE)
+    init = _parse_struct_init(p, open_token)
+    return StructInstanceAstNode(type_token.value, init, type_token, keyword)
+
+
+def _parse_struct_init(p: Parser, open_token: Token) -> StructInitAstNode:
+    """Parse `name = value` entries up to the closing `}` (already past `{`)."""
+    items: list[StructFieldInitAstNode | InitCommentAstNode] = []
+    seen: set[str] = set()
+    while p.current().type != TokenType.RBRACE:
+        token = p.current()
+        if token.type == TokenType.COMMA:
+            p.next()
+        elif token.type == TokenType.COMMENT:
+            items.append(_parse_init_comment(p))
+        else:
+            items.append(_parse_field_init(p, seen))
+    return StructInitAstNode(items, open_token, p.next())
+
+
+def _parse_field_init(p: Parser, seen: set[str]) -> StructFieldInitAstNode:
+    name_token = p.next()
+    expect_token(name_token, TokenType.IDENTIFIER)
+    if name_token.value in seen:
+        raise ParserSyntaxError(
+            f"field `{name_token.value}` is initialized twice",
+            name_token,
+            code=str(E_PARSER_ISTRUCT_DUPLICATE_FIELD),
+            hint="keep one `name = value` entry per field",
+        )
+    seen.add(name_token.value)
+    expect_token(p.next(), TokenType.EQUAL)
+    return StructFieldInitAstNode(name_token.value, _parse_init_value(p), name_token)
+
+
+def _parse_init_value(p: Parser) -> InitValue:
+    token = p.current()
+    if token.type == TokenType.QUOTED_STRING:
+        p.next()
+        return StringInitAstNode(token)
+    if token.type == TokenType.LBRACE:
+        p.next()
+        return _parse_struct_init(p, token)
+    if token.type == TokenType.LBRAKET:
+        p.next()
+        return _parse_list_init(p, token)
+    return parse_expression(p)
+
+
+def _parse_list_init(p: Parser, open_token: Token) -> ListInitAstNode:
+    """Parse comma-separated values up to the closing `]` (already past `[`)."""
+    items: list[InitValue | InitCommentAstNode] = []
+    need_comma = False
+    while p.current().type != TokenType.RBRAKET:
+        token = p.current()
+        if token.type == TokenType.COMMENT:
+            items.append(_parse_init_comment(p))
+        elif need_comma:
+            expect_token(p.next(), TokenType.COMMA)
+            need_comma = False
+        elif token.type == TokenType.QUOTED_STRING:
+            raise ParserSyntaxError(
+                "strings are not list elements",
+                token,
+                code=str(E_PARSER_ISTRUCT_STRING_IN_LIST),
+                hint='initialize a byte array with the string itself: `name = "TEXT"`',
+            )
+        else:
+            items.append(_parse_init_value(p))
+            need_comma = True
+    return ListInitAstNode(items, open_token, p.next())
+
+
+def _parse_init_comment(p: Parser) -> InitCommentAstNode:
+    """Consume a comment; it trails a value when it shares that value's line."""
+    previous = p.tokens[p.pos - 1] if p.pos > 0 else None
+    comment = p.next()
+    trailing = (
+        previous is not None
+        and previous.position is not None
+        and comment.position is not None
+        and previous.position.line == comment.position.line
+    )
+    return InitCommentAstNode(comment.value, trailing, comment)
 
 
 def parse_directive_with_quoted_string(p: Parser) -> str:

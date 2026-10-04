@@ -194,7 +194,7 @@ class LinkerExpressionTestCase(unittest.TestCase):
             [("VAL", 0x100, SymbolType.GLOBAL, SymbolSection.DATA)],
             [],
         )
-        obj.expression_relocations = [(1, "VAL", 4)]  # 4 bytes not supported
+        obj.expression_relocations = [(0, "VAL", 5)]  # 5 bytes not supported
 
         linker = Linker([obj])
         with pytest.raises(ExpressionEvaluationError) as exc_info:

@@ -363,6 +363,9 @@ class Resolver:
         # Nested arrays carry their dotted path so an enclosing struct can
         # re-publish them as `Outer.inner.items.__size`.
         self.struct_array_sizes: dict[str, dict[str, int]] = {}
+        # Declared `(name, type)` fields per struct, in source order. `.istruct`
+        # walks these to lay an instance out as bytes.
+        self.struct_fields: dict[str, list[tuple[str, str]]] = {}
         # Typed-bind registry: instance name → struct type name. Lets the
         # linter spot redundant casts and field access on non-typed bindings.
         self.typed_instances: dict[str, str] = {}

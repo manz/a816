@@ -19,7 +19,7 @@ from a816.symbols import Resolver
 
 # Byte sizes per declared struct field type. dword is 4 because users who
 # write it mean 32-bit; 65c816 effective addresses fit in 24 (use `long`).
-_STRUCT_FIELD_SIZES = {"byte": 1, "word": 2, "long": 3, "dword": 4}
+STRUCT_FIELD_SIZES = {"byte": 1, "word": 2, "long": 3, "dword": 4}
 
 # Bit-field types are spelled `uN` for any positive `N`. The width travels
 # in the type name itself so the parser keeps the simple `type name` shape
@@ -31,7 +31,7 @@ _BIT_FIELD_TYPE_RE = re.compile(r"u(\d+)$")
 _ARRAY_TYPE_RE = re.compile(r"(\w+)\[(\w+)\]", re.ASCII)
 
 
-def _bit_width_from_type(field_type: str) -> int | None:
+def bit_width_from_type(field_type: str) -> int | None:
     """Return the bit width when `field_type` matches `uN`, else None."""
     match = _BIT_FIELD_TYPE_RE.fullmatch(field_type)
     if match is None:
@@ -102,7 +102,7 @@ def _element_layout(
     node: StructAstNode, field_name: str, element_type: str, resolver: Resolver, file_info: Token
 ) -> _ElementLayout:
     """Resolve a field's element type to its width and nested layout."""
-    primitive_size = _STRUCT_FIELD_SIZES.get(element_type)
+    primitive_size = STRUCT_FIELD_SIZES.get(element_type)
     if primitive_size is not None:
         return _ElementLayout(primitive_size, [], {})
     if element_type == node.name:
@@ -140,7 +140,7 @@ def _layout_struct_fields(node: StructAstNode, resolver: Resolver, file_info: To
     """
     layout = _StructLayout()
     for field_name, field_type in node.fields:
-        bit_width = _bit_width_from_type(field_type)
+        bit_width = bit_width_from_type(field_type)
         if bit_width is not None:
             layout.add_bit_field(field_name, bit_width)
             continue
@@ -208,6 +208,7 @@ def generate_struct(
         )
     resolver.struct_layouts[node.name] = entries
     resolver.struct_sizes[node.name] = total_size
+    resolver.struct_fields[node.name] = list(node.fields)
     if bit_meta:
         resolver.struct_bitfields[node.name] = bit_meta
     if layout.array_sizes:

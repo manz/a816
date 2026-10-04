@@ -55,6 +55,15 @@ from a816.parse.ast.nodes.pool import (
     RelocateAstNode,
 )
 from a816.parse.ast.nodes.struct import StructAstNode
+from a816.parse.ast.nodes.struct_instance import (
+    InitCommentAstNode,
+    InitValue,
+    ListInitAstNode,
+    StringInitAstNode,
+    StructFieldInitAstNode,
+    StructInitAstNode,
+    StructInstanceAstNode,
+)
 from a816.parse.ast.nodes.symbols import (
     AssignAstNode,
     CodeLookupAstNode,
@@ -95,9 +104,12 @@ __all__ = [
     "IncludeAstNode",
     "IncludeBinaryAstNode",
     "IncludeIpsAstNode",
+    "InitCommentAstNode",
+    "InitValue",
     "KeywordAstNode",
     "LabelAstNode",
     "LabelDeclAstNode",
+    "ListInitAstNode",
     "MacroApplyAstNode",
     "MacroAstNode",
     "MapArgs",
@@ -112,7 +124,11 @@ __all__ = [
     "ReserveAstNode",
     "ReserveTypedAstNode",
     "ScopeAstNode",
+    "StringInitAstNode",
     "StructAstNode",
+    "StructFieldInitAstNode",
+    "StructInitAstNode",
+    "StructInstanceAstNode",
     "SymbolAffectationAstNode",
     "TableAstNode",
     "Term",
