@@ -205,6 +205,121 @@ class TestAllocEndToEnd:
         assert "fn" in labels
 
 
+class TestAllocBodyLabelsDirectPath:
+    """Labels inside a later `.alloc` in a pool must bind at that alloc's
+    placed address on the direct path, not at the pool base the pass-1
+    size measurement walks from."""
+
+    @staticmethod
+    def _assemble(src: str) -> tuple[dict[str, int], dict[int, bytes]]:
+        program = Program()
+        writer = StubWriter()
+        program.assemble_string_with_emitter(src, "test.s", writer)
+        blocks = dict(zip(writer.data_addresses, writer.data, strict=True))
+        return program.resolver.current_scope.labels, blocks
+
+    def test_label_used_before_its_alloc(self) -> None:
+        labels, blocks = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .alloc first in p {
+                jsr.w baz
+                jsr.w qux
+                rts
+            }
+            .alloc second in p {
+            baz:
+                nop
+            qux:
+                rts
+            }
+            """
+        )
+        assert (labels["baz"], labels["qux"]) == (0x028007, 0x028008)
+        assert blocks[0x010000] == bytes.fromhex("20 07 80 20 08 80 60")
+
+    def test_label_used_after_its_alloc(self) -> None:
+        labels, blocks = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .alloc first in p {
+                nop
+            }
+            .alloc second in p {
+            baz:
+                rts
+            }
+            .alloc third in p {
+                jsr.w baz
+                rts
+            }
+            """
+        )
+        assert labels["baz"] == 0x028001
+        assert blocks[0x010002] == bytes.fromhex("20 01 80 60")
+
+    def test_labels_across_multiple_allocs(self) -> None:
+        labels, _ = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .alloc first in p {
+            a1:
+                nop
+                nop
+            }
+            .alloc second in p {
+                nop
+            b1:
+                nop
+            }
+            .alloc third in p {
+                nop
+                nop
+            c1:
+                rts
+            }
+            """
+        )
+        assert (labels["a1"], labels["b1"], labels["c1"]) == (0x028000, 0x028003, 0x028006)
+
+    def test_label_in_alloc_inside_named_scope(self) -> None:
+        labels, blocks = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .scope mod {
+                .alloc first in p {
+                    jsr.w baz
+                    rts
+                }
+                .alloc second in p {
+                baz:
+                    rts
+                }
+            }
+            """
+        )
+        assert labels["mod.baz"] == 0x028004
+        assert blocks[0x010000] == bytes.fromhex("20 04 80 60")
+
+    def test_sibling_alloc_label_collision_keeps_first(self) -> None:
+        labels, _ = self._assemble(
+            """
+            .pool p { range 0x028000 0x0280ff strategy order }
+            .alloc first in p {
+                nop
+            dup:
+                rts
+            }
+            .alloc second in p {
+                nop
+            dup:
+                rts
+            }
+            """
+        )
+        assert labels["dup"] == 0x028001
+
+
 class TestRelocateCodegen:
     def test_relocate_into_unknown_pool_errors(self) -> None:
         with pytest.raises(Exception, match="unknown pool"):
@@ -685,106 +800,6 @@ class TestObjectMode:
         cons_section = next(r for r in linked.sections if r.base_address == 0x008000)
         # main: jsr.l fn (4 bytes: 0x22 LO MID HI) + rts (0x60) = 5 bytes
         assert cons_section.code[:5] == b"\x22\x00\x80\x02\x60"
-
-
-class TestAllocImportLoserSkip:
-    """ff4 Q#14 regression: when .alloc body has multiple .import directives,
-    transitive duplicates (same module pulled in by two different parent
-    modules) get marked is_loser=True for the earlier occurrences. Those
-    losers' pc_after returns current_pc unchanged so winners after them
-    place correctly — but AllocNode.emit_blocks used to call .emit() on
-    losers anyway, accumulating their bytes and overlapping the winner's
-    placement at the same target address."""
-
-    def test_alloc_body_with_duplicate_imports_does_not_double_emit(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
-        # Same module imported twice inside one .alloc body — last-wins
-        # makes the first a loser; emit_blocks must skip it so bytes don't
-        # double-emit and overlap the winner at the same offset.
-        dialog_s = tmp_path / "dialog.s"
-        dialog_s.write_text("dialog_fn:\n    rts\n    rts\n    rts\n")
-        Program().assemble_as_object(str(dialog_s), tmp_path / "dialog.o")
-
-        main = tmp_path / "main.s"
-        main.write_text(
-            ".pool slack { range 0x208000 0x20ffff strategy order }\n"
-            '.alloc body in slack {\n    .import "dialog"\n    .import "dialog"\n}\n'
-        )
-        program = Program()
-        program.add_module_path(str(tmp_path))
-        program.assemble_as_patch(str(main), tmp_path / "out.ips")
-
-        d = (tmp_path / "out.ips").read_bytes()
-        pos = 5
-        total = 0
-        while True:
-            if d[pos : pos + 3] == b"EOF":
-                break
-            pos += 3
-            sz = int.from_bytes(d[pos : pos + 2], "big")
-            pos += 2
-            if sz == 0:
-                pos += 3
-                continue
-            total += sz
-            pos += sz
-        # dialog body is 3 bytes (rts × 3). Pre-fix: 6 bytes (two copies
-        # overlapping at same offset). Post-fix: 3 bytes (loser skipped).
-        assert total == 3, f"expected 3 bytes (dialog body once); got {total} — loser emission"
-
-
-class TestAllocImportDedupe:
-    """ff4 Q#13: `.import` of the same .o module via both `.include`'d patch
-    file AND inside `.alloc` body double-emitted because
-    `_mark_import_winners` walked only top-level program nodes, missing
-    LinkedModuleNode children inside AllocNode.body."""
-
-    def test_o_import_inside_alloc_dedupes_against_outer_include(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
-        # Build dialog.s -> dialog.o so import resolves through LinkedModuleNode
-        dialog_s = tmp_path / "dialog.s"
-        dialog_s.write_text("get_bank1:\n    rep #0x20\n    lda.l 0x218000\n    sta 0x20\n    rts\n")
-        Program().assemble_as_object(str(dialog_s), tmp_path / "dialog.o")
-
-        included = tmp_path / "patches.i"
-        included.write_text('*=0x018798\n    jsr.w 0x9876\n.import "dialog"\n')
-
-        main = tmp_path / "main.s"
-        main.write_text(
-            ".pool slack { range 0x208000 0x20ffff strategy order }\n"
-            '.include "patches.i"\n'
-            '.alloc bank20_main in slack {\n    .import "dialog"\n}\n'
-        )
-        program = Program()
-        program.add_module_path(str(tmp_path))
-        program.add_include_path(str(tmp_path))
-        program.assemble_as_patch(str(main), tmp_path / "out.ips")
-
-        # Parse IPS records: expect only the patch (3B) + alloc body (single
-        # copy of dialog) — no duplicate at the patch's surrounding org.
-        d = (tmp_path / "out.ips").read_bytes()
-        pos = 5
-        records: list[tuple[int, bytes]] = []
-        while True:
-            if d[pos : pos + 3] == b"EOF":
-                break
-            addr = int.from_bytes(d[pos : pos + 3], "big")
-            pos += 3
-            sz = int.from_bytes(d[pos : pos + 2], "big")
-            pos += 2
-            if sz == 0:
-                run = int.from_bytes(d[pos : pos + 2], "big")
-                pos += 2
-                byte = d[pos : pos + 1]
-                pos += 1
-                records.append((addr, byte * run))
-            else:
-                records.append((addr, d[pos : pos + sz]))
-                pos += sz
-        # Patch at $01:8798 stays 3B (the jsr.w), dialog body lands ONLY in
-        # the alloc section. Pre-fix: patch record swelled by 18B (dialog bytes).
-        patch_record = next(b for a, b in records if a == 0x008798)
-        assert len(patch_record) == 3, (
-            f"patch record should be 3 bytes (jsr.w only); got {len(patch_record)} — duplicate import emission"
-        )
 
 
 class TestPoolExhaustion:

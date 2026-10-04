@@ -22,7 +22,7 @@ from a816.parse.ast.nodes import (
     ReserveTypedAstNode,
 )
 from a816.parse.ast.visitor import walk
-from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators
+from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen_placement_body, generators
 from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
 from a816.pool import Pool, PoolRange, Strategy
@@ -192,7 +192,7 @@ def generate_alloc(
     resolver.append_alloc_body_scope()
     resolver.use_next_scope()
     body_nodes: list[NodeProtocol] = [ScopeNode(resolver)]
-    body_nodes += _code_gen(node.body.body, resolver, macro_definitions)
+    body_nodes += _code_gen_placement_body(node.body.body, resolver, macro_definitions)
     body_nodes.append(PopScopeNode(resolver, exports=True))
     resolver.restore_scope(exports=True)
     return [AllocNode(alloc_name, pool_name, body_nodes, resolver, file_info, pinned_addr=pinned_addr)]
@@ -352,7 +352,7 @@ def generate_relocate(
         raise NodeError(f"relocate into unknown pool {node.pool_name!r}", file_info)
     old_start = _eval_int(node.old_start, resolver, file_info)
     old_end = _eval_int(node.old_end, resolver, file_info)
-    body_nodes = _code_gen(node.body.body, resolver, macro_definitions)
+    body_nodes = _code_gen_placement_body(node.body.body, resolver, macro_definitions)
     return [
         RelocateNode(
             node.symbol,

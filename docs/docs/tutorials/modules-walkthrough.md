@@ -32,20 +32,27 @@ module-paths  = ["src/modules"]
 ```ca65
 """VWF helpers shared across the hack."""
 
-.scope vwf {
-    init:
-        """Initialise VRAM tile slots used by the VWF renderer."""
-        lda.b #0x00
-        sta.w 0x2115
-        rts
+.alloc vwf_code at 0x018000 {
+    .scope vwf {
+        init:
+            """Initialise VRAM tile slots used by the VWF renderer."""
+            lda.b #0x00
+            sta.w 0x2115
+            rtl
 
-    ; private — only callable from inside this module.
-    _zero_pad:
-        rep #0x20
-        lda.w #0x0000
-        rts
+        ; private, only callable from inside this module.
+        _zero_pad:
+            rep #0x20
+            lda.w #0x0000
+            rts
+    }
 }
 ```
+
+The module owns its placement: `.alloc vwf_code at 0x018000 { ... }`
+pins its bytes (use `.alloc vwf_code in POOL { ... }` to let the
+linker pick the address instead). Code left outside any `.alloc` /
+`*=` is rejected with `E0310`; see [Placement](../modules.md#placement).
 
 Symbols inside `.scope vwf { ... }` export as `vwf.init`. The leading
 `_` on `_zero_pad` keeps it LOCAL to the module — other modules cannot
@@ -102,8 +109,9 @@ pool decls) for codegen.
 ```ca65
 .import "vwf"
 
+*= 0x008000
 main:
-    jsr.w vwf.init   ; resolves through the auto-extern
+    jsl vwf.init     ; resolves through the auto-extern
     rts
 ```
 

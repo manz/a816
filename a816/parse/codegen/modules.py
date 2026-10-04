@@ -4,20 +4,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
 from a816.module_loader import resolve_module
 from a816.object_file import ObjectFile, SymbolType
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
+    BlockAstNode,
     CommentAstNode,
+    CompoundAstNode,
     DocstringAstNode,
+    ExternAstNode,
     ForAstNode,
     IfAstNode,
     ImportAstNode,
+    IncludeAstNode,
     IncludeBinaryAstNode,
     LabelAstNode,
     LabelDeclAstNode,
     MacroAstNode,
+    MapAstNode,
     PoolAstNode,
     ReclaimAstNode,
     ScopeAstNode,
@@ -25,30 +31,34 @@ from a816.parse.ast.nodes import (
     SymbolAffectationAstNode,
 )
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators, logger
+from a816.parse.codegen.structs import declare_bus_mapping
 from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
 from a816.symbols import Resolver
 
-# AST node types whose effect must be visible to codegen of the
-# importer (struct/macro/const defs, scopes, conditionals, nested
-# imports, pool decls, reclaims, docstrings). Everything else is
-# runtime-bound and surfaces as an `ExternNode` so the linker wires
-# it up at link time.
+# Declarations whose effect must be visible to codegen of the importer
+# (struct/macro/const defs, `.map` bus layout, nested imports, pool
+# decls, reclaims, docstrings). Everything else is runtime-bound: the
+# imported module's own `.o` emits it, and its names surface as
+# `ExternNode`s so the linker wires them up at link time.
 _INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
     StructAstNode,
     MacroAstNode,
+    MapAstNode,
     SymbolAffectationAstNode,
     AssignAstNode,
     LabelDeclAstNode,
-    ScopeAstNode,
-    IfAstNode,
-    ForAstNode,
     ImportAstNode,
     PoolAstNode,
     ReclaimAstNode,
     DocstringAstNode,
     CommentAstNode,
 )
+
+# Declarations kept when they sit inside an `.if` / `.scope` / `.for`
+# body. `.extern` is body-only: a conditional extern block is how a
+# module opts into another module's symbols under a feature flag.
+_INLINE_BODY_TYPES: tuple[type[AstNode], ...] = (*_INLINE_IMPORT_TYPES, ExternAstNode)
 
 
 def _import_search_paths(resolver: Resolver) -> list[Path]:
@@ -82,11 +92,15 @@ def _import_from_object(
     obj_path: Path,
     resolver: Resolver,
     direct_mode: bool,
+    file_info: Token,
 ) -> GenNodes | None:
     try:
         obj_file = ObjectFile.from_file(str(obj_path))
     except (FileNotFoundError, ValueError):
         return None
+
+    for mapping in obj_file.bus_mappings:
+        declare_bus_mapping(resolver, mapping, file_info)
 
     if direct_mode:
         symbols_data = [
@@ -184,10 +198,11 @@ def _import_object_mode(
     """Per-node classifier for object-mode `.import`s.
 
     Inlines compile-time-only nodes (struct, macro, constant, typed
-    bind, `.label`, scope, `.if`, `.for`, nested `.import`) into the
-    importer's resolver so codegen of this module sees their effects.
-    Emits `ExternNode` for runtime-bound names so cross-module
-    references resolve at link time.
+    bind, `.label`, nested `.import`) into the importer's resolver so
+    codegen of this module sees their effects; `.if` / `.scope` /
+    `.for` are inlined with their bodies cut down to declarations
+    (`_declarations_only`). Emits `ExternNode` for runtime-bound names
+    so cross-module references resolve at link time.
 
     Names contributed by the inline pass land in
     `Resolver.imported_symbol_names`; `_export_object_symbols` skips
@@ -203,12 +218,72 @@ def _import_object_mode(
         if isinstance(node, _INLINE_IMPORT_TYPES):
             out.extend(_code_gen([node], resolver, macro_definitions) or [])
             continue
+        if isinstance(node, IfAstNode | ScopeAstNode | ForAstNode):
+            out.extend(_code_gen(_declarations_only([node], bare_names=True), resolver, macro_definitions) or [])
+            continue
         for name in _runtime_extern_names(node):
             out.append(ExternNode(name, resolver))
 
     resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)
     resolver.imported_symbol_names.update(set(root.symbols.keys()) - before_symbols)
     return out
+
+
+def _declarations_only(nodes: list[AstNode], bare_names: bool) -> list[AstNode]:
+    """Copy of `nodes` with every byte-emitting statement dropped.
+
+    `.if` / `.scope` / `.for` / `.include` keep their shape so the
+    importer evaluates conditions and scope prefixes exactly as the
+    owning module does, but their bodies hold declarations only. The
+    owning module's `.o` carries the bytes; inlining them here would
+    re-emit the code into the importer's `.o`.
+
+    Runtime names (labels, `.alloc` names, `.incbin` symbols) become
+    `.extern`s where they would publish bare (module level, possibly
+    under `.if`). Inside a named scope they publish dotted
+    (`scope.label`) and the owning `.o` already supplies those externs;
+    `.for` iterations live in internal scopes and publish nothing.
+    """
+    out: list[AstNode] = []
+    for node in nodes:
+        out.extend(_declarations_of(node, bare_names))
+    return out
+
+
+def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
+    if isinstance(node, _INLINE_BODY_TYPES):
+        return [node]
+    if isinstance(node, IfAstNode):
+        return _pruned_if(node, bare_names)
+    if isinstance(node, ScopeAstNode):
+        body = _declarations_only(node.body.body, bare_names=False)
+        return [ScopeAstNode(node.name, _block(body, node.body), node.file_info, node.docstring)] if body else []
+    if isinstance(node, ForAstNode):
+        body = _declarations_only(node.body.body, bare_names=False)
+        return (
+            [ForAstNode(node.symbol, node.min_value, node.max_value, _block(body, node.body), node.file_info)]
+            if body
+            else []
+        )
+    if isinstance(node, IncludeAstNode):
+        included = _declarations_only(node.included_nodes, bare_names)
+        return [IncludeAstNode(node.file_path, included, node.file_info, node.resolved_path)]
+    if not bare_names:
+        return []
+    return [ExternAstNode(name, node.file_info) for name in _runtime_extern_names(node)]
+
+
+def _pruned_if(node: IfAstNode, bare_names: bool) -> list[AstNode]:
+    then_body = _declarations_only(node.block.body, bare_names)
+    else_body = _declarations_only(node.else_block.body, bare_names) if node.else_block else []
+    if not then_body and not else_body:
+        return []
+    else_block = _block(else_body, node.else_block) if node.else_block else None
+    return [IfAstNode(node.expression, _block(then_body, node.block), else_block, node.file_info)]
+
+
+def _block[B: (BlockAstNode, CompoundAstNode)](body: list[AstNode], original: B) -> B:
+    return type(original)(body, original.file_info)
 
 
 def _runtime_extern_names(node: object) -> list[str]:
@@ -272,7 +347,44 @@ def generate_import(
     keep the existing winner/loser mechanism intact — `LinkedModuleNode`
     already handles duplicates by marking earlier placements as losers.
     """
-    module_name = node.module_name
+    _reject_import_in_placement(resolver, file_info)
+    importer_cursor = resolver.star_eq_cursor_active
+    resolver.star_eq_cursor_active = False
+    try:
+        return _resolve_import(node.module_name, resolver, macro_definitions, file_info)
+    finally:
+        resolver.star_eq_cursor_active = importer_cursor
+
+
+def _reject_import_in_placement(resolver: Resolver, file_info: Token) -> None:
+    """Refuse an `.import` that would ride a placement context.
+
+    The `*= ADDR / .import "mod"` chain and `.import` inside an `.alloc`
+    body used to be accepted and silently placed the module wherever the
+    module itself said (or nowhere sensible). Modules own their placement
+    through `.alloc at` / `.alloc in POOL`; imports belong in the prelude.
+    """
+    if resolver.placement_body_depth > 0:
+        where = "inside an `.alloc` / `.relocate` body"
+    elif resolver.star_eq_cursor_active:
+        where = "after a `*=` placement"
+    else:
+        return
+    raise NodeError(
+        f"`.import` {where}: modules own their placement",
+        file_info,
+        code=str(E_CODEGEN_IMPORT_IN_PLACEMENT),
+        hint="move the `.import` to the top of the file and place code inside the module with `.alloc at` / `.alloc in`",
+    )
+
+
+def _resolve_import(
+    module_name: str,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Locate the module and bring it in as `.o` stubs, a linked module or inlined source."""
     direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
     search_paths = _import_search_paths(resolver)
 
@@ -280,10 +392,10 @@ def generate_import(
     src_path = resolve_module(module_name, ".s", search_paths)
 
     if obj_path and not direct_mode and src_path:
-        return _paired_object_and_source_import(module_name, obj_path, src_path, resolver, macro_definitions)
+        return _paired_object_and_source_import(module_name, obj_path, src_path, resolver, macro_definitions, file_info)
 
     if obj_path and not (direct_mode and _object_has_pool_allocs(obj_path)):
-        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode)
+        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode, file_info)
         if nodes is not None:
             return nodes
 
@@ -299,6 +411,7 @@ def _paired_object_and_source_import(
     src_path: Path,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
+    file_info: Token,
 ) -> GenNodes:
     """Object-mode import: pair `.o` (runtime extern stubs) with source
     (compile-time inline). Neither half is complete on its own — `.o`
@@ -310,7 +423,7 @@ def _paired_object_and_source_import(
     if _is_imported(src_path, resolver, module_name):
         return []
     _mark_imported(src_path, resolver)
-    extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode=False) or []
+    extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode=False, file_info=file_info) or []
     inline_nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode=False) or []
     return extern_nodes + inline_nodes
 

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import io
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from a816.cpu.cpu_65c816 import RomType
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
-from a816.writers import IPSWriter, SFCWriter
+from a816.writers import IPSWriter, SFCWriter, Writer
 
 if TYPE_CHECKING:
     from a816.symbols import Resolver
@@ -24,6 +26,7 @@ class LinkMixin:
         def _to_physical(self, logical_address: int) -> int: ...
         def _trace_linked_sections(self, linked_obj: ObjectFile) -> None: ...
         def _flush_emit_trace(self, output_path: Path) -> None: ...
+        def _wrap_emitter_for_overlap_audit(self, emitter: Writer) -> Writer: ...
 
     def import_linked_symbols(self, linked_obj: ObjectFile) -> None:
         """Register a linked ObjectFile's symbols into the resolver.
@@ -47,7 +50,7 @@ class LinkMixin:
     def _replay_bus_mappings(self, linked_obj: ObjectFile) -> None:
         """Apply each module's `.map` directives onto this program's bus.
 
-        Linker dedupes paired-import re-emissions and errors on
+        Linker dedupes identical per-module declarations and errors on
         conflicting same-identifier declarations, so by the time we
         get here the mapping list is canonical. Skip identifiers
         already present (a previous link_as_* call on the same Program
@@ -135,25 +138,7 @@ class LinkMixin:
             self.resolver.rom_type = address_mapping[mapping]
 
         self.import_linked_symbols(linked_obj)
-        try:
-            with open(ips_file, "wb") as f:
-                ips_emitter = IPSWriter(f, copier_header)
-                ips_emitter.begin()
-
-                for section in linked_obj.sections:
-                    if section.code:
-                        ips_emitter.write_block(section.code, self._to_physical(section.placed_base))
-
-                ips_emitter.end()
-                self._trace_linked_sections(linked_obj)
-                self._flush_emit_trace(ips_file)
-                self.write_debug_info_for_linked(linked_obj, ips_file)
-                self.logger.info("Successfully created IPS patch")
-                return 0
-
-        except OSError:
-            self.logger.exception("Failed to create IPS patch")
-            return -1
+        return self._emit_linked(linked_obj, ips_file, lambda f: IPSWriter(f, copier_header), "IPS patch")
 
     def link_as_sfc(self, linked_obj: ObjectFile, sfc_file: Path, mapping: str | None = None) -> int:
         """Create SFC file from linked object file.
@@ -178,25 +163,34 @@ class LinkMixin:
             self.resolver.rom_type = address_mapping[mapping]
 
         self.import_linked_symbols(linked_obj)
+        return self._emit_linked(linked_obj, sfc_file, SFCWriter, "SFC file")
+
+    def _emit_linked(
+        self, linked_obj: ObjectFile, output_path: Path, make_writer: Callable[[BinaryIO], Writer], label: str
+    ) -> int:
+        """Write every linked section through an overlap-audited writer.
+
+        Bytes land in memory first and reach `output_path` only once the
+        whole image emitted cleanly, so an `OverlapError` (raised under
+        `overlap_mode="error"`) leaves no truncated artefact behind.
+        """
+        buffer = io.BytesIO()
+        emitter = self._wrap_emitter_for_overlap_audit(make_writer(buffer))
+        emitter.begin()
+        for section in linked_obj.sections:
+            if section.code:
+                emitter.write_block(section.code, self._to_physical(section.placed_base))
+        emitter.end()
         try:
-            with open(sfc_file, "wb") as f:
-                sfc_emitter = SFCWriter(f)
-                sfc_emitter.begin()
-
-                for section in linked_obj.sections:
-                    if section.code:
-                        sfc_emitter.write_block(section.code, self._to_physical(section.placed_base))
-
-                sfc_emitter.end()
-                self._trace_linked_sections(linked_obj)
-                self._flush_emit_trace(sfc_file)
-                self.write_debug_info_for_linked(linked_obj, sfc_file)
-                self.logger.info("Successfully created SFC file")
-                return 0
-
+            output_path.write_bytes(buffer.getvalue())
         except OSError:
-            self.logger.exception("Failed to create SFC file")
+            self.logger.exception(f"Failed to create {label}")
             return -1
+        self._trace_linked_sections(linked_obj)
+        self._flush_emit_trace(output_path)
+        self.write_debug_info_for_linked(linked_obj, output_path)
+        self.logger.info(f"Successfully created {label}")
+        return 0
 
     def _get_code_start_address(self, linked_obj: ObjectFile) -> int:
         """Determine the start address for code from linked object symbols.

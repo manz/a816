@@ -52,6 +52,21 @@ def _code_gen(ast_nodes: list[AstNode], resolver: Resolver, macro_definitions: M
     return code
 
 
+def _code_gen_placement_body(
+    ast_nodes: list[AstNode], resolver: Resolver, macro_definitions: MacroDefinitions
+) -> list[NodeProtocol]:
+    """Generate an `.alloc` / `.relocate` body, tracking the nesting
+    depth so `.import` can refuse to run inside a placement body."""
+    resolver.placement_body_depth += 1
+    try:
+        return _code_gen(ast_nodes, resolver, macro_definitions)
+    finally:
+        resolver.placement_body_depth -= 1
+
+
 def code_gen(ast_nodes: list[AstNode], resolver: Resolver) -> GenNodes:
+    # One call per source unit: a `*=` cursor left by a previous unit
+    # assembled on the same resolver must not reject this unit's imports.
+    resolver.star_eq_cursor_active = False
     macro_definitions: MacroDefinitions = {}
     return _code_gen(ast_nodes, resolver, macro_definitions)

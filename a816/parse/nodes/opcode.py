@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import logging
 from typing import cast
 
-from a816.cpu.cpu_65c816 import BlockMoveOpcode, NoOpcodeForOperandSize, guess_value_size, snes_opcode_table
+from a816.cpu.cpu_65c816 import BlockMoveOpcode, NoOpcodeForOperandSize, Opcode, guess_value_size, snes_opcode_table
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
 from a816.diagnostics.suggest import did_you_mean_hint as _did_you_mean_hint
+from a816.error_codes import E_CODEGEN_IMMEDIATE_OVERFLOW as _E_IMMEDIATE_OVERFLOW
 from a816.error_codes import E_SYMBOL_NOT_DEFINED as _E_SYMBOL_NOT_DEFINED
 from a816.exceptions import SymbolNotDefined
-from a816.parse.nodes.errors import NodeError
+from a816.parse.nodes.errors import NodeError, format_node_warning
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol, OpcodeProtocol, ValueNodeProtocol
 from a816.symbols import Resolver
+
+logger = logging.getLogger("a816")
+
+# Opcodes after which the assembler can no longer know M/X: `plp` pulls the
+# flags from the stack; the rest end straight-line flow, so the next
+# instruction is only reachable through a label with its own entry state.
+_FORGETS_REGISTER_SIZES = frozenset({"plp", "bra", "brl", "jmp", "jml", "rts", "rtl", "rti"})
 
 
 class OpcodeNode(NodeProtocol):
@@ -38,6 +47,9 @@ class OpcodeNode(NodeProtocol):
         self.size = size
         self.file_info = file_info
         self.resolver = resolver
+        # Emit may run more than once for the same node (debug capture,
+        # LSP rebuilds); warn about a width mismatch only the first time.
+        self._width_warned = False
 
     def _get_emitter(self) -> OpcodeProtocol:
         try:
@@ -69,6 +81,7 @@ class OpcodeNode(NodeProtocol):
         # stale 8-bit value. Mirror the mutation here so the inference
         # survives the desugar of legacy `*=` into `.alloc at`.
         self._maybe_update_register_sizes()
+        self._update_known_register_sizes()
         opcode_emitter = self._get_emitter()
         if self.addressing_mode is AddressingMode.block_move:
             assert self.value_node is not None and self.value_node2 is not None
@@ -76,7 +89,7 @@ class OpcodeNode(NodeProtocol):
                 self.value_node, self.value_node2, self.resolver
             )
         try:
-            return opcode_emitter.emit(self.value_node, self.resolver, self.size)
+            emitted = opcode_emitter.emit(self.value_node, self.resolver, self.size)
         except NoOpcodeForOperandSize as e:
             assert self.value_node is not None
             guessed_size = guess_value_size(self.value_node, self.size)
@@ -91,6 +104,102 @@ class OpcodeNode(NodeProtocol):
                 code=str(_E_SYMBOL_NOT_DEFINED),
                 hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
             ) from e
+        self._check_byte_immediate_overflow(opcode_emitter)
+        self._warn_on_immediate_width_mismatch(opcode_emitter)
+        return emitted
+
+    def _check_byte_immediate_overflow(self, emitter: OpcodeProtocol) -> None:
+        """Reject a `.b` immediate whose value does not fit one byte.
+
+        Only the byte width errors: `.w`/`.l` immediates keep masking
+        (`lda.w #symbol` loads the low word of an address on purpose).
+        A byte accepts -0x100..0xFF, i.e. the bits above bit 7 are all
+        zero or all one, so `#-1` and `#~0x80` stay valid. External
+        symbols resolve to 0 here and are left to the linker.
+        """
+        if self.addressing_mode is not AddressingMode.immediate or not isinstance(emitter, Opcode):
+            return
+        assert self.value_node is not None
+        if guess_value_size(self.value_node, self.size, self.resolver, emitter.is_a, emitter.is_x) != "b":
+            return
+        value = self.value_node.get_value()
+        if not isinstance(value, int) or value >> 8 in (0, -1):
+            return
+        raise NodeError(
+            f"immediate {value:#x} does not fit in a byte (`{self.opcode}.b` takes -0x100..0xFF)",
+            self.file_info,
+            code=str(_E_IMMEDIATE_OVERFLOW),
+            hint=f"use `{self.opcode}.w` if the register is 16-bit, or mask the value explicitly (`& 0xFF`)",
+        )
+
+    def _known_register_width(self, emitter: Opcode) -> tuple[str, int] | None:
+        """`(register, bits)` the immediate is read at, if the source asserted it."""
+        if emitter.is_a and self.resolver.a_size_known:
+            return "A", self.resolver.a_size
+        if emitter.is_x and self.resolver.i_size_known:
+            return "X", self.resolver.i_size
+        return None
+
+    def _warn_on_immediate_width_mismatch(self, emitter: OpcodeProtocol) -> None:
+        """Warn when an M/X-sized immediate disagrees with the known register size.
+
+        The CPU reads the operand at the width its M/X flag says, so a
+        mismatch desyncs every byte after it. Emission is unchanged (an
+        explicit suffix wins, the value drives width otherwise); unknown
+        register state never warns.
+        """
+        immediate = self.addressing_mode is AddressingMode.immediate
+        if self._width_warned or not immediate or not isinstance(emitter, Opcode):
+            return
+        known = self._known_register_width(emitter)
+        if known is None:
+            return
+        register, bits = known
+        assert self.value_node is not None
+        emitted = guess_value_size(self.value_node, self.size, self.resolver, emitter.is_a, emitter.is_x)
+        expected = "b" if bits == 8 else "w"
+        if emitted == expected:
+            return
+        self._width_warned = True
+        message = (
+            f"immediate width mismatch: `{self.opcode}` emits a .{emitted} operand but {register} is {bits}-bit here"
+        )
+        hint = f"write `{self.opcode}.{expected}`, or re-assert the register size before this line"
+        logger.warning(format_node_warning(message, self.file_info, hint=hint))
+
+    def _update_known_register_sizes(self) -> None:
+        """Keep `a_size_known` / `i_size_known` honest across flag-changing opcodes.
+
+        `plp` restores M/X from the stack, and code after an unconditional
+        transfer is only reached via a label from elsewhere, so both become
+        unknown. An
+        untracked `rep`/`sep` changes the touched register at runtime
+        while the assembler keeps its size, so that register becomes
+        unknown; a tracked one makes it known (sizes set by
+        `_maybe_update_register_sizes`).
+        """
+        if self.opcode in _FORGETS_REGISTER_SIZES:
+            self.resolver.forget_register_sizes()
+            return
+        flags = self._rep_sep_flags()
+        if flags is None:
+            return
+        known = self.resolver.track_register_size
+        if flags & 0x20:
+            self.resolver.a_size_known = known
+        if flags & 0x10:
+            self.resolver.i_size_known = known
+
+    def _rep_sep_flags(self) -> int | None:
+        """Constant immediate of a `rep`/`sep`, else None."""
+        if self.opcode not in ("rep", "sep") or self.addressing_mode is not AddressingMode.immediate:
+            return None
+        assert self.value_node is not None
+        try:
+            value = self.value_node.get_value()
+        except SymbolNotDefined:
+            return None
+        return value if isinstance(value, int) else None
 
     def pc_after(self, current_pc: Address) -> Address:
         self._maybe_update_register_sizes()
@@ -115,19 +224,13 @@ class OpcodeNode(NodeProtocol):
         sets the size directly; running after a `rep`/`sep` just
         re-asserts what the inference already chose.
         """
-        if not getattr(self.resolver, "track_register_size", False):
+        if not self.resolver.track_register_size:
             return
-        if self.opcode not in ("rep", "sep") or self.addressing_mode is not AddressingMode.immediate:
-            return
-        # Immediate-mode parser always populates value_node — no
-        # `value_node is None` guard. Forward-referencing the
-        # immediate (e.g. `rep #FORWARD_FLAGS`) raises
-        # `SymbolNotDefined` until pass 2; skip silently on pass 1
-        # so the second pass picks up the resolved value.
-        assert self.value_node is not None
-        try:
-            value = self.value_node.get_value()
-        except SymbolNotDefined:
+        # Forward-referencing the immediate (e.g. `rep #FORWARD_FLAGS`)
+        # raises `SymbolNotDefined` until pass 2; `_rep_sep_flags`
+        # returns None on pass 1 so the second pass picks up the value.
+        value = self._rep_sep_flags()
+        if value is None:
             return
         # `rep #N` clears the named flag bits → 16-bit register.
         # `sep #N` sets them → 8-bit register.

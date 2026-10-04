@@ -39,14 +39,19 @@ When two `*=` regions (or one `*=` block plus a `.alloc` placement,
 etc.) produce byte spans that share addresses, the assembler emits a
 diagnostic so a routine that silently grew past its expected end is
 caught early. **Default mode is `error`**: the build fails on the
-first overlap, naming both source locations. Override with
+first overlap, naming both byte ranges. Override with
 `--overlap-mode warn` (logged, build continues) or
 `--overlap-mode off` (silent) on the CLI, or via
 `Program(overlap_mode=...)` from the Python API.
 
+The check runs on the final link (`a816 build`, object + link), across
+every module's sections, so two modules pinning bytes at the same spot
+fail the build too. Addresses in the message are ROM file offsets. On
+error no output file is written.
+
 ```
-WARNING write at $008004..$00800b overlaps previous write at
-        $008000..$008009 ($008004..$008009 would be silently overwritten)
+WARNING write at $000004..$00000b overlaps previous write at
+        $000000..$000009 ($000004..$000009 would be silently overwritten)
 ```
 
 ### `.map` — memory map

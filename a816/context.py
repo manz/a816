@@ -32,6 +32,11 @@ class AssemblyContext:
     # `"warn"` to keep building while migrating, or `"off"` to skip
     # the check entirely. CLI: `--overlap-mode={error,warn,off}`.
     overlap_mode: str = "error"
+    # Object mode only: reject bytes emitted before any `*=` / outside
+    # `.alloc` (E0310) instead of leaving the `.o` relocatable. Set by
+    # `ModuleBuilder` for every module of an `a816 build <entry>` link;
+    # explicit `--compile-only` objects stay relocatable.
+    require_placement: bool = False
 
     @property
     def is_object_mode(self) -> bool:

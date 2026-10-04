@@ -17,17 +17,19 @@ def _write(path: Path, body: str) -> None:
 
 
 def test_direct_build_exposes_module_global_in_symbol_map() -> None:
-    main_src = """*=0x008000
-.import "vwf"
+    main_src = """.import "vwf"
+*=0x008000
 
 main:
     jsr.l vwf_render
     rts
 """
 
-    vwf_src = """vwf_render:
+    vwf_src = """.alloc at 0x009000 {
+vwf_render:
     rep #0x30
     rts
+}
 """
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -49,22 +51,24 @@ main:
         assert result.exit_code == 0, result.diagnostics
         assert "main" in result.symbol_map
         assert "vwf_render" in result.symbol_map
-        # vwf_render lands somewhere after main; bsnes wants bank:offset.
+        # bsnes wants bank:offset.
         assert isinstance(result.symbol_map["vwf_render"], int)
 
 
 def test_direct_build_emits_adbg_with_module_symbol() -> None:
-    main_src = """*=0x008000
-.import "vwf"
+    main_src = """.import "vwf"
+*=0x008000
 
 main:
     jsr.l vwf_render
     rts
 """
 
-    vwf_src = """vwf_render:
+    vwf_src = """.alloc at 0x009000 {
+vwf_render:
     rep #0x30
     rts
+}
 """
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -103,7 +107,8 @@ main:
     rts
 """
 
-    helper_src = """far_helper:
+    helper_src = """*=0x009000
+far_helper:
     rtl
 """
 
@@ -152,7 +157,8 @@ main:
     rts
 """
 
-    helper_src = """far_helper:
+    helper_src = """*=0x009000
+far_helper:
     rtl
 """
 

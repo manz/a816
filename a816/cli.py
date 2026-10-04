@@ -31,6 +31,7 @@ from pathlib import Path
 from a816.config import discover_a816_config
 from a816.exceptions import A816Error, LinkerError
 from a816.linker import Linker
+from a816.module_builder import apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
 from a816.program import Program
@@ -162,23 +163,6 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
-def _apply_experimental(program: "Program", flags: list[str] | None) -> None:
-    """Set experimental feature flags on the program's resolver.
-
-    Currently recognized:
-      - `track_register_size` — let `rep`/`sep` with constant
-        immediate operands update `resolver.a_size` /
-        `i_size` so subsequent opcode-width inference picks
-        the right form. Off by default because legacy sources
-        relied on value-driven width inference only.
-    """
-    for flag in flags or []:
-        if flag == "track_register_size":
-            program.resolver.track_register_size = True
-        else:
-            logger.warning(f"unknown --experimental flag: {flag}")
-
-
 def _run_compile_only(args: argparse.Namespace) -> int:
     exit_code = 0
     multi = len(args.input_files) > 1
@@ -190,7 +174,7 @@ def _run_compile_only(args: argparse.Namespace) -> int:
         if multi:
             logger.info(f"Compiling {input_file} -> {obj_file}")
         program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
-        _apply_experimental(program, args.experimental)
+        apply_experimental_flags(program, args.experimental)
         for inc_path in args.include_paths:
             program.add_include_path(inc_path)
         for key, value in _parse_defines(args.defines).items():
@@ -209,7 +193,7 @@ def _load_or_compile_object(input_file: Path, args: argparse.Namespace) -> Objec
         sys.exit(-1)
 
     program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
-    _apply_experimental(program, args.experimental)
+    apply_experimental_flags(program, args.experimental)
     for key, value in _parse_defines(args.defines).items():
         program.resolver.current_scope.add_symbol(key, value)
     temp_obj_file = input_file.with_suffix(".tmp.o")
@@ -230,7 +214,7 @@ def _run_link(args: argparse.Namespace) -> int:
 
     linked_obj = Linker(object_files).link(base_address=0x8000)
     program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
-    _apply_experimental(program, args.experimental)
+    apply_experimental_flags(program, args.experimental)
     if args.format == "ips":
         return program.link_as_patch(linked_obj, args.output_file, args.mapping, args.copier_header)
     if args.format == "sfc":

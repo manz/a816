@@ -64,6 +64,10 @@ E_CODEGEN_TYPED_BIND_UNKNOWN_TYPE = ErrorCode("E0304", "codegen", "typed bind re
 E_CODEGEN_TYPED_BIND_NON_INT = ErrorCode("E0305", "codegen", "typed bind base must evaluate to an address")
 E_CODEGEN_BAD_OPERAND_SIZE = ErrorCode("E0306", "codegen", "operand size mismatch")
 E_CODEGEN_BAD_ADDRESSING_MODE = ErrorCode("E0307", "codegen", "addressing mode not supported by opcode")
+E_CODEGEN_MAP_CONFLICT = ErrorCode("E0308", "codegen", "conflicting `.map` declaration")
+E_CODEGEN_IMMEDIATE_OVERFLOW = ErrorCode("E0309", "codegen", "byte immediate does not fit in 8 bits")
+E_CODEGEN_UNPLACED_CODE = ErrorCode("E0310", "codegen", "code emitted outside any placement")
+E_CODEGEN_IMPORT_IN_PLACEMENT = ErrorCode("E0311", "codegen", "`.import` inside a placement context")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")

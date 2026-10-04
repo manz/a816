@@ -214,6 +214,7 @@ def generate_star_eq(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
+    resolver.star_eq_cursor_active = True
     return [CodePositionNode(ExpressionNode(node.expression, resolver, file_info), resolver)]
 
 

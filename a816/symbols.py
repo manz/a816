@@ -29,33 +29,27 @@ def _is_exportable(name: str) -> bool:
 def _bubble_anon_exportables(scope: "Scope", parent: "Scope") -> None:
     """Promote exportable labels/symbols from an anonymous scope to its parent.
 
-    Used when an `.alloc` body closes: per-block underscore labels
-    (`_skip`, `_end`) stay private to the body, but non-underscore
-    body labels must surface so sibling allocs and `.extern`
-    declarations in the same module can reach them.
+    Used when an `.alloc` body or a macro / `{ }` block closes:
+    underscore labels (`_skip`, `_end`) stay private, non-underscore
+    names surface so sibling allocs, `.extern` declarations and a
+    NamedScope parent's dotted export can reach them.
+
+    Runs on every resolver pass. A name this scope already promoted is
+    refreshed with its latest value - pass 1 measures `.alloc` bodies
+    before the allocator places them, so the first promotion carries a
+    provisional address. Names the parent got from elsewhere are left alone.
     """
-    for label_name, label_value in scope.labels.items():
-        if _is_exportable(label_name) and label_name not in parent.labels:
-            parent.labels[label_name] = label_value
-    for sym_name, sym_value in scope.symbols.items():
-        if _is_exportable(sym_name) and sym_name not in parent.symbols:
-            parent.symbols[sym_name] = sym_value
+    _bubble_names(scope.labels, parent.labels, scope.bubbled_labels)
+    _bubble_names(scope.symbols, parent.symbols, scope.bubbled_symbols)
 
 
-def _bubble_anon_into_named(scope: "Scope", parent: "NamedScope") -> None:
-    """Surface labels/symbols from an anonymous scope into its NamedScope parent.
-
-    A macro's arg-binding scope (or a plain `{ }` block) is anonymous, so
-    its labels would be discarded on restore. When such a scope sits inside
-    a NamedScope, we copy the exportable names up so the next
-    NamedScope.restore_scope(exports=True) publishes them as `Name.label`.
-    """
-    for label_name, label_value in scope.labels.items():
-        if _is_exportable(label_name) and label_name not in parent.labels:
-            parent.labels[label_name] = label_value
-    for sym_name, sym_value in scope.symbols.items():
-        if _is_exportable(sym_name) and sym_name not in parent.symbols:
-            parent.symbols[sym_name] = sym_value
+def _bubble_names[V: (int, int | str)](source: dict[str, V], target: dict[str, V], owned: dict[str, V]) -> None:
+    for name, value in source.items():
+        if not _is_exportable(name):
+            continue
+        if name not in target or (name in owned and target[name] == owned[name]):
+            target[name] = value
+            owned[name] = value
 
 
 def _publish_named_dotted(scope: "NamedScope", parent: "Scope") -> None:
@@ -109,6 +103,10 @@ class Scope:
         # delta to these; treat them as DATA at object-file level but as
         # LABEL kind in `.adbg`.
         self.absolute_labels: dict[str, int] = {}
+        # Names this scope promoted into its parent, with the value last
+        # promoted, so later passes can refresh them (`_bubble_anon_exportables`).
+        self.bubbled_labels: dict[str, int] = {}
+        self.bubbled_symbols: dict[str, int | str] = {}
 
     def add_label(self, label: str, value: Address) -> None:
         self.labels[label] = value.logical_value
@@ -299,10 +297,15 @@ class Resolver:
         # written assuming value-driven width inference only - a
         # `lda #$01` after some earlier `rep #$20` was always meant
         # as 2 bytes (value forces .b). Enabling globally breaks
-        # those. Block-scoped opt-in via `.track_register_size`
-        # (or via the original `.a16` / `rep #$30` flow within a
-        # tight routine) is the path forward.
+        # those. Enabled via `--experimental track_register_size` or
+        # the `[experimental]` table in `a816.toml`.
         self.track_register_size: bool = False
+        # Whether `a_size` / `i_size` reflect a size the source actually
+        # asserted (`.a8`/`.a16`/`.i8`/`.i16`, or a tracked `rep`/`sep`)
+        # during emission, as opposed to the 8-bit default. Only known
+        # sizes drive the immediate-width mismatch warning.
+        self.a_size_known: bool = False
+        self.i_size_known: bool = False
         # Per-pool sandbox cursor for object-mode `.alloc` body labels.
         # Each `.alloc NAME in POOL` advances this so successive allocs
         # bind their bodies at distinct addresses inside the pool's
@@ -361,6 +364,13 @@ class Resolver:
         # owned by its dependencies - the owner's `.o` is the single
         # source of truth, downstream `.o`s carry externs.
         self.imported_symbol_names: set[str] = set()
+        # Placement context seen by `.import` at codegen. A `*=` cursor
+        # stays active until the end of the source unit that opened it
+        # (`.import` restores the importer's flag); the depth counts the
+        # `.alloc` / `.relocate` bodies being generated. Either one makes
+        # an `.import` a hard error: modules own their placement.
+        self.star_eq_cursor_active: bool = False
+        self.placement_body_depth: int = 0
         # Absolute paths of non-source assets pulled in during assembly
         # (`.incbin` blobs, `.table` files). The module builder records
         # these alongside the `.o`'s source-file table so an incremental
@@ -387,6 +397,11 @@ class Resolver:
             return
         for pool in self.pools.values():
             pool.allocate()
+
+    def forget_register_sizes(self) -> None:
+        """Mark A/X sizes unknown (new placement block, `plp`, ...)."""
+        self.a_size_known = False
+        self.i_size_known = False
 
     def get_bus(self) -> Bus:
         if self.bus.has_mappings():
@@ -433,9 +448,7 @@ class Resolver:
         if parent is None:
             raise RuntimeError("Current scope has no parent...")
 
-        if not isinstance(scope, NamedScope) and isinstance(parent, NamedScope):
-            _bubble_anon_into_named(scope, parent)
-        elif exports and not isinstance(scope, NamedScope):
+        if not isinstance(scope, NamedScope) and (exports or isinstance(parent, NamedScope)):
             _bubble_anon_exportables(scope, parent)
         if exports and isinstance(scope, NamedScope):
             _publish_named_dotted(scope, parent)

@@ -87,6 +87,16 @@ separate blocks separated by a blank line.
 - `E0305` typed bind base must evaluate to an address.
 - `E0306` operand size mismatch.
 - `E0307` addressing mode not supported by opcode.
+- `E0308` conflicting `.map` declaration. Two modules (or a module
+  and one it `.import`s) declare the same identifier with different
+  ranges, mask, writable flag or mirror.
+- `E0309` byte immediate does not fit in 8 bits: an explicit `.b`
+  immediate whose value exceeds `0xFF`.
+- `E0310` code emitted outside any placement. Under `a816 build`,
+  a module (entrypoint included) emitted bytes before any `*=` and
+  outside every `.alloc`. Wrap them in `.alloc` or set `*=` first.
+- `E0311` `.import` inside a placement context. `.import` must sit in
+  the file prelude, before the first `*=` and outside any `.alloc` body.
 
 ### Linker
 
