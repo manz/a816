@@ -64,7 +64,7 @@ translate into a physical ROM offset and which banks are writable.
 .map identifier=3 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=1
 ```
 
-Without any region the bus falls back to the `-m` default (LoROM).
+Without any region the bus follows `-m` (LoROM when `-m` is absent).
 The layout is usually project-wide: declare it once in `a816.toml`
 (`mapper` or `[map.N]`) instead of repeating it in every module.
 

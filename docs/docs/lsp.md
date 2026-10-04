@@ -38,8 +38,8 @@ module-paths  = ["src/modules"]
 ```
 
 - `entrypoint`: the root file the server indexes from.
-- `include-paths` — directories searched by `.include`.
-- `module-paths` — directories searched by `.import`.
+- `include-paths`: directories searched by `.include`.
+- `module-paths`: directories searched by `.import`.
 
 Fluff (`a816 check` / `a816 format`) and `a816 build` read the same
 config. See [Fluff (lint + format)](fluff.md#a816toml-discovery) and
