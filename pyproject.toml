@@ -51,6 +51,8 @@ dev = [
 ]
 
 [tool.ruff]
+# What `ruff check` and `ruff format` cover, shared by tests:check and tests:format.
+include = ["a816/**/*.py", "script/**/*.py", "tests/**/*.py"]
 # Exclude a variety of commonly ignored directories.
 exclude = [
     ".git",
@@ -88,10 +90,10 @@ diffcov = [
 ]
 
 tests = "pytest tests"
-check = ["ruff check a816 script tests", "ruff format --check script tests"]
+check = ["ruff check", "ruff format --check"]
 format = [
-    "ruff check --fix a816 script tests",
-    "ruff format a816 script tests",
+    "ruff check --fix",
+    "ruff format",
     "check",
 ]
 

@@ -168,9 +168,7 @@ class CompletionsMixin:
         ]
 
     def _build_labels_completions(self, doc: A816Document) -> list[CompletionItem]:
-        return [
-            CompletionItem(label=sym, kind=CompletionItemKind.Variable, detail="Symbol") for sym in doc.symbols
-        ]
+        return [CompletionItem(label=sym, kind=CompletionItemKind.Variable, detail="Symbol") for sym in doc.symbols]
 
     def _build_workspace_label_completions(self, doc: A816Document, workspace: WorkspaceIndex) -> list[CompletionItem]:
         doc_labels = set(doc.labels.keys())
