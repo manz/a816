@@ -47,10 +47,10 @@ mode).
   pool may sit in different banks, but each range must stay inside
   one bank, and ranges of the same pool must not overlap.
 - **Bank rule**: an allocation is always placed inside a single
-  free chunk, so a block never straddles a bank boundary (nor two
-  ranges, even adjacent ones in different banks). An alloc larger
-  than the pool's largest range can never fit, however much space
-  is free in total.
+  free chunk, so a block never straddles a bank boundary or spans
+  two separate (non-adjacent) ranges. An alloc larger than the
+  pool's largest range can never fit, however much space is free
+  in total.
 - **Allocation** — a named request for `N` bytes inside a specific
   pool. After `Pool.allocate()` runs, every allocation has a final
   ROM address.
@@ -79,8 +79,10 @@ placement → byte-identical output.
 ```
 
 Ranges are tried first-fit in address order. Adjacent ranges in the
-same bank merge into one chunk; ranges in different banks never do,
-so `range 0x01fff0 0x01ffff` + `range 0x028000 0x02800f` is two
+same bank merge into one chunk (`range 0x028000 0x028007` +
+`range 0x028008 0x02800f` is one 16-byte chunk); ranges in
+different banks never do, even when their addresses touch, so
+`range 0x01fff0 0x01ffff` + `range 0x020000 0x02000f` is two
 16-byte chunks, not one 32-byte chunk.
 
 `range`, `fill`, and `strategy` accept constant expressions; literal
@@ -175,21 +177,23 @@ Available stats: `<pool>.capacity`, `<pool>.fragments`,
 When an alloc doesn't fit, the build stops with an error naming the
 pool, the alloc and its size. Direct mode reports `error[E0318]`
 with a caret on the alloc name; link time reports
-`linker error[E0404]` with the pool, the largest free chunk, the
-largest range, the free total and the `file:line` of the alloc body.
-The message says which of three cases you hit:
+`linker error[E0404]` with the pool, the `file:line` of the alloc
+body and a hint. The message says which of three cases you hit:
 
 ```
-alloc 'big' (20 bytes) does not fit in pool 'slack': larger than its largest range (16 bytes); a block never spans a bank boundary or two ranges
+alloc 'big' (20 bytes) does not fit in pool 'slack': larger than its largest range (16 bytes); a block never spans a bank boundary or two separate ranges
 alloc 'c' (8 bytes) does not fit in pool 'slack': 8 bytes free in total but fragmented; largest free chunk is 4 bytes
 alloc 'c' (10 bytes) does not fit in pool 'slack': largest free chunk is 4 bytes
 ```
 
 - **Larger than any range**: no free space helps; split the alloc
-  or give the pool a range at least that big. A single-range pool
-  (including the one behind `.alloc at ADDR size N`) says
-  `larger than the pool (N bytes)` instead.
-- **Fragmented**: the pool has the bytes, but not in one chunk.
+  or give the pool a range at least that big. The bank boundary is
+  only mentioned when the pool's ranges sit in several banks. A
+  single-range pool (including the one behind `.alloc at ADDR size
+  N`, or adjacent same-bank ranges merged into one) says `larger
+  than the pool (N bytes)` instead.
+- **Fragmented**: the pool has the bytes, but not in one chunk;
+  split the alloc or grow one of the ranges.
 - **Out of room**: grow the pool or move code out of it.
 
 ## Object mode + cross-TU pool merging
@@ -224,7 +228,7 @@ Under `a816 build`, a module that `.import`s both sees two `.pool
 slack` declarations with different ranges and rejects them; there,
 declare the pool once in a shared include with all its ranges.
 
-The `.o` format (version 0x0008) carries `PoolDecl` and `PoolAlloc`
+The `.o` format (version 0x000C) carries `PoolDecl` and `PoolAlloc`
 records (visible via `xobj`).
 
 ## Python API
