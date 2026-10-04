@@ -69,10 +69,6 @@ class Scanner:
         self.emit(TokenType.EOF)
         return self.tokens
 
-    @property
-    def current_line(self) -> int:
-        return bisect_right(self._line_starts, self.pos) - 1
-
     def next(self) -> str | None:
         pos = self.pos
         if pos < len(self.input):
