@@ -2,6 +2,7 @@ from unittest import TestCase
 
 from a816.parse.ast.expression import eval_expression_str
 from a816.parse.errors import ParserSyntaxError
+from a816.parse.nodes import NodeError
 from a816.symbols import Resolver
 
 
@@ -64,7 +65,7 @@ class ExpressionsTest(TestCase):
         value = eval_expression_str("~0x80000000", resolver)
         self.assertEqual(0x7FFFFFFF, value)
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(NodeError):
             eval_expression_str("~0x8000000000", resolver)
 
     def test_lshift(self) -> None:

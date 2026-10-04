@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -117,3 +118,60 @@ def test_placement_line(src: str, code: str, line: int, token: str) -> None:
 @pytest.mark.parametrize(("src", "code", "line", "token"), PLACEMENT_CASES)
 def test_placement_caret(src: str, code: str, line: int, token: str) -> None:
     assert _assemble_error(src).underlined == token
+
+
+EMIT_CASES = [
+    pytest.param(
+        "*=0x8000\nstart:\n    bra far\n.db 0\n*=0x8200\nfar:\n    nop\n", "E0315", 3, "far", id="branch-out-of-range"
+    ),
+    pytest.param("*=0x8000\n    bra 0x7e0000\n", "E0316", 2, "0x7e0000", id="branch-into-ram"),
+    pytest.param("    nomacro(1)\n", "E0207", 1, "nomacro", id="unknown-macro"),
+    pytest.param(".macro m(a) {\n    nop\n}\n    m(1, 2)\n", "E0208", 4, "m", id="macro-arity"),
+    pytest.param("*=0x708000\n    nop\n", "E0317", 1, "0x708000", id="unmapped-bank"),
+    pytest.param('*=0x8000\n    lda.w #"a" + 1\n', "E0319", 2, "+", id="mismatched-types"),
+    pytest.param("*=0x8000\n    lda.w #~0x100000000\n", "E0320", 2, "~", id="bitwise-not-too-wide"),
+    pytest.param(_STRUCT_S + '*=0x8000\n    lda.w ("x" as S).x\n', "E0305", 5, '"x"', id="cast-base-not-address"),
+    pytest.param(
+        ".macro m(b) {\n    lda.w b\n}\n*=0x8000\n    m({\n    nop\n})\n", "E0209", 2, "b", id="block-used-as-value"
+    ),
+]
+
+
+@pytest.mark.parametrize(("src", "code", "line", "token"), EMIT_CASES)
+def test_emit_code(src: str, code: str, line: int, token: str) -> None:
+    assert _assemble_error(src).code == code
+
+
+@pytest.mark.parametrize(("src", "code", "line", "token"), EMIT_CASES)
+def test_emit_line(src: str, code: str, line: int, token: str) -> None:
+    assert _assemble_error(src).line == line
+
+
+@pytest.mark.parametrize(("src", "code", "line", "token"), EMIT_CASES)
+def test_emit_caret(src: str, code: str, line: int, token: str) -> None:
+    assert _assemble_error(src).underlined == token
+
+
+def _include_ips_error(path: Path) -> Rendered:
+    return _assemble_error(f'.include_ips "{path}", 0\n')
+
+
+def test_include_ips_without_header_code(tmp_path: Path) -> None:
+    patch = tmp_path / "bad.ips"
+    patch.write_bytes(b"NOPE")
+    assert _include_ips_error(patch).code == "E0502"
+
+
+def test_include_ips_without_header_caret(tmp_path: Path) -> None:
+    patch = tmp_path / "bad.ips"
+    patch.write_bytes(b"NOPE")
+    assert _include_ips_error(patch).underlined == f'"{patch}"'
+
+
+def test_include_ips_missing_file_code(tmp_path: Path) -> None:
+    assert _include_ips_error(tmp_path / "absent.ips").code == "E0500"
+
+
+def test_include_ips_missing_file_caret(tmp_path: Path) -> None:
+    patch = tmp_path / "absent.ips"
+    assert _include_ips_error(patch).underlined == f'"{patch}"'

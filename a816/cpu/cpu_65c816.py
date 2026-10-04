@@ -3,7 +3,7 @@ import typing
 import warnings
 
 from a816.cpu.types import AddressingMode, RomType, ValueSize
-from a816.exceptions import MissingOperandError
+from a816.exceptions import BranchOutOfRangeError, BranchTargetUnmappedError, MissingOperandError
 from a816.protocols import OpcodeProtocol, ValueNodeProtocol
 
 if typing.TYPE_CHECKING:  # pragma: nocover
@@ -30,7 +30,6 @@ class NoOpcodeForOperandSize(Exception):
     This is an internal exception that gets caught and converted to a
     more informative OperandSizeError with opcode context.
     """
-
 
 
 class OpcodeWithoutOperand(OpcodeProtocol):
@@ -69,10 +68,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         if hasattr(value_node, "expression"):
             physical_destination = resolver.get_bus().get_address(value).physical
             if physical_destination is None:
-                raise RuntimeError(
-                    f"Cannot compute relative jump: target address {value:#x} "
-                    "has no physical mapping (RAM addresses not supported)"
-                )
+                raise BranchTargetUnmappedError(value)
             return physical_destination - resolver.pc - (1 + self.OFFSET_BYTES)
         return value
 
@@ -88,7 +84,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         try:
             return super().emit(value_node, resolver, size) + struct.pack(self._PACK, delta)
         except struct.error as e:
-            raise RuntimeError(f"Branch target out of range: offset {delta} exceeds {self._RANGE}") from e
+            raise BranchOutOfRangeError(delta, self._RANGE) from e
 
     def supposed_length(
         self,

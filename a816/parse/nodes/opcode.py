@@ -9,10 +9,12 @@ from a816.cpu.cpu_65c816 import BlockMoveOpcode, NoOpcodeForOperandSize, Opcode,
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
 from a816.diagnostics.suggest import did_you_mean_hint as _did_you_mean_hint
+from a816.error_codes import E_CODEGEN_BRANCH_RANGE, E_CODEGEN_BRANCH_UNMAPPED
 from a816.error_codes import E_CODEGEN_IMMEDIATE_OVERFLOW as _E_IMMEDIATE_OVERFLOW
 from a816.error_codes import E_SYMBOL_NOT_DEFINED as _E_SYMBOL_NOT_DEFINED
-from a816.exceptions import SymbolNotDefined
+from a816.exceptions import BranchOutOfRangeError, BranchTargetUnmappedError, SymbolNotDefined
 from a816.parse.nodes.errors import NodeError, format_node_warning
+from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol, OpcodeProtocol, ValueNodeProtocol
 from a816.symbols import Resolver
@@ -104,9 +106,24 @@ class OpcodeNode(NodeProtocol):
                 code=str(_E_SYMBOL_NOT_DEFINED),
                 hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
             ) from e
+        except BranchOutOfRangeError as e:
+            raise NodeError(
+                str(e),
+                self._operand_token(),
+                code=str(E_CODEGEN_BRANCH_RANGE),
+                hint="use `brl` (16-bit offset) or `jmp` to reach a distant target",
+            ) from e
+        except BranchTargetUnmappedError as e:
+            raise NodeError(str(e), self._operand_token(), code=str(E_CODEGEN_BRANCH_UNMAPPED)) from e
         self._check_byte_immediate_overflow(opcode_emitter)
         self._warn_on_immediate_width_mismatch(opcode_emitter)
         return emitted
+
+    def _operand_token(self) -> Token:
+        """First token of the operand expression, falling back to the opcode."""
+        if isinstance(self.value_node, ExpressionNode) and self.value_node.expression.tokens:
+            return self.value_node.expression.tokens[0].token
+        return self.file_info
 
     def _check_byte_immediate_overflow(self, emitter: OpcodeProtocol) -> None:
         """Reject a `.b` immediate whose value does not fit one byte.

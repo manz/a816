@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from a816.error_codes import E_CODEGEN_UNMAPPED_BANK
 from a816.errors import SourceLocation, format_error
-from a816.exceptions import A816Error
+from a816.exceptions import A816Error, UnmappedBankError
 from a816.parse.tokens import Token
 
 
@@ -65,3 +66,20 @@ def node_source_location(file_info: Token | None) -> SourceLocation | None:
 def format_node_warning(message: str, file_info: Token, *, code: str | None = None, hint: str | None = None) -> str:
     """Render a located warning with the same layout as `NodeError`."""
     return format_error(message, node_source_location(file_info), error_type="warning", code=code, hint=hint)
+
+
+def node_file_info(node: object) -> Token | None:
+    """The source token a node carries, if any (not every node type has one)."""
+    file_info = getattr(node, "file_info", None)
+    return file_info if isinstance(file_info, Token) else None
+
+
+def unmapped_bank_error(exc: UnmappedBankError, file_info: Token | None) -> NodeError:
+    """Locate a bus-level unmapped-bank failure on the node that triggered it."""
+    address = f" (address ${exc.logical_address:06X})" if exc.logical_address is not None else ""
+    return NodeError(
+        f"bank ${exc.bank:02X} is not covered by any `.map` region{address}",
+        file_info,
+        code=str(E_CODEGEN_UNMAPPED_BANK),
+        hint=f"mapped banks: {exc.mapped_ranges()}; add a `.map` region or move the placement",
+    )

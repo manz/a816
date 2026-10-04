@@ -79,6 +79,11 @@ separate blocks separated by a blank line.
   before them. The caret sits on the pool name.
 - `E0206` `.reserve NAME as TYPE in POOL` names a struct type that
   isn't declared. The caret sits on the type name.
+- `E0207` macro not defined. The hint suggests the closest defined
+  macro name.
+- `E0208` macro called with the wrong number of arguments.
+- `E0209` symbol names a block, not a value: a block argument
+  (`m({ ... })`) used where an expression is expected.
 
 ### Codegen
 
@@ -89,7 +94,8 @@ separate blocks separated by a blank line.
   itself.
 - `E0303` struct redefined.
 - `E0304` typed bind references unknown struct type.
-- `E0305` typed bind base must evaluate to an address.
+- `E0305` typed bind or cast base must evaluate to an address
+  (`(expr as T)` with a string `expr`).
 - `E0306` operand size mismatch.
 - `E0307` addressing mode not supported by opcode.
 - `E0308` conflicting `.map` declaration. Two modules (or a module
@@ -106,6 +112,15 @@ separate blocks separated by a blank line.
   `%` evaluated to 0; the caret points at the operator. In a relocation
   resolved at link time the linker reports `cannot evaluate expression`
   with reason `division by zero`.
+- `E0315` branch target out of range: the displacement does not fit
+  the branch's signed 8-bit (`bra`, `bne`, ...) or 16-bit (`brl`)
+  offset. The caret sits on the target.
+- `E0316` branch target has no ROM address. Relative branches are
+  computed in ROM space; a RAM target cannot be reached.
+- `E0317` address in a bank no `.map` region covers (and the
+  configured ROM type doesn't back). The hint lists the mapped banks.
+- `E0319` operator applied to a string and a number.
+- `E0320` `~` operand wider than 32 bits.
 
 ### Linker
 
@@ -118,6 +133,8 @@ separate blocks separated by a blank line.
 
 - `E0500` file not found.
 - `E0501` invalid project config.
+- `E0502` `.include_ips` file is not an IPS patch (no `PATCH`
+  header). An unreadable `.include_ips` path reports `E0500`.
 
 ## LSP integration
 

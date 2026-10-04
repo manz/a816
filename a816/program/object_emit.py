@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from a816.error_codes import E_CODEGEN_UNPLACED_CODE
+from a816.exceptions import UnmappedBankError
 from a816.parse.nodes import AllocNode, CodePositionNode, IncludeIpsNode, NodeError
+from a816.parse.nodes.errors import node_file_info, unmapped_bank_error
 from a816.parse.tokens import Token
 from a816.program.state import ObjectEmitState
 from a816.protocols import NodeProtocol
@@ -51,6 +53,13 @@ class ObjectEmitMixin:
             self.resolver.reloc_address = original_reloc
 
     def _object_emit_one(self, node: NodeProtocol, object_writer: ObjectWriter, state: ObjectEmitState) -> None:
+        """Emit one node, locating a bus-level unmapped-bank failure on it."""
+        try:
+            self._object_emit_dispatch(node, object_writer, state)
+        except UnmappedBankError as exc:
+            raise unmapped_bank_error(exc, node_file_info(node)) from exc
+
+    def _object_emit_dispatch(self, node: NodeProtocol, object_writer: ObjectWriter, state: ObjectEmitState) -> None:
         """Emit one node into the current object-writer section.
 
         Splits the dispatch the way `emit()` does so each branch — the

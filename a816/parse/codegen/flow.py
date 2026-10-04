@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import difflib
 from typing import cast
 
+from a816.error_codes import E_SYMBOL_MACRO_ARITY, E_SYMBOL_UNKNOWN_MACRO
 from a816.exceptions import (
     ExternalExpressionReference,
     ExternalSymbolReference,
@@ -103,6 +105,14 @@ def _expression_touches_local_label(expr: ExpressionAstNode, resolver: Resolver)
     return False
 
 
+def _macro_hint(name: str, macro_definitions: MacroDefinitions) -> str | None:
+    """`did you mean` for a misspelled macro, or a pointer to `.macro`."""
+    close = difflib.get_close_matches(name, list(macro_definitions), n=1)
+    if close:
+        return f"did you mean `{close[0]}`?"
+    return "define it with `.macro NAME(args) { ... }` before calling it"
+
+
 def generate_macro_application(
     node: MacroApplyAstNode,
     resolver: Resolver,
@@ -110,14 +120,23 @@ def generate_macro_application(
     file_info: Token,
 ) -> GenNodes:
     code: GenNodes = []
-    macro_def: MacroAstNode = macro_definitions[node.name]
+    macro_def: MacroAstNode | None = macro_definitions.get(node.name)
+    if macro_def is None:
+        raise NodeError(
+            f"macro `{node.name}` is not defined",
+            file_info,
+            code=str(E_SYMBOL_UNKNOWN_MACRO),
+            hint=_macro_hint(node.name, macro_definitions),
+        )
     macro_code = macro_def.block
     macro_args = macro_def.args
     macro_args_values = node.args
 
     if len(macro_args_values) != len(macro_args):
         raise NodeError(
-            f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}", file_info
+            f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}",
+            file_info,
+            code=str(E_SYMBOL_MACRO_ARITY),
         )
 
     resolver.append_scope()

@@ -230,6 +230,10 @@ class UnmappedBankError(A816Error):
         ranges.append(f"${start:02X}" if start == prev else f"${start:02X}-${prev:02X}")
         return ", ".join(ranges)
 
+    def mapped_ranges(self) -> str:
+        """The banks the bus does cover, as `$xx-$yy` ranges."""
+        return self._format_ranges(self.mapped_banks)
+
     def format(self) -> str:
         # Late import: intentional to avoid circular dependency with errors module
         from a816.errors import format_error_simple
@@ -237,7 +241,7 @@ class UnmappedBankError(A816Error):
         details: list[tuple[str, str]] = [("bank", f"${self.bank:02X}")]
         if self.logical_address is not None:
             details.append(("address", f"${self.logical_address:06X}"))
-        details.append(("mapped banks", self._format_ranges(self.mapped_banks)))
+        details.append(("mapped banks", self.mapped_ranges()))
         message = f"bank ${self.bank:02X} is not covered by any `.map` region (and is not backed by the configured ROM)"
         return format_error_simple("error", message, details=details)
 
@@ -249,6 +253,23 @@ class UnmappedBankError(A816Error):
 
 class OpcodeError(A816Error):
     """Base class for opcode-related errors."""
+
+
+class BranchOutOfRangeError(OpcodeError):
+    """Raised when a relative branch displacement does not fit its offset field."""
+
+    def __init__(self, delta: int, allowed: str) -> None:
+        self.delta = delta
+        self.allowed = allowed
+        super().__init__(f"branch target out of range: offset {delta} exceeds {allowed}")
+
+
+class BranchTargetUnmappedError(OpcodeError):
+    """Raised when a relative branch targets an address with no ROM location."""
+
+    def __init__(self, target: int) -> None:
+        self.target = target
+        super().__init__(f"branch target {target:#x} has no ROM address; relative branches cannot reach RAM")
 
 
 class MissingOperandError(OpcodeError):
