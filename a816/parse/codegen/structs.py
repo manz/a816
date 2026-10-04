@@ -200,19 +200,18 @@ def generate_map(
     return []
 
 
-def _declared_bus_mapping(bus: Bus, identifier: str) -> BusMapping | None:
-    mapping = bus.mappings.get(identifier)
-    if mapping is None:
+def _bus_shape(bus: Bus, identifier: str) -> tuple[object, ...] | None:
+    """The declared shape of ``identifier`` on ``bus``, comparable with `_mapping_shape`."""
+    declared = bus.mappings.get(identifier)
+    if declared is None:
         return None
     mirror = bus.mappings.get(f"{identifier}_mirror")
-    return BusMapping(
-        identifier=identifier,
-        bank_range=mapping.bank_range,
-        addr_range=mapping.address_range,
-        mask=mapping.mask,
-        writeable=mapping.writable,
-        mirror_bank_range=mirror.bank_range if mirror is not None else None,
-    )
+    mirror_range = mirror.bank_range if mirror is not None else None
+    return (declared.bank_range, declared.address_range, declared.mask, declared.writable, mirror_range)
+
+
+def _mapping_shape(mapping: BusMapping) -> tuple[object, ...]:
+    return (mapping.bank_range, mapping.addr_range, mapping.mask, mapping.writeable, mapping.mirror_bank_range)
 
 
 def declare_bus_mapping(resolver: Resolver, mapping: BusMapping, file_info: Token) -> None:
@@ -229,10 +228,10 @@ def declare_bus_mapping(resolver: Resolver, mapping: BusMapping, file_info: Toke
 
 def _is_redeclaration(bus: Bus, mapping: BusMapping, file_info: Token) -> bool:
     """True when ``mapping`` is already declared identically; raise on a conflicting shape."""
-    existing = _declared_bus_mapping(bus, mapping.identifier)
+    existing = _bus_shape(bus, mapping.identifier)
     if existing is None:
         return False
-    if existing != mapping:
+    if existing != _mapping_shape(mapping):
         raise NodeError(
             f"conflicting `.map {mapping.identifier!r}` declaration",
             file_info,
