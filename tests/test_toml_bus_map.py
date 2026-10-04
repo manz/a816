@@ -15,6 +15,7 @@ import pytest
 
 from a816.cli import _apply_a816_toml, _build_arg_parser, _run_assemble
 from a816.exceptions import A816ConfigError
+from a816.fluff.cli import fluff_main
 from a816.module_builder import BuildResult, ModuleBuilder, build_with_imports
 from a816.object_file import BusMapping, ObjectFile
 from a816.program import Program
@@ -192,20 +193,17 @@ def test_cli_link_of_sources_seeds_toml_map(tmp_path: Path) -> None:
     assert _run_assemble(args) == 0
 
 
-def test_fluff_reports_a_broken_config_instead_of_crashing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    from a816.fluff.cli import fluff_main
-
+def _broken_config_source(tmp_path: Path) -> Path:
     (tmp_path / "a816.toml").write_text("entrypoint = \n", encoding="utf-8")
     source = tmp_path / "main.s"
     source.write_text("nop\n", encoding="utf-8")
-    fluff_main(["check", str(source)])
+    return source
+
+
+def test_fluff_reports_a_broken_config_instead_of_crashing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fluff_main(["check", str(_broken_config_source(tmp_path))])
     assert "config error[E0501]" in capsys.readouterr().err
 
 
 def test_fluff_broken_config_exit_code(tmp_path: Path) -> None:
-    from a816.fluff.cli import fluff_main
-
-    (tmp_path / "a816.toml").write_text("entrypoint = \n", encoding="utf-8")
-    source = tmp_path / "main.s"
-    source.write_text("nop\n", encoding="utf-8")
-    assert fluff_main(["check", str(source)]) == 2
+    assert fluff_main(["check", str(_broken_config_source(tmp_path))]) == 2

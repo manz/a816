@@ -10,7 +10,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from a816.exceptions import FormattingError
+from a816.exceptions import A816ConfigError, FormattingError
 from a816.fluff.core import Diagnostic, Rule
 from a816.fluff.runner import apply_fixes, lint_file, lint_text
 from a816.formatter import A816Formatter
@@ -403,8 +403,6 @@ def _run_explain(args: argparse.Namespace) -> int:
 
 
 def fluff_main(argv: Sequence[str] | None = None) -> int:
-    from a816.exceptions import A816ConfigError
-
     parser = _build_fluff_parser()
     args = parser.parse_args(argv)
     try:
