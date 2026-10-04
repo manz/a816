@@ -6,6 +6,7 @@ from typing import Any
 
 from a816.parse.ast.nodes import AstNode
 from a816.parse.codegen import code_gen
+from a816.parse.codegen.structs import seed_bus_map
 from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
 from a816.parse.parser import Parser
 from a816.parse.parser_states import parse_initial
@@ -48,6 +49,7 @@ class A816Parser:
         include_paths = self.resolver.context.include_paths
         ast = self.parse_as_ast(program, filename, include_paths=include_paths, verbose_errors=True)
         self.resolver.current_scope.add_symbol("BUILD_DATE", strftime("%Y-%m-%d %H:%M:%S", gmtime()))
+        seed_bus_map(self.resolver)
         return ast.error, code_gen(ast.nodes, self.resolver)
 
     @staticmethod

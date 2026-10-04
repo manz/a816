@@ -28,9 +28,11 @@ import logging
 import sys
 from pathlib import Path
 
-from a816.config import discover_a816_config
-from a816.exceptions import A816Error, LinkerError
+from a816.config import A816Config, discover_a816_config
+from a816.error_codes import E_CONFIG_MAPPER_MISMATCH
+from a816.exceptions import A816ConfigError, A816Error, LinkerError
 from a816.linker import Linker
+from a816.mappers import CLI_MAPPERS
 from a816.module_builder import apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
@@ -39,14 +41,48 @@ from a816.program import Program
 logger = logging.getLogger("x816")
 
 
+_DEFAULT_MAPPING = "low"
+
+
 def _apply_a816_toml(args: argparse.Namespace) -> None:
-    """Merge `a816.toml` settings into `args` (CLI flags win over file)."""
+    """Merge `a816.toml` settings into `args` (CLI flags win over file).
+
+    `-m` and the toml `mapper` must agree: the toml regions are seeded
+    into every object, so letting `-m` silently win would build a bus
+    that matches neither. Without `-m`, the toml `mapper` picks it.
+    """
+    config = _discover_config(args)
+    if config is not None:
+        _merge_config(args, config)
+    if getattr(args, "mapping", None) is None:
+        args.mapping = _DEFAULT_MAPPING
+
+
+def _discover_config(args: argparse.Namespace) -> A816Config | None:
     if not args.input_files:
-        return
+        return None
     start = args.input_files[0]
-    config = discover_a816_config(start if start.is_file() else start.parent)
-    if config is None:
+    return discover_a816_config(start if start.is_file() else start.parent)
+
+
+def _merge_mapper(args: argparse.Namespace, config: A816Config) -> None:
+    if config.mapper is None:
         return
+    cli_mapping = getattr(args, "mapping", None)
+    if cli_mapping is None:
+        args.mapping = next(flag for flag, mapper in CLI_MAPPERS.items() if mapper == config.mapper)
+        return
+    if CLI_MAPPERS[cli_mapping] != config.mapper:
+        raise A816ConfigError(
+            E_CONFIG_MAPPER_MISMATCH,
+            f"`-m {cli_mapping}` disagrees with `mapper = {config.mapper!r}`; drop one of them",
+            config.config_path,
+        )
+
+
+def _merge_config(args: argparse.Namespace, config: A816Config) -> None:
+    _merge_mapper(args, config)
+    args.bus_map = list(config.bus_map)
     if config.include_paths and not args.include_paths:
         args.include_paths = [str(p) for p in config.include_paths]
     if config.module_paths and not args.module_paths:
@@ -71,9 +107,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-m",
         dest="mapping",
-        default="low",
-        choices=("low", "low2", "high"),
-        help="Address mapping: low (LoROM), low2 (LoROM, alternate), high (HiROM).",
+        default=None,
+        choices=tuple(CLI_MAPPERS),
+        help=(
+            "Address mapping: low (LoROM, default), low2 (LoROM, alternate), high (HiROM). "
+            "Must agree with `mapper` in a816.toml when both are set."
+        ),
     )
     parser.add_argument(
         "--copier-header",
@@ -135,6 +174,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Mirrors the [experimental] table in `a816.toml`. CLI wins."
         ),
     )
+    parser.set_defaults(bus_map=[])
     return parser
 
 
@@ -165,8 +205,17 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         overlap_mode=args.overlap_mode,
         experimental=list(args.experimental or []),
         mapping=args.mapping,
+        bus_map=list(args.bus_map),
     )
     return result.exit_code
+
+
+def _new_compile_program(args: argparse.Namespace) -> Program:
+    """A `Program` for one translation unit, carrying the CLI / toml settings."""
+    program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
+    apply_experimental_flags(program, args.experimental)
+    program.resolver.context.bus_map = list(args.bus_map)
+    return program
 
 
 def _run_compile_only(args: argparse.Namespace) -> int:
@@ -179,8 +228,7 @@ def _run_compile_only(args: argparse.Namespace) -> int:
         obj_file = input_file.with_suffix(".o")
         if multi:
             logger.info(f"Compiling {input_file} -> {obj_file}")
-        program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
-        apply_experimental_flags(program, args.experimental)
+        program = _new_compile_program(args)
         for inc_path in args.include_paths:
             program.add_include_path(inc_path)
         for key, value in _parse_defines(args.defines).items():
@@ -198,8 +246,7 @@ def _load_or_compile_object(input_file: Path, args: argparse.Namespace) -> Objec
         logger.error(f"Unknown file type: {input_file}")
         sys.exit(-1)
 
-    program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
-    apply_experimental_flags(program, args.experimental)
+    program = _new_compile_program(args)
     for key, value in _parse_defines(args.defines).items():
         program.resolver.current_scope.add_symbol(key, value)
     temp_obj_file = input_file.with_suffix(".tmp.o")
