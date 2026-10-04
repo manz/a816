@@ -114,7 +114,9 @@ class Scanner:
         return self.input[self.start : self.pos]
 
     def get_token(self, token_type: TokenType) -> Token:
-        return Token(token_type, self.input[self.start : self.pos], self.get_position())
+        line = bisect_right(self._line_starts, self.start) - 1
+        column = self.start - self._line_starts[line]
+        return Token.located(token_type, self.input[self.start : self.pos], line, column, self.file)
 
     def get_position(self) -> Position:
         line = bisect_right(self._line_starts, self.start) - 1
