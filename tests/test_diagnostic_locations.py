@@ -62,8 +62,10 @@ def parse_rendered(rendered: str) -> Rendered:
 
 
 def _assemble_error(src: str) -> Rendered:
+    program = Program()
+    writer = StubWriter()
     with pytest.raises(NodeError) as exc_info:
-        Program().assemble_string_with_emitter(src, "t.s", StubWriter())
+        program.assemble_string_with_emitter(src, "t.s", writer)
     return parse_rendered(str(exc_info.value))
 
 
@@ -195,8 +197,10 @@ def test_pool_overflow_caret_on_alloc_name() -> None:
 
 
 def test_pool_overflow_names_largest_free_chunk() -> None:
+    program = Program()
+    writer = StubWriter()
     with pytest.raises(NodeError) as exc_info:
-        Program().assemble_string_with_emitter(_OVERFLOW_SRC, "t.s", StubWriter())
+        program.assemble_string_with_emitter(_OVERFLOW_SRC, "t.s", writer)
     assert "largest free chunk is 4 bytes" in str(exc_info.value)
 
 
@@ -230,8 +234,9 @@ def test_link_pool_overflow_points_at_alloc_body(tmp_path: Path) -> None:
 
 def test_link_alloc_into_undeclared_pool_code() -> None:
     orphan = ObjectFile([], [], pool_allocs=[PoolAlloc(pool_name="gone", symbol_name="foo", section_idx=0, size=1)])
+    linker = Linker([orphan])
     with pytest.raises(LinkerError) as exc_info:
-        Linker([orphan]).link()
+        linker.link()
     assert "[E0405]" in exc_info.value.format()
 
 
