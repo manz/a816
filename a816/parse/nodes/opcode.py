@@ -243,9 +243,9 @@ class OpcodeNode(NodeProtocol):
         """
         if not self.resolver.track_register_size:
             return
-        # Forward-referencing the immediate (e.g. `rep #FORWARD_FLAGS`)
-        # raises `SymbolNotDefined` until pass 2; `_rep_sep_flags`
-        # returns None on pass 1 so the second pass picks up the value.
+        # An operand pass 1 cannot evaluate (forward label) raises E0200
+        # here on purpose: labels bind on pass 1 only, so skipping the
+        # `rep`/`sep` would size the code after it at the old width.
         value = self._rep_sep_flags()
         if value is None:
             return
