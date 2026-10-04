@@ -24,8 +24,11 @@ Usage:
 """
 
 import argparse
+import gc
 import logging
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from a816.config import A816Config, discover_a816_config
@@ -299,7 +302,29 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
     return None
 
 
+# Allocations between gen-0 collections during a build. The CPython default
+# (2000) re-walks the growing token/AST/node heap thousands of times on a
+# large file; 50k cut a cold 100k-line build by ~20% on 3.14 and 3.15.
+_BUILD_GC_THRESHOLD = 50_000
+
+
+@contextmanager
+def _build_gc_threshold() -> Iterator[None]:
+    """Collect gen 0 less often for the duration of a build, then restore."""
+    previous = gc.get_threshold()
+    gc.set_threshold(_BUILD_GC_THRESHOLD, *previous[1:])
+    try:
+        yield
+    finally:
+        gc.set_threshold(*previous)
+
+
 def _run_assemble(args: argparse.Namespace) -> int:
+    with _build_gc_threshold():
+        return _assemble(args)
+
+
+def _assemble(args: argparse.Namespace) -> int:
     _apply_a816_toml(args)
     use_auto_imports = (
         not args.no_auto_imports
