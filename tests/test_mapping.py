@@ -50,7 +50,7 @@ class MappingTest(unittest.TestCase):
         )
         bus.editable = False
 
-        self.assertRaises(RuntimeError, bus.unmap, 1)
+        self.assertRaises(RuntimeError, bus.unmap, "1")
 
     def test_map_not_editable_bus_should_raise(self) -> None:
         bus = Bus("test ro")
