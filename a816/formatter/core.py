@@ -39,12 +39,14 @@ from a816.parse.ast.nodes import (
     RelocateAstNode,
     ScopeAstNode,
     StructAstNode,
+    StructInstanceAstNode,
     SymbolAffectationAstNode,
     TableAstNode,
     TextAstNode,
 )
 from a816.parse.errors import ParserSyntaxError
 from a816.parse.mzparser import A816Parser
+from a816.parse.tokens import Token
 
 
 class A816Formatter:
@@ -66,6 +68,7 @@ class A816Formatter:
             CodePositionAstNode,
             CodeRelocationAstNode,
             CodeLookupAstNode,
+            StructInstanceAstNode,
         )
 
     def format_text(
@@ -131,9 +134,7 @@ class A816Formatter:
             should_indent and isinstance(node, self._instruction_like_nodes) and not isinstance(node, DocstringAstNode)
         )
         if indent_body_node:
-            node_lines = [
-                self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines
-            ]
+            node_lines = self._indent_node_lines(node, node_lines)
         lines.extend(node_lines)
 
     _BLOCK_LIKE_AST: ClassVar[tuple[type, ...]] = (IfAstNode, ForAstNode, MacroAstNode, ScopeAstNode, CompoundAstNode)
@@ -457,8 +458,12 @@ class A816Formatter:
         """
         indented: list[str] = []
         in_docstring = False
+        istruct_ws: int | None = None
         for line in lines:
             stripped = line.strip()
+            if istruct_ws is not None:
+                istruct_ws = self._append_istruct_line(line, istruct_ws, levels, indented)
+                continue
             if not stripped:
                 indented.append("")
                 continue
@@ -468,12 +473,43 @@ class A816Formatter:
                 if triple_count % 2 == 1:
                     in_docstring = not in_docstring
                 continue
-            is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
-            if is_label or stripped.startswith(";"):
-                indented.append(stripped)
-            else:
-                indented.append(self._indent(line, levels))
+            if self._opens_istruct_block(stripped):
+                istruct_ws = self._append_istruct_line(line, len(line) - len(line.lstrip()), levels, indented)
+                continue
+            indented.append(stripped if self._stays_flush_left(stripped) else self._indent(line, levels))
         return indented
+
+    @staticmethod
+    def _stays_flush_left(stripped: str) -> bool:
+        """Inner labels and stand-alone comments keep column 0 inside a block."""
+        is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
+        return is_label or stripped.startswith(";")
+
+    @staticmethod
+    def _opens_istruct_block(stripped: str) -> bool:
+        return stripped.startswith(".istruct ") and stripped.endswith("{")
+
+    def _append_istruct_line(self, line: str, base_ws: int, levels: int, out: list[str]) -> int | None:
+        """Re-indent one line of a multi-line `.istruct`, keeping its nesting.
+
+        `base_ws` is the header's indentation; the block ends at the `}`
+        back at that column. Returns the indentation to keep tracking, or
+        None once the closing brace is emitted.
+        """
+        if not line.strip():
+            out.append("")
+            return base_ws
+        out.append(" " * (self.options.indent_size * levels) + line[base_ws:])
+        closes = line.lstrip().startswith("}") and len(line) - len(line.lstrip()) == base_ws
+        return None if closes else base_ws
+
+    @staticmethod
+    def _close_line_num(node: AstNode) -> int | None:
+        """Source line of a node's closing bracket (`.istruct` initializers)."""
+        close = getattr(node, "close_token", None)
+        if isinstance(close, Token) and close.position is not None:
+            return close.position.line
+        return None
 
     @staticmethod
     def _node_line_num(node: AstNode) -> int | None:
@@ -564,11 +600,20 @@ class A816Formatter:
             formatted.extend(node_lines)
             return in_label_section
         if in_label_section:
-            node_lines = [
-                self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines
-            ]
+            node_lines = self._indent_node_lines(node, node_lines)
         formatted.extend(node_lines)
         return in_label_section
+
+    def _indent_node_lines(self, node: AstNode, node_lines: list[str]) -> list[str]:
+        """Indent a body node's lines one level.
+
+        A multi-line `.istruct` shifts as a whole so its fields stay nested
+        under the header; other nodes indent only their flush-left lines.
+        """
+        if isinstance(node, StructInstanceAstNode):
+            prefix = " " * self.options.indent_size
+            return [f"{prefix}{line}" if line.strip() else line for line in node_lines]
+        return [self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines]
 
     def _emit_compound(self, node: CompoundAstNode, formatted: list[str]) -> None:
         block_lines = self._format_ast(node, indent_after_label=False)
@@ -641,6 +686,9 @@ class A816Formatter:
                 line = A816Formatter._node_line_num(current)
                 if line is not None and (max_line is None or line > max_line):
                     max_line = line
+            close_line = A816Formatter._close_line_num(current)
+            if close_line is not None and (max_line is None or close_line > max_line):
+                max_line = close_line
             stack.extend(A816Formatter._ast_children(current))
         return max_line
 
