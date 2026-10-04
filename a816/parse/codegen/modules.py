@@ -10,11 +10,15 @@ from a816.object_file import ObjectFile, SymbolType
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
+    BlockAstNode,
     CommentAstNode,
+    CompoundAstNode,
     DocstringAstNode,
+    ExternAstNode,
     ForAstNode,
     IfAstNode,
     ImportAstNode,
+    IncludeAstNode,
     IncludeBinaryAstNode,
     LabelAstNode,
     LabelDeclAstNode,
@@ -32,11 +36,11 @@ from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
 from a816.symbols import Resolver
 
-# AST node types whose effect must be visible to codegen of the
-# importer (struct/macro/const defs, `.map` bus layout, scopes,
-# conditionals, nested imports, pool decls, reclaims, docstrings).
-# Everything else is runtime-bound and surfaces as an `ExternNode` so
-# the linker wires it up at link time.
+# Declarations whose effect must be visible to codegen of the importer
+# (struct/macro/const defs, `.map` bus layout, nested imports, pool
+# decls, reclaims, docstrings). Everything else is runtime-bound: the
+# imported module's own `.o` emits it, and its names surface as
+# `ExternNode`s so the linker wires them up at link time.
 _INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
     StructAstNode,
     MacroAstNode,
@@ -44,15 +48,17 @@ _INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
     SymbolAffectationAstNode,
     AssignAstNode,
     LabelDeclAstNode,
-    ScopeAstNode,
-    IfAstNode,
-    ForAstNode,
     ImportAstNode,
     PoolAstNode,
     ReclaimAstNode,
     DocstringAstNode,
     CommentAstNode,
 )
+
+# Declarations kept when they sit inside an `.if` / `.scope` / `.for`
+# body. `.extern` is body-only: a conditional extern block is how a
+# module opts into another module's symbols under a feature flag.
+_INLINE_BODY_TYPES: tuple[type[AstNode], ...] = (*_INLINE_IMPORT_TYPES, ExternAstNode)
 
 
 def _import_search_paths(resolver: Resolver) -> list[Path]:
@@ -192,10 +198,11 @@ def _import_object_mode(
     """Per-node classifier for object-mode `.import`s.
 
     Inlines compile-time-only nodes (struct, macro, constant, typed
-    bind, `.label`, scope, `.if`, `.for`, nested `.import`) into the
-    importer's resolver so codegen of this module sees their effects.
-    Emits `ExternNode` for runtime-bound names so cross-module
-    references resolve at link time.
+    bind, `.label`, nested `.import`) into the importer's resolver so
+    codegen of this module sees their effects; `.if` / `.scope` /
+    `.for` are inlined with their bodies cut down to declarations
+    (`_declarations_only`). Emits `ExternNode` for runtime-bound names
+    so cross-module references resolve at link time.
 
     Names contributed by the inline pass land in
     `Resolver.imported_symbol_names`; `_export_object_symbols` skips
@@ -211,12 +218,72 @@ def _import_object_mode(
         if isinstance(node, _INLINE_IMPORT_TYPES):
             out.extend(_code_gen([node], resolver, macro_definitions) or [])
             continue
+        if isinstance(node, IfAstNode | ScopeAstNode | ForAstNode):
+            out.extend(_code_gen(_declarations_only([node], bare_names=True), resolver, macro_definitions) or [])
+            continue
         for name in _runtime_extern_names(node):
             out.append(ExternNode(name, resolver))
 
     resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)
     resolver.imported_symbol_names.update(set(root.symbols.keys()) - before_symbols)
     return out
+
+
+def _declarations_only(nodes: list[AstNode], bare_names: bool) -> list[AstNode]:
+    """Copy of `nodes` with every byte-emitting statement dropped.
+
+    `.if` / `.scope` / `.for` / `.include` keep their shape so the
+    importer evaluates conditions and scope prefixes exactly as the
+    owning module does, but their bodies hold declarations only. The
+    owning module's `.o` carries the bytes; inlining them here would
+    re-emit the code into the importer's `.o`.
+
+    Runtime names (labels, `.alloc` names, `.incbin` symbols) become
+    `.extern`s where they would publish bare (module level, possibly
+    under `.if`). Inside a named scope they publish dotted
+    (`scope.label`) and the owning `.o` already supplies those externs;
+    `.for` iterations live in internal scopes and publish nothing.
+    """
+    out: list[AstNode] = []
+    for node in nodes:
+        out.extend(_declarations_of(node, bare_names))
+    return out
+
+
+def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
+    if isinstance(node, _INLINE_BODY_TYPES):
+        return [node]
+    if isinstance(node, IfAstNode):
+        return _pruned_if(node, bare_names)
+    if isinstance(node, ScopeAstNode):
+        body = _declarations_only(node.body.body, bare_names=False)
+        return [ScopeAstNode(node.name, _block(body, node.body), node.file_info, node.docstring)] if body else []
+    if isinstance(node, ForAstNode):
+        body = _declarations_only(node.body.body, bare_names=False)
+        return (
+            [ForAstNode(node.symbol, node.min_value, node.max_value, _block(body, node.body), node.file_info)]
+            if body
+            else []
+        )
+    if isinstance(node, IncludeAstNode):
+        included = _declarations_only(node.included_nodes, bare_names)
+        return [IncludeAstNode(node.file_path, included, node.file_info, node.resolved_path)]
+    if not bare_names:
+        return []
+    return [ExternAstNode(name, node.file_info) for name in _runtime_extern_names(node)]
+
+
+def _pruned_if(node: IfAstNode, bare_names: bool) -> list[AstNode]:
+    then_body = _declarations_only(node.block.body, bare_names)
+    else_body = _declarations_only(node.else_block.body, bare_names) if node.else_block else []
+    if not then_body and not else_body:
+        return []
+    else_block = _block(else_body, node.else_block) if node.else_block else None
+    return [IfAstNode(node.expression, _block(then_body, node.block), else_block, node.file_info)]
+
+
+def _block[B: (BlockAstNode, CompoundAstNode)](body: list[AstNode], original: B) -> B:
+    return type(original)(body, original.file_info)
 
 
 def _runtime_extern_names(node: object) -> list[str]:
