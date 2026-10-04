@@ -6,18 +6,24 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
 from a816.error_codes import (
+    E_PARSER_ISTRUCT_DUPLICATE_FIELD,
+    E_PARSER_ISTRUCT_STRING_IN_LIST,
     E_PARSER_POOL_NO_RANGES,
+    E_PARSER_STRUCT_ARRAY_COUNT,
+    E_PARSER_STRUCT_BITFIELD_ARRAY,
     E_PARSER_STRUCT_DUPLICATE_FIELD,
     E_PARSER_UNEXPECTED_TOKEN,
     E_PARSER_UNKNOWN_DIRECTIVE_ATTR,
     E_PARSER_UNKNOWN_POOL_STRATEGY,
 )
+from a816.parse.ast.expression import eval_number
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AstNode,
@@ -32,7 +38,10 @@ from a816.parse.ast.nodes import (
     ImportAstNode,
     IncludeAstNode,
     IncludeIpsAstNode,
+    InitCommentAstNode,
+    InitValue,
     LabelDeclAstNode,
+    ListInitAstNode,
     MacroAstNode,
     MapArgs,
     MapAstNode,
@@ -43,7 +52,11 @@ from a816.parse.ast.nodes import (
     ReserveAstNode,
     ReserveTypedAstNode,
     ScopeAstNode,
+    StringInitAstNode,
     StructAstNode,
+    StructFieldInitAstNode,
+    StructInitAstNode,
+    StructInstanceAstNode,
     Term,
 )
 from a816.parse.errors import ParserSyntaxError
@@ -179,14 +192,18 @@ def parse_for(p: Parser) -> ForAstNode:
 # codegen time against registered struct types so nested layouts compose.
 STRUCT_FIELD_TYPES = {"byte", "word", "long", "dword"}
 
+_BIT_FIELD_TYPE_RE = re.compile(r"u\d+", re.ASCII)
+
 
 def parse_struct(p: Parser) -> StructAstNode:
     """Parse a `.struct Name { ... }` body.
 
-    Field shape is always `type name`. Primitive types are
+    Field shape is `type name` or `type[N] name`. Primitive types are
     `byte/word/long/dword`; `uN` (any positive `N`) declares a
     bit-field of `N` bits packed into the surrounding byte run; any
-    other identifier references a previously declared `.struct`.
+    other identifier references a previously declared `.struct`. The
+    `[N]` suffix declares an array of `N` consecutive elements and
+    travels in the type string (`byte[21]`), like the bit width of `uN`.
     """
     current = p.current()
 
@@ -197,36 +214,159 @@ def parse_struct(p: Parser) -> StructAstNode:
     fields: list[tuple[str, str]] = []
     seen: set[str] = set()
     while p.current().type != TokenType.EOF:
-        if p.current().type == TokenType.COMMENT:
-            p.next()
-            continue
-        if p.current().type == TokenType.COMMA:
+        if p.current().type in (TokenType.COMMENT, TokenType.COMMA):
             p.next()
             continue
         if p.current().type == TokenType.RBRACE:
             break
-
-        type_token = p.current()
-        expect_token(type_token, TokenType.IDENTIFIER)
-        p.next()
-
-        name_token = p.current()
-        expect_token(name_token, TokenType.IDENTIFIER)
-        if name_token.value in seen:
-            raise ParserSyntaxError(
-                f"Duplicate struct field `{name_token.value}`",
-                name_token,
-                TokenType.IDENTIFIER,
-                code=str(E_PARSER_STRUCT_DUPLICATE_FIELD),
-                hint="each field name must be unique within a `.struct` block",
-            )
-        seen.add(name_token.value)
-        p.next()
-        fields.append((name_token.value, type_token.value))
+        fields.append(_parse_struct_field(p, seen))
 
     expect_token(p.next(), TokenType.RBRACE)
 
     return StructAstNode(variable.value, fields, current)
+
+
+def _parse_struct_field(p: Parser, seen: set[str]) -> tuple[str, str]:
+    """Parse one `type name` / `type[N] name` field; return `(name, type)`."""
+    type_token = p.current()
+    expect_token(type_token, TokenType.IDENTIFIER)
+    p.next()
+    field_type = type_token.value
+    if p.current().type == TokenType.LBRAKET:
+        field_type += _parse_struct_array_suffix(p, type_token)
+
+    name_token = p.current()
+    expect_token(name_token, TokenType.IDENTIFIER)
+    if name_token.value in seen:
+        raise ParserSyntaxError(
+            f"Duplicate struct field `{name_token.value}`",
+            name_token,
+            TokenType.IDENTIFIER,
+            code=str(E_PARSER_STRUCT_DUPLICATE_FIELD),
+            hint="each field name must be unique within a `.struct` block",
+        )
+    seen.add(name_token.value)
+    p.next()
+    return name_token.value, field_type
+
+
+def _parse_struct_array_suffix(p: Parser, type_token: Token) -> str:
+    """Consume `[N]` after a field type; return it verbatim for the type string."""
+    if _BIT_FIELD_TYPE_RE.fullmatch(type_token.value):
+        raise ParserSyntaxError(
+            f"bit-field `{type_token.value}` cannot be an array",
+            type_token,
+            code=str(E_PARSER_STRUCT_BITFIELD_ARRAY),
+            hint="declare one `uN` field per bit run, or use a `byte[N]` array",
+        )
+    p.next()
+    count_token = p.next()
+    expect_token(count_token, TokenType.NUMBER)
+    if eval_number(count_token.value) < 1:
+        raise ParserSyntaxError(
+            f"struct array count must be a positive integer, found `{count_token.value}`",
+            count_token,
+            code=str(E_PARSER_STRUCT_ARRAY_COUNT),
+            hint="write the element count as a literal, e.g. `byte[21] title`",
+        )
+    expect_token(p.next(), TokenType.RBRAKET)
+    return f"[{count_token.value}]"
+
+
+def parse_istruct(p: Parser, keyword: Token) -> StructInstanceAstNode:
+    """Parse `.istruct TYPE { field = value, ... }`.
+
+    Fields are separated by commas and/or newlines. A value is a quoted
+    string, a `[ ... ]` list, a nested `{ ... }` or an expression; the
+    codegen checks each against the field's declared type.
+    """
+    type_token = p.next()
+    expect_token(type_token, TokenType.IDENTIFIER)
+    open_token = p.next()
+    expect_token(open_token, TokenType.LBRACE)
+    init = _parse_struct_init(p, open_token)
+    return StructInstanceAstNode(type_token.value, init, type_token, keyword)
+
+
+def _parse_struct_init(p: Parser, open_token: Token) -> StructInitAstNode:
+    """Parse `name = value` entries up to the closing `}` (already past `{`)."""
+    items: list[StructFieldInitAstNode | InitCommentAstNode] = []
+    seen: set[str] = set()
+    while p.current().type != TokenType.RBRACE:
+        token = p.current()
+        if token.type == TokenType.COMMA:
+            p.next()
+        elif token.type == TokenType.COMMENT:
+            items.append(_parse_init_comment(p))
+        else:
+            items.append(_parse_field_init(p, seen))
+    return StructInitAstNode(items, open_token, p.next())
+
+
+def _parse_field_init(p: Parser, seen: set[str]) -> StructFieldInitAstNode:
+    name_token = p.next()
+    expect_token(name_token, TokenType.IDENTIFIER)
+    if name_token.value in seen:
+        raise ParserSyntaxError(
+            f"field `{name_token.value}` is initialized twice",
+            name_token,
+            code=str(E_PARSER_ISTRUCT_DUPLICATE_FIELD),
+            hint="keep one `name = value` entry per field",
+        )
+    seen.add(name_token.value)
+    expect_token(p.next(), TokenType.EQUAL)
+    return StructFieldInitAstNode(name_token.value, _parse_init_value(p), name_token)
+
+
+def _parse_init_value(p: Parser) -> InitValue:
+    token = p.current()
+    if token.type == TokenType.QUOTED_STRING:
+        p.next()
+        return StringInitAstNode(token)
+    if token.type == TokenType.LBRACE:
+        p.next()
+        return _parse_struct_init(p, token)
+    if token.type == TokenType.LBRAKET:
+        p.next()
+        return _parse_list_init(p, token)
+    return parse_expression(p)
+
+
+def _parse_list_init(p: Parser, open_token: Token) -> ListInitAstNode:
+    """Parse comma-separated values up to the closing `]` (already past `[`)."""
+    items: list[InitValue | InitCommentAstNode] = []
+    need_comma = False
+    while p.current().type != TokenType.RBRAKET:
+        token = p.current()
+        if token.type == TokenType.COMMENT:
+            items.append(_parse_init_comment(p))
+        elif need_comma:
+            expect_token(p.next(), TokenType.COMMA)
+            need_comma = False
+        elif token.type == TokenType.QUOTED_STRING:
+            raise ParserSyntaxError(
+                "strings are not list elements",
+                token,
+                code=str(E_PARSER_ISTRUCT_STRING_IN_LIST),
+                hint='initialize a byte array with the string itself: `name = "TEXT"`',
+            )
+        else:
+            items.append(_parse_init_value(p))
+            need_comma = True
+    return ListInitAstNode(items, open_token, p.next())
+
+
+def _parse_init_comment(p: Parser) -> InitCommentAstNode:
+    """Consume a comment; it trails a value when it shares that value's line."""
+    previous = p.tokens[p.pos - 1] if p.pos > 0 else None
+    comment = p.next()
+    trailing = (
+        previous is not None
+        and previous.position is not None
+        and comment.position is not None
+        and previous.position.line == comment.position.line
+    )
+    return InitCommentAstNode(comment.value, trailing, comment)
 
 
 def parse_directive_with_quoted_string(p: Parser) -> str:

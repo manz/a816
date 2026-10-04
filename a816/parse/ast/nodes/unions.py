@@ -27,6 +27,7 @@ from a816.parse.ast.nodes.directives import (
 )
 from a816.parse.ast.nodes.opcode import OpcodeAstNode
 from a816.parse.ast.nodes.struct import StructAstNode
+from a816.parse.ast.nodes.struct_instance import StructInstanceAstNode
 from a816.parse.ast.nodes.symbols import (
     CodeLookupAstNode,
     ExternAstNode,
@@ -52,6 +53,7 @@ KeywordAstNode = (
     | BlockAstNode
     | TableAstNode
     | StructAstNode
+    | StructInstanceAstNode
     | ExternAstNode
     | ImportAstNode
     | DebugAstNode

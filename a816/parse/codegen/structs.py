@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 
 from a816.context import AssemblyMode
 from a816.cpu.mapping import Bus
 from a816.error_codes import E_CODEGEN_MAP_CONFLICT
 from a816.object_file import BusMapping
+from a816.parse.ast.expression import eval_number
 from a816.parse.ast.nodes import MapAstNode, StructAstNode
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, generators
 from a816.parse.nodes import NodeError, PopScopeNode, ScopeNode
@@ -17,15 +19,19 @@ from a816.symbols import Resolver
 
 # Byte sizes per declared struct field type. dword is 4 because users who
 # write it mean 32-bit; 65c816 effective addresses fit in 24 (use `long`).
-_STRUCT_FIELD_SIZES = {"byte": 1, "word": 2, "long": 3, "dword": 4}
+STRUCT_FIELD_SIZES = {"byte": 1, "word": 2, "long": 3, "dword": 4}
 
 # Bit-field types are spelled `uN` for any positive `N`. The width travels
 # in the type name itself so the parser keeps the simple `type name` shape
 # with no new tokens.
 _BIT_FIELD_TYPE_RE = re.compile(r"u(\d+)$")
 
+# Array fields carry their element count in the type string: `byte[21]`,
+# `Pt[0x03]`. The parser has already validated the count literal.
+_ARRAY_TYPE_RE = re.compile(r"(\w+)\[(\w+)\]", re.ASCII)
 
-def _bit_width_from_type(field_type: str) -> int | None:
+
+def bit_width_from_type(field_type: str) -> int | None:
     """Return the bit width when `field_type` matches `uN`, else None."""
     match = _BIT_FIELD_TYPE_RE.fullmatch(field_type)
     if match is None:
@@ -36,64 +42,114 @@ def _bit_width_from_type(field_type: str) -> int | None:
     return width
 
 
-def _layout_struct_fields(
-    node: StructAstNode,
-    resolver: Resolver,
-    file_info: Token,
-) -> tuple[list[tuple[str, int, int]], int, dict[str, tuple[int, int]]]:
-    """Compute flat (field_path, offset, width) entries + total size for a struct.
+@dataclass
+class _StructLayout:
+    """Accumulator for one struct's flattened layout.
+
+    ``entries`` holds `(field_path, offset, width)`; ``bit_meta`` the
+    `(mask, shift)` of each bit field; ``array_sizes`` the total byte size
+    of every (possibly nested) array field, published as `.__size`.
+    """
+
+    entries: list[tuple[str, int, int]] = field(default_factory=list)
+    bit_meta: dict[str, tuple[int, int]] = field(default_factory=dict)
+    array_sizes: dict[str, int] = field(default_factory=dict)
+    offset: int = 0
+    bit_buffer: list[tuple[str, int, int]] = field(default_factory=list)
+    bit_position: int = 0
+
+    def add_bit_field(self, name: str, width: int) -> None:
+        self.bit_buffer.append((name, self.bit_position, width))
+        self.bit_position += width
+
+    def flush_bits(self) -> None:
+        if self.bit_buffer:
+            self.offset += _flush_bit_run(self.bit_buffer, self.entries, self.bit_meta, self.offset)
+            self.bit_buffer = []
+            self.bit_position = 0
+
+    def add_field(self, name: str, element: _ElementLayout, count: int | None) -> None:
+        """Lay out `element` (times `count` for an array) at the current offset."""
+        self.entries.append((name, self.offset, element.width))
+        for sub_path, sub_offset, sub_width in element.sub_entries:
+            self.entries.append((f"{name}.{sub_path}", self.offset + sub_offset, sub_width))
+        for sub_path, sub_size in element.sub_array_sizes.items():
+            self.array_sizes[f"{name}.{sub_path}"] = sub_size
+        total = element.width * (count or 1)
+        if count is not None:
+            self.array_sizes[name] = total
+        self.offset += total
+
+
+@dataclass
+class _ElementLayout:
+    """Width + flattened sub-layout of one field element (primitive or struct)."""
+
+    width: int
+    sub_entries: list[tuple[str, int, int]]
+    sub_array_sizes: dict[str, int]
+
+
+def split_array_type(field_type: str) -> tuple[str, int | None]:
+    """Split `T[N]` into `(T, N)`; a scalar type yields `(T, None)`."""
+    match = _ARRAY_TYPE_RE.fullmatch(field_type)
+    if match is None:
+        return field_type, None
+    return match.group(1), eval_number(match.group(2))
+
+
+def _element_layout(
+    node: StructAstNode, field_name: str, element_type: str, resolver: Resolver, file_info: Token
+) -> _ElementLayout:
+    """Resolve a field's element type to its width and nested layout."""
+    primitive_size = STRUCT_FIELD_SIZES.get(element_type)
+    if primitive_size is not None:
+        return _ElementLayout(primitive_size, [], {})
+    if element_type == node.name:
+        raise NodeError(
+            f"Struct {node.name!r} field {field_name!r} cannot reference its own type.",
+            file_info,
+        )
+    if element_type not in resolver.struct_layouts:
+        raise NodeError(
+            f"Unknown struct field type {element_type!r} for {node.name}.{field_name}; "
+            f"declare `.struct {element_type}` before use.",
+            file_info,
+        )
+    return _ElementLayout(
+        resolver.struct_sizes[element_type],
+        resolver.struct_layouts[element_type],
+        resolver.struct_array_sizes.get(element_type, {}),
+    )
+
+
+def _layout_struct_fields(node: StructAstNode, resolver: Resolver, file_info: Token) -> _StructLayout:
+    """Compute the flat field layout + total size for a struct.
 
     Primitive fields contribute one entry whose ``width`` is the declared
     type's byte size (1/2/3/4). Nested struct fields contribute the parent
     field at its own offset with width equal to the nested struct's
     ``__size`` plus every flattened sub-entry inheriting its declared
-    primitive width. Forward refs and self-references raise a NodeError.
+    primitive width. An array field `T[N]` lays out like one `T` (its
+    sub-entries describe element 0) but occupies `N` elements. Forward
+    refs and self-references raise a NodeError.
 
     Width is what `lda p.field` needs to pick the right operand encoding
     later; without it auto-sizing would have to fall back to the string
     heuristic that already misfires for typed accesses.
     """
-    entries: list[tuple[str, int, int]] = []
-    bit_meta: dict[str, tuple[int, int]] = {}
-    bit_buffer: list[tuple[str, int, int]] = []
-    offset = 0
-    bit_position = 0
-
+    layout = _StructLayout()
     for field_name, field_type in node.fields:
-        bit_width = _bit_width_from_type(field_type)
+        bit_width = bit_width_from_type(field_type)
         if bit_width is not None:
-            bit_buffer.append((field_name, bit_position, bit_width))
-            bit_position += bit_width
+            layout.add_bit_field(field_name, bit_width)
             continue
-        if bit_buffer:
-            offset += _flush_bit_run(bit_buffer, entries, bit_meta, offset)
-            bit_buffer = []
-            bit_position = 0
-        primitive_size = _STRUCT_FIELD_SIZES.get(field_type)
-        if primitive_size is not None:
-            entries.append((field_name, offset, primitive_size))
-            offset += primitive_size
-            continue
-        if field_type == node.name:
-            raise NodeError(
-                f"Struct {node.name!r} field {field_name!r} cannot reference its own type.",
-                file_info,
-            )
-        if field_type not in resolver.struct_layouts:
-            raise NodeError(
-                f"Unknown struct field type {field_type!r} for {node.name}.{field_name}; "
-                f"declare `.struct {field_type}` before use.",
-                file_info,
-            )
-        nested_layout = resolver.struct_layouts[field_type]
-        nested_size = resolver.struct_sizes[field_type]
-        entries.append((field_name, offset, nested_size))
-        for sub_path, sub_offset, sub_width in nested_layout:
-            entries.append((f"{field_name}.{sub_path}", offset + sub_offset, sub_width))
-        offset += nested_size
-    if bit_buffer:
-        offset += _flush_bit_run(bit_buffer, entries, bit_meta, offset)
-    return entries, offset, bit_meta
+        layout.flush_bits()
+        element_type, count = split_array_type(field_type)
+        element = _element_layout(node, field_name, element_type, resolver, file_info)
+        layout.add_field(field_name, element, count)
+    layout.flush_bits()
+    return layout
 
 
 def _flush_bit_run(
@@ -135,13 +191,15 @@ def generate_struct(
     different cascades) doesn't fail. A mismatched redef still raises so
     real layout bugs surface.
     """
-    entries, total_size, bit_meta = _layout_struct_fields(node, resolver, file_info)
+    layout = _layout_struct_fields(node, resolver, file_info)
+    entries, total_size, bit_meta = layout.entries, layout.offset, layout.bit_meta
     existing = resolver.struct_layouts.get(node.name)
     if existing is not None:
         if (
             existing == entries
             and resolver.struct_sizes.get(node.name) == total_size
             and resolver.struct_bitfields.get(node.name, {}) == bit_meta
+            and resolver.struct_array_sizes.get(node.name, {}) == layout.array_sizes
         ):
             return []
         raise NodeError(
@@ -150,8 +208,11 @@ def generate_struct(
         )
     resolver.struct_layouts[node.name] = entries
     resolver.struct_sizes[node.name] = total_size
+    resolver.struct_fields[node.name] = list(node.fields)
     if bit_meta:
         resolver.struct_bitfields[node.name] = bit_meta
+    if layout.array_sizes:
+        resolver.struct_array_sizes[node.name] = layout.array_sizes
 
     resolver.append_named_scope(node.name)
     resolver.use_next_scope()
@@ -165,6 +226,8 @@ def generate_struct(
     for field_name, (mask, shift) in bit_meta.items():
         resolver.current_scope.add_symbol(f"{field_name}.mask", mask)
         resolver.current_scope.add_symbol(f"{field_name}.shift", shift)
+    for field_path, array_size in layout.array_sizes.items():
+        resolver.current_scope.add_symbol(f"{field_path}.__size", array_size)
     resolver.current_scope.add_symbol("__size", total_size)
     # exports=True promotes Name.field and Name.__size to the parent scope.
     code.append(PopScopeNode(resolver, exports=True))
