@@ -107,6 +107,7 @@ class ObjectEmitMixin:
         is_bss = bool(pool and pool.bss)
         # Each alloc body is its own routine: drop asserted A/X sizes.
         self.resolver.forget_register_sizes()
+        node.enter_body_sizes()
         try:
             self.resolver.set_position(sandbox_logical)
             # Always force-create the body section (`bss=True` here means

@@ -33,3 +33,18 @@ def test_top_level_size_directive_sizes_labels() -> None:
     # `.a16` widens the emitted immediate; the label must follow it.
     data, program = _assemble("*=0x008000\n.a16\nlda #0x12\nafter:\n")
     assert (data, _label(program, "after")) == (b"\xa9\x12\x00", 0x008003)
+
+
+_POOL = ".pool client {\n range 0x008000 0x00FFEF\n strategy order\n}\n"
+
+
+def test_alloc_body_inherits_size_set_before_it() -> None:
+    src = _POOL + "*=0x018000\n.a16\nnop\n.alloc r in client {\nlda #0x12\nafter:\nnop\n}\n"
+    data, program = _assemble(src)
+    assert (data, _label(program, "after")) == (b"\xea\xa9\x12\x00\xea", 0x008003)
+
+
+def test_code_after_alloc_inherits_size_set_inside_it() -> None:
+    src = _POOL + ".alloc r in client {\n.a16\nnop\n}\n*=0x018000\nlda #0x12\nafter:\n"
+    data, program = _assemble(src)
+    assert (data, _label(program, "after")) == (b"\xea\xa9\x12\x00", 0x018003)
