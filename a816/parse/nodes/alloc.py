@@ -49,15 +49,6 @@ class AllocNode(NodeProtocol):
         # chosen address directly. Object-emit reads it; reading in
         # any other path is a bug, so keep the optional shape loud.
         self._sandbox_base: int | None = None
-        # A/X sizes on entry to / exit from the body, captured once in
-        # `_measure_body` from the running register-size state. The bind
-        # walks and emission start the body from the entry snapshot, and
-        # the code after the alloc continues from the exit one, so labels
-        # and bytes are sized from the same state.
-        self._entry_a_size: int = 8
-        self._entry_i_size: int = 8
-        self._exit_a_size: int = 8
-        self._exit_i_size: int = 8
 
     def _sandbox_pc(self) -> Address:
         pool = self.resolver.pools[self.pool_name]
@@ -87,15 +78,6 @@ class AllocNode(NodeProtocol):
         """
         return isinstance(node, SymbolNode)
 
-    def enter_body_sizes(self) -> None:
-        """Set the A/X sizes the body was measured with (emission entry)."""
-        self.resolver.a_size = self._entry_a_size
-        self.resolver.i_size = self._entry_i_size
-
-    def _leave_body_sizes(self) -> None:
-        self.resolver.a_size = self._exit_a_size
-        self.resolver.i_size = self._exit_i_size
-
     def _measure_body(self) -> int:
         # The body runs in the same M/X stream as the code around it, in
         # source order (that is the order emission walks): it starts
@@ -103,14 +85,10 @@ class AllocNode(NodeProtocol):
         # into whatever follows, top-level code or the next alloc.
         start = self._sandbox_pc()
         pc = start
-        self._entry_a_size = self.resolver.a_size
-        self._entry_i_size = self.resolver.i_size
         for node in self.body:
             if self._skip_in_pass1(node):
                 continue
             pc = node.pc_after(pc)
-        self._exit_a_size = self.resolver.a_size
-        self._exit_i_size = self.resolver.i_size
         # Use physical-address diff so bank-edge allocs measure
         # correctly. `pc.logical_value - start.logical_value` jumps
         # `0x8020` for a 32-byte alloc that ends at `$00:FFFF` because
@@ -151,7 +129,6 @@ class AllocNode(NodeProtocol):
         self.resolver.current_scope.add_label(self.name, target)
         pc = target
         saved_current_scope = self.resolver.current_scope
-        self.enter_body_sizes()
         try:
             for node in self.body:
                 try:
@@ -209,7 +186,6 @@ class AllocNode(NodeProtocol):
             # sandbox base captured at `_request_slot` time so the
             # second walk binds with the now-resolved forward refs.
             self._bind_body_labels_at(self._sandbox_address(self._sandbox_base))
-        self._leave_body_sizes()
         return current_pc
 
     def emit(self, current_addr: Address) -> bytes:
@@ -242,7 +218,6 @@ class AllocNode(NodeProtocol):
         saved_reloc = self.resolver.reloc_address
         # Each alloc body is its own routine: drop asserted A/X sizes.
         self.resolver.forget_register_sizes()
-        self.enter_body_sizes()
         try:
             self.resolver.set_position(alloc.addr)
             cur = self.resolver.reloc_address
