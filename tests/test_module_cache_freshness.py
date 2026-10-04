@@ -213,3 +213,17 @@ def test_import_added_through_edited_include_is_discovered(tmp_path: Path) -> No
     _set_mtime(inc, _NEWER)
     _build(tmp_path, main)
     assert _obj(tmp_path, "lib").exists(), "an import added via an edited include must be discovered"
+
+
+def test_sidecar_without_imports_line_falls_back_to_parsing(tmp_path: Path) -> None:
+    main = _write_lib_and_main(tmp_path, '.import "lib"\n*= 0x008000\nmain:\n    jsr.w lib_func\n    rts\n')
+    _build(tmp_path, main)
+    deps = _obj(tmp_path, "__main__").with_suffix(".deps")
+    deps.write_text(
+        "".join(line for line in deps.read_text().splitlines(keepends=True) if not line.startswith("imports:"))
+    )
+    _park_all(tmp_path)
+    (tmp_path / "obj" / "lib.o").unlink()
+
+    _build(tmp_path, main)
+    assert _obj(tmp_path, "lib").exists(), "a pre-cache sidecar must still discover imports by parsing"
