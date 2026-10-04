@@ -22,23 +22,24 @@ class RegisterSizeNode(NodeProtocol):
         self.size = size  # 8 or 16
         self.resolver = resolver
 
-    def emit(self, current_addr: Address) -> bytes:
-        # Update resolver state during emission
+    def _apply(self) -> None:
         if self.register == "a":
             self.resolver.a_size = self.size
-            self.resolver.a_size_known = True
         else:
             self.resolver.i_size = self.size
+
+    def emit(self, current_addr: Address) -> bytes:
+        self._apply()
+        if self.register == "a":
+            self.resolver.a_size_known = True
+        else:
             self.resolver.i_size_known = True
         return b""
 
     def pc_after(self, current_pc: Address) -> Address:
-        # Intentionally a no-op for the resolver's top-level pc_after
-        # passes — historically those passes don't propagate `.a8`/`.a16`
-        # so callers (incl. legacy ff4-modules code) rely on `.b`/`.w`
-        # suffixes or operand value width to pick the right opcode size.
-        # `AllocNode._measure_body` mirrors emit's mutation locally so
-        # pool sizing stays accurate without leaking the change globally.
+        # Size the following opcodes exactly as `emit` will, or every
+        # label after a widened immediate lands short of its bytes.
+        self._apply()
         return current_pc
 
     def __str__(self) -> str:

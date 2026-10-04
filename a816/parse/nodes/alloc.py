@@ -85,16 +85,11 @@ class AllocNode(NodeProtocol):
         return isinstance(node, SymbolNode)
 
     def _measure_body(self) -> int:
-        # Mirror `RegisterSizeNode.emit`'s mutation across the body walk
-        # so `OpcodeNode.pc_after` sees the A/X size that emission will
-        # see. Inherit the size state from whichever alloc was measured
+        # Inherit the size state from whichever alloc was measured
         # immediately before this one (stashed on the resolver under
         # `_alloc_carry_a_size`/`_alloc_carry_i_size`) - matches runtime,
         # where the CPU's M/X flags carry across `jsr` calls. Restore
-        # the live resolver state on exit so top-level passes (which
-        # historically treat `.a8`/`.a16` as no-ops) stay unaffected.
-        from a816.parse.nodes.data import RegisterSizeNode
-
+        # the live resolver state on exit.
         start = self._sandbox_pc()
         pc = start
         saved_a = self.resolver.a_size
@@ -107,11 +102,6 @@ class AllocNode(NodeProtocol):
             for node in self.body:
                 if self._skip_in_pass1(node):
                     continue
-                if isinstance(node, RegisterSizeNode):
-                    if node.register == "a":
-                        self.resolver.a_size = node.size
-                    else:
-                        self.resolver.i_size = node.size
                 pc = node.pc_after(pc)
             self.resolver.alloc_carry_a_size = self.resolver.a_size
             self.resolver.alloc_carry_i_size = self.resolver.i_size
@@ -156,8 +146,6 @@ class AllocNode(NodeProtocol):
         # and body labels (e.g. `_draw_string_loop:`) bind at the right
         # offsets. Restore live resolver state on exit so top-level
         # passes stay clean.
-        from a816.parse.nodes.data import RegisterSizeNode
-
         self.resolver.current_scope.add_label(self.name, target)
         pc = target
         saved_a = self.resolver.a_size
@@ -167,11 +155,6 @@ class AllocNode(NodeProtocol):
         self.resolver.i_size = self._entry_i_size
         try:
             for node in self.body:
-                if isinstance(node, RegisterSizeNode):
-                    if node.register == "a":
-                        self.resolver.a_size = node.size
-                    else:
-                        self.resolver.i_size = node.size
                 try:
                     pc = node.pc_after(pc)
                 except (NodeError, SymbolNotDefined):
