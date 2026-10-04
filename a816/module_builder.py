@@ -32,6 +32,9 @@ logger = logging.getLogger("a816.module_builder")
 _EXPERIMENTAL_PREFIX = "experimental:"
 _BUS_MAP_PREFIX = "bus-map:"
 _CONFIG_PREFIXES = (_EXPERIMENTAL_PREFIX, _BUS_MAP_PREFIX)
+# `.deps` sidecar line caching the module's `.import` names, so a warm build
+# can rebuild the import graph without re-parsing unchanged modules.
+_IMPORTS_PREFIX = "imports:"
 
 
 @dataclass
@@ -131,6 +134,7 @@ class ModuleBuilder:
         # Discovery parses every module with the same inputs compile uses,
         # so compile reuses the AST instead of scanning + parsing twice.
         self._parsed: dict[str, ParserResult] = {}
+        self._imports: dict[str, list[str]] = {}
 
     def discover_imports(self, source_file: Path, parsed_nodes: list[AstNode] | None = None) -> None:
         """Recursively discover all imports starting from a source file.
@@ -152,20 +156,8 @@ class ModuleBuilder:
         self.graph.add_module(module_name, source_path)
 
         try:
-            if parsed_nodes is not None:
-                nodes = parsed_nodes
-            else:
-                content = source_path.read_text(encoding="utf-8")
-                parsed = A816Parser.parse_as_ast(
-                    content,
-                    str(source_path),
-                    include_paths=list(dict.fromkeys(self.include_paths)),
-                    verbose_errors=True,
-                )
-                self._parsed[module_name] = parsed
-                nodes = parsed.nodes
-
-            imports = self._collect_imports(nodes)
+            imports = self._module_imports(source_path, module_name, parsed_nodes)
+            self._imports[module_name] = imports
 
             for import_name in imports:
                 self.graph.add_dependency(module_name, import_name)
@@ -181,6 +173,30 @@ class ModuleBuilder:
             logger.error(f"Error reading {source_path}: {e}")  # NOSONAR python:S8572
             logger.debug("Source read traceback", exc_info=True)
             raise
+
+    def _module_imports(self, source_path: Path, module_name: str, parsed_nodes: list[AstNode] | None) -> list[str]:
+        """The module's `.import` names: from the `.deps` cache when its files are unchanged, else by parsing."""
+        if parsed_nodes is not None:
+            return self._collect_imports(parsed_nodes)
+        cached = self._cached_imports(module_name)
+        if cached is not None:
+            return cached
+        parsed = A816Parser.parse_as_ast(
+            source_path.read_text(encoding="utf-8"),
+            str(source_path),
+            include_paths=list(dict.fromkeys(self.include_paths)),
+            verbose_errors=True,
+        )
+        self._parsed[module_name] = parsed
+        return self._collect_imports(parsed.nodes)
+
+    def _cached_imports(self, module_name: str) -> list[str] | None:
+        if self._needs_recompilation(module_name):
+            return None
+        for line in self._deps_path(module_name).read_text(encoding="utf-8").splitlines():
+            if line.startswith(_IMPORTS_PREFIX):
+                return [name for name in line.removeprefix(_IMPORTS_PREFIX).split(",") if name]
+        return None
 
     def _collect_imports(self, nodes: list[AstNode]) -> list[str]:
         """Collect all import names from AST nodes."""
@@ -236,7 +252,7 @@ class ModuleBuilder:
         config = [line for line in lines if line.startswith(_CONFIG_PREFIXES)]
         if config != self._config_lines():
             return True
-        deps = [line for line in lines if not line.startswith(_CONFIG_PREFIXES)]
+        deps = [line for line in lines if not line.startswith((*_CONFIG_PREFIXES, _IMPORTS_PREFIX))]
         # The source that built this object is recorded in its sidecar; if the
         # current source path isn't there, the object belongs to a different
         # file that mapped to the same module name, so rebuild.
@@ -275,7 +291,8 @@ class ModuleBuilder:
         deps = {os.path.abspath(str(source_path))}
         deps.update(os.path.abspath(f) for f in obj.files)
         deps.update(asset_files)
-        lines = self._config_lines() + sorted(deps)
+        imports = [_IMPORTS_PREFIX + ",".join(self._imports.get(module_name, []))]
+        lines = self._config_lines() + imports + sorted(deps)
         self._deps_path(module_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _config_lines(self) -> list[str]:
