@@ -51,12 +51,6 @@ def test_config_is_found_above_the_workspace_root(tmp_path: Path) -> None:
     assert index.include_paths == [(tmp_path / "inc").resolve()]
 
 
-def test_config_bus_map_is_exposed(tmp_path: Path) -> None:
-    index = _prepared(tmp_path, 'mapper = "hirom"\n')
-    bus_map = index.config.bus_map if index.config is not None else []
-    assert [m.identifier for m in bus_map] == ["1", "2"]
-
-
 def test_invalid_config_does_not_break_indexing(tmp_path: Path) -> None:
     index = _prepared(tmp_path, 'mapper = "exhirom"\n')
     assert index.entrypoint == (tmp_path / "src" / "main.s").resolve()

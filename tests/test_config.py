@@ -73,14 +73,10 @@ def test_bus_map_defaults_to_empty(tmp_path: Path) -> None:
 def test_map_entry_parses_every_key(tmp_path: Path) -> None:
     body = (
         "[map.1]\nbank_range = [0xc0, 0xfd]\naddr_range = [0x0000, 0xffff]\n"
-        "mask = 0x10000\nmirror_bank_range = [0x40, 0x7d]\n"
+        "mask = 0x10000\nwritable = true\nmirror_bank_range = [0x40, 0x7d]\n"
     )
     shape = _load(tmp_path, body).bus_map[0].shape()
-    assert shape == ("1", (0xC0, 0xFD), (0x0000, 0xFFFF), 0x10000, False, (0x40, 0x7D))
-
-
-def test_map_entry_writable(tmp_path: Path) -> None:
-    assert _load(tmp_path, _SRAM_MAP).bus_map[0].writeable is True
+    assert shape == ("1", (0xC0, 0xFD), (0x0000, 0xFFFF), 0x10000, True, (0x40, 0x7D))
 
 
 def test_map_integer_identifier_matches_directive_spelling(tmp_path: Path) -> None:
@@ -128,7 +124,7 @@ def test_map_missing_key_is_rejected(tmp_path: Path) -> None:
     assert _config_error_code(tmp_path, _SRAM_MAP.replace("mask = 0x8000\n", "")) == "E0505"
 
 
-def test_map_must_be_array_of_tables(tmp_path: Path) -> None:
+def test_map_must_be_a_table_of_tables(tmp_path: Path) -> None:
     assert _config_error_code(tmp_path, "map = 3\n") == "E0505"
 
 
