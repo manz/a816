@@ -24,6 +24,8 @@ jobs:
 
   binaries:
     name: Build Windows binary and create GitHub release
+    # Pre-release tags (vX.Y.ZaN / bN / rcN) skip the ~6 min Nuitka build.
+    if: ${{ !contains(github.ref_name, 'a') && !contains(github.ref_name, 'b') && !contains(github.ref_name, 'rc') }}
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
@@ -35,6 +37,17 @@ jobs:
         run: pip install -r requirements.txt
       - name: Build binary and publish release
         run: make binary-release
+        env:
+          VERSION: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+
+  prerelease:
+    name: Create GitHub pre-release
+    if: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Create pre-release with generated notes
+        run: gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --generate-notes --prerelease
         env:
           VERSION: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
