@@ -221,17 +221,13 @@ def _declare_owned_mapping(resolver: Resolver, mapping: BusMapping, file_info: T
 
 
 def _bus_shape(bus: Bus, identifier: str) -> tuple[object, ...] | None:
-    """The declared shape of ``identifier`` on ``bus``, comparable with `_mapping_shape`."""
+    """The declared shape of ``identifier`` on ``bus``, comparable with `BusMapping.shape`."""
     declared = bus.mappings.get(identifier)
     if declared is None:
         return None
     mirror = bus.mappings.get(f"{identifier}_mirror")
     mirror_range = mirror.bank_range if mirror is not None else None
-    return (declared.bank_range, declared.address_range, declared.mask, declared.writable, mirror_range)
-
-
-def _mapping_shape(mapping: BusMapping) -> tuple[object, ...]:
-    return (mapping.bank_range, mapping.addr_range, mapping.mask, mapping.writeable, mapping.mirror_bank_range)
+    return (identifier, declared.bank_range, declared.address_range, declared.mask, declared.writable, mirror_range)
 
 
 _MODULE_CONFLICT_HINT = (
@@ -261,7 +257,7 @@ def _is_redeclaration(bus: Bus, mapping: BusMapping, file_info: Token | None, hi
     existing = _bus_shape(bus, mapping.identifier)
     if existing is None:
         return False
-    if existing != _mapping_shape(mapping):
+    if existing != mapping.shape():
         raise NodeError(
             f"conflicting `.map {mapping.identifier!r}` declaration",
             file_info,

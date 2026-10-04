@@ -36,13 +36,10 @@ def _compile(tmp_path: Path, source: str, bus_map: list[BusMapping]) -> tuple[in
 
 
 def _shapes(obj: Path) -> list[tuple[object, ...]]:
-    return [
-        (m.identifier, m.bank_range, m.addr_range, m.mask, m.writeable, m.mirror_bank_range)
-        for m in ObjectFile.from_file(str(obj)).bus_mappings
-    ]
+    return [m.shape() for m in ObjectFile.from_file(str(obj)).bus_mappings]
 
 
-_ROM_SHAPE = ("1", (0xC0, 0xFF), (0x0000, 0xFFFF), 0x1_0000, False, None)
+_ROM_SHAPE = _ROM.shape()
 
 
 def test_module_without_local_map_places_code_in_toml_bank(tmp_path: Path) -> None:

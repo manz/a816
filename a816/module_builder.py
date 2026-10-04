@@ -277,7 +277,7 @@ class ModuleBuilder:
         """
         lines = [_EXPERIMENTAL_PREFIX + ",".join(self.experimental)] if self.experimental else []
         if self.bus_map:
-            lines.append(_BUS_MAP_PREFIX + ";".join(repr(_bus_map_key(m)) for m in self.bus_map))
+            lines.append(_BUS_MAP_PREFIX + ";".join(repr(m.shape()) for m in self.bus_map))
         return lines
 
     def _compile_module(
@@ -364,17 +364,6 @@ class ModuleBuilder:
             return object_files[0]
         logger.info(f"Linking {len(object_files)} module(s)")
         return Linker(object_files).link(base_address=0x8000)
-
-
-def _bus_map_key(mapping: "BusMapping") -> tuple[object, ...]:
-    return (
-        mapping.identifier,
-        mapping.bank_range,
-        mapping.addr_range,
-        mapping.mask,
-        mapping.writeable,
-        mapping.mirror_bank_range,
-    )
 
 
 def _object_needs_linking(obj: ObjectFile) -> bool:

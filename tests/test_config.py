@@ -8,7 +8,6 @@ import pytest
 
 from a816.config import A816Config, discover_a816_config, find_a816_toml, load_a816_toml
 from a816.exceptions import A816ConfigError
-from a816.object_file import BusMapping
 
 
 def test_find_walks_up(tmp_path: Path) -> None:
@@ -56,17 +55,6 @@ def _load(tmp_path: Path, body: str) -> A816Config:
     return loaded
 
 
-def _shape(mapping: BusMapping) -> tuple[object, ...]:
-    return (
-        mapping.identifier,
-        mapping.bank_range,
-        mapping.addr_range,
-        mapping.mask,
-        mapping.writeable,
-        mapping.mirror_bank_range,
-    )
-
-
 def _config_error_code(tmp_path: Path, body: str) -> str:
     cfg = tmp_path / "a816.toml"
     cfg.write_text(body, encoding="utf-8")
@@ -87,7 +75,7 @@ def test_map_entry_parses_every_key(tmp_path: Path) -> None:
         "[map.1]\nbank_range = [0xc0, 0xfd]\naddr_range = [0x0000, 0xffff]\n"
         "mask = 0x10000\nmirror_bank_range = [0x40, 0x7d]\n"
     )
-    shape = _shape(_load(tmp_path, body).bus_map[0])
+    shape = _load(tmp_path, body).bus_map[0].shape()
     assert shape == ("1", (0xC0, 0xFD), (0x0000, 0xFFFF), 0x10000, False, (0x40, 0x7D))
 
 
@@ -101,7 +89,7 @@ def test_map_integer_identifier_matches_directive_spelling(tmp_path: Path) -> No
 
 
 def test_mapper_lorom_expands_to_default_bus(tmp_path: Path) -> None:
-    shapes = [_shape(m) for m in _load(tmp_path, 'mapper = "lorom"\n').bus_map]
+    shapes = [m.shape() for m in _load(tmp_path, 'mapper = "lorom"\n').bus_map]
     assert shapes == [
         ("1", (0x00, 0x6F), (0x8000, 0xFFFF), 0x8000, False, (0x80, 0xCF)),
         ("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x10000, True, None),
@@ -109,7 +97,7 @@ def test_mapper_lorom_expands_to_default_bus(tmp_path: Path) -> None:
 
 
 def test_mapper_hirom_expands_to_default_bus(tmp_path: Path) -> None:
-    shapes = [_shape(m) for m in _load(tmp_path, 'mapper = "hirom"\n').bus_map]
+    shapes = [m.shape() for m in _load(tmp_path, 'mapper = "hirom"\n').bus_map]
     assert shapes == [
         ("1", (0x40, 0x7F), (0x0000, 0xFFFF), 0x10000, False, (0xC0, 0xFF)),
         ("2", (0x7E, 0x7F), (0x0000, 0xFFFF), 0x10000, True, None),
