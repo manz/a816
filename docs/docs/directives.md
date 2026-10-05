@@ -492,13 +492,15 @@ Emits the literal bytes of a string with no character-map translation.
 
 ### `.incbin "data.bin"`
 
-Includes a binary file verbatim. Defines the named label *and*
-`<label>__size` with the byte count.
+Includes a binary file verbatim. Defines a label at its first byte and
+a `__size` constant with the byte count, both named after the path as
+written, with `/` and `.` replaced by `_`. A label placed before the
+directive gets no `__size` of its own.
 
 ```ca65
-assets_intro_map:
+intro_map:
 .incbin "assets/intro.map"
-; symbols emitted: assets_intro_map, assets_intro_map__size
+; symbols emitted: intro_map, assets_intro_map, assets_intro_map__size
 ```
 
 ### `.include "file.s"`
