@@ -361,8 +361,10 @@ def apply_experimental_flags(program: "Program", flags: list[str] | None) -> Non
             logger.warning(f"unknown experimental flag: {flag}")
 
 
+# Public API: peer build scripts pass these by keyword; a grouping object
+# would break every caller for no gain.
 def build_with_imports(
-    main_source: str | Path,
+    main_source: str | Path,  # NOSONAR python:S107 (Sonar anchors it here)
     output_file: str | Path,
     output_format: str = "ips",
     module_paths: list[Path] | None = None,

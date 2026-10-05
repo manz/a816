@@ -93,7 +93,9 @@ class BuildCache:
         recorded_ns = data["recorded_ns"]
         if not all(_file_fresh(path, entry, recorded_ns) for path, entry in data["files"].items()):
             return False
-        return not any(os.path.exists(path) for path in data["misses"])
+        # Probing recorded lookup misses is the point: a file that now exists
+        # shadows an include. The paths are this build's own inputs.
+        return not any(os.path.exists(path) for path in data["misses"])  # NOSONAR pythonsecurity:S6549
 
     def fresh(self, obj_path: Path, source_path: Path, import_keys: dict[str, str]) -> bool:
         """Own inputs unchanged and every import still has the key it had."""
@@ -144,7 +146,11 @@ class BuildCache:
             data = json.loads(self.sidecar_path(obj_path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        if not isinstance(data, dict) or data.get("sidecar") != SIDECAR_VERSION or not _SIDECAR_KEYS <= data.keys():
+        if (
+            not isinstance(data, dict)
+            or data.get("sidecar") != SIDECAR_VERSION
+            or not _SIDECAR_KEYS.issubset(data.keys())
+        ):
             return None
         return data
 
