@@ -98,7 +98,7 @@ def _codec(tp: Any) -> tuple[Encoder, Decoder]:
 
 def _int_codec() -> tuple[Encoder, Decoder]:
     def enc(value: int, out: bytearray) -> None:
-        out += _I64.pack(value)
+        out.extend(_I64.pack(value))
 
     def dec(data: memoryview, offset: int) -> tuple[int, int]:
         return _I64.unpack_from(data, offset)[0], offset + 8
@@ -118,8 +118,8 @@ def _bool_codec() -> tuple[Encoder, Decoder]:
 
 def _bytes_codec() -> tuple[Encoder, Decoder]:
     def enc(value: bytes, out: bytearray) -> None:
-        out += _U32.pack(len(value))
-        out += value
+        out.extend(_U32.pack(len(value)))
+        out.extend(value)
 
     def dec(data: memoryview, offset: int) -> tuple[bytes, int]:
         (size,) = _U32.unpack_from(data, offset)
@@ -180,7 +180,7 @@ def _list_codec(item: Any) -> tuple[Encoder, Decoder]:
     enc_item, dec_item = _codec(item)
 
     def enc(values: list[Any], out: bytearray) -> None:
-        out += _U32.pack(len(values))
+        out.extend(_U32.pack(len(values)))
         for value in values:
             enc_item(value, out)
 
@@ -270,7 +270,7 @@ def _columnar_codec(record: Any) -> tuple[Encoder, Decoder]:
             return list(zip(*cols, strict=True))
 
     def enc(values: list[Any], out: bytearray) -> None:
-        out += _U32.pack(len(values))
+        out.extend(_U32.pack(len(values)))
         for (enc_column, _), column in zip(columns, split(values), strict=True):
             enc_column(column, out)
 
@@ -302,7 +302,7 @@ def _column_codec(tp: Any) -> tuple[Callable[[list[Any], bytearray], None], Colu
     unwrap = (lambda v: v.value) if isinstance(tp, type) and issubclass(tp, Enum) else int
 
     def enc(column: list[Any], out: bytearray) -> None:
-        out += array("q", (unwrap(v) for v in column)).tobytes()
+        out.extend(array("q", (unwrap(v) for v in column)).tobytes())
 
     def dec(data: memoryview, offset: int, count: int) -> tuple[list[Any], int]:
         end = offset + 8 * count
@@ -318,8 +318,8 @@ def _str_column() -> tuple[Callable[[list[str], bytearray], None], ColumnDecoder
         if any("\x00" in value for value in column):
             raise ValueError("object codec: a string column value contains NUL")
         blob = "\x00".join(column).encode("utf-8")
-        out += _U32.pack(len(blob))
-        out += blob
+        out.extend(_U32.pack(len(blob)))
+        out.extend(blob)
 
     def dec(data: memoryview, offset: int, count: int) -> tuple[list[str], int]:
         (size,) = _U32.unpack_from(data, offset)

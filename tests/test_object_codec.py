@@ -140,7 +140,8 @@ def test_a_short_file_with_the_magic_reports_its_version(tmp_path: Path) -> None
     path = tmp_path / "old.o"
     path.write_bytes(struct.pack("<IHB", ObjectFile.MAGIC_NUMBER, 5, 0))
     header = ObjectFile.read_header(str(path))
-    assert header is not None and header.version == 5
+    assert header is not None
+    assert header.version == 5
 
 
 def test_a_file_without_the_magic_has_no_header(tmp_path: Path) -> None:

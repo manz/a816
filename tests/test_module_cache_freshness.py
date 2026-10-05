@@ -86,7 +86,8 @@ def test_a_cached_file_that_is_not_an_object_recompiles(tmp_path: Path) -> None:
 
     _build(tmp_path, main)
     header = ObjectFile.read_header(str(obj))
-    assert header is not None and header.identity == ObjectFile.identity()
+    assert header is not None
+    assert header.identity == ObjectFile.identity()
 
 
 def test_a_touched_but_unchanged_source_stays_cached(tmp_path: Path) -> None:
