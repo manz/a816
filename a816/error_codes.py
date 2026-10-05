@@ -80,6 +80,7 @@ E_CODEGEN_IMMEDIATE_OVERFLOW = ErrorCode("E0309", "codegen", "byte immediate doe
 E_CODEGEN_UNPLACED_CODE = ErrorCode("E0310", "codegen", "code emitted outside any placement")
 E_CODEGEN_IMPORT_IN_PLACEMENT = ErrorCode("E0311", "codegen", "`.import` inside a placement context")
 E_CODEGEN_DIVISION_BY_ZERO = ErrorCode("E0312", "codegen", "division or modulo by zero")
+E_CODEGEN_UNDECIDABLE_SIZE = ErrorCode("E0313", "codegen", "operand size of a link-time symbol needs a suffix")
 E_CODEGEN_BRANCH_RANGE = ErrorCode("E0315", "codegen", "branch target out of range")
 E_CODEGEN_BRANCH_UNMAPPED = ErrorCode("E0316", "codegen", "branch target has no ROM address")
 E_CODEGEN_UNMAPPED_BANK = ErrorCode("E0317", "codegen", "address in a bank no `.map` region covers")

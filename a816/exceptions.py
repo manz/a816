@@ -397,6 +397,16 @@ class BranchTargetUnmappedError(OpcodeError):
         super().__init__(f"branch target {target:#x} has no ROM address; relative branches cannot reach RAM")
 
 
+class UndecidableOperandSizeError(OpcodeError):
+    """Raised when an unsized operand names a symbol resolved only at link:
+    its size (and so the opcode form) can't be inferred at compile time."""
+
+    def __init__(self, symbols: set[str]) -> None:
+        self.symbols = symbols
+        names = ", ".join(f"`{name}`" for name in sorted(symbols))
+        super().__init__(f"operand size can't be inferred: {names} is resolved at link")
+
+
 class MissingOperandError(OpcodeError):
     """Raised when an opcode requires an operand but none was provided."""
 

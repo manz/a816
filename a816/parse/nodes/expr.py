@@ -33,6 +33,8 @@ class ExpressionNode(ValueNodeProtocol):
         self.expression = expression
         self.resolver = resolver
         self.file_info = file_info
+        self.external_symbols: set[str] = set()
+        """Extern names the value waits on (object mode); empty once it resolved locally."""
 
     def _compute_local_label_renames(self) -> tuple[dict[str, str], bool]:
         """Return (rename map, touches_any_label). Nested-scope label refs
@@ -73,6 +75,7 @@ class ExpressionNode(ValueNodeProtocol):
     def get_value(self) -> int | str:  # type:ignore
         try:
             value = eval_expression(self.expression, self.resolver)
+            self.external_symbols = set()
             if self.resolver.context.is_object_mode and isinstance(value, int):
                 # Module-local label refs: record the original expression so the
                 # linker can re-evaluate against the module's final placement.
@@ -82,6 +85,7 @@ class ExpressionNode(ValueNodeProtocol):
             if self.resolver.context.is_object_mode:
                 self._deferred_expression = e.expression_str
                 self._external_symbols = e.external_symbols
+                self.external_symbols = set(e.external_symbols)
                 return 0
             raise NodeError(f"Expression contains external symbols: {e.expression_str}", self.file_info) from e
         except ExternalSymbolReference as e:
@@ -97,6 +101,7 @@ class ExpressionNode(ValueNodeProtocol):
                 from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
 
                 self._deferred_expression = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+                self.external_symbols = {e.symbol_name}
                 return 0
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
         except SymbolNotDefined as e:
