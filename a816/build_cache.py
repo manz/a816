@@ -88,7 +88,8 @@ class BuildCache:
             return False
         if data["identity"] != ObjectFile.identity() or data["settings"] != self.settings_digest:
             return False
-        if ObjectFile.read_version(str(obj_path)) != ObjectFile.VERSION:
+        header = ObjectFile.read_header(str(obj_path))
+        if header is None or header.identity != ObjectFile.identity():
             return False
         recorded_ns = data["recorded_ns"]
         if not all(_file_fresh(path, entry, recorded_ns) for path, entry in data["files"].items()):

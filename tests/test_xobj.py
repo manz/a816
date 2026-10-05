@@ -3,7 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from a816.object_file import ObjectFile, RelocationType, Section, SymbolSection, SymbolType
+from a816.object_file import (
+    CODEGEN_REVISION,
+    SCHEMA_DIGEST,
+    ObjectFile,
+    RelocationType,
+    Section,
+    SymbolSection,
+    SymbolType,
+)
 from a816.xobj import main
 
 
@@ -191,3 +199,25 @@ def test_diff_handles_added_and_removed_sections(tmp_path: Path, capsys: pytest.
     out = capsys.readouterr().out
     assert rc == 0
     assert "- section[0] only in A" in out
+
+
+def test_summary_shows_schema_and_codegen_revision(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = tmp_path / "m.o"
+    ObjectFile([], []).write(str(path))
+    main([str(path)])
+    out = capsys.readouterr().out
+    assert f"schema: {SCHEMA_DIGEST.hex()}" in out
+    assert f"codegen_revision: {CODEGEN_REVISION}" in out
+
+
+def test_an_object_from_another_a816_is_reported_not_decoded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "m.o"
+    ObjectFile([], []).write(str(path))
+    data = bytearray(path.read_bytes())
+    data[7:23] = bytes(16)
+    path.write_bytes(bytes(data))
+    with pytest.raises(SystemExit):
+        main([str(path)])
+    assert "rebuild it" in capsys.readouterr().err

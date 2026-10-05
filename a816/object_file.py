@@ -1,7 +1,7 @@
+import hashlib
 import struct
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import IO
 
 INVALID_FILE_FORMAT = "Invalid file format"
 
@@ -30,6 +30,7 @@ class SymbolSection(Enum):
     ABS_LABEL = 0x03
 
 
+from a816.object_codec import decode, encode, schema
 from a816.section import Placement, Section
 
 # Re-exported for callers that import them from here.
@@ -155,9 +156,66 @@ class PoolAlloc:
     is ambiguous when pools share memory (contexts)."""
 
 
+CODEGEN_REVISION = 1
+"""Bumped whenever a816 emits different object bytes for unchanged source (a
+codegen fix such as #159's end-marker labels). With the format's schema digest
+it forms the object identity the build cache keys on, so a release that changes
+codegen rebuilds every cached object and one that doesn't keeps them.
+`tests/test_codegen_revision.py` fails when the output changes without a bump,
+or the revision moves with no output change."""
+
+
+@dataclass
+class WireSection:
+    """What a section carries in an object file: the reader rebuilds an
+    anonymous pinned `Section` from it (placement comes from the pool allocs)."""
+
+    base_address: int
+    code: bytes
+    bss: bool
+    relocations: list[tuple[int, str, RelocationType]]
+    expression_relocations: list[tuple[int, str, int]]
+    lines: list[tuple[int, int, int, int, int]]
+
+
+@dataclass
+class WireObject:
+    """Every table of an object file, in order. Encoded by `object_codec`
+    from these annotations: a field added here (or in any record type it
+    holds) is written, read and versioned without further code."""
+
+    sections: list[WireSection]
+    symbols: list[tuple[str, int, SymbolType, SymbolSection]]
+    aliases: list[tuple[str, str]]
+    files: list[str]
+    pool_decls: list[PoolDecl]
+    pool_allocs: list[PoolAlloc]
+    bus_mappings: list[BusMapping]
+
+
+SCHEMA_DIGEST = hashlib.sha256(schema(WireObject).encode()).digest()[:16]
+"""Digest of the wire schema: changes whenever any field of any table does."""
+
+_PREFIX = struct.Struct("<IHB")  # magic, container version, flags: every version starts so
+_HEADER = struct.Struct("<IHB16sI")  # ... then schema digest, codegen revision
+
+
+@dataclass(frozen=True)
+class ObjectHeader:
+    magic: int
+    version: int
+    flags: int
+    schema: bytes
+    revision: int
+
+    @property
+    def identity(self) -> str:
+        return f"{self.version}:{self.schema.hex()}:{self.revision}"
+
+
 class ObjectFile:
     MAGIC_NUMBER = 0x41383136  # 'A816'
-    VERSION = 0x000F  # Version 15: pool allocs list the labels bound in their section.
+    VERSION = 0x0010  # Version 16: tables encoded from their annotations (`object_codec`).
 
     def __init__(
         self,
@@ -236,338 +294,77 @@ class ObjectFile:
         return out
 
     def write(self, filename: str) -> None:
-        with open(filename, "wb") as f:
-            self._write_header(f)
-            self._write_sections(f)
-            self._write_symbol_table(f)
-            self._write_alias_table(f)
-            self._write_file_table(f)
-            self._write_pool_decls(f)
-            self._write_pool_allocs(f)
-            self._write_bus_mappings(f)
-
-    def _write_pool_decls(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<H", len(self.pool_decls)))
-        for decl in self.pool_decls:
-            name_bytes = decl.name.encode("utf-8")
-            strategy_bytes = decl.strategy.encode("utf-8")
-            f.write(struct.pack("<B", len(name_bytes)))
-            f.write(name_bytes)
-            f.write(struct.pack("<B", len(strategy_bytes)))
-            f.write(strategy_bytes)
-            f.write(struct.pack("<B", 1 if decl.bss else 0))
-            context_bytes = (decl.context or "").encode("utf-8")
-            f.write(struct.pack("<B", len(context_bytes)))
-            f.write(context_bytes)
-            f.write(struct.pack("<BH", decl.fill, len(decl.ranges)))
-            for start, end in decl.ranges:
-                f.write(struct.pack("<II", start, end))
-
-    def _write_pool_allocs(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<H", len(self.pool_allocs)))
-        for alloc in self.pool_allocs:
-            pool_bytes = alloc.pool_name.encode("utf-8")
-            sym_bytes = alloc.symbol_name.encode("utf-8")
-            f.write(struct.pack("<B", len(pool_bytes)))
-            f.write(pool_bytes)
-            f.write(struct.pack("<B", len(sym_bytes)))
-            f.write(sym_bytes)
-            f.write(struct.pack("<IIi", alloc.section_idx, alloc.size, alloc.pinned_addr))
-            source_bytes = alloc.source.encode("utf-8")
-            f.write(struct.pack("<H", len(source_bytes)))
-            f.write(source_bytes)
-            f.write(struct.pack("<H", len(alloc.labels)))
-            for label in alloc.labels:
-                label_bytes = label.encode("utf-8")
-                f.write(struct.pack("<H", len(label_bytes)))
-                f.write(label_bytes)
-
-    def _write_bus_mappings(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<H", len(self.bus_mappings)))
-        for mapping in self.bus_mappings:
-            ident_bytes = mapping.identifier.encode("utf-8")
-            f.write(struct.pack("<B", len(ident_bytes)))
-            f.write(ident_bytes)
-            f.write(
-                struct.pack(
-                    "<HHIIIB",
-                    mapping.bank_range[0],
-                    mapping.bank_range[1],
-                    mapping.addr_range[0],
-                    mapping.addr_range[1],
-                    mapping.mask,
-                    1 if mapping.writeable else 0,
-                )
-            )
-            if mapping.mirror_bank_range is None:
-                f.write(struct.pack("<B", 0))
-            else:
-                f.write(struct.pack("<BHH", 1, mapping.mirror_bank_range[0], mapping.mirror_bank_range[1]))
-            if mapping.address is None:
-                f.write(struct.pack("<B", 0))
-            else:
-                address = mapping.address.encode("utf-8")
-                f.write(struct.pack("<BB", 1, len(address)))
-                f.write(address)
-                f.write(struct.pack("<II", mapping.base, mapping.rom_size))
-
-    def _write_header(self, f: IO[bytes]) -> None:
         flags = 0x01 if self.relocatable else 0x00
-        header = struct.pack(
-            "<IHB",
-            self.MAGIC_NUMBER,
-            self.VERSION,
-            flags,
+        with open(filename, "wb") as f:
+            f.write(_HEADER.pack(self.MAGIC_NUMBER, self.VERSION, flags, SCHEMA_DIGEST, CODEGEN_REVISION))
+            f.write(encode(WireObject, self.wire()))
+
+    def wire(self) -> WireObject:
+        """The object as its wire record (what `write` encodes)."""
+        sections = [
+            WireSection(s.placed_base, s.code, s.bss, s.relocations, s.expression_relocations, s.lines)
+            for s in self.sections
+        ]
+        return WireObject(
+            sections, self.symbols, self.aliases, self.files, self.pool_decls, self.pool_allocs, self.bus_mappings
         )
-        f.write(header)
-
-    def _write_sections(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<H", len(self.sections)))
-        for section in self.sections:
-            f.write(struct.pack("<II", section.base_address, len(section.code)))
-            section_flags = 0x01 if section.bss else 0x00
-            f.write(struct.pack("<B", section_flags))
-            f.write(
-                struct.pack("<HHI", len(section.relocations), len(section.expression_relocations), len(section.lines))
-            )
-            f.write(section.code)
-            for offset, name, reloc_type in section.relocations:
-                name_bytes = name.encode("utf-8")
-                f.write(struct.pack("<IB", offset, len(name_bytes)))
-                f.write(name_bytes)
-                f.write(struct.pack("<B", reloc_type.value))
-            for offset, expression, size_bytes in section.expression_relocations:
-                expr_bytes = expression.encode("utf-8")
-                f.write(struct.pack("<IH", offset, len(expr_bytes)))
-                f.write(expr_bytes)
-                f.write(struct.pack("<B", size_bytes))
-            for offset, file_idx, line, column, flags in section.lines:
-                f.write(struct.pack("<IIIHB", offset, file_idx, line, column & 0xFFFF, flags & 0xFF))
-
-    def _write_symbol_table(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<H", len(self.symbols)))
-        for name, address, symbol_type, section in self.symbols:
-            name_bytes = name.encode("utf-8")
-            f.write(struct.pack("<B", len(name_bytes)))
-            f.write(name_bytes)
-            f.write(struct.pack("<IBB", address, symbol_type.value, section.value))
-
-    def _write_alias_table(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<H", len(self.aliases)))
-        for name, expression in self.aliases:
-            name_bytes = name.encode("utf-8")
-            expr_bytes = expression.encode("utf-8")
-            f.write(struct.pack("<B", len(name_bytes)))
-            f.write(name_bytes)
-            f.write(struct.pack("<H", len(expr_bytes)))
-            f.write(expr_bytes)
-
-    def _write_file_table(self, f: IO[bytes]) -> None:
-        f.write(struct.pack("<H", len(self.files)))
-        for path in self.files:
-            encoded = path.encode("utf-8")
-            f.write(struct.pack("<H", len(encoded)))
-            f.write(encoded)
-
-    @staticmethod
-    def _read_sections(f: IO[bytes]) -> list[Section]:
-        (count,) = struct.unpack("<H", f.read(2))
-        sections: list[Section] = []
-        for _ in range(count):
-            base_address, code_size = struct.unpack("<II", f.read(8))
-            (section_flags,) = struct.unpack("<B", f.read(1))
-            num_relocs, num_expr_relocs, num_lines = struct.unpack("<HHI", f.read(8))
-            code = f.read(code_size)
-            relocs: list[tuple[int, str, RelocationType]] = []
-            for _ in range(num_relocs):
-                offset, name_len = struct.unpack("<IB", f.read(5))
-                name = f.read(name_len).decode("utf-8")
-                (rt_value,) = struct.unpack("<B", f.read(1))
-                relocs.append((offset, name, RelocationType(rt_value)))
-            expr_relocs: list[tuple[int, str, int]] = []
-            for _ in range(num_expr_relocs):
-                offset, expr_len = struct.unpack("<IH", f.read(6))
-                expression = f.read(expr_len).decode("utf-8")
-                (size_bytes,) = struct.unpack("<B", f.read(1))
-                expr_relocs.append((offset, expression, size_bytes))
-            lines: list[tuple[int, int, int, int, int]] = []
-            for _ in range(num_lines):
-                offset, file_idx, line, column, flags = struct.unpack("<IIIHB", f.read(15))
-                lines.append((offset, file_idx, line, column, flags))
-            section = Section.anonymous_pinned(
-                base_address=base_address,
-                code=code,
-                relocations=relocs,
-                expression_relocations=expr_relocs,
-                lines=lines,
-            )
-            section.bss = bool(section_flags & 0x01)
-            sections.append(section)
-        return sections
-
-    @staticmethod
-    def _read_symbol_table(f: IO[bytes]) -> list[tuple[str, int, SymbolType, SymbolSection]]:
-        (count,) = struct.unpack("<H", f.read(2))
-        out: list[tuple[str, int, SymbolType, SymbolSection]] = []
-        for _ in range(count):
-            (name_len,) = struct.unpack("<B", f.read(1))
-            name = f.read(name_len).decode("utf-8")
-            address, sym_type, section = struct.unpack("<IBB", f.read(6))
-            out.append((name, address, SymbolType(sym_type), SymbolSection(section)))
-        return out
-
-    @staticmethod
-    def _read_alias_table(f: IO[bytes]) -> list[tuple[str, str]]:
-        (count,) = struct.unpack("<H", f.read(2))
-        out: list[tuple[str, str]] = []
-        for _ in range(count):
-            (name_len,) = struct.unpack("<B", f.read(1))
-            name = f.read(name_len).decode("utf-8")
-            (expr_len,) = struct.unpack("<H", f.read(2))
-            expression = f.read(expr_len).decode("utf-8")
-            out.append((name, expression))
-        return out
-
-    @staticmethod
-    def _read_file_table(f: IO[bytes]) -> list[str]:
-        (count,) = struct.unpack("<H", f.read(2))
-        out: list[str] = []
-        for _ in range(count):
-            (path_len,) = struct.unpack("<H", f.read(2))
-            out.append(f.read(path_len).decode("utf-8"))
-        return out
-
-    @staticmethod
-    def _read_pool_decls(f: IO[bytes]) -> list[PoolDecl]:
-        (count,) = struct.unpack("<H", f.read(2))
-        out: list[PoolDecl] = []
-        for _ in range(count):
-            (name_len,) = struct.unpack("<B", f.read(1))
-            name = f.read(name_len).decode("utf-8")
-            (strategy_len,) = struct.unpack("<B", f.read(1))
-            strategy = f.read(strategy_len).decode("utf-8")
-            (bss_flag,) = struct.unpack("<B", f.read(1))
-            (context_len,) = struct.unpack("<B", f.read(1))
-            context = f.read(context_len).decode("utf-8") or None
-            fill, range_count = struct.unpack("<BH", f.read(3))
-            ranges: list[tuple[int, int]] = []
-            for _ in range(range_count):
-                start, end = struct.unpack("<II", f.read(8))
-                ranges.append((start, end))
-            out.append(
-                PoolDecl(name=name, ranges=ranges, fill=fill, strategy=strategy, bss=bool(bss_flag), context=context)
-            )
-        return out
-
-    @staticmethod
-    def _read_bus_mappings(f: IO[bytes]) -> list[BusMapping]:
-        (count,) = struct.unpack("<H", f.read(2))
-        out: list[BusMapping] = []
-        for _ in range(count):
-            (ident_len,) = struct.unpack("<B", f.read(1))
-            identifier = f.read(ident_len).decode("utf-8")
-            bank_lo, bank_hi, addr_lo, addr_hi, mask, writeable_byte = struct.unpack("<HHIIIB", f.read(17))
-            (has_mirror,) = struct.unpack("<B", f.read(1))
-            mirror: tuple[int, int] | None = None
-            if has_mirror:
-                m_lo, m_hi = struct.unpack("<HH", f.read(4))
-                mirror = (m_lo, m_hi)
-            (has_bml,) = struct.unpack("<B", f.read(1))
-            address: str | None = None
-            base = rom_size = 0
-            if has_bml:
-                (address_len,) = struct.unpack("<B", f.read(1))
-                address = f.read(address_len).decode("utf-8")
-                base, rom_size = struct.unpack("<II", f.read(8))
-            out.append(
-                BusMapping(
-                    identifier=identifier,
-                    bank_range=(bank_lo, bank_hi),
-                    addr_range=(addr_lo, addr_hi),
-                    mask=mask,
-                    writeable=bool(writeable_byte),
-                    mirror_bank_range=mirror,
-                    address=address,
-                    base=base,
-                    rom_size=rom_size,
-                )
-            )
-        return out
-
-    @staticmethod
-    def _read_pool_allocs(f: IO[bytes]) -> list[PoolAlloc]:
-        (count,) = struct.unpack("<H", f.read(2))
-        out: list[PoolAlloc] = []
-        for _ in range(count):
-            (pool_len,) = struct.unpack("<B", f.read(1))
-            pool_name = f.read(pool_len).decode("utf-8")
-            (sym_len,) = struct.unpack("<B", f.read(1))
-            sym_name = f.read(sym_len).decode("utf-8")
-            section_idx, size, pinned_addr = struct.unpack("<IIi", f.read(12))
-            (source_len,) = struct.unpack("<H", f.read(2))
-            source = f.read(source_len).decode("utf-8")
-            (label_count,) = struct.unpack("<H", f.read(2))
-            labels: list[str] = []
-            for _ in range(label_count):
-                (label_len,) = struct.unpack("<H", f.read(2))
-                labels.append(f.read(label_len).decode("utf-8"))
-            out.append(
-                PoolAlloc(
-                    pool_name=pool_name,
-                    symbol_name=sym_name,
-                    section_idx=section_idx,
-                    size=size,
-                    pinned_addr=pinned_addr,
-                    source=source,
-                    labels=labels,
-                )
-            )
-        return out
 
     @staticmethod
     def identity() -> str:
-        """What an object's bytes depend on besides its sources: the build
-        cache rebuilds every object built under another identity."""
-        return f"format-{ObjectFile.VERSION}"
+        """What an object's bytes depend on besides its sources: the container
+        version, the wire schema and the codegen revision. The build cache
+        rebuilds every object built under another identity."""
+        return f"{ObjectFile.VERSION}:{SCHEMA_DIGEST.hex()}:{CODEGEN_REVISION}"
 
     @staticmethod
-    def read_version(filename: str) -> int | None:
-        """Format version in an object's header, or None when the file isn't
-        an a816 object. Reads the header only: the build cache uses it to
-        rebuild objects from another format instead of failing to load them."""
+    def read_header(filename: str) -> ObjectHeader | None:
+        """An object's header, or None when the file isn't an a816 object.
+
+        Every container version starts with magic, version and flags; only
+        this one carries the schema digest and codegen revision after them,
+        so an older object reports its version and an empty schema."""
         with open(filename, "rb") as f:
-            header = f.read(7)
-        if len(header) < 7:
+            raw = f.read(_HEADER.size)
+        if len(raw) < _PREFIX.size:
             return None
-        magic, version, _flags = struct.unpack("<IHB", header)
-        return version if magic == ObjectFile.MAGIC_NUMBER else None
+        magic, version, flags = _PREFIX.unpack_from(raw)
+        if magic != ObjectFile.MAGIC_NUMBER:
+            return None
+        if version != ObjectFile.VERSION or len(raw) < _HEADER.size:
+            return ObjectHeader(magic, version, flags, b"", -1)
+        return ObjectHeader(*_HEADER.unpack(raw))
 
     @staticmethod
     def from_file(filename: str) -> "ObjectFile":
-        with open(filename, "rb") as f:
-            header = f.read(7)
-            if len(header) < 7:
-                raise ValueError(INVALID_FILE_FORMAT)
-            magic, version, flags = struct.unpack("<IHB", header)
-            if magic != ObjectFile.MAGIC_NUMBER:
-                raise ValueError("Invalid magic number")
-            if version != ObjectFile.VERSION:
-                raise ValueError(f"Unsupported version: {version} (expected {ObjectFile.VERSION})")
-            relocatable = bool(flags & 0x01)
-            sections = ObjectFile._read_sections(f)
-            symbols = ObjectFile._read_symbol_table(f)
-            aliases = ObjectFile._read_alias_table(f)
-            files = ObjectFile._read_file_table(f)
-            pool_decls = ObjectFile._read_pool_decls(f)
-            pool_allocs = ObjectFile._read_pool_allocs(f)
-            bus_mappings = ObjectFile._read_bus_mappings(f)
-            return ObjectFile(
-                sections,
-                symbols,
-                aliases=aliases,
-                files=files,
-                relocatable=relocatable,
-                pool_decls=pool_decls,
-                pool_allocs=pool_allocs,
-                bus_mappings=bus_mappings,
+        header = ObjectFile.read_header(filename)
+        if header is None:
+            raise ValueError(INVALID_FILE_FORMAT)
+        if header.identity != ObjectFile.identity():
+            raise ValueError(
+                f"Unsupported version: object built with format {header.identity}, this a816 reads "
+                f"{ObjectFile.identity()}; rebuild it"
             )
+        with open(filename, "rb") as f:
+            data = f.read()[_HEADER.size :]
+        wire, _end = decode(WireObject, data)
+        sections = []
+        for ws in wire.sections:
+            section = Section.anonymous_pinned(
+                base_address=ws.base_address,
+                code=ws.code,
+                relocations=ws.relocations,
+                expression_relocations=ws.expression_relocations,
+                lines=ws.lines,
+            )
+            section.bss = ws.bss
+            sections.append(section)
+        return ObjectFile(
+            sections,
+            wire.symbols,
+            aliases=wire.aliases,
+            files=wire.files,
+            relocatable=bool(header.flags & 0x01),
+            pool_decls=wire.pool_decls,
+            pool_allocs=wire.pool_allocs,
+            bus_mappings=wire.bus_mappings,
+        )
