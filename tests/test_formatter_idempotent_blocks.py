@@ -31,6 +31,10 @@ _SOURCES = {
         ".alloc f in rom {\n    nop\n    rts\n}  ; after the block\nX = 1\n"
     ),
     "trailing_blank_lines": "main:\n    rts\n\n\n",
+    # dq6 name7.s: a blank line inside a module docstring was read as a gap
+    # before the next node, so each pass added one more blank after `"""`.
+    "docstring_with_blank_line": '"""\nFirst paragraph.\n\nSecond paragraph.\n"""\nX = 1\n',
+    "docstring_then_blank": '"""\nFirst paragraph.\n\nSecond paragraph.\n"""\n\nX = 1\n',
 }
 
 
@@ -54,6 +58,14 @@ def test_reserve_stays_a_reserve() -> None:
 
 def test_pinned_reserve_keeps_its_address() -> None:
     assert ".reserve VEC 0x10 at 0x7e5100 in ram  ; vectors\n" in _fmt(_SOURCES["pinned_reserve"])
+
+
+def test_blank_line_inside_a_docstring_is_not_a_gap_after_it() -> None:
+    assert '"""\nX = 1\n' in _fmt(_SOURCES["docstring_with_blank_line"])
+
+
+def test_blank_line_after_a_docstring_is_kept_once() -> None:
+    assert '"""\n\nX = 1\n' in _fmt(_SOURCES["docstring_then_blank"])
 
 
 def test_output_ends_with_a_single_newline() -> None:

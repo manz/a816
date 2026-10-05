@@ -535,6 +535,16 @@ class A816Formatter:
         return None
 
     @staticmethod
+    def _node_end_line(node: AstNode) -> int | None:
+        """Last source line a node spans. A docstring's token sits on its
+        opening quotes; its text runs on, and the lines inside it (blank
+        ones included) are not a gap before the next node."""
+        line = A816Formatter._node_line_num(node)
+        if line is not None and isinstance(node, DocstringAstNode):
+            return line + node.text.count("\n")
+        return line
+
+    @staticmethod
     def _emit_preserved_blanks(
         original_lines: list[str], processed: set[int], current_idx: int, until: int, formatted: list[str]
     ) -> int:
@@ -700,7 +710,7 @@ class A816Formatter:
         while stack:
             current = stack.pop()
             if not isinstance(current, CompoundAstNode):
-                line = A816Formatter._node_line_num(current)
+                line = A816Formatter._node_end_line(current)
                 if line is not None and (max_line is None or line > max_line):
                     max_line = line
             close_line = A816Formatter._close_line_num(current)
@@ -754,7 +764,7 @@ class A816Formatter:
             if close_line is not None:
                 state.last_emitted_line_num = close_line
             elif node_line is not None:
-                state.last_emitted_line_num = node_line
+                state.last_emitted_line_num = self._node_end_line(node)
             state.prev_was_label = isinstance(node, LabelAstNode)
 
         processed.add(line_num)
