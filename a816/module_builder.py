@@ -238,10 +238,16 @@ class ModuleBuilder:
         return self.output_dir / obj_name
 
     def _compile_module(
-        self, module_name: str, source_path: Path, obj_path: Path, constants: dict[str, int]
-    ) -> tuple[set[str], set[str]]:
+        self,
+        module_name: str,
+        source_path: Path,
+        obj_path: Path,
+        constants: dict[str, int],
+        fallback: dict[str, tuple[int, str]],
+    ) -> tuple[set[str], set[str], set[str]]:
         """Compile one module to its `.o`; return the asset paths it read
-        (absolute `.incbin` / `.table` paths) and the lookups that missed."""
+        (absolute `.incbin` / `.table` paths), the lookups that missed and
+        the unimported modules whose constants it used."""
         from a816.program import Program
 
         logger.info(f"Compiling {module_name}: {source_path} -> {obj_path}")
@@ -258,20 +264,37 @@ class ModuleBuilder:
             program.resolver.current_scope.add_symbol(name, value)
         for name, value in constants.items():
             program.resolver.current_scope.add_symbol(name, value)
-            # Constants accumulated from previously-built modules are seeded
+            # Constants exported by the modules this one imports are seeded
             # into this module's resolver as raw symbols so codegen can read
             # their values, but they're owned by the contributing module's
             # `.o`. Mark them imported so `_export_object_symbols` doesn't
             # re-publish them here - otherwise every downstream `.o` gains
             # a duplicate GLOBAL and the linker rejects the build.
             program.resolver.imported_symbol_names.add(name)
+        program.resolver.unimported_constants = dict(fallback)
         with recording_misses() as misses:
             result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
         if result != 0:
             raise RuntimeError(f"Failed to compile module '{module_name}'")
-        return set(program.resolver.dependency_files), misses | self._discovery_misses.pop(module_name, set())
+        used = program.resolver.used_unimported
+        for name, owner in sorted(used.items()):
+            logger.warning(
+                f"module `{module_name}` uses `{name}` from `{owner}` without importing it; "
+                f'add `.import "{owner}"` (this becomes an error in a816 1.1.0)'
+            )
+        return (
+            set(program.resolver.dependency_files),
+            misses | self._discovery_misses.pop(module_name, set()),
+            set(used.values()),
+        )
 
-    def _build_module(self, module_name: str, keys: dict[str, str], constants: dict[str, int]) -> ObjectFile:
+    def _build_module(
+        self,
+        module_name: str,
+        keys: dict[str, str],
+        constants: dict[str, int],
+        fallback: dict[str, tuple[int, str]],
+    ) -> ObjectFile:
         """Reuse or compile one module; record its key in `keys`.
 
         Its `.o` bakes in the exported constants of what it imports, so it is
@@ -288,24 +311,64 @@ class ModuleBuilder:
             logger.info(f"Module {module_name} is up to date")
             keys[module_name] = self.cache.key(obj_path) or ""
             return ObjectFile.from_file(str(obj_path))
-        asset_files, misses = self._compile_module(module_name, source_path, obj_path, constants)
+        asset_files, misses, owners = self._compile_module(module_name, source_path, obj_path, constants, fallback)
         obj = ObjectFile.from_file(str(obj_path))
-        files = {os.path.abspath(str(source_path)), *(os.path.abspath(f) for f in obj.files), *asset_files}
+        # An unimported owner whose constants were used: its `.o` is an input,
+        # so changing those constants rebuilds this module.
+        owner_objects = {os.path.abspath(self._get_obj_path(owner)) for owner in owners}
+        files = {
+            os.path.abspath(str(source_path)),
+            *(os.path.abspath(f) for f in obj.files),
+            *asset_files,
+            *owner_objects,
+        }
         keys[module_name] = self.cache.record(obj_path, ModuleInputs(files, misses, imports, import_keys))
         return obj
 
     @staticmethod
-    def _accumulate_constants(obj: ObjectFile, accumulated: dict[str, int]) -> None:
+    def _exported_constants(obj: ObjectFile) -> dict[str, int]:
+        """The GLOBAL constants a module's `.o` exports.
+
+        ABS_LABEL is a `.label`-declared address: it propagates like a DATA
+        constant so importers see the binding without an explicit `.extern`.
+        """
         from a816.object_file import SymbolSection as ObjSymbolSection
         from a816.object_file import SymbolType as ObjSymbolType
 
-        # ABS_LABEL is a `.label`-declared address - propagate it like a
-        # DATA constant so dependent modules see the binding without needing
-        # an explicit `.extern`.
         constant_sections = (ObjSymbolSection.DATA, ObjSymbolSection.ABS_LABEL)
-        for name, value, sym_type, section in obj.symbols:
-            if sym_type == ObjSymbolType.GLOBAL and section in constant_sections:
-                accumulated[name] = value
+        return {
+            name: value
+            for name, value, sym_type, section in obj.symbols
+            if sym_type == ObjSymbolType.GLOBAL and section in constant_sections
+        }
+
+    def _transitive_imports(self, module_name: str) -> set[str]:
+        seen: set[str] = set()
+        pending = list(self._imports.get(module_name, []))
+        while pending:
+            name = pending.pop()
+            if name not in seen:
+                seen.add(name)
+                pending.extend(self._imports.get(name, []))
+        return seen
+
+    def _constants_for(
+        self, module_name: str, compilation_order: list[str], exported: dict[str, dict[str, int]]
+    ) -> tuple[dict[str, int], dict[str, tuple[int, str]]]:
+        """Constants a module sees: those of what it imports, directly or
+        not, plus the deprecated fallback of every other module built so far
+        (resolved with a warning, see `Resolver.unimported_constant`)."""
+        reachable = self._transitive_imports(module_name)
+        constants: dict[str, int] = {}
+        fallback: dict[str, tuple[int, str]] = {}
+        for name in compilation_order:
+            if name not in exported:
+                continue
+            if name in reachable:
+                constants.update(exported[name])
+            else:
+                fallback.update({symbol: (value, name) for symbol, value in exported[name].items()})
+        return constants, fallback
 
     def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
         """Build all modules in topo order, then link."""
@@ -315,11 +378,12 @@ class ModuleBuilder:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         object_files: list[ObjectFile] = []
-        accumulated_constants: dict[str, int] = {}
+        exported: dict[str, dict[str, int]] = {}
         keys: dict[str, str] = {}
         for module_name in compilation_order:
-            obj = self._build_module(module_name, keys, accumulated_constants)
-            self._accumulate_constants(obj, accumulated_constants)
+            constants, fallback = self._constants_for(module_name, compilation_order, exported)
+            obj = self._build_module(module_name, keys, constants, fallback)
+            exported[module_name] = self._exported_constants(obj)
             object_files.append(obj)
 
         if len(object_files) == 1 and not _object_needs_linking(object_files[0]):

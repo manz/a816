@@ -300,10 +300,10 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     },
     "lda": {
         AddressingMode.immediate: Opcode([0xA9, 0xA9], is_a=True),
-        AddressingMode.direct: Opcode([0xA5, 0xAD, 0xAF], is_a=True),
+        AddressingMode.direct: Opcode([0xA5, 0xAD, 0xAF]),
         AddressingMode.direct_indexed: {
-            "x": Opcode([0xB5, 0xBD, 0xBF], is_a=True),
-            "y": Opcode([None, 0xB9, None], is_a=True),
+            "x": Opcode([0xB5, 0xBD, 0xBF]),
+            "y": Opcode([None, 0xB9, None]),
             "s": Opcode([0xA3]),
         },
         AddressingMode.indirect_indexed_long: {"y": Opcode([0xB7])},
@@ -317,10 +317,10 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     },
     "ora": {
         AddressingMode.immediate: Opcode([0x09, 0x09], is_a=True),
-        AddressingMode.direct: Opcode([0x05, 0x0D, 0x0F], is_a=True),
+        AddressingMode.direct: Opcode([0x05, 0x0D, 0x0F]),
         AddressingMode.direct_indexed: {
-            "x": Opcode([0x15, 0x1D, 0x1F], is_a=True),
-            "y": Opcode([None, 0x19, None], is_a=True),
+            "x": Opcode([0x15, 0x1D, 0x1F]),
+            "y": Opcode([None, 0x19, None]),
             "s": Opcode([0x03]),
         },
         AddressingMode.indirect: Opcode([0x12]),
@@ -347,13 +347,13 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     },
     "ldx": {
         AddressingMode.immediate: Opcode([0xA2, 0xA2], is_x=True),
-        AddressingMode.direct: Opcode([0xA6, 0xAE], is_x=True),
-        AddressingMode.direct_indexed: {"y": Opcode([0xB6, 0xBE], is_x=True)},
+        AddressingMode.direct: Opcode([0xA6, 0xAE]),
+        AddressingMode.direct_indexed: {"y": Opcode([0xB6, 0xBE])},
     },
     "ldy": {
         AddressingMode.immediate: Opcode([0xA0, 0xA0], is_x=True),
-        AddressingMode.direct: Opcode([0xA4, 0xAC], is_x=True),
-        AddressingMode.direct_indexed: {"x": Opcode([0xB4, 0xBC], is_x=True)},
+        AddressingMode.direct: Opcode([0xA4, 0xAC]),
+        AddressingMode.direct_indexed: {"x": Opcode([0xB4, 0xBC])},
     },
     "lsr": {
         AddressingMode.none: OpcodeWithoutOperand(0x4A),
@@ -448,10 +448,10 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
     "clv": {AddressingMode.none: OpcodeWithoutOperand(0xB8)},
     "cmp": {
         AddressingMode.immediate: Opcode([0xC9, 0xC9], is_a=True),
-        AddressingMode.direct: Opcode([0xC5, 0xCD, 0xCF], is_a=True),
+        AddressingMode.direct: Opcode([0xC5, 0xCD, 0xCF]),
         AddressingMode.direct_indexed: {
-            "x": Opcode([0xD5, 0xDD, 0xDF], is_a=True),
-            "y": Opcode([None, 0xD9, None], is_a=True),
+            "x": Opcode([0xD5, 0xDD, 0xDF]),
+            "y": Opcode([None, 0xD9, None]),
             "s": Opcode([0xC3]),
         },
         AddressingMode.indirect: Opcode([0xD2]),

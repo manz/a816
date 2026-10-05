@@ -109,9 +109,8 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
     """If RHS is `(expr as T)`, eager-expand the instance's flat field symbols.
 
     Returns True iff the RHS was a typed cast and the expansion succeeded.
-    Externs in the cast base aren't supported here — the user would lose the
-    static field-access ergonomics anyway, so raise rather than silently
-    falling back to a plain alias.
+    In object mode an extern base binds link-time aliases instead: the view
+    and each `view.field` resolve to `base + offset` once the base is placed.
     """
     tokens = node.value.tokens
     if len(tokens) != 1 or not isinstance(tokens[0], CastValueExprNode):
@@ -123,7 +122,14 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
             f"Typed bind {node.symbol!r}: unknown struct type {type_name!r}.",
             file_info,
         )
-    base = _eager_eval(node, ExpressionAstNode(list(cast.inner)), resolver, file_info)
+    inner = ExpressionAstNode(list(cast.inner))
+    try:
+        base = _eager_eval(node, inner, resolver, file_info)
+    except (ExternalExpressionReference, ExternalSymbolReference) as e:
+        if not resolver.context.is_object_mode:
+            raise
+        _bind_extern_view(node.symbol, type_name, _external_expression(e, resolver), resolver)
+        return True
     if not isinstance(base, int):
         raise NodeError(
             f"Typed bind {node.symbol!r}: base expression must evaluate to an integer address.",
@@ -135,6 +141,19 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
     resolver.typed_instances[node.symbol] = type_name
     resolver.typed_instance_addr_width[node.symbol] = _address_width_for(base)
     return True
+
+
+def _external_expression(e: ExternalExpressionReference | ExternalSymbolReference, resolver: Resolver) -> str:
+    expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
+    return canonicalize_local_label_refs(expr_str, resolver)
+
+
+def _bind_extern_view(symbol: str, type_name: str, base: str, resolver: Resolver) -> None:
+    """`view := (extern as T)`: alias the view and every field to link-time
+    expressions over the extern base."""
+    resolver.register_external_alias(symbol, base)
+    for field_path, offset, _width in resolver.struct_layouts[type_name]:
+        resolver.register_external_alias(f"{symbol}.{field_path}", f"( {base} ) + {offset:#x}")
 
 
 def _address_width_for(value: int) -> str:
@@ -170,9 +189,7 @@ def generate_assign(
                 f"external symbols only allowed in object compilation mode.",
                 file_info,
             ) from e
-        expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
-        canonical = canonicalize_local_label_refs(expr_str, resolver)
-        resolver.register_external_alias(node.symbol, canonical)
+        resolver.register_external_alias(node.symbol, _external_expression(e, resolver))
 
     return []
 

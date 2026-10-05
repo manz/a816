@@ -202,6 +202,9 @@ def _apply_binary(operator: BinOp, v1: int | str, v2: int | str) -> int:
 def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> set[str]:
     external_symbols: set[str] = set()
     for current in ordered:
+        if isinstance(current, CastAccessExprNode | CastValueExprNode):
+            external_symbols |= _collect_external_symbols(current.inner, resolver)
+            continue
         if current.token.type != TokenType.IDENTIFIER:
             continue
         try:
@@ -240,14 +243,18 @@ def _eval_cast_base(current: CastAccessExprNode | CastValueExprNode, resolver: R
     return base
 
 
+def _field_offset(cast: CastAccessExprNode, resolver: Resolver) -> int:
+    """Byte offset of `(inner as T).a.b` within `T`."""
+    field_symbol = ".".join([cast.type_name, *cast.field_path])
+    offset = _lookup(field_symbol, cast.leaf_token, resolver)
+    if not isinstance(offset, int):
+        raise RuntimeError(f"Struct field {field_symbol!r} did not resolve to an offset")  # noqa: TRY004 - invariant failure, not a caller type error
+    return offset
+
+
 def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | str]) -> None:
     if isinstance(current, CastAccessExprNode):
-        base = _eval_cast_base(current, resolver)
-        field_symbol = ".".join([current.type_name, *current.field_path])
-        offset = _lookup(field_symbol, current.leaf_token, resolver)
-        if not isinstance(offset, int):
-            raise RuntimeError(f"Struct field {field_symbol!r} did not resolve to an offset")  # noqa: TRY004 - invariant failure, not a caller type error
-        values_stack.append(base + offset)
+        values_stack.append(_eval_cast_base(current, resolver) + _field_offset(current, resolver))
         return
     if isinstance(current, CastValueExprNode):
         values_stack.append(_eval_cast_base(current, resolver))
@@ -278,7 +285,7 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
             # labels; canonicalize them to their exported `__sc<idx>__` form so
             # the relocation matches the linker's symbol map instead of folding
             # to 0 against unknown bare names.
-            expression_str = _inline_aliases(reconstruct_expression(expression), resolver)
+            expression_str = _inline_aliases(reconstruct_expression(expression, resolver), resolver)
             expression_str = canonicalize_local_label_refs(expression_str, resolver)
             raise ExternalExpressionReference(expression_str, external_symbols)
 
@@ -362,18 +369,23 @@ def _inline_aliases(expression_str: str, resolver: Resolver, depth: int = 0) -> 
     return _IDENT_RE.sub(replace, expression_str)
 
 
-def reconstruct_expression(expression: ExpressionAstNode) -> str:
-    """Reconstruct the original expression string from the AST"""
-    tokens = expression.tokens
-    result = []
+def reconstruct_expression(expression: ExpressionAstNode, resolver: Resolver | None = None) -> str:
+    """Reconstruct the original expression string from the AST.
 
-    for token in tokens:
-        if hasattr(token, "token"):
-            result.append(token.token.value)
-        else:
-            result.append(str(token))
+    With a resolver, a cast lowers to plain arithmetic the linker can
+    evaluate: `(inner as T).field` becomes `( inner + OFFSET )` and
+    `(inner as T)` becomes `( inner )`.
+    """
+    return " ".join(_render_term(node, resolver) for node in expression.tokens)
 
-    return " ".join(result)
+
+def _render_term(node: ExprNode, resolver: Resolver | None) -> str:
+    if resolver is not None and isinstance(node, CastAccessExprNode | CastValueExprNode):
+        inner = reconstruct_expression(ExpressionAstNode(list(node.inner)), resolver)
+        if isinstance(node, CastValueExprNode):
+            return f"( {inner} )"
+        return f"( {inner} + {_field_offset(node, resolver):#x} )"
+    return node.token.value if hasattr(node, "token") else str(node)
 
 
 def expr_to_ast(expr_str: str) -> ExpressionAstNode:

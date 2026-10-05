@@ -13,6 +13,7 @@ from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
     BlockAstNode,
+    CastValueExprNode,
     CommentAstNode,
     CompoundAstNode,
     DocstringAstNode,
@@ -219,8 +220,12 @@ def _import_object_mode(
     root = resolver.scopes[0]
     before_labels = set(root.labels.keys())
     before_symbols = set(root.symbols.keys())
+    runtime = _runtime_names_in(nodes) | {node.symbol for node in nodes if isinstance(node, ExternAstNode)}
 
     for node in nodes:
+        if isinstance(node, AssignAstNode) and _is_runtime_typed_bind(node, runtime):
+            out.extend(ExternNode(name, resolver) for name in _typed_bind_names(node, resolver))
+            continue
         if isinstance(node, _INLINE_IMPORT_TYPES):
             out.extend(_code_gen([node], resolver, macro_definitions) or [])
             continue
@@ -233,6 +238,24 @@ def _import_object_mode(
     resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)
     resolver.imported_symbol_names.update(set(root.symbols.keys()) - before_symbols)
     return out
+
+
+def _is_runtime_typed_bind(node: AssignAstNode, runtime: set[str]) -> bool:
+    """`view := (base as T)` whose base is a runtime name of the imported
+    module (a label, an alloc, an `.extern`): the importer can't evaluate it,
+    the owning `.o` exports the view and its fields."""
+    return (
+        len(node.value.tokens) == 1
+        and isinstance(node.value.tokens[0], CastValueExprNode)
+        and _mentions(node.value, runtime)
+    )
+
+
+def _typed_bind_names(node: AssignAstNode, resolver: Resolver) -> list[str]:
+    cast = node.value.tokens[0]
+    assert isinstance(cast, CastValueExprNode)
+    fields = resolver.struct_layouts.get(cast.type_name, [])
+    return [node.symbol, *(f"{node.symbol}.{field_path}" for field_path, _offset, _width in fields)]
 
 
 def _declarations_only(nodes: list[AstNode], bare_names: bool) -> list[AstNode]:

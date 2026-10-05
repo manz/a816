@@ -1,6 +1,6 @@
 import logging
 from collections.abc import ItemsView
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from a816.context import AssemblyContext
 from a816.cpu.mapping import Address, Bus
@@ -10,6 +10,9 @@ from a816.mappers import build_mapper_bus
 from a816.parse.ast.nodes import BlockAstNode
 from a816.parse.tokens import Token
 from a816.pool import Pool
+
+if TYPE_CHECKING:
+    from a816.object_file import LinkAssert
 from script import Table
 
 
@@ -229,8 +232,13 @@ class Scope:
             if symbol in self.external_aliases:
                 return self[symbol]
             return self.parent.value_for(symbol)
-        else:
+        try:
             return self[symbol]
+        except SymbolNotDefined:
+            value = self.resolver.unimported_constant(symbol)
+            if value is None:
+                raise
+            return value
 
 
 class InternalScope(Scope):
@@ -367,6 +375,16 @@ class Resolver:
         # owned by its dependencies - the owner's `.o` is the single
         # source of truth, downstream `.o`s carry externs.
         self.imported_symbol_names: set[str] = set()
+        # Constants of already-built modules this one does not import
+        # (name -> (value, owning module)). Still resolved during 1.1.0 so
+        # projects relying on compile order keep building, with a warning
+        # naming the `.import` to add; the ones used land in
+        # `used_unimported` (name -> owning module) so the build cache tracks them.
+        self.unimported_constants: dict[str, tuple[int, str]] = {}
+        self.used_unimported: dict[str, str] = {}
+        # `.assert`s of a direct build, checked once labels are final
+        # (object mode hands them to the linker instead).
+        self.direct_asserts: list[LinkAssert] = []
         # Placement context seen by `.import` at codegen. A `*=` cursor
         # stays active until the end of the source unit that opened it
         # (`.import` restores the importer's flag); the depth counts the
@@ -398,7 +416,9 @@ class Resolver:
         """
         if self.context.is_object_mode:
             return
+        contiguous = self.bus.contiguous if self.bus.has_mappings() else None
         for pool in self.pools.values():
+            pool.contiguous = contiguous
             pool.allocate()
 
     def reset_register_sizes(self) -> None:
@@ -524,14 +544,16 @@ class Resolver:
     def _export_name(name: str, scope: "Scope", idx: int, mangle_nested: bool) -> str:
         """Compute the exported name for a label/symbol in `scope`.
 
-        Already-dotted names (e.g. `shops.gils` re-published by
-        `_publish_named_dotted`) pass through unchanged so we don't
-        double-prefix. Bare names inside a NamedScope get the scope's
-        name as a prefix to avoid bare-name collisions across modules.
+        Names already carrying the scope's prefix (e.g. `shops.gils`
+        re-published by `_publish_named_dotted`) pass through unchanged so
+        we don't double-prefix. Every other name inside a NamedScope gets
+        the scope's name as a prefix, relative dotted ones included (a
+        struct's bit-field `lo.mask` exports as `T.lo.mask`, never bare),
+        to avoid bare-name collisions across modules.
         Anonymous nested scopes opt into the `__sc<idx>__` mangle when
         `mangle_nested` is set.
         """
-        if isinstance(scope, NamedScope) and "." not in name:
+        if isinstance(scope, NamedScope) and not name.startswith(f"{scope.name}."):
             return f"{scope.name}.{name}"
         # AllocBodyScope keeps PUBLIC (non-underscore) labels bare so
         # cross-alloc refs + `.extern` resolve them by their source name.
@@ -619,6 +641,19 @@ class Resolver:
                         symbols.append((exported, value))
                         seen.add(exported)
         return symbols
+
+    def unimported_constant(self, name: str) -> int | None:
+        """A constant of a module this one does not `.import`, or None.
+
+        Recorded in `used_unimported`: visibility that depends on compile
+        order breaks as soon as the order changes; the module builder warns.
+        """
+        found = self.unimported_constants.get(name)
+        if found is None:
+            return None
+        value, module = found
+        self.used_unimported[name] = module
+        return value
 
     def is_root_scope_symbol(self, name: str) -> bool:
         """Check whether ``name`` is defined directly in the root scope.
