@@ -124,7 +124,10 @@ _NUMBERS = (Operand("0x12", "b", True), Operand("0x1234", "w", False), Operand("
 _NODE_BRANCH_TARGET = Operand("0x008010", "w", False)
 _SELF_LABEL = Operand("L{k}", None, False)
 _BACKWARD_LABEL = Operand("start", "w", False)  # bound at 0x008000
-_EXTERN = Operand("ext", "b", True)  # object mode: externs evaluate to 0
+# Object mode: an extern evaluates to 0 until link, so its magnitude sizes
+# nothing (`_width`); unsized, only a register-sized immediate or a
+# single-form opcode is decidable, the rest stops with E0313.
+_EXTERN = Operand("ext", None, True)
 
 
 def _is_relative(entry: Entry) -> bool:
@@ -159,6 +162,11 @@ def _width(entry: Entry, suffix: str | None, operand: Operand, state: RegState) 
         return suffix
     if (emitter.is_a and state.a16) or (emitter.is_x and state.i16):
         return "w"
+    if operand is _EXTERN:
+        if emitter.is_a or emitter.is_x:
+            return "b"
+        forms = emitter.encodable_sizes()
+        return forms[0] if len(forms) == 1 else None
     return operand.width
 
 
@@ -188,10 +196,10 @@ def _expected_length(entry: Entry, suffix: str | None, operand: Operand, state: 
 
 
 def _resolvable(entry: Entry, suffix: str | None, operand: Operand, state: RegState) -> bool:
-    """False for an unsized forward reference.
+    """False for an unsized forward reference or link-time extern.
 
-    The first pass cannot size it and assembly stops with E0200 (loud,
-    never silent drift).
+    The first pass cannot size either: assembly stops with E0200 or E0313
+    (loud, never silent drift).
     """
     if operand.width is not None or not isinstance(entry.emitter, Opcode):
         return True

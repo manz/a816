@@ -122,6 +122,19 @@ class Scope:
         # promoted, so later passes can refresh them (`_bubble_anon_exportables`).
         self.bubbled_labels: dict[str, int] = {}
         self.bubbled_symbols: dict[str, int | str] = {}
+        # Macro parameters bound to an argument that did not resolve at the
+        # call: name -> (argument expression, "passed to `m` as `p`"). A
+        # lookup that misses on the parameter reports the argument instead.
+        self.macro_arguments: dict[str, tuple[Any, str]] = {}
+
+    def macro_argument(self, name: str) -> tuple[Any, str] | None:
+        """The pending macro argument bound to `name`, searching outwards."""
+        scope: Scope | None = self
+        while scope is not None:
+            if name in scope.macro_arguments:
+                return scope.macro_arguments[name]
+            scope = scope.parent
+        return None
 
     def add_label(self, label: str, value: Address) -> None:
         self.labels[label] = value.logical_value

@@ -44,6 +44,8 @@ class SymbolNotDefined(A816Error):
         super().__init__(name)
         self.name = name
         self.token = token
+        self.note: str | None = None
+        """Context for the hint, e.g. the macro argument the name was passed as."""
 
 
 class ExternalSymbolReference(A816Error):
@@ -393,6 +395,16 @@ class BranchTargetUnmappedError(OpcodeError):
     def __init__(self, target: int) -> None:
         self.target = target
         super().__init__(f"branch target {target:#x} has no ROM address; relative branches cannot reach RAM")
+
+
+class UndecidableOperandSizeError(OpcodeError):
+    """Raised when an unsized operand names a symbol resolved only at link:
+    its size (and so the opcode form) can't be inferred at compile time."""
+
+    def __init__(self, symbols: set[str]) -> None:
+        self.symbols = symbols
+        names = ", ".join(f"`{name}`" for name in sorted(symbols))
+        super().__init__(f"operand size can't be inferred: {names} is resolved at link")
 
 
 class MissingOperandError(OpcodeError):

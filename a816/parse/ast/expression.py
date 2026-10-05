@@ -223,8 +223,28 @@ def _lookup(name: str, token: Token, resolver: Resolver) -> int | str | BlockAst
     try:
         return resolver.current_scope.value_for(name)
     except SymbolNotDefined as exc:
+        if exc.name == name:
+            _raise_for_macro_argument(name, token, resolver)
         if exc.token is None or exc.token.position is None:
             exc.token = token
+        raise
+
+
+def _raise_for_macro_argument(name: str, use: Token, resolver: Resolver) -> None:
+    """A miss on a macro parameter whose argument never resolved: report
+    what the argument names, where the caller wrote it, and note where the
+    macro body used it."""
+    pending = resolver.current_scope.macro_argument(name)
+    if pending is None:
+        return
+    argument, note = pending
+    position = use.position
+    if position is not None and position.file is not None:
+        note = f"{note}, used at {position.file.filename}:{position.line + 1}"
+    try:
+        eval_expression(argument, resolver)
+    except SymbolNotDefined as inner:
+        inner.note = inner.note or note
         raise
 
 

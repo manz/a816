@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from a816.error_codes import E_CODEGEN_UNMAPPED_BANK
 from a816.errors import SourceLocation, format_error
-from a816.exceptions import A816Error, UnmappedBankError
+from a816.exceptions import A816Error, SymbolNotDefined, UnmappedBankError
 from a816.parse.tokens import Token
+
+if TYPE_CHECKING:
+    from a816.symbols import Scope
 
 
 class UnknownOpcodeError(Exception):
@@ -82,4 +87,18 @@ def unmapped_bank_error(exc: UnmappedBankError, file_info: Token | None) -> Node
         file_info,
         code=str(E_CODEGEN_UNMAPPED_BANK),
         hint=f"mapped banks: {exc.mapped_ranges()}; add a `.map` region or move the placement",
+    )
+
+
+def undefined_symbol_error(error: SymbolNotDefined, fallback: Token | None, scope: Scope) -> NodeError:
+    """E0200 for `error`, located on the term that named the symbol."""
+    from a816.diagnostics.suggest import did_you_mean_hint
+    from a816.error_codes import E_SYMBOL_NOT_DEFINED
+
+    hints = [hint for hint in (error.note, did_you_mean_hint(str(error), scope)) if hint]
+    return NodeError(
+        f"`{error}` is not defined in the current scope",
+        error.token or fallback,
+        code=str(E_SYMBOL_NOT_DEFINED),
+        hint="; ".join(hints) or None,
     )

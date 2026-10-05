@@ -8,12 +8,15 @@ from typing import cast
 from a816.cpu.cpu_65c816 import BlockMoveOpcode, NoOpcodeForOperandSize, Opcode, guess_value_size, snes_opcode_table
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
-from a816.diagnostics.suggest import did_you_mean_hint as _did_you_mean_hint
-from a816.error_codes import E_CODEGEN_BRANCH_RANGE, E_CODEGEN_BRANCH_UNMAPPED
+from a816.error_codes import E_CODEGEN_BRANCH_RANGE, E_CODEGEN_BRANCH_UNMAPPED, E_CODEGEN_UNDECIDABLE_SIZE
 from a816.error_codes import E_CODEGEN_IMMEDIATE_OVERFLOW as _E_IMMEDIATE_OVERFLOW
-from a816.error_codes import E_SYMBOL_NOT_DEFINED as _E_SYMBOL_NOT_DEFINED
-from a816.exceptions import BranchOutOfRangeError, BranchTargetUnmappedError, SymbolNotDefined
-from a816.parse.nodes.errors import NodeError, format_node_warning
+from a816.exceptions import (
+    BranchOutOfRangeError,
+    BranchTargetUnmappedError,
+    SymbolNotDefined,
+    UndecidableOperandSizeError,
+)
+from a816.parse.nodes.errors import NodeError, format_node_warning, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
 from a816.protocols import NodeBase, OpcodeProtocol, ValueNodeProtocol
@@ -86,6 +89,8 @@ class OpcodeNode(NodeBase):
             )
         try:
             emitted = opcode_emitter.emit(self.value_node, self.resolver, self.size)
+        except UndecidableOperandSizeError as undecidable:
+            raise self._undecidable_size_error(undecidable, opcode_emitter) from undecidable
         except NoOpcodeForOperandSize as size_error:
             assert self.value_node is not None
             guessed_size = guess_value_size(self.value_node, self.size)
@@ -94,12 +99,7 @@ class OpcodeNode(NodeBase):
                 self.file_info,
             ) from size_error
         except SymbolNotDefined as undefined:
-            raise NodeError(
-                f"`{undefined}` is not defined in the current scope",
-                undefined.token or self.file_info,
-                code=str(_E_SYMBOL_NOT_DEFINED),
-                hint=_did_you_mean_hint(str(undefined), self.resolver.current_scope),
-            ) from undefined
+            raise undefined_symbol_error(undefined, self.file_info, self.resolver.current_scope) from undefined
         except BranchOutOfRangeError as out_of_range:
             raise NodeError(
                 str(out_of_range),
@@ -131,7 +131,7 @@ class OpcodeNode(NodeBase):
         if self.addressing_mode is not AddressingMode.immediate or not isinstance(emitter, Opcode):
             return
         assert self.value_node is not None
-        if guess_value_size(self.value_node, self.size, self.resolver, emitter.is_a, emitter.is_x) != "b":
+        if emitter.value_size(self.value_node, self.size, self.resolver) != "b":
             return
         value = self.value_node.get_value()
         if not isinstance(value, int) or value >> 8 in (0, -1):
@@ -167,7 +167,7 @@ class OpcodeNode(NodeBase):
             return
         register, bits = known
         assert self.value_node is not None
-        emitted = guess_value_size(self.value_node, self.size, self.resolver, emitter.is_a, emitter.is_x)
+        emitted = emitter.value_size(self.value_node, self.size, self.resolver)
         expected = "b" if bits == 8 else "w"
         if emitted == expected:
             return
@@ -215,7 +215,22 @@ class OpcodeNode(NodeBase):
     def pc_after(self, current_pc: Address) -> Address:
         self._maybe_update_register_sizes()
         opcode_emitter = self._get_emitter()
-        return current_pc + opcode_emitter.supposed_length(self.value_node, self.size, self.resolver)
+        try:
+            return current_pc + opcode_emitter.supposed_length(self.value_node, self.size, self.resolver)
+        except UndecidableOperandSizeError as undecidable:
+            raise self._undecidable_size_error(undecidable, opcode_emitter) from undecidable
+
+    def _undecidable_size_error(self, error: UndecidableOperandSizeError, emitter: object) -> NodeError:
+        """`jmp target` with `target` placed by another module: which form to
+        emit depends on where the linker puts it, so the source must say."""
+        sizes = emitter.encodable_sizes() if isinstance(emitter, Opcode) else []
+        forms = [f"`{self.opcode}.{size}`" for size in sizes]
+        return NodeError(
+            f"`{self.opcode}`: {error}",
+            self._operand_token(),
+            code=str(E_CODEGEN_UNDECIDABLE_SIZE),
+            hint=f"write the size: {' or '.join(forms)}" if forms else None,
+        )
 
     def _maybe_update_register_sizes(self) -> None:
         """`rep`/`sep` change M/X at runtime; the assembler-time analog

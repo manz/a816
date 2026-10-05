@@ -165,8 +165,10 @@ def generate_macro_application(
             else:
                 resolver.current_scope.add_symbol(arg, eval_expression(value, resolver))
         except SymbolNotDefined:
-            # Defer the resolve to the emit part.
+            # Defer the resolve to the emit part; if it never resolves, the
+            # error names the argument at the call, not the parameter.
             code.append(SymbolNode(arg, value, resolver))
+            resolver.current_scope.macro_arguments[arg] = (value, f"passed to `{node.name}` as `{arg}`")
         except (ExternalExpressionReference, ExternalSymbolReference) as e:
             # Macro argument expression references externs; treat the bound
             # name as an alias locally. Do NOT publish to the object writer:

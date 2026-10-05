@@ -127,6 +127,11 @@ separate blocks separated by a blank line.
   `%` evaluated to 0; the caret points at the operator. In a relocation
   resolved at link time the linker reports `cannot evaluate expression`
   with reason `division by zero`.
+- `E0313` an unsized operand names a symbol resolved at link (`jmp target`
+  with `target` from another module): its value is unknown at compile time,
+  so the form can't be chosen. Write the size; the hint lists the forms the
+  opcode has (`jmp.w` in the same bank, `jmp.l` across). Register-sized
+  immediates and single-form opcodes (`pea`, `rep`) need none.
 - `E0315` branch target out of range: the displacement does not fit
   the branch's signed 8-bit (`bra`, `bne`, ...) or 16-bit (`brl`)
   offset. The caret sits on the target.

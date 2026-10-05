@@ -3,7 +3,12 @@ import typing
 import warnings
 
 from a816.cpu.types import AddressingMode, RomType, ValueSize
-from a816.exceptions import BranchOutOfRangeError, BranchTargetUnmappedError, MissingOperandError
+from a816.exceptions import (
+    BranchOutOfRangeError,
+    BranchTargetUnmappedError,
+    MissingOperandError,
+    UndecidableOperandSizeError,
+)
 from a816.protocols import OpcodeBase, OpcodeProtocol, ValueNodeProtocol
 
 if typing.TYPE_CHECKING:  # pragma: nocover
@@ -124,7 +129,14 @@ def guess_value_size(
         if is_x and resolver.i_size == 16:
             return "w"
 
-    return value_node.get_operand_size()
+    operand_size = value_node.get_operand_size()
+    # An extern evaluates to 0 until link; its magnitude says nothing. An
+    # A/X immediate is sized by the register width (8-bit here: the 16-bit
+    # cases returned above), anything else needs an explicit suffix.
+    external = getattr(value_node, "external_symbols", None)
+    if external and not (is_a or is_x):
+        raise UndecidableOperandSizeError(external)
+    return operand_size
 
 
 class Opcode(OpcodeBase):
@@ -181,8 +193,31 @@ class Opcode(OpcodeBase):
         if value_node is None:
             raise MissingOperandError(f"opcode (def: {self.opcode_def})")
 
-        value_size = guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
+        value_size = self.value_size(value_node, size, resolver)
         return 2 + self.size_opcode_map[value_size]
+
+    def encodable_sizes(self) -> list[ValueSize]:
+        """The operand sizes this opcode has a form for."""
+        sizes: list[ValueSize] = ["b", "w", "l"]
+        return [size for size in sizes if self._slot(size) is not None]
+
+    def _slot(self, size: str) -> int | None:
+        index = self.size_opcode_map[size]
+        return self.opcode_def[index] if index < len(self.opcode_def) else None
+
+    def value_size(
+        self, value_node: "ValueNodeProtocol", size: ValueSize | None, resolver: "Resolver | None"
+    ) -> ValueSize:
+        """`guess_value_size`, except that a link-time operand of an opcode
+        with a single form (`rep #ext`, `pea ext`) takes that form: only a
+        real choice needs the source to spell it."""
+        try:
+            return guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
+        except UndecidableOperandSizeError:
+            forms = self.encodable_sizes()
+            if len(forms) == 1:
+                return forms[0]
+            raise
 
     def get_opcode_byte(self, value_size: str) -> int:
         try:
@@ -203,7 +238,7 @@ class Opcode(OpcodeBase):
         if value_node is None:
             raise MissingOperandError(f"opcode (def: {self.opcode_def})")
 
-        value_size = guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
+        value_size = self.value_size(value_node, size, resolver)
         opcode_byte = self.get_opcode_byte(value_size)
 
         operand_bytes = self.emit_value(value_node, value_size)
