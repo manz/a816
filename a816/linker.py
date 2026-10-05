@@ -43,6 +43,7 @@ class Linker:
         self.linked_symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
         # First GLOBAL address per name, mirroring `linked_symbols` order.
         self._global_addresses: dict[str, int] = {}
+        self._global_owners: dict[str, ObjectFile] = {}  # first definer of each GLOBAL, for E0400
         # (final_address, section_idx, symbol_name, RelocationType)
         self._linked_relocations: list[tuple[int, int, str, RelocationType]] = []
         # (final_address, section_idx, expression, size_bytes)
@@ -431,7 +432,7 @@ class Linker:
             return
         final_address = self._final_address(name, section, address, delta, obj_file, obj_idx)
         if symbol_type == SymbolType.GLOBAL:
-            self._register_global_symbol(name, final_address, section)
+            self._register_global_symbol(name, final_address, section, obj_file)
             return
         if symbol_type == SymbolType.LOCAL:
             self._register_local_symbol(name, final_address, section)
@@ -458,7 +459,7 @@ class Linker:
         pool_delta = self._pool_delta_for_symbol(obj_file, obj_idx, name, address)
         return address + (pool_delta if pool_delta is not None else delta)
 
-    def _register_global_symbol(self, name: str, final_address: int, section: SymbolSection) -> None:
+    def _register_global_symbol(self, name: str, final_address: int, section: SymbolSection, owner: ObjectFile) -> None:
         # Only treat as duplicate when an existing GLOBAL claims the
         # same name AND resolves to a DIFFERENT address. Two .o's
         # exporting the same name at the same final address happens
@@ -473,11 +474,13 @@ class Linker:
         existing = self._existing_global_address(name)
         if existing is not None:
             if existing != final_address:
-                raise DuplicateSymbolError(name)
+                first = self._global_owners[name].describe()
+                raise DuplicateSymbolError(name, [(first, existing), (owner.describe(), final_address)])
             return
         self.symbol_map[name] = final_address
         self.linked_symbols.append((name, final_address, SymbolType.GLOBAL, section))
         self._global_addresses.setdefault(name, final_address)
+        self._global_owners.setdefault(name, owner)
 
     def _existing_global_address(self, name: str) -> int | None:
         return self._global_addresses.get(name)

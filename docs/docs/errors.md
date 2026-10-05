@@ -155,7 +155,8 @@ separate blocks separated by a blank line.
 
 ### Linker
 
-- `E0400` duplicate global symbol.
+- `E0400` duplicate global symbol. Names each definition: the defining
+  module (its source, or its object for a constant-only module) and value.
 - `E0401` unresolved external symbol.
 - `E0402` relocation out of range.
 - `E0403` relocation expression failed.
