@@ -524,14 +524,16 @@ class Resolver:
     def _export_name(name: str, scope: "Scope", idx: int, mangle_nested: bool) -> str:
         """Compute the exported name for a label/symbol in `scope`.
 
-        Already-dotted names (e.g. `shops.gils` re-published by
-        `_publish_named_dotted`) pass through unchanged so we don't
-        double-prefix. Bare names inside a NamedScope get the scope's
-        name as a prefix to avoid bare-name collisions across modules.
+        Names already carrying the scope's prefix (e.g. `shops.gils`
+        re-published by `_publish_named_dotted`) pass through unchanged so
+        we don't double-prefix. Every other name inside a NamedScope gets
+        the scope's name as a prefix, relative dotted ones included (a
+        struct's bit-field `lo.mask` exports as `T.lo.mask`, never bare),
+        to avoid bare-name collisions across modules.
         Anonymous nested scopes opt into the `__sc<idx>__` mangle when
         `mangle_nested` is set.
         """
-        if isinstance(scope, NamedScope) and "." not in name:
+        if isinstance(scope, NamedScope) and not name.startswith(f"{scope.name}."):
             return f"{scope.name}.{name}"
         # AllocBodyScope keeps PUBLIC (non-underscore) labels bare so
         # cross-alloc refs + `.extern` resolve them by their source name.
