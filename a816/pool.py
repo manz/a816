@@ -257,7 +257,7 @@ class Pool:
         )
         for alloc in sorted(pinned, key=lambda a: a.pinned_addr):
             alloc.addr = alloc.pinned_addr
-            free = _carve(alloc, free, self.ranges, self.name)
+            free = _carve(alloc, free, self.ranges, self.name, self.contiguous)
             free_total = sum(r.size for r in free)
             logger.info(
                 "  pinned %s size %d at 0x%06x  (free: %d bytes across %d range(s))",
@@ -430,7 +430,13 @@ def _take(free: list[PoolRange], idx: int, start: int, size: int) -> list[PoolRa
     return [*free[:idx], *head, *_shrink_chunk([rest], 0, size), *free[idx + 1 :]]
 
 
-def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:
+def _carve(
+    alloc: Allocation,
+    free: list[PoolRange],
+    ranges: list[PoolRange],
+    pool_name: str,
+    contiguous: Callable[[int, int], bool] | None = None,
+) -> list[PoolRange]:
     span_start = alloc.addr
     span_end = alloc.addr + alloc.size - 1
     for idx, chunk in enumerate(free):
@@ -444,6 +450,10 @@ def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], po
             out.append(PoolRange(start=span_end + 1, end=chunk.end, allow_bank_cross=chunk.allow_bank_cross))
         out.extend(free[idx + 1 :])
         return out
+    if alloc.cross_bank and contiguous is not None:
+        carved = _carve_across_edges(alloc, free, contiguous)
+        if carved is not None:
+            return carved
     # No free chunk contains the span. If a declared pool range does contain it,
     # the conflict is with another (already-carved) allocation; otherwise the
     # address simply lies outside the pool.
@@ -455,6 +465,17 @@ def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], po
     raise PoolInvalidRangeError(
         f"pinned alloc '{alloc.name}' 0x{span_start:06x}..0x{span_end:06x} is outside the ranges of pool '{pool_name}'"
     )
+
+
+def _carve_across_edges(
+    alloc: Allocation, free: list[PoolRange], contiguous: Callable[[int, int], bool]
+) -> list[PoolRange] | None:
+    """A pinned cross_bank span: from the chunk holding `alloc.addr`, on
+    through contiguous chunks."""
+    for idx, chunk in enumerate(free):
+        if chunk.start <= alloc.addr <= chunk.end:
+            return _span_from(free, idx, alloc.addr, alloc.size, contiguous)
+    return None
 
 
 def _shrink_chunk(free: list[PoolRange], idx: int, used: int) -> list[PoolRange]:

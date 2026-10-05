@@ -201,8 +201,9 @@ class ReserveAstNode(AstNode):
 
 
 class ReserveTypedAstNode(AstNode):
-    """`.reserve NAME as TYPE in POOL`: reserve sizeof(TYPE) in a bss pool and
-    publish NAME plus NAME.<field> at the allocator-assigned address."""
+    """`.reserve NAME as TYPE [at ADDR] in POOL`: reserve sizeof(TYPE) in a bss
+    pool and publish NAME plus NAME.<field> at the allocator-assigned (or
+    pinned) address."""
 
     name: str
     type_name: str
@@ -217,8 +218,10 @@ class ReserveTypedAstNode(AstNode):
         *,
         type_token: Token | None = None,
         pool_token: Token | None = None,
+        at_address: ExpressionAstNode | None = None,
     ):
         super().__init__("reserve_typed", file_info)
+        self.at_address = at_address
         self.name = name
         self.type_name = type_name
         self.pool_name = pool_name
@@ -230,7 +233,8 @@ class ReserveTypedAstNode(AstNode):
         return self.kind, self.name, self.type_name, self.pool_name
 
     def to_canonical(self) -> str:
-        return f".reserve {self.name} as {self.type_name} in {self.pool_name}"
+        at = f" at {self.at_address.to_canonical()}" if self.at_address is not None else ""
+        return f".reserve {self.name} as {self.type_name}{at} in {self.pool_name}"
 
 
 class TableAstNode(AstNode):

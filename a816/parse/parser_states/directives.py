@@ -733,11 +733,37 @@ def _parse_alloc_flags(p: Parser) -> tuple[bool, ExpressionAstNode | None]:
 
 
 def _parse_pinned_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Token, *, name: str | None) -> AllocAstNode:
-    """Common tail for the two pinned alloc shapes: ADDR [size N] { body }."""
+    """Common tail for the pinned shapes: ADDR [size N] { body }, or
+    ADDR in POOL [cross_bank] [align N] { body }: pinned inside a pool, which
+    carves the span out before placing its floating allocs."""
     at_address = parse_expression(p)
     at_size = _parse_optional_size_clause(p)
+    pool_token: Token | None = None
+    cross_bank, align = False, None
+    if p.current().type == TokenType.IDENTIFIER and p.current().value == "in":
+        in_token = p.next()
+        if at_size is not None:
+            raise ParserSyntaxError(
+                "`size N` and `in POOL` don't combine: the pool bounds the alloc",
+                in_token,
+                code=str(E_PARSER_UNEXPECTED_TOKEN),
+            )
+        pool_token = p.next()
+        expect_token(pool_token, TokenType.IDENTIFIER)
+        cross_bank, align = _parse_alloc_flags(p)
     body, close = _parse_alloc_body(p, parse_block)
-    return AllocAstNode(name, None, body, keyword, at_address=at_address, at_size=at_size, close_token=close)
+    return AllocAstNode(
+        name,
+        pool_token.value if pool_token is not None else None,
+        body,
+        keyword,
+        at_address=at_address,
+        at_size=at_size,
+        pool_token=pool_token,
+        close_token=close,
+        cross_bank=cross_bank,
+        align=align,
+    )
 
 
 def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
@@ -762,6 +788,10 @@ def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
         p.next()  # consume `as`
         type_token = p.next()
         expect_token(type_token, TokenType.IDENTIFIER)
+        typed_at: ExpressionAstNode | None = None
+        if p.current().type == TokenType.IDENTIFIER and p.current().value == "at":
+            p.next()  # consume `at`
+            typed_at = parse_expression(p)
         _expect_contextual_keyword(p, "in")
         pool_token = p.next()
         expect_token(pool_token, TokenType.IDENTIFIER)
@@ -772,6 +802,7 @@ def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
             keyword,
             type_token=type_token,
             pool_token=pool_token,
+            at_address=typed_at,
         )
 
     size_expr = parse_expression(p)

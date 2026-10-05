@@ -133,7 +133,7 @@ class AllocAstNode(AstNode):
             size = f" size {self.at_size.to_canonical()}" if self.at_size else ""
             # Pinned *inside* a named pool (`.reserve NAME SIZE at ADDR in POOL`)
             # keeps the `in POOL` tail; anonymous pins drop it.
-            tail = f" in {self.pool_name}" if self.pool_name else ""
+            tail = f" in {self.pool_name}{self.flags_suffix()}" if self.pool_name else ""
             return f".alloc {head}at {addr}{size}{tail} {{\n{body}\n}}"
         return f".alloc {head}in {self.pool_name}{self.flags_suffix()} {{\n{body}\n}}"
 

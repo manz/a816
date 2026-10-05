@@ -224,6 +224,29 @@ Legacy `*= ADDR` directives still work and have the same effect;
 the fluff rule `UP001` plus `a816 fix --select UP001 --unsafe-fixes`
 rewraps them mechanically when you're ready to migrate.
 
+### `.alloc NAME at ADDR in POOL [cross_bank] [align N] { body }`
+
+Pinned *inside* a pool: the pool carves the pinned span out before it
+places its floating allocs, so they pack around it. A plain
+`.alloc at` next to a pool is invisible to the allocator; only the
+write audit would catch a collision.
+
+```ca65
+.pool upper_gap { range 0x500000 0x5cffff  strategy pack }
+
+.alloc dialogue_stream at 0x500000 in upper_gap cross_bank {
+    .incbin "assets/stream.dat"      ; runs over several banks
+}
+.alloc keep_font in upper_gap {      ; packs behind the stream
+    .incbin "assets/keep_font.dat"
+}
+```
+
+With `cross_bank` the pinned span may run on through contiguous
+banks. `size N` doesn't combine with `in POOL`: the pool already
+bounds the block. Two pins that overlap, or a pin off its `align`
+boundary, are errors.
+
 ### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
 
 ```ca65

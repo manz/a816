@@ -343,7 +343,12 @@ def generate_reserve_typed(
 
     resolver.typed_instances[node.name] = node.type_name
     alloc = AllocAstNode(
-        node.name, node.pool_name, BlockAstNode(body, file_info), file_info, pool_token=node.pool_token
+        node.name,
+        node.pool_name,
+        BlockAstNode(body, file_info),
+        file_info,
+        pool_token=node.pool_token,
+        at_address=node.at_address,
     )
     return generate_alloc(alloc, resolver, macro_definitions, file_info)
 

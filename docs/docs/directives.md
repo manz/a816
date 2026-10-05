@@ -574,8 +574,8 @@ address; nothing is emitted into the image.
   other allocation (pinned or floating), then carves it out. Use for fixed
   memory maps (VRAM, MMIO mirrors) where the address is the contract but
   you still want overlap checking across the whole layout.
-* `.reserve NAME as TYPE in POOL`: reserves `sizeof(TYPE)` and publishes
-  `NAME.<field>` at each struct offset.
+* `.reserve NAME as TYPE [at ADDR] in POOL`: reserves `sizeof(TYPE)` and publishes
+  `NAME.<field>` at each struct offset; `at ADDR` pins it like the flat form.
 
 ```ca65
 .pool vram { bss  range 0x0000 0x7fff  strategy order }
