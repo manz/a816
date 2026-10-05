@@ -5,13 +5,14 @@ ascii/text/incbin/table/.aN/.iN)."""
 from __future__ import annotations
 
 import ast
-import os
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
+from a816.build_inputs import record_miss, recording_misses, replay_misses
 from a816.error_codes import (
     E_PARSER_ISTRUCT_DUPLICATE_FIELD,
     E_PARSER_ISTRUCT_STRING_IN_LIST,
@@ -436,17 +437,19 @@ def _resolve_include_path(p: Parser, keyword: Token, include_path: str) -> str:
             candidate = parent_dir / include_path
             if candidate.exists():
                 return str(candidate)
+            record_miss(candidate)
 
     for search_dir in p.include_paths or []:
         candidate = search_dir / include_path
         if candidate.exists():
             return str(candidate)
+        record_miss(candidate)
 
     return include_path  # let the eventual open() raise the canonical error
 
 
-#: (resolved path, search paths) -> (file stamp, parsed body).
-_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[tuple[int, int], list[AstNode]]] = {}
+#: (resolved path, search paths) -> (content hash, parsed body, lookup misses of its nested includes).
+_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[str, list[AstNode], set[str]]] = {}
 
 
 def clear_include_ast_cache() -> None:
@@ -454,14 +457,16 @@ def clear_include_ast_cache() -> None:
     _INCLUDE_AST_CACHE.clear()
 
 
-def _include_stamp(resolved_path: str) -> tuple[int, int] | None:
-    """Identity of the file on disk, or None when it cannot be stat'd (in
-    which case the include is parsed fresh and never cached)."""
+def _include_stamp(resolved_path: str) -> str | None:
+    """Hash of the file's bytes, or None when it cannot be read (in which case
+    the include is parsed fresh and never cached). Content, not mtime and
+    size: an edit that keeps both (same size, inside one mtime granule) would
+    otherwise serve the old parse to a long-running process."""
     try:
-        stat = os.stat(resolved_path)
+        with open(resolved_path, "rb") as fd:
+            return hashlib.sha256(fd.read()).hexdigest()
     except OSError:
         return None
-    return stat.st_mtime_ns, stat.st_size
 
 
 def _parse_include_file(resolved_path: str, include_paths: list[Path]) -> list[AstNode]:
@@ -490,12 +495,17 @@ def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode
     if stamp is not None:
         cached = _INCLUDE_AST_CACHE.get(key)
         if cached is not None and cached[0] == stamp:
+            # The nested includes were not resolved again: report what
+            # resolving them found missing, for the build cache.
+            replay_misses(cached[2])
             return cached[1]
-    sub_ast = _parse_include_file(resolved_path, include_paths)
+    with recording_misses() as misses:
+        sub_ast = _parse_include_file(resolved_path, include_paths)
+    replay_misses(misses)
     if stamp is not None:
         # Keyed per file, so the cache stays the size of the project rather
         # than growing with every edit.
-        _INCLUDE_AST_CACHE[key] = (stamp, sub_ast)
+        _INCLUDE_AST_CACHE[key] = (stamp, sub_ast, misses)
     return sub_ast
 
 

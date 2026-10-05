@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from a816.object_file import BusMapping
     from a816.program import Program
 
+from a816.build_cache import BuildCache, BuildSettings, ModuleInputs
+from a816.build_inputs import recording_misses
 from a816.config import discover_a816_config, merge_build_settings
 from a816.exceptions import A816Error
 from a816.linker import Linker
@@ -27,15 +29,6 @@ from a816.parse.ast.nodes import (
 from a816.parse.mzparser import A816Parser, ParserResult
 
 logger = logging.getLogger("a816.module_builder")
-
-# `.deps` sidecar lines recording the experimental flags / a816.toml bus
-# regions an object was built with.
-_EXPERIMENTAL_PREFIX = "experimental:"
-_BUS_MAP_PREFIX = "bus-map:"
-_CONFIG_PREFIXES = (_EXPERIMENTAL_PREFIX, _BUS_MAP_PREFIX)
-# `.deps` sidecar line caching the module's `.import` names, so a warm build
-# can rebuild the import graph without re-parsing unchanged modules.
-_IMPORTS_PREFIX = "imports:"
 
 
 @dataclass
@@ -113,6 +106,7 @@ class ModuleBuilder:
         include_paths: list[Path] | None = None,
         experimental: list[str] | None = None,
         bus_map: "list[BusMapping] | None" = None,
+        use_cache: bool = True,
     ) -> None:
         """Initialize the module builder.
 
@@ -123,6 +117,7 @@ class ModuleBuilder:
             include_paths: Directories to search for .include files.
             experimental: Experimental feature flags applied to every module compile.
             bus_map: Bus regions seeded onto every module's bus.
+            use_cache: Reuse up-to-date objects from `output_dir` (False compiles every module).
         use_a816_toml: Merge the nearest `a816.toml` above `main_source`
             under the arguments above (`merge_build_settings`), so an API
             build matches `a816 build`. Pass False for a bare build.
@@ -139,6 +134,11 @@ class ModuleBuilder:
         # so compile reuses the AST instead of scanning + parsing twice.
         self._parsed: dict[str, ParserResult] = {}
         self._imports: dict[str, list[str]] = {}
+        # Lookups that missed while parsing a module during discovery: the
+        # compile reuses that AST, so they belong to the module's inputs.
+        self._discovery_misses: dict[str, set[str]] = {}
+        settings = BuildSettings(self.symbols, self.experimental, self.bus_map, self.include_paths, self.module_paths)
+        self.cache = BuildCache(self.output_dir, settings, enabled=use_cache)
 
     def discover_imports(self, source_file: Path, parsed_nodes: list[AstNode] | None = None) -> None:
         """Recursively discover all imports starting from a source file.
@@ -185,22 +185,21 @@ class ModuleBuilder:
         cached = self._cached_imports(module_name)
         if cached is not None:
             return cached
-        parsed = A816Parser.parse_as_ast(
-            source_path.read_text(encoding="utf-8"),
-            str(source_path),
-            include_paths=list(dict.fromkeys(self.include_paths)),
-            verbose_errors=True,
-        )
+        with recording_misses() as misses:
+            parsed = A816Parser.parse_as_ast(
+                source_path.read_text(encoding="utf-8"),
+                str(source_path),
+                include_paths=list(dict.fromkeys(self.include_paths)),
+                verbose_errors=True,
+            )
         self._parsed[module_name] = parsed
+        self._discovery_misses[module_name] = misses
         return self._collect_imports(parsed.nodes)
 
     def _cached_imports(self, module_name: str) -> list[str] | None:
         if self._needs_recompilation(module_name):
             return None
-        for line in self._deps_path(module_name).read_text(encoding="utf-8").splitlines():
-            if line.startswith(_IMPORTS_PREFIX):
-                return [name for name in line.removeprefix(_IMPORTS_PREFIX).split(",") if name]
-        return None
+        return self.cache.imports(self._get_obj_path(module_name))
 
     def _collect_imports(self, nodes: list[AstNode]) -> list[str]:
         """Collect all import names from AST nodes."""
@@ -224,58 +223,13 @@ class ModuleBuilder:
         return resolve_module(module_name, ".s", self.module_paths)
 
     def _needs_recompilation(self, module_name: str) -> bool:
-        """Whether a module's own files changed since its `.o` was built.
-
-        Dirty when the object is missing, its dependency sidecar is missing
-        (so a pre-feature `.o` rebuilds once), the cached object was built from
-        a different source path (object names like `__main__` collide across
-        unrelated builds sharing one `--obj-dir`), or any recorded dependency
-        (the source, an `.include`d file, or an `.incbin`/`.table` asset) is
-        missing or newer than the object. Import-graph propagation (a
-        dependency *module* recompiling) is handled by the caller in `build`,
-        which walks modules dependencies-first.
-
-        Args:
-            module_name: The module name
-
-        Returns:
-            True if the module needs recompilation.
-        """
+        """Whether a module's own inputs changed since its `.o` was built:
+        its files, the lookups that missed, the build settings and the object
+        format (`BuildCache.inputs_fresh`). Imports are judged by key in
+        `build`, once every importee's key is known."""
         if module_name not in self.graph.modules:
             return True
-
-        obj_path = self._get_obj_path(module_name)
-        if not obj_path.exists():
-            return True
-        # Built by a toolchain with another object format: rebuild, don't fail to load it.
-        if ObjectFile.read_version(str(obj_path)) != ObjectFile.VERSION:
-            return True
-
-        deps_path = self._deps_path(module_name)
-        if not deps_path.exists():
-            return True
-
-        lines = [line for line in deps_path.read_text(encoding="utf-8").splitlines() if line]
-        config = [line for line in lines if line.startswith(_CONFIG_PREFIXES)]
-        if config != self._config_lines():
-            return True
-        deps = [line for line in lines if not line.startswith((*_CONFIG_PREFIXES, _IMPORTS_PREFIX))]
-        # The source that built this object is recorded in its sidecar; if the
-        # current source path isn't there, the object belongs to a different
-        # file that mapped to the same module name, so rebuild.
-        if os.path.abspath(str(self.graph.modules[module_name])) not in deps:
-            return True
-
-        obj_mtime = obj_path.stat().st_mtime
-        for dep in deps:
-            dep_file = Path(dep)
-            # NOSONAR python:S6776: `dep` is a816's own cache metadata that this
-            # process wrote to build/obj, not untrusted input, and the CLI runs
-            # with the invoking developer's own filesystem rights. There is no
-            # trust boundary to oracle across, so the path-from-data flow is safe.
-            if not dep_file.exists() or dep_file.stat().st_mtime > obj_mtime:  # NOSONAR
-                return True
-        return False
+        return not self.cache.inputs_fresh(self._get_obj_path(module_name), self.graph.modules[module_name])
 
     def _get_obj_path(self, module_name: str) -> Path:
         """Get the object file path for a module."""
@@ -283,46 +237,11 @@ class ModuleBuilder:
         obj_name = module_name.replace("/", "_") + ".o"
         return self.output_dir / obj_name
 
-    def _deps_path(self, module_name: str) -> Path:
-        """Sidecar listing every file a module's `.o` was built from."""
-        return self._get_obj_path(module_name).with_suffix(".deps")
-
-    def _write_deps(self, module_name: str, source_path: Path, obj: ObjectFile, asset_files: set[str]) -> None:
-        """Record the module's dependency set next to its `.o`.
-
-        The set unions the source, every file in the object's source-file
-        table (the module plus its `.include`s), and the asset paths the
-        resolver collected (`.incbin` / `.table`). Stored as absolute paths,
-        one per line, so the next build can stat them directly.
-        """
-        deps = {os.path.abspath(str(source_path))}
-        deps.update(os.path.abspath(f) for f in obj.files)
-        deps.update(asset_files)
-        imports = [_IMPORTS_PREFIX + ",".join(self._imports.get(module_name, []))]
-        lines = self._config_lines() + imports + sorted(deps)
-        self._deps_path(module_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    def _config_lines(self) -> list[str]:
-        """Sidecar lines pinning the build settings the `.o` was compiled under.
-
-        Experimental flags change codegen (e.g. `track_register_size` widens
-        immediates) and the a816.toml bus regions are serialized into every
-        `.o`, so changing either must invalidate every cached object.
-        """
-        lines = [_EXPERIMENTAL_PREFIX + ",".join(self.experimental)] if self.experimental else []
-        if self.bus_map:
-            lines.append(_BUS_MAP_PREFIX + ";".join(repr(m.shape()) for m in self.bus_map))
-        return lines
-
     def _compile_module(
         self, module_name: str, source_path: Path, obj_path: Path, constants: dict[str, int]
-    ) -> set[str]:
-        """Compile one module to its `.o`; return the asset paths it read.
-
-        The returned set (absolute `.incbin` / `.table` paths) is folded into
-        the dependency sidecar by the caller so editing an asset invalidates
-        the cache.
-        """
+    ) -> tuple[set[str], set[str]]:
+        """Compile one module to its `.o`; return the asset paths it read
+        (absolute `.incbin` / `.table` paths) and the lookups that missed."""
         from a816.program import Program
 
         logger.info(f"Compiling {module_name}: {source_path} -> {obj_path}")
@@ -346,10 +265,34 @@ class ModuleBuilder:
             # re-publish them here - otherwise every downstream `.o` gains
             # a duplicate GLOBAL and the linker rejects the build.
             program.resolver.imported_symbol_names.add(name)
-        result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
+        with recording_misses() as misses:
+            result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
         if result != 0:
             raise RuntimeError(f"Failed to compile module '{module_name}'")
-        return set(program.resolver.dependency_files)
+        return set(program.resolver.dependency_files), misses | self._discovery_misses.pop(module_name, set())
+
+    def _build_module(self, module_name: str, keys: dict[str, str], constants: dict[str, int]) -> ObjectFile:
+        """Reuse or compile one module; record its key in `keys`.
+
+        Its `.o` bakes in the exported constants of what it imports, so it is
+        reused only when its own inputs are unchanged and every import still
+        has the key it was compiled against. Compilation order is
+        dependencies-first, so every import's key is already known, and a
+        change anywhere upstream reaches every importer through the keys.
+        """
+        source_path = self.graph.modules[module_name]
+        obj_path = self._get_obj_path(module_name)
+        imports = self._imports.get(module_name, [])
+        import_keys = {name: keys[name] for name in imports if name in keys}
+        if self.cache.fresh(obj_path, source_path, import_keys):
+            logger.info(f"Module {module_name} is up to date")
+            keys[module_name] = self.cache.key(obj_path) or ""
+            return ObjectFile.from_file(str(obj_path))
+        asset_files, misses = self._compile_module(module_name, source_path, obj_path, constants)
+        obj = ObjectFile.from_file(str(obj_path))
+        files = {os.path.abspath(str(source_path)), *(os.path.abspath(f) for f in obj.files), *asset_files}
+        keys[module_name] = self.cache.record(obj_path, ModuleInputs(files, misses, imports, import_keys))
+        return obj
 
     @staticmethod
     def _accumulate_constants(obj: ObjectFile, accumulated: dict[str, int]) -> None:
@@ -373,24 +316,9 @@ class ModuleBuilder:
 
         object_files: list[ObjectFile] = []
         accumulated_constants: dict[str, int] = {}
-        recompiled: set[str] = set()
+        keys: dict[str, str] = {}
         for module_name in compilation_order:
-            source_path = self.graph.modules[module_name]
-            obj_path = self._get_obj_path(module_name)
-            # A module must rebuild when its own files changed OR when any
-            # module it imports recompiled, since its `.o` bakes in the importee's
-            # exported constants, so a stale `.o` would carry old values.
-            # Compilation order is dependencies-first, so a direct check
-            # against `recompiled` is transitive.
-            dep_recompiled = any(dep in recompiled for dep in self.graph.dependencies.get(module_name, set()))
-            if dep_recompiled or self._needs_recompilation(module_name):
-                asset_files = self._compile_module(module_name, source_path, obj_path, accumulated_constants)
-                recompiled.add(module_name)
-                obj = ObjectFile.from_file(str(obj_path))
-                self._write_deps(module_name, source_path, obj, asset_files)
-            else:
-                logger.info(f"Module {module_name} is up to date")
-                obj = ObjectFile.from_file(str(obj_path))
+            obj = self._build_module(module_name, keys, accumulated_constants)
             self._accumulate_constants(obj, accumulated_constants)
             object_files.append(obj)
 
@@ -447,6 +375,7 @@ def build_with_imports(
     mapping: str | None = None,
     bus_map: "list[BusMapping] | None" = None,
     use_a816_toml: bool = True,
+    use_cache: bool = True,
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
@@ -464,6 +393,7 @@ def build_with_imports(
         experimental: List of experimental feature flags to enable.
         mapping: `-m` ROM type used to translate addresses at link time.
         bus_map: `a816.toml` bus regions seeded onto every module's bus.
+        use_cache: Reuse up-to-date objects (False compiles every module: `--no-cache`).
 
     Returns:
         BuildResult with exit_code, symbol_map, diagnostics, and program.
@@ -496,6 +426,7 @@ def build_with_imports(
             include_paths=include_paths,
             experimental=experimental,
             bus_map=bus_map,
+            use_cache=use_cache,
         )
 
         linked = builder.build(main_source)

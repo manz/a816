@@ -525,6 +525,12 @@ class ObjectFile:
         return out
 
     @staticmethod
+    def identity() -> str:
+        """What an object's bytes depend on besides its sources: the build
+        cache rebuilds every object built under another identity."""
+        return f"format-{ObjectFile.VERSION}"
+
+    @staticmethod
     def read_version(filename: str) -> int | None:
         """Format version in an object's header, or None when the file isn't
         an a816 object. Reads the header only: the build cache uses it to
