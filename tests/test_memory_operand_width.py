@@ -11,9 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from a816.module_builder import build_with_imports
+from tests import BANK_40_MAP, build_rom
 
-_MAP = ".map identifier=1 bank_range=0x40, 0x7d addr_range=0x0000, 0xffff mask=0x10000\n"
 _WIDTHS = [".a8\n    .i8", ".a16\n    .i16", "rep #0x30", "sep #0x30"]
 
 # (instruction, bytes) whatever the A/X width.
@@ -35,20 +34,9 @@ _MEMORY = [
 
 
 def _emit(tmp_path: Path, width: str, line: str) -> str:
-    (tmp_path / "main.s").write_text(
-        _MAP + ".alloc c at 0x400000 {\n    " + width + "\n    " + line + "\n    .db 0xEE\n}\n"
-    )
-    out = tmp_path / "out.sfc"
-    result = build_with_imports(
-        tmp_path / "main.s",
-        out,
-        output_format="sfc",
-        output_dir=tmp_path / "obj",
-        use_a816_toml=False,
-        experimental=["track_register_size"],
-    )
-    assert result.exit_code == 0
-    rom = out.read_bytes()
+    source = BANK_40_MAP + ".alloc c at 0x400000 {\n    " + width + "\n    " + line + "\n    .db 0xEE\n}\n"
+    rc, rom = build_rom(tmp_path, {"main.s": source}, experimental=["track_register_size"])
+    assert rc == 0
     width_prefix = 2 if width.startswith(("rep", "sep")) else 0
     return rom[width_prefix : rom.index(0xEE, width_prefix)].hex(" ")
 
