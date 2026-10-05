@@ -85,6 +85,14 @@ different banks never do, even when their addresses touch, so
 `range 0x01fff0 0x01ffff` + `range 0x020000 0x02000f` is two
 16-byte chunks, not one 32-byte chunk.
 
+A `range` may span several banks: it is shorthand for one range per
+bank, clipped to the windows the bus serves for the pool's kind (ROM,
+or writable memory for a `bss` pool). On LoROM
+`range 0x228000 0x2fffff` becomes the `$8000-$FFFF` half of each bank
+`$22-$2F`, never the low halves. A bank the range covers that no `.map`
+serves is an error rather than a quietly smaller pool. Blocks stay
+bank-local either way.
+
 `range`, `fill`, and `strategy` accept constant expressions; literal
 arithmetic resolves at code-generation time. Constants declared
 earlier in the same source bind eagerly so `range BASE BASE + 0xff`

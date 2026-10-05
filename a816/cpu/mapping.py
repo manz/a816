@@ -283,6 +283,22 @@ class Bus:
     def get_address(self, addr: int) -> "Address":
         return Address(self, addr)
 
+    def windows_in(self, bank: int, writable: bool) -> list[tuple[int, int]]:
+        """Address windows of `bank` that regions of the given kind (ROM or
+        writable memory) actually serve. A legacy `.map` claims its banks
+        whole but only serves its `addr_range`: outside it, `physical_address`
+        folds onto the same ROM bytes, so it must not count as more room."""
+        out: list[tuple[int, int]] = []
+        for lo, hi, identifier in self.windows.get(bank, []):
+            region = self.mappings[identifier]
+            if region.writable != writable:
+                continue
+            if isinstance(region, Mapping):
+                lo, hi = max(lo, region.address_range[0]), min(hi, region.address_range[1])
+            if lo <= hi:
+                out.append((lo, hi))
+        return sorted(out)
+
 
 class Address:
     def __init__(self, bus: Bus, logical_value: int) -> None:

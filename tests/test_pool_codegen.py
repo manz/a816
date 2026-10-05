@@ -56,7 +56,13 @@ class TestPoolCodegen:
             )
 
     def test_invalid_range_propagates(self) -> None:
-        with pytest.raises(Exception, match="crosses bank boundary"):
+        with pytest.raises(Exception, match="start 0x028100 > end 0x028000"):
+            _gen(".pool bad { range 0x028100 0x028000 }")
+
+    def test_multi_bank_range_over_unmapped_banks_is_rejected(self) -> None:
+        """A range over several banks splits per bank along the bus; with no
+        `.map` for those banks there is nothing to split onto."""
+        with pytest.raises(Exception, match="which no `.map` serves as ROM"):
             _gen(".pool bad { range 0x02ff00 0x030100 }")
 
     def test_overlapping_ranges_propagate(self) -> None:

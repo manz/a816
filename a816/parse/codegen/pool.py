@@ -69,11 +69,11 @@ def generate_pool(
 ) -> GenNodes:
     try:
         ranges = [
-            PoolRange(
-                start=_eval_int(lo, resolver, file_info),
-                end=_eval_int(hi, resolver, file_info),
-            )
+            piece
             for lo, hi in node.ranges
+            for piece in _bank_local_ranges(
+                _eval_int(lo, resolver, file_info), _eval_int(hi, resolver, file_info), node, resolver, file_info
+            )
         ]
         fill_value = _eval_int(node.fill, resolver, file_info)
         if not 0 <= fill_value <= 0xFF:
@@ -124,6 +124,34 @@ def generate_pool(
             resolver,
         )
     return []
+
+
+def _bank_local_ranges(lo: int, hi: int, node: PoolAstNode, resolver: Resolver, file_info: Token) -> list[PoolRange]:
+    """`range LO HI` as bank-local ranges: one per bank, clipped to the
+    windows the bus serves for this pool's kind (ROM, or writable for bss).
+
+    Blocks stay bank-local, so a range over several banks is just shorthand
+    for one range per bank. Clipping keeps a LoROM `range 0x228000 0x2fffff`
+    to the `$8000-$FFFF` halves instead of handing out the low halves too.
+    """
+    if lo >> 16 == hi >> 16:
+        return [PoolRange(start=lo, end=hi)]
+    pieces: list[PoolRange] = []
+    for bank in range((lo >> 16), (hi >> 16) + 1):
+        windows = resolver.bus.windows_in(bank, writable=node.bss)
+        if not windows:
+            raise NodeError(
+                f"pool {node.pool_name!r} range 0x{lo:06x}..0x{hi:06x} covers bank ${bank:02X}, "
+                f"which no `.map` serves as {'memory' if node.bss else 'ROM'}",
+                file_info,
+                hint="declare the `.map` for these banks before the pool, or end the range before them",
+            )
+        bank_lo, bank_hi = max(lo, bank << 16), min(hi, bank << 16 | 0xFFFF)
+        for w_lo, w_hi in windows:
+            start, end = max(bank_lo, bank << 16 | w_lo), min(bank_hi, bank << 16 | w_hi)
+            if start <= end:
+                pieces.append(PoolRange(start=start, end=end))
+    return pieces
 
 
 def _declared_contexts(pool_name: str, resolver: Resolver) -> list[str]:
