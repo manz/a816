@@ -185,10 +185,8 @@ class Linker:
         return request_sites
 
     def _rom_contiguity(self) -> Callable[[int, int], bool] | None:
-        """`contiguous(last, first)` over the modules' bus: true when the
-        bytes at logical `last` and `first` are consecutive in the ROM (a
-        LoROM `$80:FFFF` -> `$81:8000` edge, a HiROM `$C0:FFFF` -> `$C1:0000`
-        one). None when no module declares a map: then nothing crosses."""
+        """`Bus.contiguous` over the modules' bus; None when no module
+        declares a map: then nothing crosses."""
         from a816.cpu.mapping import Bus
         from a816.mappers import map_on_bus
 
@@ -198,14 +196,9 @@ class Linker:
         bus = Bus()
         for mapping in declared.values():
             map_on_bus(bus, mapping)
-
-        def contiguous(last: int, first: int) -> bool:
-            # Both are pool range bounds, mapped since compile (an unmapped
-            # pool range already fails there).
-            last_physical = bus.get_address(last).physical
-            return last_physical is not None and bus.get_address(first).physical == last_physical + 1
-
-        return contiguous
+        # Both arguments are pool range bounds, mapped since compile (an
+        # unmapped pool range already fails there).
+        return bus.contiguous
 
     def _index_alloc_labels(self) -> None:
         """Map each symbol a pool alloc binds to that alloc's section:

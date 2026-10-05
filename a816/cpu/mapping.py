@@ -283,6 +283,13 @@ class Bus:
     def get_address(self, addr: int) -> "Address":
         return Address(self, addr)
 
+    def contiguous(self, last: int, first: int) -> bool:
+        """Whether the bytes at logical `last` and `first` are consecutive in
+        the ROM (a LoROM `$80:FFFF` -> `$81:8000` edge, a HiROM `$C0:FFFF` ->
+        `$C1:0000` one): the edges a `cross_bank` alloc may run over."""
+        last_physical = self.get_address(last).physical
+        return last_physical is not None and self.get_address(first).physical == last_physical + 1
+
     def windows_in(self, bank: int, writable: bool) -> list[tuple[int, int]]:
         """Address windows of `bank` that regions of the given kind (ROM or
         writable memory) actually serve. A legacy `.map` claims its banks

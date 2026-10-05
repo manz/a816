@@ -508,14 +508,17 @@ def generate_assert(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    """Queue a `.assert` for the linker: it may name pooled labels, which
-    only have their address after placement. Parse-only runs (LSP) skip it."""
-    if resolver.context.is_object_mode and resolver.context.object_writer is not None:
-        from a816.object_file import LinkAssert
+    """Queue a `.assert` until every address is final: for the linker in
+    object mode, for the end of label resolution in a direct build. It may
+    name pooled labels, which only have their address after placement.
+    Parse-only runs (LSP) skip it."""
+    from a816.object_file import LinkAssert
 
-        resolver.context.object_writer.asserts.append(
-            LinkAssert(node.expression.to_canonical(), node.message, _source_of_token(file_info))
-        )
+    check = LinkAssert(node.expression.to_canonical(), node.message, _source_of_token(file_info))
+    if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+        resolver.context.object_writer.asserts.append(check)
+    elif resolver.context.is_direct_mode:
+        resolver.direct_asserts.append(check)
     return []
 
 

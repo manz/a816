@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from a816.context import AssemblyMode
 from a816.cpu.cpu_65c816 import RomType
-from a816.exceptions import AssemblyError
+from a816.exceptions import AssemblyError, LinkAssertError, SymbolNotDefined
 from a816.object_file import SymbolSection, SymbolType
 from a816.parse.mzparser import A816Parser, ParserResult
 from a816.parse.nodes import NodeError
@@ -75,6 +75,7 @@ class AssembleMixin:
         self._mark_import_winners(nodes)
         self.logger.debug("Resolving labels")
         self.resolve_labels(nodes)
+        self._check_direct_asserts()
 
         if self.dump_symbols:
             self.resolver.dump_symbol_map()
@@ -83,6 +84,23 @@ class AssembleMixin:
         # LinkedModuleNode placements after emission.
         self._program_nodes = list(nodes)
         self.emit(nodes, self._wrap_emitter_for_overlap_audit(emitter))
+
+    def _check_direct_asserts(self) -> None:
+        """Evaluate a direct build's `.assert`s once labels are final; report
+        every failure at once, as the linker does (E0407)."""
+        from a816.parse.ast.expression import eval_expression_str
+
+        failures: list[tuple[str, str, str]] = []
+        for check in self.resolver.direct_asserts:
+            try:
+                holds = bool(eval_expression_str(check.expression, self.resolver))
+            except SymbolNotDefined as e:
+                failures.append((f"{check.message} (`{e}` is not defined)", check.expression, check.source))
+                continue
+            if not holds:
+                failures.append((check.message, check.expression, check.source))
+        if failures:
+            raise LinkAssertError(failures)
 
     def _wrap_emitter_for_overlap_audit(self, emitter: Writer) -> Writer:
         """Auto-wrap SFC / IPS emitters so overlapping writes get reported.
@@ -135,6 +153,9 @@ class AssembleMixin:
                     # traceback at debug for postmortem.
                     logger.error(str(e))  # NOSONAR python:S8572
                     logger.debug("Codegen failure traceback", exc_info=True)
+                    return 128
+                except LinkAssertError as e:
+                    logger.error(e.format())  # NOSONAR python:S8572
                     return 128
                 except OverlapError as e:
                     # Section-overlap = hard error since the default flip
