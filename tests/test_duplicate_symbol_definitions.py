@@ -26,8 +26,9 @@ def _object(tmp_path: Path, name: str, source: str) -> ObjectFile:
 def test_a_duplicate_global_names_both_modules_and_values(tmp_path: Path) -> None:
     first = _object(tmp_path, "inventory_rolling", "MENU_HDMA_TABLE_SIZE = 40\n")
     second = _object(tmp_path, "wram_layout", "MENU_HDMA_TABLE_SIZE = 0x40\n")
+    linker = Linker([first, second])
     with pytest.raises(DuplicateSymbolError) as excinfo:
-        Linker([first, second]).link(base_address=0x8000)
+        linker.link(base_address=0x8000)
     formatted = excinfo.value.format()
     assert "E0400" in formatted
     assert f"{tmp_path / 'inventory_rolling.o'} = 0x28" in formatted
