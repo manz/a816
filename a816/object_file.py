@@ -154,9 +154,11 @@ class PoolAlloc:
     """Exported names of the symbols bound in this alloc's section. The linker
     rebases them by this section's placement; looking the section up by address
     is ambiguous when pools share memory (contexts)."""
+    align: int = 1
+    """The block's address must be a multiple of this (a power of two)."""
 
 
-CODEGEN_REVISION = 1
+CODEGEN_REVISION = 2  # 2: an empty alloc body no longer takes a byte
 """Bumped whenever a816 emits different object bytes for unchanged source (a
 codegen fix such as #159's end-marker labels). With the format's schema digest
 it forms the object identity the build cache keys on, so a release that changes

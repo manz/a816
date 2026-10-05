@@ -91,8 +91,11 @@ class AllocAstNode(AstNode):
         pool_token: Token | None = None,
         close_token: Token | None = None,
         reserve: bool = False,
+        align: ExpressionAstNode | None = None,
     ) -> None:
         super().__init__("alloc", file_info)
+        # `align N`: the allocator places the block on a multiple of N.
+        self.align = align
         # Closing `}`: a trailing comment on its line folds onto the brace.
         self.close_token = close_token
         # Desugared from `.reserve NAME SIZE [at ADDR] in POOL`; the
@@ -129,7 +132,11 @@ class AllocAstNode(AstNode):
             # keeps the `in POOL` tail; anonymous pins drop it.
             tail = f" in {self.pool_name}" if self.pool_name else ""
             return f".alloc {head}at {addr}{size}{tail} {{\n{body}\n}}"
-        return f".alloc {head}in {self.pool_name} {{\n{body}\n}}"
+        return f".alloc {head}in {self.pool_name}{self.flags_suffix()} {{\n{body}\n}}"
+
+    def flags_suffix(self) -> str:
+        """The placement flags as written after `in POOL` (` align N`)."""
+        return f" align {self.align.to_canonical()}" if self.align is not None else ""
 
 
 class RelocateAstNode(AstNode):

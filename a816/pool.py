@@ -149,6 +149,8 @@ class Allocation:
     allocations are placed. Kept separate from `addr` so `placed` stays False
     until `allocate()` runs (object mode binds body labels at the sandbox base
     uniformly and lets the linker apply the final address)."""
+    align: int = 1
+    """The block's address is a multiple of this (a power of two)."""
 
     @property
     def pinned(self) -> bool:
@@ -200,15 +202,16 @@ class Pool:
             context=decl.context,
         )
 
-    def request(self, name: str, size: int, addr: int | None = None) -> Allocation:
-        if size <= 0:
-            raise PoolError(f"alloc '{name}' has non-positive size {size}")
+    def request(self, name: str, size: int, addr: int | None = None, *, align: int = 1) -> Allocation:
+        """Queue a block; size 0 binds its address and takes no space."""
+        if size < 0:
+            raise PoolError(f"alloc '{name}' has negative size {size}")
         if self._allocated:
             raise PoolError(f"pool '{self.name}' already allocated; cannot request more")
         if addr is not None:
-            alloc = Allocation(name=name, size=size, pinned_addr=addr)
+            alloc = Allocation(name=name, size=size, pinned_addr=addr, align=align)
         else:
-            alloc = Allocation(name=name, size=size)
+            alloc = Allocation(name=name, size=size, align=align)
         self.allocations.append(alloc)
         return alloc
 
@@ -333,9 +336,10 @@ def _sort_allocations(allocs: list[Allocation], strategy: Strategy) -> list[Allo
 
 def _place(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:
     for idx, chunk in enumerate(free):
-        if chunk.size >= alloc.size:
-            alloc.addr = chunk.start
-            return _shrink_chunk(free, idx, alloc.size)
+        start = _align_up(chunk.start, alloc.align)
+        if start + alloc.size - 1 <= chunk.end:
+            alloc.addr = start
+            return _take(free, idx, start, alloc.size)
     raise PoolOverflowError(
         pool_name,
         alloc.name,
@@ -346,6 +350,21 @@ def _place(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], po
         single_range=len(ranges) == 1,
         spans_banks=len({r.start >> 16 for r in ranges}) > 1,
     )
+
+
+def _align_up(addr: int, align: int) -> int:
+    return (addr + align - 1) & -align
+
+
+def _take(free: list[PoolRange], idx: int, start: int, size: int) -> list[PoolRange]:
+    """Use `size` bytes at `start` inside chunk `idx`; an alignment gap
+    before it stays free for later blocks."""
+    chunk = free[idx]
+    head = []
+    if start > chunk.start:
+        head = [PoolRange(start=chunk.start, end=start - 1, allow_bank_cross=chunk.allow_bank_cross)]
+    rest = PoolRange(start=start, end=chunk.end, allow_bank_cross=chunk.allow_bank_cross)
+    return [*free[:idx], *head, *_shrink_chunk([rest], 0, size), *free[idx + 1 :]]
 
 
 def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:

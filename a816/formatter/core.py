@@ -352,7 +352,7 @@ class A816Formatter:
             size_part = f" size {ast.at_size.to_canonical()}" if ast.at_size is not None else ""
             header = f".alloc{name_part} at {addr}{size_part} {{"
         else:
-            header = f".alloc{name_part} in {ast.pool_name} {{"
+            header = f".alloc{name_part} in {ast.pool_name}{ast.flags_suffix()} {{"
         lines = [header]
         lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
         lines.append("}")

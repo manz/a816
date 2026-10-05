@@ -684,24 +684,35 @@ def parse_alloc(p: Parser) -> AllocAstNode:
 
     # `.alloc in POOL ...` — anonymous pooled.
     if first.value == "in":
-        pool_token = p.next()
-        expect_token(pool_token, TokenType.IDENTIFIER)
-        body, close = _parse_alloc_body(p, parse_block)
-        return AllocAstNode(None, pool_token.value, body, keyword, pool_token=pool_token, close_token=close)
+        return _parse_pooled_alloc_tail(p, parse_block, keyword, name=None)
 
     # `.alloc NAME ...` — pooled or named-pinned.
     name = first.value
     separator = _expect_contextual_keyword_one_of(p, ("in", "at"))
     if separator.value == "in":
-        pool_token = p.next()
-        expect_token(pool_token, TokenType.IDENTIFIER)
-        body, close = _parse_alloc_body(p, parse_block)
-        return AllocAstNode(name, pool_token.value, body, keyword, pool_token=pool_token, close_token=close)
+        return _parse_pooled_alloc_tail(p, parse_block, keyword, name=name)
 
     return _parse_pinned_alloc_tail(p, parse_block, keyword, name=name)
 
 
 ParseBlockFn = Callable[[Parser], list[AstNode]]
+
+
+def _parse_pooled_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Token, *, name: str | None) -> AllocAstNode:
+    """Common tail for the pooled shapes: POOL [align N] { body }."""
+    pool_token = p.next()
+    expect_token(pool_token, TokenType.IDENTIFIER)
+    align = _parse_alloc_flags(p)
+    body, close = _parse_alloc_body(p, parse_block)
+    return AllocAstNode(name, pool_token.value, body, keyword, pool_token=pool_token, close_token=close, align=align)
+
+
+def _parse_alloc_flags(p: Parser) -> ExpressionAstNode | None:
+    """`align N` before the body's `{`: the block starts on a multiple of N."""
+    if p.current().type == TokenType.IDENTIFIER and p.current().value == "align":
+        p.next()
+        return parse_expression(p)
+    return None
 
 
 def _parse_pinned_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Token, *, name: str | None) -> AllocAstNode:

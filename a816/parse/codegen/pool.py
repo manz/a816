@@ -241,6 +241,7 @@ def generate_alloc(
             pinned_addr = _eval_int(node.at_address, resolver, file_info)
 
     _reject_nested_placement(node)
+    align = _eval_align(node, resolver, file_info)
     # Open an AllocBodyScope around the body so per-block underscore
     # labels (`_skip`, `_end`) stay private to this alloc; otherwise
     # two sibling allocs declaring `_skip:` silently overwrite each
@@ -264,8 +265,21 @@ def generate_alloc(
             pinned_addr=pinned_addr,
             pool_token=node.pool_token,
             body_scope=body_scope,
+            align=align,
         )
     ]
+
+
+def _eval_align(node: AllocAstNode, resolver: Resolver, file_info: Token) -> int:
+    """`align N` as an int: a power of two, 1 when absent."""
+    if node.align is None:
+        return 1
+    align = _eval_int(node.align, resolver, file_info)
+    if align <= 0 or align & (align - 1):
+        raise NodeError(f"alloc {node.name or ''!s} `align {align}` is not a power of two", file_info)
+    if node.at_address is not None and _eval_int(node.at_address, resolver, file_info) % align:
+        raise NodeError(f"alloc {node.name or ''!s} is pinned off its `align {align}` boundary", file_info)
+    return align
 
 
 def generate_reserve_typed(

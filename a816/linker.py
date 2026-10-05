@@ -169,7 +169,7 @@ class Linker:
                 alloc_obj = first_placed.get(key)
                 if alloc_obj is None:
                     pinned = req.pinned_addr if req.pinned_addr >= 0 else None
-                    alloc_obj = pool.request(req.symbol_name, req.size, pinned)
+                    alloc_obj = pool.request(req.symbol_name, req.size, pinned, align=req.align)
                     first_placed[key] = alloc_obj
                     request_sites[key] = (obj_idx, req.section_idx)
                     self._alloc_sources[key] = req.source

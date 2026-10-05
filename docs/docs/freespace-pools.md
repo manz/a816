@@ -147,6 +147,21 @@ same bytes at their canonical address.
 Allocator picks the address. `helper_fn` symbol resolves to that
 address. Body bytes land there.
 
+`align N` (a power of two, any constant expression) places the block
+on a multiple of `N`, for data whose layout depends on its base:
+
+```ca65
+.alloc item_chr in upper_gap align 0x200 {
+    .incbin "assets/item_chr.bin"   ; padded so no 0x200-byte slice crosses a bank
+}
+```
+
+Alignment is on the logical address, which is what DMA and the reading
+code see. The gap before the boundary stays free for later blocks.
+
+A block whose body is empty (a slot whose `.incbin` is empty in this
+build) binds its label and takes no space.
+
 ### `.alloc [NAME] at ADDR [size N] { body }`
 
 Pinned placement: `body` lands at the literal `ADDR`. `NAME` is
