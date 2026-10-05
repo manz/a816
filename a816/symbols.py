@@ -229,8 +229,13 @@ class Scope:
             if symbol in self.external_aliases:
                 return self[symbol]
             return self.parent.value_for(symbol)
-        else:
+        try:
             return self[symbol]
+        except SymbolNotDefined:
+            value = self.resolver.unimported_constant(symbol)
+            if value is None:
+                raise
+            return value
 
 
 class InternalScope(Scope):
@@ -367,6 +372,13 @@ class Resolver:
         # owned by its dependencies - the owner's `.o` is the single
         # source of truth, downstream `.o`s carry externs.
         self.imported_symbol_names: set[str] = set()
+        # Constants of already-built modules this one does not import
+        # (name -> (value, owning module)). Still resolved during 1.1.0 so
+        # projects relying on compile order keep building, with a warning
+        # naming the `.import` to add; the ones used land in
+        # `used_unimported` (name -> owning module) so the build cache tracks them.
+        self.unimported_constants: dict[str, tuple[int, str]] = {}
+        self.used_unimported: dict[str, str] = {}
         # Placement context seen by `.import` at codegen. A `*=` cursor
         # stays active until the end of the source unit that opened it
         # (`.import` restores the importer's flag); the depth counts the
@@ -621,6 +633,19 @@ class Resolver:
                         symbols.append((exported, value))
                         seen.add(exported)
         return symbols
+
+    def unimported_constant(self, name: str) -> int | None:
+        """A constant of a module this one does not `.import`, or None.
+
+        Recorded in `used_unimported`: visibility that depends on compile
+        order breaks as soon as the order changes; the module builder warns.
+        """
+        found = self.unimported_constants.get(name)
+        if found is None:
+            return None
+        value, module = found
+        self.used_unimported[name] = module
+        return value
 
     def is_root_scope_symbol(self, name: str) -> bool:
         """Check whether ``name`` is defined directly in the root scope.
