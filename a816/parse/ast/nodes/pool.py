@@ -188,6 +188,22 @@ class RelocateAstNode(AstNode):
         )
 
 
+class AssertAstNode(AstNode):
+    """`.assert EXPR, "message"`: a layout invariant checked once every
+    address is final (at link), so it may use pooled labels."""
+
+    def __init__(self, expression: ExpressionAstNode, message: str, file_info: Token) -> None:
+        super().__init__("assert", file_info)
+        self.expression = expression
+        self.message = message
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.message
+
+    def to_canonical(self) -> str:
+        return f'.assert {self.expression.to_canonical()}, "{self.message}"'
+
+
 class ReclaimAstNode(AstNode):
     """AST node for `.reclaim POOL START END` directive.
 

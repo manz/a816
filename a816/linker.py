@@ -6,6 +6,7 @@ from re import Match
 from a816.exceptions import (
     DuplicateSymbolError,
     ExpressionEvaluationError,
+    LinkAssertError,
     PlacedSpan,
     PoolOverflowLinkError,
     PoolOverlapLinkError,
@@ -76,6 +77,7 @@ class Linker:
         self._resolve_symbols()
         self._resolve_aliases()
         self._check_unresolved()
+        self._check_asserts()
         self._apply_relocations()
         self._apply_expression_relocations()
         return ObjectFile(
@@ -534,6 +536,18 @@ class Linker:
             unresolved_symbols -= satisfied_by_scope
         if unresolved_symbols:
             raise UnresolvedSymbolError(unresolved_symbols)
+
+    def _check_asserts(self) -> None:
+        """Evaluate every module's `.assert` with final addresses, the
+        module's own locals in scope; report all failures at once."""
+        failures: list[tuple[str, str, str]] = []
+        for obj_idx, obj_file in enumerate(self.object_files):
+            local_overlay = self._local_by_obj.get(obj_idx)
+            for check in obj_file.asserts:
+                if not self._evaluate_expression(check.expression, local_overlay):
+                    failures.append((check.message, check.expression, check.source))
+        if failures:
+            raise LinkAssertError(failures)
 
     def _resolve_aliases(self) -> None:
         if not self.linked_aliases:

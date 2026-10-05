@@ -102,6 +102,7 @@ E_LINKER_EXPRESSION = ErrorCode("E0403", "linker", "relocation expression failed
 E_LINKER_POOL_OVERFLOW = ErrorCode("E0404", "linker", "alloc does not fit in its pool at link time")
 E_LINKER_UNDECLARED_POOL = ErrorCode("E0405", "linker", "alloc request names a pool no object declares")
 E_LINKER_POOL_OVERLAP = ErrorCode("E0406", "linker", "allocs from different pools overlap")
+E_LINKER_ASSERT_FAILED = ErrorCode("E0407", "linker", "a `.assert` is false once addresses are final")
 
 # --- I/O / config (E0500..) ---
 E_IO_FILE_NOT_FOUND = ErrorCode("E0500", "io", "file not found")

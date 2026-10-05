@@ -16,6 +16,7 @@ from a816.exceptions import (
 from a816.parse.ast.expression import eval_expression, expr_to_ast
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    AssertAstNode,
     AstNode,
     BlockAstNode,
     CodePositionAstNode,
@@ -499,3 +500,30 @@ generators["alloc"] = generate_alloc
 generators["reserve_typed"] = generate_reserve_typed
 generators["relocate"] = generate_relocate
 generators["reclaim"] = generate_reclaim
+
+
+def generate_assert(
+    node: AssertAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Queue a `.assert` for the linker: it may name pooled labels, which
+    only have their address after placement. Parse-only runs (LSP) skip it."""
+    if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+        from a816.object_file import LinkAssert
+
+        resolver.context.object_writer.asserts.append(
+            LinkAssert(node.expression.to_canonical(), node.message, _source_of_token(file_info))
+        )
+    return []
+
+
+def _source_of_token(token: Token) -> str:
+    position = token.position
+    if position is None or position.file is None:
+        return ""
+    return f"{position.file.filename}:{position.line + 1}"
+
+
+generators["assert"] = generate_assert

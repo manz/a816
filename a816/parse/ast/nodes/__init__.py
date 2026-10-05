@@ -49,6 +49,7 @@ from a816.parse.ast.nodes.directives import (
 from a816.parse.ast.nodes.opcode import OpcodeAstNode, index_map
 from a816.parse.ast.nodes.pool import (
     AllocAstNode,
+    AssertAstNode,
     PoolAstNode,
     PoolRangeExpr,
     ReclaimAstNode,
@@ -79,6 +80,7 @@ from a816.parse.ast.nodes.unions import DeclAstNode, KeywordAstNode
 __all__ = [
     "AllocAstNode",
     "AsciiAstNode",
+    "AssertAstNode",
     "AssignAstNode",
     "AstNode",
     "BinOp",

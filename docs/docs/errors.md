@@ -169,6 +169,8 @@ separate blocks separated by a blank line.
   Lists every clash with both reservations, their spans and their
   `file:line`. Memory used in turns goes in one pool's `contexts`
   (see [Freespace pools](freespace-pools.md#memory-pools-bss-and-contexts)).
+- `E0407` a `.assert` is false once every address is final. Lists each
+  failed assert with its message, expression and `file:line`.
 
 ### I/O / config
 

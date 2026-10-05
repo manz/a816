@@ -587,6 +587,23 @@ address; nothing is emitted into the image.
 Pinned spans that fall outside the pool or collide with another allocation
 fail the build, naming the offending reservation.
 
+### `.assert EXPR, "message"`
+
+A layout invariant checked at link time, once every address is final,
+so it may use pooled labels and the module's private ones:
+
+```ca65
+.alloc dialogue_stream in upper_gap cross_bank {
+    .incbin "assets/stream.dat"    ; publishes assets_stream_dat__size
+}
+
+.assert (items_vwf & 0xFFFF) == 0, "items_vwf must open a bank"
+.assert dialogue_stream + assets_stream_dat__size <= 0x5d0000, "the stream overruns the gap"
+```
+
+A false assert fails the link with `E0407`; every failed assert is
+reported, each with its message, expression and source line.
+
 ### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
 
 Moves `SYMBOL` from `[OLD_START, OLD_END]` into the pool — old range

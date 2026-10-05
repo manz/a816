@@ -27,6 +27,7 @@ from a816.error_codes import (
 from a816.parse.ast.expression import eval_number
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    AssertAstNode,
     AstNode,
     BlockAstNode,
     CompoundAstNode,
@@ -375,6 +376,13 @@ def parse_directive_with_quoted_string(p: Parser) -> str:
     expect_token(string, TokenType.QUOTED_STRING)
 
     return string.value[1:-1]
+
+
+def parse_assert(p: Parser, keyword: Token) -> AssertAstNode:
+    """`.assert EXPR, "message"`."""
+    expression = parse_expression(p)
+    expect_token(p.next(), TokenType.COMMA)
+    return AssertAstNode(expression, parse_directive_with_quoted_string(p), keyword)
 
 
 def parse_include_ips(p: Parser) -> IncludeIpsAstNode:

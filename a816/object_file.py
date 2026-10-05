@@ -170,6 +170,17 @@ or the revision moves with no output change."""
 
 
 @dataclass
+class LinkAssert:
+    """`.assert EXPR, "message"` carried to the linker, evaluated once every
+    symbol has its final address."""
+
+    expression: str
+    message: str
+    source: str = ""
+    """`file:line` of the directive."""
+
+
+@dataclass
 class WireSection:
     """What a section carries in an object file: the reader rebuilds an
     anonymous pinned `Section` from it (placement comes from the pool allocs)."""
@@ -195,6 +206,7 @@ class WireObject:
     pool_decls: list[PoolDecl]
     pool_allocs: list[PoolAlloc]
     bus_mappings: list[BusMapping]
+    asserts: list[LinkAssert] = field(default_factory=list)
 
 
 SCHEMA_DIGEST = hashlib.sha256(schema(WireObject).encode()).digest()[:16]
@@ -234,6 +246,7 @@ class ObjectFile:
         pool_decls: list[PoolDecl] | None = None,
         pool_allocs: list[PoolAlloc] | None = None,
         bus_mappings: list[BusMapping] | None = None,
+        asserts: list[LinkAssert] | None = None,
     ) -> None:
         # `relocatable` is True iff the source contained no `*=` directive,
         # so the importer is free to place section 0 at the import site PC
@@ -259,6 +272,7 @@ class ObjectFile:
         self.pool_decls: list[PoolDecl] = pool_decls or []
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
         self.bus_mappings: list[BusMapping] = bus_mappings or []
+        self.asserts: list[LinkAssert] = asserts or []
 
     # ----- legacy single-section accessors (tests / older callers) -----
     def _ensure_first_section(self) -> Section:
@@ -310,7 +324,14 @@ class ObjectFile:
             for s in self.sections
         ]
         return WireObject(
-            sections, self.symbols, self.aliases, self.files, self.pool_decls, self.pool_allocs, self.bus_mappings
+            sections,
+            self.symbols,
+            self.aliases,
+            self.files,
+            self.pool_decls,
+            self.pool_allocs,
+            self.bus_mappings,
+            self.asserts,
         )
 
     @staticmethod
@@ -371,4 +392,5 @@ class ObjectFile:
             pool_decls=wire.pool_decls,
             pool_allocs=wire.pool_allocs,
             bus_mappings=wire.bus_mappings,
+            asserts=wire.asserts,
         )
