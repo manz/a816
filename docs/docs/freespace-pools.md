@@ -162,6 +162,38 @@ code see. The gap before the boundary stays free for later blocks.
 A block whose body is empty (a slot whose `.incbin` is empty in this
 build) binds its label and takes no space.
 
+A block never spans a bank boundary: code can't run through one, and
+DMA, `MVN`/`MVP` and 16-bit pointers all wrap inside a bank.
+
+#### `cross_bank`: data blobs across bank edges
+
+```ca65
+.pool text { range 0x228000 0x22ffff  range 0x238000 0x23ffff  strategy order }
+
+.alloc dialog in text cross_bank {
+    .incbin "assets/dialog.bin"
+}
+```
+
+A `cross_bank` block may straddle bank edges where the ROM is
+physically contiguous: the last byte of one chunk and the first byte of
+the next are consecutive in the ROM file. That holds for LoROM
+(`$22:FFFF` is followed by `$23:8000`) and HiROM (`$C0:FFFF` by
+`$C1:0000`); a gap in the ROM, or a bank no `.map` region covers, is
+never crossed. The allocator still prefers a single chunk when one is
+big enough.
+
+The body holds data only (`.incbin`, `.db`/`.dw`/`.dl`); code or labels
+inside are an error (`E0336`). The blob is position independent: its
+base is `NAME` (an `.incbin` inside also publishes `<path>__size`,
+named after its path: `assets_dialog_bin__size` above), and how offsets
+inside it become addresses is the contract between whatever generated
+it and the code reading it. That code must step each bank edge the
+mapper's way, for every read, lookahead included: on LoROM, when the
+low word wraps, it goes back to `$8000` and the bank goes up by one. A
+16-bit read at `$xx:FFFF` takes its second byte from `(xx+1):0000`,
+which on LoROM isn't ROM.
+
 ### `.alloc [NAME] at ADDR [size N] { body }`
 
 Pinned placement: `body` lands at the literal `ADDR`. `NAME` is

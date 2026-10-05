@@ -699,20 +699,37 @@ ParseBlockFn = Callable[[Parser], list[AstNode]]
 
 
 def _parse_pooled_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Token, *, name: str | None) -> AllocAstNode:
-    """Common tail for the pooled shapes: POOL [align N] { body }."""
+    """Common tail for the pooled shapes: POOL [cross_bank] [align N] { body }.
+
+    `cross_bank` lets a data blob straddle bank edges where the ROM is
+    physically contiguous; the code reading it steps the edge itself.
+    """
     pool_token = p.next()
     expect_token(pool_token, TokenType.IDENTIFIER)
-    align = _parse_alloc_flags(p)
+    cross_bank, align = _parse_alloc_flags(p)
     body, close = _parse_alloc_body(p, parse_block)
-    return AllocAstNode(name, pool_token.value, body, keyword, pool_token=pool_token, close_token=close, align=align)
+    return AllocAstNode(
+        name,
+        pool_token.value,
+        body,
+        keyword,
+        pool_token=pool_token,
+        close_token=close,
+        cross_bank=cross_bank,
+        align=align,
+    )
 
 
-def _parse_alloc_flags(p: Parser) -> ExpressionAstNode | None:
-    """`align N` before the body's `{`: the block starts on a multiple of N."""
-    if p.current().type == TokenType.IDENTIFIER and p.current().value == "align":
-        p.next()
-        return parse_expression(p)
-    return None
+def _parse_alloc_flags(p: Parser) -> tuple[bool, ExpressionAstNode | None]:
+    """`cross_bank` and `align N`, in any order, before the body's `{`."""
+    cross_bank = False
+    align: ExpressionAstNode | None = None
+    while p.current().type == TokenType.IDENTIFIER and p.current().value in ("cross_bank", "align"):
+        if p.next().value == "cross_bank":
+            cross_bank = True
+        else:
+            align = parse_expression(p)
+    return cross_bank, align
 
 
 def _parse_pinned_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Token, *, name: str | None) -> AllocAstNode:

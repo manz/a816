@@ -150,6 +150,7 @@ class ObjectEmitMixin:
                 source=_source_of(node),
                 labels=node.exported_labels(),
                 align=node.align,
+                cross_bank=node.cross_bank,
             )
         )
 

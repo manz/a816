@@ -92,8 +92,11 @@ class AllocAstNode(AstNode):
         close_token: Token | None = None,
         reserve: bool = False,
         align: ExpressionAstNode | None = None,
+        cross_bank: bool = False,
     ) -> None:
         super().__init__("alloc", file_info)
+        # Data blob allowed to straddle bank edges where the ROM is contiguous.
+        self.cross_bank = cross_bank
         # `align N`: the allocator places the block on a multiple of N.
         self.align = align
         # Closing `}`: a trailing comment on its line folds onto the brace.
@@ -135,8 +138,11 @@ class AllocAstNode(AstNode):
         return f".alloc {head}in {self.pool_name}{self.flags_suffix()} {{\n{body}\n}}"
 
     def flags_suffix(self) -> str:
-        """The placement flags as written after `in POOL` (` align N`)."""
-        return f" align {self.align.to_canonical()}" if self.align is not None else ""
+        """The placement flags as written after `in POOL` (` cross_bank`, ` align N`)."""
+        flags = " cross_bank" if self.cross_bank else ""
+        if self.align is not None:
+            flags += f" align {self.align.to_canonical()}"
+        return flags
 
 
 class RelocateAstNode(AstNode):

@@ -149,6 +149,9 @@ separate blocks separated by a blank line.
 - `E0333` string or list initializer longer than its array field.
 - `E0334` non-ASCII character in a string initializer.
 - `E0335` initialized bit-field run wider than 32 bits.
+- `E0336` a `cross_bank` alloc body holds something other than data
+  (code or a label); see
+  [Freespace pools](freespace-pools.md#cross_bank-data-blobs-across-bank-edges).
 
 ### Linker
 

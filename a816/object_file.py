@@ -156,6 +156,8 @@ class PoolAlloc:
     is ambiguous when pools share memory (contexts)."""
     align: int = 1
     """The block's address must be a multiple of this (a power of two)."""
+    cross_bank: bool = False
+    """The block may straddle bank edges where the ROM is contiguous."""
 
 
 CODEGEN_REVISION = 2  # 2: an empty alloc body no longer takes a byte

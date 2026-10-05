@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from a816.error_codes import E_SYMBOL_NOT_DEFINED, E_SYMBOL_RESERVE_UNKNOWN_TYPE, E_SYMBOL_UNKNOWN_POOL
+from a816.error_codes import (
+    E_CODEGEN_CROSS_BANK_BODY,
+    E_SYMBOL_NOT_DEFINED,
+    E_SYMBOL_RESERVE_UNKNOWN_TYPE,
+    E_SYMBOL_UNKNOWN_POOL,
+)
 from a816.exceptions import (
     ExternalExpressionReference,
     ExternalSymbolReference,
@@ -241,6 +246,8 @@ def generate_alloc(
             pinned_addr = _eval_int(node.at_address, resolver, file_info)
 
     _reject_nested_placement(node)
+    if node.cross_bank:
+        _check_cross_bank_body(node)
     align = _eval_align(node, resolver, file_info)
     # Open an AllocBodyScope around the body so per-block underscore
     # labels (`_skip`, `_end`) stay private to this alloc; otherwise
@@ -266,8 +273,27 @@ def generate_alloc(
             pool_token=node.pool_token,
             body_scope=body_scope,
             align=align,
+            cross_bank=node.cross_bank,
         )
     ]
+
+
+def _check_cross_bank_body(node: AllocAstNode) -> None:
+    """A `cross_bank` blob is read from its base by code that steps bank
+    edges itself: only data may sit in it. Code can't execute through an
+    edge, and a label inside would need an address a816 doesn't track
+    across the edge."""
+    from a816.parse.ast.nodes import CommentAstNode, DataNode, DocstringAstNode, IncludeBinaryAstNode
+
+    allowed = (CommentAstNode, DataNode, DocstringAstNode, IncludeBinaryAstNode)
+    for child in node.body.body:
+        if not isinstance(child, allowed):
+            raise NodeError(
+                f"`cross_bank` alloc {node.name or ''!s} may hold only data (`.incbin`, `.db`/`.dw`/`.dl`)",
+                child.file_info,
+                code=str(E_CODEGEN_CROSS_BANK_BODY),
+                hint="readers work from the alloc's base; move code and labels outside the blob",
+            )
 
 
 def _eval_align(node: AllocAstNode, resolver: Resolver, file_info: Token) -> int:
