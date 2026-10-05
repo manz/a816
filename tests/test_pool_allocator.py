@@ -121,10 +121,14 @@ class TestAllocator:
         assert pool.free == 0
         assert pool.fragments == 0
 
-    def test_zero_size_raises(self) -> None:
+    def test_zero_size_takes_no_space(self) -> None:
+        """An empty body binds its address and leaves room for the next block."""
         pool = _pool(_range(0x028000, 0x028FFF))
-        with pytest.raises(PoolError):
-            pool.request("fn", 0)
+        empty = pool.request("empty", 0)
+        pool.request("after", 4)
+        pool.allocate()
+        assert empty.placed
+        assert pool.free == pool.capacity - 4
 
     def test_negative_size_raises(self) -> None:
         pool = _pool(_range(0x028000, 0x028FFF))

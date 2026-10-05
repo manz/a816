@@ -92,6 +92,7 @@ E_CODEGEN_ISTRUCT_VALUE_KIND = ErrorCode("E0332", "codegen", "initializer value 
 E_CODEGEN_ISTRUCT_TOO_LONG = ErrorCode("E0333", "codegen", "initializer longer than its array field")
 E_CODEGEN_ISTRUCT_NON_ASCII = ErrorCode("E0334", "codegen", "non-ASCII character in a string initializer")
 E_CODEGEN_ISTRUCT_BIT_RUN_TOO_WIDE = ErrorCode("E0335", "codegen", "initialized bit-field run wider than 32 bits")
+E_CODEGEN_CROSS_BANK_BODY = ErrorCode("E0336", "codegen", "`cross_bank` body holds something other than data")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")
@@ -101,6 +102,7 @@ E_LINKER_EXPRESSION = ErrorCode("E0403", "linker", "relocation expression failed
 E_LINKER_POOL_OVERFLOW = ErrorCode("E0404", "linker", "alloc does not fit in its pool at link time")
 E_LINKER_UNDECLARED_POOL = ErrorCode("E0405", "linker", "alloc request names a pool no object declares")
 E_LINKER_POOL_OVERLAP = ErrorCode("E0406", "linker", "allocs from different pools overlap")
+E_LINKER_ASSERT_FAILED = ErrorCode("E0407", "linker", "a `.assert` is false once addresses are final")
 
 # --- I/O / config (E0500..) ---
 E_IO_FILE_NOT_FOUND = ErrorCode("E0500", "io", "file not found")

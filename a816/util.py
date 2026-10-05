@@ -3,6 +3,8 @@
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from a816.build_inputs import record_miss
+
 
 def uri_to_path(uri: str) -> Path:
     """Convert a file:// URI (or a plain path) to a Path."""
@@ -28,8 +30,10 @@ def resolve_asset_path(path: str, include_paths: list[Path]) -> str:
     candidate = Path(path)
     if candidate.is_absolute() or candidate.exists():
         return path
+    record_miss(candidate)
     for base in include_paths:
         hit = base / path
         if hit.exists():
             return str(hit)
+        record_miss(hit)
     return path

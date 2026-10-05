@@ -5,13 +5,14 @@ ascii/text/incbin/table/.aN/.iN)."""
 from __future__ import annotations
 
 import ast
-import os
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
+from a816.build_inputs import record_miss, recording_misses, replay_misses
 from a816.error_codes import (
     E_PARSER_ISTRUCT_DUPLICATE_FIELD,
     E_PARSER_ISTRUCT_STRING_IN_LIST,
@@ -26,6 +27,7 @@ from a816.error_codes import (
 from a816.parse.ast.expression import eval_number
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    AssertAstNode,
     AstNode,
     BlockAstNode,
     CompoundAstNode,
@@ -376,6 +378,13 @@ def parse_directive_with_quoted_string(p: Parser) -> str:
     return string.value[1:-1]
 
 
+def parse_assert(p: Parser, keyword: Token) -> AssertAstNode:
+    """`.assert EXPR, "message"`."""
+    expression = parse_expression(p)
+    expect_token(p.next(), TokenType.COMMA)
+    return AssertAstNode(expression, parse_directive_with_quoted_string(p), keyword)
+
+
 def parse_include_ips(p: Parser) -> IncludeIpsAstNode:
     current = p.current()
     string = parse_directive_with_quoted_string(p)
@@ -436,17 +445,19 @@ def _resolve_include_path(p: Parser, keyword: Token, include_path: str) -> str:
             candidate = parent_dir / include_path
             if candidate.exists():
                 return str(candidate)
+            record_miss(candidate)
 
     for search_dir in p.include_paths or []:
         candidate = search_dir / include_path
         if candidate.exists():
             return str(candidate)
+        record_miss(candidate)
 
     return include_path  # let the eventual open() raise the canonical error
 
 
-#: (resolved path, search paths) -> (file stamp, parsed body).
-_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[tuple[int, int], list[AstNode]]] = {}
+#: (resolved path, search paths) -> (content hash, parsed body, lookup misses of its nested includes).
+_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[str, list[AstNode], set[str]]] = {}
 
 
 def clear_include_ast_cache() -> None:
@@ -454,14 +465,16 @@ def clear_include_ast_cache() -> None:
     _INCLUDE_AST_CACHE.clear()
 
 
-def _include_stamp(resolved_path: str) -> tuple[int, int] | None:
-    """Identity of the file on disk, or None when it cannot be stat'd (in
-    which case the include is parsed fresh and never cached)."""
+def _include_stamp(resolved_path: str) -> str | None:
+    """Hash of the file's bytes, or None when it cannot be read (in which case
+    the include is parsed fresh and never cached). Content, not mtime and
+    size: an edit that keeps both (same size, inside one mtime granule) would
+    otherwise serve the old parse to a long-running process."""
     try:
-        stat = os.stat(resolved_path)
+        with open(resolved_path, "rb") as fd:
+            return hashlib.sha256(fd.read()).hexdigest()
     except OSError:
         return None
-    return stat.st_mtime_ns, stat.st_size
 
 
 def _parse_include_file(resolved_path: str, include_paths: list[Path]) -> list[AstNode]:
@@ -490,12 +503,17 @@ def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode
     if stamp is not None:
         cached = _INCLUDE_AST_CACHE.get(key)
         if cached is not None and cached[0] == stamp:
+            # The nested includes were not resolved again: report what
+            # resolving them found missing, for the build cache.
+            replay_misses(cached[2])
             return cached[1]
-    sub_ast = _parse_include_file(resolved_path, include_paths)
+    with recording_misses() as misses:
+        sub_ast = _parse_include_file(resolved_path, include_paths)
+    replay_misses(misses)
     if stamp is not None:
         # Keyed per file, so the cache stays the size of the project rather
         # than growing with every edit.
-        _INCLUDE_AST_CACHE[key] = (stamp, sub_ast)
+        _INCLUDE_AST_CACHE[key] = (stamp, sub_ast, misses)
     return sub_ast
 
 
@@ -674,19 +692,13 @@ def parse_alloc(p: Parser) -> AllocAstNode:
 
     # `.alloc in POOL ...` — anonymous pooled.
     if first.value == "in":
-        pool_token = p.next()
-        expect_token(pool_token, TokenType.IDENTIFIER)
-        body, close = _parse_alloc_body(p, parse_block)
-        return AllocAstNode(None, pool_token.value, body, keyword, pool_token=pool_token, close_token=close)
+        return _parse_pooled_alloc_tail(p, parse_block, keyword, name=None)
 
     # `.alloc NAME ...` — pooled or named-pinned.
     name = first.value
     separator = _expect_contextual_keyword_one_of(p, ("in", "at"))
     if separator.value == "in":
-        pool_token = p.next()
-        expect_token(pool_token, TokenType.IDENTIFIER)
-        body, close = _parse_alloc_body(p, parse_block)
-        return AllocAstNode(name, pool_token.value, body, keyword, pool_token=pool_token, close_token=close)
+        return _parse_pooled_alloc_tail(p, parse_block, keyword, name=name)
 
     return _parse_pinned_alloc_tail(p, parse_block, keyword, name=name)
 
@@ -694,12 +706,72 @@ def parse_alloc(p: Parser) -> AllocAstNode:
 ParseBlockFn = Callable[[Parser], list[AstNode]]
 
 
+def _parse_pooled_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Token, *, name: str | None) -> AllocAstNode:
+    """Common tail for the pooled shapes: POOL [cross_bank] [align N] { body }.
+
+    `cross_bank` lets a data blob straddle bank edges where the ROM is
+    physically contiguous; the code reading it steps the edge itself.
+    """
+    pool_token = p.next()
+    expect_token(pool_token, TokenType.IDENTIFIER)
+    cross_bank, align = _parse_alloc_flags(p)
+    body, close = _parse_alloc_body(p, parse_block)
+    return AllocAstNode(
+        name,
+        pool_token.value,
+        body,
+        keyword,
+        pool_token=pool_token,
+        close_token=close,
+        cross_bank=cross_bank,
+        align=align,
+    )
+
+
+def _parse_alloc_flags(p: Parser) -> tuple[bool, ExpressionAstNode | None]:
+    """`cross_bank` and `align N`, in any order, before the body's `{`."""
+    cross_bank = False
+    align: ExpressionAstNode | None = None
+    while p.current().type == TokenType.IDENTIFIER and p.current().value in ("cross_bank", "align"):
+        if p.next().value == "cross_bank":
+            cross_bank = True
+        else:
+            align = parse_expression(p)
+    return cross_bank, align
+
+
 def _parse_pinned_alloc_tail(p: Parser, parse_block: ParseBlockFn, keyword: Token, *, name: str | None) -> AllocAstNode:
-    """Common tail for the two pinned alloc shapes: ADDR [size N] { body }."""
+    """Common tail for the pinned shapes: ADDR [size N] { body }, or
+    ADDR in POOL [cross_bank] [align N] { body }: pinned inside a pool, which
+    carves the span out before placing its floating allocs."""
     at_address = parse_expression(p)
     at_size = _parse_optional_size_clause(p)
+    pool_token: Token | None = None
+    cross_bank, align = False, None
+    if p.current().type == TokenType.IDENTIFIER and p.current().value == "in":
+        in_token = p.next()
+        if at_size is not None:
+            raise ParserSyntaxError(
+                "`size N` and `in POOL` don't combine: the pool bounds the alloc",
+                in_token,
+                code=str(E_PARSER_UNEXPECTED_TOKEN),
+            )
+        pool_token = p.next()
+        expect_token(pool_token, TokenType.IDENTIFIER)
+        cross_bank, align = _parse_alloc_flags(p)
     body, close = _parse_alloc_body(p, parse_block)
-    return AllocAstNode(name, None, body, keyword, at_address=at_address, at_size=at_size, close_token=close)
+    return AllocAstNode(
+        name,
+        pool_token.value if pool_token is not None else None,
+        body,
+        keyword,
+        at_address=at_address,
+        at_size=at_size,
+        pool_token=pool_token,
+        close_token=close,
+        cross_bank=cross_bank,
+        align=align,
+    )
 
 
 def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
@@ -724,6 +796,10 @@ def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
         p.next()  # consume `as`
         type_token = p.next()
         expect_token(type_token, TokenType.IDENTIFIER)
+        typed_at: ExpressionAstNode | None = None
+        if p.current().type == TokenType.IDENTIFIER and p.current().value == "at":
+            p.next()  # consume `at`
+            typed_at = parse_expression(p)
         _expect_contextual_keyword(p, "in")
         pool_token = p.next()
         expect_token(pool_token, TokenType.IDENTIFIER)
@@ -734,6 +810,7 @@ def parse_reserve(p: Parser) -> AllocAstNode | ReserveTypedAstNode:
             keyword,
             type_token=type_token,
             pool_token=pool_token,
+            at_address=typed_at,
         )
 
     size_expr = parse_expression(p)

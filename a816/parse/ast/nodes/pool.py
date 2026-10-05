@@ -91,8 +91,14 @@ class AllocAstNode(AstNode):
         pool_token: Token | None = None,
         close_token: Token | None = None,
         reserve: bool = False,
+        align: ExpressionAstNode | None = None,
+        cross_bank: bool = False,
     ) -> None:
         super().__init__("alloc", file_info)
+        # Data blob allowed to straddle bank edges where the ROM is contiguous.
+        self.cross_bank = cross_bank
+        # `align N`: the allocator places the block on a multiple of N.
+        self.align = align
         # Closing `}`: a trailing comment on its line folds onto the brace.
         self.close_token = close_token
         # Desugared from `.reserve NAME SIZE [at ADDR] in POOL`; the
@@ -127,9 +133,16 @@ class AllocAstNode(AstNode):
             size = f" size {self.at_size.to_canonical()}" if self.at_size else ""
             # Pinned *inside* a named pool (`.reserve NAME SIZE at ADDR in POOL`)
             # keeps the `in POOL` tail; anonymous pins drop it.
-            tail = f" in {self.pool_name}" if self.pool_name else ""
+            tail = f" in {self.pool_name}{self.flags_suffix()}" if self.pool_name else ""
             return f".alloc {head}at {addr}{size}{tail} {{\n{body}\n}}"
-        return f".alloc {head}in {self.pool_name} {{\n{body}\n}}"
+        return f".alloc {head}in {self.pool_name}{self.flags_suffix()} {{\n{body}\n}}"
+
+    def flags_suffix(self) -> str:
+        """The placement flags as written after `in POOL` (` cross_bank`, ` align N`)."""
+        flags = " cross_bank" if self.cross_bank else ""
+        if self.align is not None:
+            flags += f" align {self.align.to_canonical()}"
+        return flags
 
 
 class RelocateAstNode(AstNode):
@@ -173,6 +186,22 @@ class RelocateAstNode(AstNode):
             f".relocate {self.symbol} {self.old_start.to_canonical()} {self.old_end.to_canonical()} "
             f"into {self.pool_name} {{\n{body}\n}}"
         )
+
+
+class AssertAstNode(AstNode):
+    """`.assert EXPR, "message"`: a layout invariant checked once every
+    address is final (at link), so it may use pooled labels."""
+
+    def __init__(self, expression: ExpressionAstNode, message: str, file_info: Token) -> None:
+        super().__init__("assert", file_info)
+        self.expression = expression
+        self.message = message
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.message
+
+    def to_canonical(self) -> str:
+        return f'.assert {self.expression.to_canonical()}, "{self.message}"'
 
 
 class ReclaimAstNode(AstNode):

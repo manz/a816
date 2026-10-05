@@ -265,6 +265,28 @@ def _describe_span(span: PlacedSpan) -> str:
     return f"`{span.alloc}` in pool `{span.pool}` (0x{span.start:06x}..0x{span.end - 1:06x}){where}"
 
 
+class LinkAssertError(LinkerError):
+    """Raised when `.assert` checks fail once every address is final."""
+
+    def __init__(self, failures: list[tuple[str, str, str]]) -> None:
+        # (message, expression, source) per failed assert
+        self.failures = failures
+        message, _expression, _source = failures[0]
+        more = f" (+{len(failures) - 1} more)" if len(failures) > 1 else ""
+        super().__init__(f"assertion failed: {message}{more}")
+
+    def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.error_codes import E_LINKER_ASSERT_FAILED
+        from a816.errors import format_error_simple
+
+        details = [
+            ("assert", f"{message}: `{expression}`" + (f" at {source}" if source else ""))
+            for message, expression, source in self.failures
+        ]
+        return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_ASSERT_FAILED}]", str(self), details)
+
+
 class UndeclaredPoolError(LinkerError):
     """Raised when an alloc request names a pool no linked object declares."""
 

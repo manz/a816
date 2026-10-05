@@ -149,6 +149,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Mirrors the [experimental] table in `a816.toml`. CLI wins."
         ),
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_false",
+        dest="use_cache",
+        help="Compile every module instead of reusing up-to-date objects from the obj dir.",
+    )
     parser.set_defaults(bus_map=[])
     return parser
 
@@ -182,6 +188,7 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         mapping=args.mapping,
         bus_map=list(args.bus_map),
         use_a816_toml=False,
+        use_cache=args.use_cache,
     )
     return result.exit_code
 

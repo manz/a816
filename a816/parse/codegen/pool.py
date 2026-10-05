@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from a816.error_codes import E_SYMBOL_NOT_DEFINED, E_SYMBOL_RESERVE_UNKNOWN_TYPE, E_SYMBOL_UNKNOWN_POOL
+from a816.error_codes import (
+    E_CODEGEN_CROSS_BANK_BODY,
+    E_SYMBOL_NOT_DEFINED,
+    E_SYMBOL_RESERVE_UNKNOWN_TYPE,
+    E_SYMBOL_UNKNOWN_POOL,
+)
 from a816.exceptions import (
     ExternalExpressionReference,
     ExternalSymbolReference,
@@ -11,6 +16,7 @@ from a816.exceptions import (
 from a816.parse.ast.expression import eval_expression, expr_to_ast
 from a816.parse.ast.nodes import (
     AllocAstNode,
+    AssertAstNode,
     AstNode,
     BlockAstNode,
     CodePositionAstNode,
@@ -69,11 +75,11 @@ def generate_pool(
 ) -> GenNodes:
     try:
         ranges = [
-            PoolRange(
-                start=_eval_int(lo, resolver, file_info),
-                end=_eval_int(hi, resolver, file_info),
-            )
+            piece
             for lo, hi in node.ranges
+            for piece in _bank_local_ranges(
+                _eval_int(lo, resolver, file_info), _eval_int(hi, resolver, file_info), node, resolver, file_info
+            )
         ]
         fill_value = _eval_int(node.fill, resolver, file_info)
         if not 0 <= fill_value <= 0xFF:
@@ -124,6 +130,34 @@ def generate_pool(
             resolver,
         )
     return []
+
+
+def _bank_local_ranges(lo: int, hi: int, node: PoolAstNode, resolver: Resolver, file_info: Token) -> list[PoolRange]:
+    """`range LO HI` as bank-local ranges: one per bank, clipped to the
+    windows the bus serves for this pool's kind (ROM, or writable for bss).
+
+    Blocks stay bank-local, so a range over several banks is just shorthand
+    for one range per bank. Clipping keeps a LoROM `range 0x228000 0x2fffff`
+    to the `$8000-$FFFF` halves instead of handing out the low halves too.
+    """
+    if lo >> 16 == hi >> 16:
+        return [PoolRange(start=lo, end=hi)]
+    pieces: list[PoolRange] = []
+    for bank in range((lo >> 16), (hi >> 16) + 1):
+        windows = resolver.bus.windows_in(bank, writable=node.bss)
+        if not windows:
+            raise NodeError(
+                f"pool {node.pool_name!r} range 0x{lo:06x}..0x{hi:06x} covers bank ${bank:02X}, "
+                f"which no `.map` serves as {'memory' if node.bss else 'ROM'}",
+                file_info,
+                hint="declare the `.map` for these banks before the pool, or end the range before them",
+            )
+        bank_lo, bank_hi = max(lo, bank << 16), min(hi, bank << 16 | 0xFFFF)
+        for w_lo, w_hi in windows:
+            start, end = max(bank_lo, bank << 16 | w_lo), min(bank_hi, bank << 16 | w_hi)
+            if start <= end:
+                pieces.append(PoolRange(start=start, end=end))
+    return pieces
 
 
 def _declared_contexts(pool_name: str, resolver: Resolver) -> list[str]:
@@ -213,6 +247,9 @@ def generate_alloc(
             pinned_addr = _eval_int(node.at_address, resolver, file_info)
 
     _reject_nested_placement(node)
+    if node.cross_bank:
+        _check_cross_bank_body(node)
+    align = _eval_align(node, resolver, file_info)
     # Open an AllocBodyScope around the body so per-block underscore
     # labels (`_skip`, `_end`) stay private to this alloc; otherwise
     # two sibling allocs declaring `_skip:` silently overwrite each
@@ -236,8 +273,40 @@ def generate_alloc(
             pinned_addr=pinned_addr,
             pool_token=node.pool_token,
             body_scope=body_scope,
+            align=align,
+            cross_bank=node.cross_bank,
         )
     ]
+
+
+def _check_cross_bank_body(node: AllocAstNode) -> None:
+    """A `cross_bank` blob is read from its base by code that steps bank
+    edges itself: only data may sit in it. Code can't execute through an
+    edge, and a label inside would need an address a816 doesn't track
+    across the edge."""
+    from a816.parse.ast.nodes import CommentAstNode, DataNode, DocstringAstNode, IncludeBinaryAstNode
+
+    allowed = (CommentAstNode, DataNode, DocstringAstNode, IncludeBinaryAstNode)
+    for child in node.body.body:
+        if not isinstance(child, allowed):
+            raise NodeError(
+                f"`cross_bank` alloc {node.name or ''!s} may hold only data (`.incbin`, `.db`/`.dw`/`.dl`)",
+                child.file_info,
+                code=str(E_CODEGEN_CROSS_BANK_BODY),
+                hint="readers work from the alloc's base; move code and labels outside the blob",
+            )
+
+
+def _eval_align(node: AllocAstNode, resolver: Resolver, file_info: Token) -> int:
+    """`align N` as an int: a power of two, 1 when absent."""
+    if node.align is None:
+        return 1
+    align = _eval_int(node.align, resolver, file_info)
+    if align <= 0 or align & (align - 1):
+        raise NodeError(f"alloc {node.name or ''!s} `align {align}` is not a power of two", file_info)
+    if node.at_address is not None and _eval_int(node.at_address, resolver, file_info) % align:
+        raise NodeError(f"alloc {node.name or ''!s} is pinned off its `align {align}` boundary", file_info)
+    return align
 
 
 def generate_reserve_typed(
@@ -275,7 +344,12 @@ def generate_reserve_typed(
 
     resolver.typed_instances[node.name] = node.type_name
     alloc = AllocAstNode(
-        node.name, node.pool_name, BlockAstNode(body, file_info), file_info, pool_token=node.pool_token
+        node.name,
+        node.pool_name,
+        BlockAstNode(body, file_info),
+        file_info,
+        pool_token=node.pool_token,
+        at_address=node.at_address,
     )
     return generate_alloc(alloc, resolver, macro_definitions, file_info)
 
@@ -426,3 +500,30 @@ generators["alloc"] = generate_alloc
 generators["reserve_typed"] = generate_reserve_typed
 generators["relocate"] = generate_relocate
 generators["reclaim"] = generate_reclaim
+
+
+def generate_assert(
+    node: AssertAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Queue a `.assert` for the linker: it may name pooled labels, which
+    only have their address after placement. Parse-only runs (LSP) skip it."""
+    if resolver.context.is_object_mode and resolver.context.object_writer is not None:
+        from a816.object_file import LinkAssert
+
+        resolver.context.object_writer.asserts.append(
+            LinkAssert(node.expression.to_canonical(), node.message, _source_of_token(file_info))
+        )
+    return []
+
+
+def _source_of_token(token: Token) -> str:
+    position = token.position
+    if position is None or position.file is None:
+        return ""
+    return f"{position.file.filename}:{position.line + 1}"
+
+
+generators["assert"] = generate_assert

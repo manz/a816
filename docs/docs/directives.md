@@ -492,13 +492,15 @@ Emits the literal bytes of a string with no character-map translation.
 
 ### `.incbin "data.bin"`
 
-Includes a binary file verbatim. Defines the named label *and*
-`<label>__size` with the byte count.
+Includes a binary file verbatim. Defines a label at its first byte and
+a `__size` constant with the byte count, both named after the path as
+written, with `/` and `.` replaced by `_`. A label placed before the
+directive gets no `__size` of its own.
 
 ```ca65
-assets_intro_map:
+intro_map:
 .incbin "assets/intro.map"
-; symbols emitted: assets_intro_map, assets_intro_map__size
+; symbols emitted: intro_map, assets_intro_map, assets_intro_map__size
 ```
 
 ### `.include "file.s"`
@@ -574,8 +576,8 @@ address; nothing is emitted into the image.
   other allocation (pinned or floating), then carves it out. Use for fixed
   memory maps (VRAM, MMIO mirrors) where the address is the contract but
   you still want overlap checking across the whole layout.
-* `.reserve NAME as TYPE in POOL`: reserves `sizeof(TYPE)` and publishes
-  `NAME.<field>` at each struct offset.
+* `.reserve NAME as TYPE [at ADDR] in POOL`: reserves `sizeof(TYPE)` and publishes
+  `NAME.<field>` at each struct offset; `at ADDR` pins it like the flat form.
 
 ```ca65
 .pool vram { bss  range 0x0000 0x7fff  strategy order }
@@ -586,6 +588,23 @@ address; nothing is emitted into the image.
 
 Pinned spans that fall outside the pool or collide with another allocation
 fail the build, naming the offending reservation.
+
+### `.assert EXPR, "message"`
+
+A layout invariant checked at link time, once every address is final,
+so it may use pooled labels and the module's private ones:
+
+```ca65
+.alloc dialogue_stream in upper_gap cross_bank {
+    .incbin "assets/stream.dat"    ; publishes assets_stream_dat__size
+}
+
+.assert (items_vwf & 0xFFFF) == 0, "items_vwf must open a bank"
+.assert dialogue_stream + assets_stream_dat__size <= 0x5d0000, "the stream overruns the gap"
+```
+
+A false assert fails the link with `E0407`; every failed assert is
+reported, each with its message, expression and source line.
 
 ### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
 

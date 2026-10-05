@@ -15,6 +15,7 @@ nav = [
     { "Directives" = "directives.md" },
     { "Standard library" = "stdlib.md" },
     { "Modules" = "modules.md" },
+    { "Placement" = "placement.md" },
     { "Freespace pools" = "freespace-pools.md" },
     { "Fluff (lint + format)" = "fluff.md" },
     { "Error codes" = "errors.md" },

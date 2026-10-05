@@ -149,6 +149,9 @@ separate blocks separated by a blank line.
 - `E0333` string or list initializer longer than its array field.
 - `E0334` non-ASCII character in a string initializer.
 - `E0335` initialized bit-field run wider than 32 bits.
+- `E0336` a `cross_bank` alloc body holds something other than data
+  (code or a label); see
+  [Freespace pools](freespace-pools.md#cross_bank-data-blobs-across-bank-edges).
 
 ### Linker
 
@@ -166,6 +169,8 @@ separate blocks separated by a blank line.
   Lists every clash with both reservations, their spans and their
   `file:line`. Memory used in turns goes in one pool's `contexts`
   (see [Freespace pools](freespace-pools.md#memory-pools-bss-and-contexts)).
+- `E0407` a `.assert` is false once every address is final. Lists each
+  failed assert with its message, expression and `file:line`.
 
 ### I/O / config
 

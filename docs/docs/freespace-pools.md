@@ -85,6 +85,14 @@ different banks never do, even when their addresses touch, so
 `range 0x01fff0 0x01ffff` + `range 0x020000 0x02000f` is two
 16-byte chunks, not one 32-byte chunk.
 
+A `range` may span several banks: it is shorthand for one range per
+bank, clipped to the windows the bus serves for the pool's kind (ROM,
+or writable memory for a `bss` pool). On LoROM
+`range 0x228000 0x2fffff` becomes the `$8000-$FFFF` half of each bank
+`$22-$2F`, never the low halves. A bank the range covers that no `.map`
+serves is an error rather than a quietly smaller pool. Blocks stay
+bank-local either way.
+
 `range`, `fill`, and `strategy` accept constant expressions; literal
 arithmetic resolves at code-generation time. Constants declared
 earlier in the same source bind eagerly so `range BASE BASE + 0xff`
@@ -139,6 +147,53 @@ same bytes at their canonical address.
 Allocator picks the address. `helper_fn` symbol resolves to that
 address. Body bytes land there.
 
+`align N` (a power of two, any constant expression) places the block
+on a multiple of `N`, for data whose layout depends on its base:
+
+```ca65
+.alloc item_chr in upper_gap align 0x200 {
+    .incbin "assets/item_chr.bin"   ; padded so no 0x200-byte slice crosses a bank
+}
+```
+
+Alignment is on the logical address, which is what DMA and the reading
+code see. The gap before the boundary stays free for later blocks.
+
+A block whose body is empty (a slot whose `.incbin` is empty in this
+build) binds its label and takes no space.
+
+A block never spans a bank boundary: code can't run through one, and
+DMA, `MVN`/`MVP` and 16-bit pointers all wrap inside a bank.
+
+#### `cross_bank`: data blobs across bank edges
+
+```ca65
+.pool text { range 0x228000 0x22ffff  range 0x238000 0x23ffff  strategy order }
+
+.alloc dialog in text cross_bank {
+    .incbin "assets/dialog.bin"
+}
+```
+
+A `cross_bank` block may straddle bank edges where the ROM is
+physically contiguous: the last byte of one chunk and the first byte of
+the next are consecutive in the ROM file. That holds for LoROM
+(`$22:FFFF` is followed by `$23:8000`) and HiROM (`$C0:FFFF` by
+`$C1:0000`); a gap in the ROM, or a bank no `.map` region covers, is
+never crossed. The allocator still prefers a single chunk when one is
+big enough.
+
+The body holds data only (`.incbin`, `.db`/`.dw`/`.dl`); code or labels
+inside are an error (`E0336`). The blob is position independent: its
+base is `NAME` (an `.incbin` inside also publishes `<path>__size`,
+named after its path: `assets_dialog_bin__size` above), and how offsets
+inside it become addresses is the contract between whatever generated
+it and the code reading it. That code must step each bank edge the
+mapper's way, for every read, lookahead included: on LoROM, when the
+low word wraps, it goes back to `$8000` and the bank goes up by one. A
+16-bit read at `$xx:FFFF` takes its second byte from `(xx+1):0000`,
+which on LoROM isn't ROM.
+
 ### `.alloc [NAME] at ADDR [size N] { body }`
 
 Pinned placement: `body` lands at the literal `ADDR`. `NAME` is
@@ -168,6 +223,29 @@ raise a hard error naming both source locations.
 Legacy `*= ADDR` directives still work and have the same effect;
 the fluff rule `UP001` plus `a816 fix --select UP001 --unsafe-fixes`
 rewraps them mechanically when you're ready to migrate.
+
+### `.alloc NAME at ADDR in POOL [cross_bank] [align N] { body }`
+
+Pinned *inside* a pool: the pool carves the pinned span out before it
+places its floating allocs, so they pack around it. A plain
+`.alloc at` next to a pool is invisible to the allocator; only the
+write audit would catch a collision.
+
+```ca65
+.pool upper_gap { range 0x500000 0x5cffff  strategy pack }
+
+.alloc dialogue_stream at 0x500000 in upper_gap cross_bank {
+    .incbin "assets/stream.dat"      ; runs over several banks
+}
+.alloc keep_font in upper_gap {      ; packs behind the stream
+    .incbin "assets/keep_font.dat"
+}
+```
+
+With `cross_bank` the pinned span may run on through contiguous
+banks. `size N` doesn't combine with `in POOL`: the pool already
+bounds the block. Two pins that overlap, or a pin off its `align`
+boundary, are errors.
 
 ### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
 

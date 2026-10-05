@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -94,7 +95,10 @@ class PoolOverflowError(PoolError):
         kind = self.kind
         if kind is OverflowKind.TOO_LARGE:
             target = "the pool" if self.single_range else "a range"
-            return f"split '{self.alloc_name}' into smaller allocs or grow {target} to at least {self.size} bytes"
+            hint = f"split '{self.alloc_name}' into smaller allocs or grow {target} to at least {self.size} bytes"
+            if self.spans_banks:
+                hint += "; a data blob read across bank edges can opt in with `cross_bank`"
+            return hint
         if kind is OverflowKind.FRAGMENTED:
             return f"split '{self.alloc_name}' or grow one of the ranges"
         return f"grow pool '{self.pool_name}' or move code out of it"
@@ -149,6 +153,11 @@ class Allocation:
     allocations are placed. Kept separate from `addr` so `placed` stays False
     until `allocate()` runs (object mode binds body labels at the sandbox base
     uniformly and lets the linker apply the final address)."""
+    align: int = 1
+    """The block's address is a multiple of this (a power of two)."""
+    cross_bank: bool = False
+    """The block may span free chunks across a bank edge the pool's
+    `contiguous` predicate accepts (consecutive ROM bytes)."""
 
     @property
     def pinned(self) -> bool:
@@ -174,6 +183,10 @@ class Pool:
     may share memory (screens that never coexist); a pool without a context is
     live everywhere and shares memory with no one."""
     allocations: list[Allocation] = field(default_factory=list)
+    contiguous: Callable[[int, int], bool] | None = field(default=None, compare=False)
+    """`contiguous(last, first)`: are the bytes at logical `last` and `first`
+    consecutive in the ROM? Set by the linker from the bus; without it no
+    block crosses a bank edge."""
     _allocated: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
@@ -200,15 +213,18 @@ class Pool:
             context=decl.context,
         )
 
-    def request(self, name: str, size: int, addr: int | None = None) -> Allocation:
-        if size <= 0:
-            raise PoolError(f"alloc '{name}' has non-positive size {size}")
+    def request(
+        self, name: str, size: int, addr: int | None = None, *, align: int = 1, cross_bank: bool = False
+    ) -> Allocation:
+        """Queue a block; size 0 binds its address and takes no space."""
+        if size < 0:
+            raise PoolError(f"alloc '{name}' has negative size {size}")
         if self._allocated:
             raise PoolError(f"pool '{self.name}' already allocated; cannot request more")
         if addr is not None:
-            alloc = Allocation(name=name, size=size, pinned_addr=addr)
+            alloc = Allocation(name=name, size=size, pinned_addr=addr, align=align, cross_bank=cross_bank)
         else:
-            alloc = Allocation(name=name, size=size)
+            alloc = Allocation(name=name, size=size, align=align, cross_bank=cross_bank)
         self.allocations.append(alloc)
         return alloc
 
@@ -241,7 +257,7 @@ class Pool:
         )
         for alloc in sorted(pinned, key=lambda a: a.pinned_addr):
             alloc.addr = alloc.pinned_addr
-            free = _carve(alloc, free, self.ranges, self.name)
+            free = _carve(alloc, free, self.ranges, self.name, self.contiguous)
             free_total = sum(r.size for r in free)
             logger.info(
                 "  pinned %s size %d at 0x%06x  (free: %d bytes across %d range(s))",
@@ -252,7 +268,7 @@ class Pool:
                 len(free),
             )
         for alloc in order:
-            free = _place(alloc, free, self.ranges, self.name)
+            free = _place(alloc, free, self.ranges, self.name, self.contiguous)
             free_total = sum(r.size for r in free)
             logger.info(
                 "  placed %s size %d at 0x%06x  (free: %d bytes across %d range(s))",
@@ -331,11 +347,22 @@ def _sort_allocations(allocs: list[Allocation], strategy: Strategy) -> list[Allo
     return sorted(allocs, key=lambda a: (-a.size, a.name))
 
 
-def _place(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:
+def _place(
+    alloc: Allocation,
+    free: list[PoolRange],
+    ranges: list[PoolRange],
+    pool_name: str,
+    contiguous: Callable[[int, int], bool] | None = None,
+) -> list[PoolRange]:
     for idx, chunk in enumerate(free):
-        if chunk.size >= alloc.size:
-            alloc.addr = chunk.start
-            return _shrink_chunk(free, idx, alloc.size)
+        start = _align_up(chunk.start, alloc.align)
+        if start + alloc.size - 1 <= chunk.end:
+            alloc.addr = start
+            return _take(free, idx, start, alloc.size)
+    if alloc.cross_bank and contiguous is not None:
+        spanned = _place_across_edges(alloc, free, contiguous)
+        if spanned is not None:
+            return spanned
     raise PoolOverflowError(
         pool_name,
         alloc.name,
@@ -348,7 +375,68 @@ def _place(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], po
     )
 
 
-def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], pool_name: str) -> list[PoolRange]:
+def _place_across_edges(
+    alloc: Allocation, free: list[PoolRange], contiguous: Callable[[int, int], bool]
+) -> list[PoolRange] | None:
+    """First fit over runs of free chunks joined by contiguous edges.
+
+    A block that starts in one chunk and goes on past its end must use the
+    chunk to its last byte, so it starts at the chunk's (aligned) start.
+    Returns the new free list, or None when no run is long enough.
+    """
+    for first in range(len(free)):
+        start = _align_up(free[first].start, alloc.align)
+        if start <= free[first].end:
+            spanned = _span_from(free, first, start, alloc.size, contiguous)
+            if spanned is not None:
+                alloc.addr = start
+                return spanned
+    return None
+
+
+def _span_from(
+    free: list[PoolRange], first: int, start: int, size: int, contiguous: Callable[[int, int], bool]
+) -> list[PoolRange] | None:
+    """Use `size` bytes from `start` inside chunk `first`, running on through
+    following chunks while each edge is contiguous: the chunks after the first
+    are used from their start, every middle one whole. Returns the new free
+    list (the gap before `start` and the rest of the last chunk stay free), or
+    None when the run ends before `size` bytes."""
+    remaining = size - (free[first].end - start + 1)
+    last = first
+    while remaining > 0:
+        if last + 1 == len(free) or not contiguous(free[last].end, free[last + 1].start):
+            return None
+        last += 1
+        remaining -= free[last].size
+    head = [PoolRange(start=free[first].start, end=start - 1)] if start > free[first].start else []
+    tail_start = free[last].end + 1 + remaining  # remaining <= 0: minus the bytes left in the last chunk
+    tail = [PoolRange(start=tail_start, end=free[last].end)] if tail_start <= free[last].end else []
+    return [*free[:first], *head, *tail, *free[last + 1 :]]
+
+
+def _align_up(addr: int, align: int) -> int:
+    return (addr + align - 1) & -align
+
+
+def _take(free: list[PoolRange], idx: int, start: int, size: int) -> list[PoolRange]:
+    """Use `size` bytes at `start` inside chunk `idx`; an alignment gap
+    before it stays free for later blocks."""
+    chunk = free[idx]
+    head = []
+    if start > chunk.start:
+        head = [PoolRange(start=chunk.start, end=start - 1, allow_bank_cross=chunk.allow_bank_cross)]
+    rest = PoolRange(start=start, end=chunk.end, allow_bank_cross=chunk.allow_bank_cross)
+    return [*free[:idx], *head, *_shrink_chunk([rest], 0, size), *free[idx + 1 :]]
+
+
+def _carve(
+    alloc: Allocation,
+    free: list[PoolRange],
+    ranges: list[PoolRange],
+    pool_name: str,
+    contiguous: Callable[[int, int], bool] | None = None,
+) -> list[PoolRange]:
     span_start = alloc.addr
     span_end = alloc.addr + alloc.size - 1
     for idx, chunk in enumerate(free):
@@ -362,6 +450,10 @@ def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], po
             out.append(PoolRange(start=span_end + 1, end=chunk.end, allow_bank_cross=chunk.allow_bank_cross))
         out.extend(free[idx + 1 :])
         return out
+    if alloc.cross_bank and contiguous is not None:
+        carved = _carve_across_edges(alloc, free, contiguous)
+        if carved is not None:
+            return carved
     # No free chunk contains the span. If a declared pool range does contain it,
     # the conflict is with another (already-carved) allocation; otherwise the
     # address simply lies outside the pool.
@@ -373,6 +465,17 @@ def _carve(alloc: Allocation, free: list[PoolRange], ranges: list[PoolRange], po
     raise PoolInvalidRangeError(
         f"pinned alloc '{alloc.name}' 0x{span_start:06x}..0x{span_end:06x} is outside the ranges of pool '{pool_name}'"
     )
+
+
+def _carve_across_edges(
+    alloc: Allocation, free: list[PoolRange], contiguous: Callable[[int, int], bool]
+) -> list[PoolRange] | None:
+    """A pinned cross_bank span: from the chunk holding `alloc.addr`, on
+    through contiguous chunks."""
+    for idx, chunk in enumerate(free):
+        if chunk.start <= alloc.addr <= chunk.end:
+            return _span_from(free, idx, alloc.addr, alloc.size, contiguous)
+    return None
 
 
 def _shrink_chunk(free: list[PoolRange], idx: int, used: int) -> list[PoolRange]:

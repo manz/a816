@@ -149,6 +149,8 @@ class ObjectEmitMixin:
                 pinned_addr=node.pinned_addr if node.pinned_addr is not None else -1,
                 source=_source_of(node),
                 labels=node.exported_labels(),
+                align=node.align,
+                cross_bank=node.cross_bank,
             )
         )
 

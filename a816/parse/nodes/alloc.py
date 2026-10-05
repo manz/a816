@@ -32,6 +32,8 @@ class AllocNode(NodeBase):
         pinned_addr: int | None = None,
         pool_token: Token | None = None,
         body_scope: Scope | None = None,
+        align: int = 1,
+        cross_bank: bool = False,
     ) -> None:
         self.name = name
         # The body's AllocBodyScope: every label in it (or nested in it)
@@ -40,6 +42,10 @@ class AllocNode(NodeBase):
         # between pools sharing memory (contexts).
         self.body_scope = body_scope
         self._name_scope: Scope | None = None
+        # Placement on a multiple of `align` (1 = anywhere).
+        self.align = align
+        # Data blob that may straddle bank edges where the ROM is contiguous.
+        self.cross_bank = cross_bank
         self.pool_name = pool_name
         self.pool_token = pool_token
         self.body = body
@@ -111,8 +117,10 @@ class AllocNode(NodeBase):
 
     def _request_slot(self) -> None:
         pool = self.resolver.pools[self.pool_name]
-        self._size = max(1, self._measure_body())
-        self._alloc = pool.request(self.name, self._size, self.pinned_addr)
+        self._size = self._measure_body()
+        self._alloc = pool.request(
+            self.name, self._size, self.pinned_addr, align=self.align, cross_bank=self.cross_bank
+        )
         self.resolver.alloc_sites[(self.pool_name, self.name)] = self.file_info
         # Object mode defers allocator to link time. Bind the alloc's
         # symbol + body labels at the sandbox PC (pool start + cursor)

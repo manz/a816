@@ -350,9 +350,10 @@ class A816Formatter:
         if ast.is_pinned:
             addr = ast.at_address.to_canonical() if ast.at_address else "?"
             size_part = f" size {ast.at_size.to_canonical()}" if ast.at_size is not None else ""
-            header = f".alloc{name_part} at {addr}{size_part} {{"
+            pool_part = f" in {ast.pool_name}{ast.flags_suffix()}" if ast.pool_name else ""
+            header = f".alloc{name_part} at {addr}{size_part}{pool_part} {{"
         else:
-            header = f".alloc{name_part} in {ast.pool_name} {{"
+            header = f".alloc{name_part} in {ast.pool_name}{ast.flags_suffix()} {{"
         lines = [header]
         lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
         lines.append("}")

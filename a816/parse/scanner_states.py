@@ -355,6 +355,7 @@ DIRECTIVE_NAMES = {
     "alloc",
     "relocate",
     "reclaim",
+    "assert",
     "res",
     "reserve",
     "a8",

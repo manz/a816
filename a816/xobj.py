@@ -8,14 +8,12 @@ hunting subtle drift.
 
 import argparse
 import json
-import struct
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
 from a816.object_file import (
-    INVALID_FILE_FORMAT,
     ObjectFile,
     Section,
 )
@@ -28,45 +26,21 @@ def _fmt_addr(addr: int | None) -> str:
 
 
 def _load_tolerant(path: Path, out: TextIO) -> ObjectFile:
+    """Load an object; one built by another a816 can't be decoded (its tables
+    follow another schema), so say what it was built with and stop."""
     try:
         return ObjectFile.from_file(str(path))
     except ValueError as exc:
-        msg = str(exc)
-        if "Unsupported version" not in msg:
-            raise
-        print(f"warning: {msg}; attempting best-effort read", file=out)
-        return _read_any_version(path)
-
-
-def _read_any_version(path: Path) -> ObjectFile:
-    with open(path, "rb") as f:
-        header = f.read(7)
-        if len(header) < 7:
-            raise ValueError(INVALID_FILE_FORMAT)
-        magic, _version, flags = struct.unpack("<IHB", header)
-        if magic != ObjectFile.MAGIC_NUMBER:
-            raise ValueError("Invalid magic number")
-        relocatable = bool(flags & 0x01)
-        sections = ObjectFile._read_sections(f)
-        symbols = ObjectFile._read_symbol_table(f)
-        try:
-            aliases = ObjectFile._read_alias_table(f)
-        except struct.error:
-            aliases = []
-        try:
-            files = ObjectFile._read_file_table(f)
-        except struct.error:
-            files = []
-        return ObjectFile(sections, symbols, aliases=aliases, files=files, relocatable=relocatable)
+        header = ObjectFile.read_header(str(path))
+        if header is not None and header.identity != ObjectFile.identity():
+            print(f"error: {path}: {exc}", file=out)
+            raise SystemExit(1) from exc
+        raise
 
 
 def _detect_version(path: Path) -> int:
-    with open(path, "rb") as f:
-        header = f.read(7)
-    if len(header) < 7:
-        return -1
-    _magic, version, _flags = struct.unpack("<IHB", header)
-    return int(version)
+    header = ObjectFile.read_header(str(path))
+    return header.version if header is not None else -1
 
 
 def print_summary(path: Path, obj: ObjectFile, out: TextIO) -> None:
@@ -77,6 +51,10 @@ def print_summary(path: Path, obj: ObjectFile, out: TextIO) -> None:
     total_lines = sum(len(r.lines) for r in obj.sections)
     print(f"file: {path}", file=out)
     print(f"version: {version}", file=out)
+    header = ObjectFile.read_header(str(path))
+    if header is not None:
+        print(f"schema: {header.schema.hex()}", file=out)
+        print(f"codegen_revision: {header.revision}", file=out)
     print(f"relocatable: {obj.relocatable}", file=out)
     print(f"sections: {len(obj.sections)}", file=out)
     print(f"code_bytes: {total_code}", file=out)

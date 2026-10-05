@@ -12,201 +12,81 @@ Inspect with [`xobj`](index.md#xobj).
 All integers are little-endian.
 
 ```
-magic   : u32 = 0x41383136 ('A816')
-version : u16 = current 15
-flags   : u8  bit 0 = relocatable (1 when produced by --compile-only)
+magic     : u32 = 0x41383136 ('A816')
+version   : u16 = 16          container version: how the rest is laid out
+flags     : u8  bit 0 = relocatable (no `*=` in the source)
+schema    : 16 bytes          digest of the wire schema (below)
+revision  : u32               CODEGEN_REVISION of the a816 that wrote it
 ```
 
-Reader rejects mismatched `version`. Bumping the version is always a
-breaking change — old `.o` files cannot be linked by a newer
-toolchain. Recompile from source when you upgrade.
+Every container version starts with `magic`, `version`, `flags`, so an
+object from any a816 at least reports which version it is.
 
-## Sections
+`version`, `schema` and `revision` together are the object's
+**identity**. a816 reads only objects of its own identity; the build
+cache rebuilds any other one instead of failing to load it.
 
-The header is followed by six tables in this order:
+- `schema` changes whenever a field of any table changes (added,
+  removed, retyped, reordered). Nothing to bump by hand.
+- `revision` (`CODEGEN_REVISION` in `a816/object_file.py`) is bumped
+  when a816 emits different object bytes for unchanged source.
+  `tests/test_codegen_revision.py` assembles a fixed corpus and fails
+  when the output changed without a bump, or the revision moved
+  without an output change.
 
-1. **Sections** — emitted code plus per-section relocations and debug lines.
-2. **Symbol table** — names defined or referenced by the module.
-3. **Alias table** — deferred constant expressions.
-4. **File table** — source paths referenced by the line tables.
-5. **Pool declarations** — `.pool NAME { range ... }` decls so the
-   linker can re-create the pool object when merging modules.
-6. **Pool allocations** — `.alloc NAME in POOL { ... }` requests the
-   link-time allocator fulfils across the whole link, plus
-   `.alloc at ADDR { ... }` pinned synthesised pools.
+## Body
 
-### Sections
+After the header comes one `WireObject` record, encoded from its type
+annotations by `a816/object_codec.py`:
 
-A new section is opened on every `*=` directive (legacy form) or
-`.alloc [NAME] at ADDR { ... }` / `.alloc NAME in POOL { ... }`
-directive during compilation, so the layout is faithful to the
-author's intent (no concatenation of disjoint memory ranges).
-
-Each section carries a `placement` tag: `PINNED` (base address fixed
-at parse time — `*=` and `.alloc at`) or `POOLED` (base address
-chosen by the linker's cross-module pool allocator — `.alloc … in
-POOL`). The placement tag drives whether the linker uses the
-section's recorded `base_address` verbatim or re-bases it after pool
-allocation.
-
-```
-count : u16
-
-per section:
-    base_address          : u32   logical SNES address of the section's first byte
-    code_size             : u32
-    num_relocations       : u16
-    num_expression_relocs : u16
-    num_lines             : u32
-    code                  : bytes[code_size]
-
-    per relocation:
-        offset    : u32       byte offset into `code`
-        name_len  : u8
-        name      : utf-8[name_len]
-        reloc_type: u8
-                              0 = ABSOLUTE_16
-                              1 = ABSOLUTE_24
-                              2 = RELATIVE_16
-                              3 = RELATIVE_24
-
-    per expression relocation:
-        offset    : u32       byte offset into `code`
-        expr_len  : u16
-        expression: utf-8[expr_len]
-        size_bytes: u8        emit width (1, 2, 3 or 4)
-
-    per line entry:
-        offset    : u32       byte offset into `code`
-        file_idx  : u32       index into the file table
-        line      : u32       1-based
-        column    : u16       1-based
-        flags     : u8        bit 0 = synthetic (macro expansion)
+```python
+@dataclass
+class WireObject:
+    sections: list[WireSection]
+    symbols: list[tuple[str, int, SymbolType, SymbolSection]]
+    aliases: list[tuple[str, str]]
+    files: list[str]
+    pool_decls: list[PoolDecl]
+    pool_allocs: list[PoolAlloc]
+    bus_mappings: list[BusMapping]
 ```
 
-Plain *relocations* hold a single symbol name; the linker resolves the
-name to an address and writes back at `offset`. *Expression relocations*
-hold a full a816 expression text; the linker re-parses and evaluates
-the expression once every name in it is bound. They make
-`name = target + 0x40` style aliases work across modules.
+The record types (`WireSection`, `PoolDecl`, `PoolAlloc`,
+`BusMapping`) are dataclasses in `a816/object_file.py`; their
+annotations are the format. Encoding rules:
 
-### Symbol table
+| Type | Bytes |
+|---|---|
+| `int` | i64 |
+| `bool` | u8 |
+| `Enum` | its value, as an `int` |
+| `str`, `bytes` | u32 length + bytes (UTF-8 for `str`) |
+| `X \| None` | u8 tag (0 = None) + `X` |
+| dataclass, fixed `tuple` | its fields in order |
+| `list[R]`, `R` a record of `int`/`bool`/`Enum`/`str` | u32 count, then one column per field: numbers as `count` i64s, strings as one u32-length blob joined by NUL |
+| other `list[X]` | u32 count + items |
 
-```
-count : u16
+Columnar lists keep the big tables (symbols, relocations, line
+entries) fast to read: each column decodes in one call.
 
-per entry:
-    name_len    : u8
-    name        : utf-8[name_len]
-    address     : u32
-    symbol_type : u8    0 = LOCAL, 1 = GLOBAL, 2 = EXTERNAL
-    section     : u8    0 = CODE,  1 = DATA,   2 = BSS
-```
+Offsets in a section's `relocations`, `expression_relocations` and
+`lines` are byte offsets into that section's `code`. The reader builds
+an anonymous pinned `Section` from each `WireSection`; pooled sections
+get their final address from the matching `PoolAlloc` at link time.
 
-LOCAL symbols are private to the module (names starting with `_`).
-GLOBAL symbols export to other modules. EXTERNAL symbols are
-declarations the linker is responsible for filling in.
-
-### Alias table
-
-```
-count : u16
-
-per entry:
-    name_len    : u8
-    name        : utf-8[name_len]
-    expr_len    : u16
-    expression  : utf-8[expr_len]
-```
-
-Aliases are constant-binding expressions deferred until link time.
-They support `name = (target >> 16) & 0xFF` shapes where `target` is
-defined in another module.
-
-### File table
-
-```
-count : u16
-
-per entry:
-    path_len : u16
-    path     : utf-8[path_len]
-```
-
-Indices are referenced from each section's line table.
-
-### Pool declarations
-
-```
-count : u16
-
-per entry:
-    name_len      : u8
-    name          : utf-8[name_len]
-    strategy_len  : u8
-    strategy      : utf-8[strategy_len]   "pack" | "order"
-    bss           : u8    1 = byte-less memory pool
-    context_len   : u8    0 = not a context
-    context       : utf-8[context_len]
-    fill          : u8    byte used to back-fill the pool's slack
-    num_ranges    : u16
-    per range:
-        start     : u32   inclusive logical SNES address
-        end       : u32   inclusive
-```
-
-The linker keys pools by `name` and merges identical decls across
-modules. Mismatched shape (different fill / strategy / bss / context
-under the same name) is a hard error during merge. A pool's
-`contexts A, B` reach the format as sibling decls named `POOL.A`,
-`POOL.B` carrying `context`; every module declaring `POOL` must list
-the same contexts.
-
-### Pool allocations
-
-```
-count : u16
-
-per entry:
-    pool_name_len   : u8
-    pool_name       : utf-8[pool_name_len]
-    symbol_name_len : u8
-    symbol_name     : utf-8[symbol_name_len]
-    section_idx     : u32   index into the section table — the alloc's body
-    size            : u32   byte length the allocator must reserve
-    pinned_addr     : i32   fixed address (`.reserve … at ADDR`), -1 = allocator picks
-    source_len      : u16
-    source          : utf-8[source_len]   `file:line` of the request, for diagnostics
-    label_count     : u16
-    per label:
-        label_len   : u16
-        label       : utf-8[label_len]    exported name of a symbol bound in this section
-```
-
-`labels` names every symbol the alloc binds (its own name, its body
-labels, end markers included). The linker rebases those by this
-section's placement instead of guessing the section from the symbol's
-address, which is ambiguous when pools share memory.
-
-Each entry binds one `.alloc NAME in POOL { ... }` to the section
-holding its body bytes. The link-time cross-module pool allocator
-walks every module's pool_allocs, places each in its pool's free
-list, then rewrites the owning section's base address before emit.
+To add data to the format, add an annotated field (with a default, for
+in-memory callers) to the right record: it is written, read and
+versioned with no further code.
 
 ## Stability
 
-The format version is bumped on every breaking change. Past versions:
+Objects are build artifacts: only the a816 that wrote one reads it.
+The container version changes only when the header or the encoding
+rules do:
 
-- v15 (current): pool allocs list the labels bound in their section.
-- v14: pool decls carry `bss` and a context name; pool allocs
-  carry `pinned_addr` and their source location. (v7 to v13 are not
-  listed here.)
-- v6: section-aware code layout. `*=` produces a new section,
-  preserving disjoint address ranges across the same module.
-- v5: added per-section line tables for `.adbg` debug info.
-
-Older versions are not read by current builds. Always recompile
-sources after upgrading the toolchain.
+- v16 (current): tables encoded from their annotations; schema digest
+  and codegen revision in the header.
+- v15 and earlier: hand-written per-table layouts.
 
 ## Producer notes
 

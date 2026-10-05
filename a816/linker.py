@@ -1,10 +1,12 @@
 import re
 import struct
+from collections.abc import Callable
 from re import Match
 
 from a816.exceptions import (
     DuplicateSymbolError,
     ExpressionEvaluationError,
+    LinkAssertError,
     PlacedSpan,
     PoolOverflowLinkError,
     PoolOverlapLinkError,
@@ -75,6 +77,7 @@ class Linker:
         self._resolve_symbols()
         self._resolve_aliases()
         self._check_unresolved()
+        self._check_asserts()
         self._apply_relocations()
         self._apply_expression_relocations()
         return ObjectFile(
@@ -101,6 +104,9 @@ class Linker:
         """
         self._merge_pool_decls()
         merged: dict[str, Pool] = {p.name: self._pool_from_decl(p) for p in self._merged_pool_decls}
+        contiguous = self._rom_contiguity()
+        for pool in merged.values():
+            pool.contiguous = contiguous
         # (obj_idx, section_idx) -> Allocation, to look up alloc.addr later.
         self._section_pool_alloc: dict[tuple[int, int], object] = {}
         request_sites = self._request_pool_allocs(merged)
@@ -169,12 +175,37 @@ class Linker:
                 alloc_obj = first_placed.get(key)
                 if alloc_obj is None:
                     pinned = req.pinned_addr if req.pinned_addr >= 0 else None
-                    alloc_obj = pool.request(req.symbol_name, req.size, pinned)
+                    alloc_obj = pool.request(
+                        req.symbol_name, req.size, pinned, align=req.align, cross_bank=req.cross_bank
+                    )
                     first_placed[key] = alloc_obj
                     request_sites[key] = (obj_idx, req.section_idx)
                     self._alloc_sources[key] = req.source
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
         return request_sites
+
+    def _rom_contiguity(self) -> Callable[[int, int], bool] | None:
+        """`contiguous(last, first)` over the modules' bus: true when the
+        bytes at logical `last` and `first` are consecutive in the ROM (a
+        LoROM `$80:FFFF` -> `$81:8000` edge, a HiROM `$C0:FFFF` -> `$C1:0000`
+        one). None when no module declares a map: then nothing crosses."""
+        from a816.cpu.mapping import Bus
+        from a816.mappers import map_on_bus
+
+        declared = {m.identifier: m for obj in self.object_files for m in obj.bus_mappings}
+        if not declared:
+            return None
+        bus = Bus()
+        for mapping in declared.values():
+            map_on_bus(bus, mapping)
+
+        def contiguous(last: int, first: int) -> bool:
+            # Both are pool range bounds, mapped since compile (an unmapped
+            # pool range already fails there).
+            last_physical = bus.get_address(last).physical
+            return last_physical is not None and bus.get_address(first).physical == last_physical + 1
+
+        return contiguous
 
     def _index_alloc_labels(self) -> None:
         """Map each symbol a pool alloc binds to that alloc's section:
@@ -505,6 +536,18 @@ class Linker:
             unresolved_symbols -= satisfied_by_scope
         if unresolved_symbols:
             raise UnresolvedSymbolError(unresolved_symbols)
+
+    def _check_asserts(self) -> None:
+        """Evaluate every module's `.assert` with final addresses, the
+        module's own locals in scope; report all failures at once."""
+        failures: list[tuple[str, str, str]] = []
+        for obj_idx, obj_file in enumerate(self.object_files):
+            local_overlay = self._local_by_obj.get(obj_idx)
+            for check in obj_file.asserts:
+                if not self._evaluate_expression(check.expression, local_overlay):
+                    failures.append((check.message, check.expression, check.source))
+        if failures:
+            raise LinkAssertError(failures)
 
     def _resolve_aliases(self) -> None:
         if not self.linked_aliases:

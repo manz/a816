@@ -152,9 +152,9 @@ flickering with the interpreter's hash seed.
 
 ## Auto-generated symbols
 
-`.incbin "data.bin"` defines both the data label and a `<label>__size`
-symbol with the byte count, so callers can do bounds checks without
-tracking the length manually.
+`.incbin "assets/data.bin"` defines a label and a size constant named
+after its path, `assets_data_bin` and `assets_data_bin__size`, so
+callers can do bounds checks without tracking the length manually.
 
 ## Pools across modules
 
