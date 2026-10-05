@@ -273,6 +273,8 @@ class ObjectFile:
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
         self.bus_mappings: list[BusMapping] = bus_mappings or []
         self.asserts: list[LinkAssert] = asserts or []
+        self.origin: str = ""
+        """Path the object was read from (not serialized): names it in diagnostics."""
 
     # ----- legacy single-section accessors (tests / older callers) -----
     def _ensure_first_section(self) -> Section:
@@ -383,7 +385,7 @@ class ObjectFile:
             )
             section.bss = ws.bss
             sections.append(section)
-        return ObjectFile(
+        obj = ObjectFile(
             sections,
             wire.symbols,
             aliases=wire.aliases,
@@ -394,3 +396,12 @@ class ObjectFile:
             bus_mappings=wire.bus_mappings,
             asserts=wire.asserts,
         )
+        obj.origin = filename
+        return obj
+
+    def describe(self) -> str:
+        """How diagnostics name this object: its first source file, else the
+        path it was read from."""
+        if self.files:
+            return self.files[0]
+        return self.origin or "<object>"
