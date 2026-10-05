@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import re
 
-from a816.diagnostics.suggest import did_you_mean_hint as _did_you_mean_hint
-from a816.error_codes import E_SYMBOL_NOT_DEFINED as _E_SYMBOL_NOT_DEFINED
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import ExpressionAstNode
-from a816.parse.nodes.errors import NodeError
+from a816.parse.nodes.errors import NodeError, undefined_symbol_error
 from a816.parse.tokens import Token
 from a816.protocols import ValueNodeProtocol
 from a816.symbols import Resolver
@@ -102,12 +100,7 @@ class ExpressionNode(ValueNodeProtocol):
                 return 0
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
         except SymbolNotDefined as e:
-            raise NodeError(
-                f"`{e}` is not defined in the current scope",
-                e.token or self.file_info,
-                code=str(_E_SYMBOL_NOT_DEFINED),
-                hint=_did_you_mean_hint(str(e), self.resolver.current_scope),
-            ) from e
+            raise undefined_symbol_error(e, self.file_info, self.resolver.current_scope) from e
 
     def get_value_string_len(self) -> int:
         value = self.get_value()

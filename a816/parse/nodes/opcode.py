@@ -8,12 +8,10 @@ from typing import cast
 from a816.cpu.cpu_65c816 import BlockMoveOpcode, NoOpcodeForOperandSize, Opcode, guess_value_size, snes_opcode_table
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
-from a816.diagnostics.suggest import did_you_mean_hint as _did_you_mean_hint
 from a816.error_codes import E_CODEGEN_BRANCH_RANGE, E_CODEGEN_BRANCH_UNMAPPED
 from a816.error_codes import E_CODEGEN_IMMEDIATE_OVERFLOW as _E_IMMEDIATE_OVERFLOW
-from a816.error_codes import E_SYMBOL_NOT_DEFINED as _E_SYMBOL_NOT_DEFINED
 from a816.exceptions import BranchOutOfRangeError, BranchTargetUnmappedError, SymbolNotDefined
-from a816.parse.nodes.errors import NodeError, format_node_warning
+from a816.parse.nodes.errors import NodeError, format_node_warning, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
 from a816.protocols import NodeBase, OpcodeProtocol, ValueNodeProtocol
@@ -94,12 +92,7 @@ class OpcodeNode(NodeBase):
                 self.file_info,
             ) from size_error
         except SymbolNotDefined as undefined:
-            raise NodeError(
-                f"`{undefined}` is not defined in the current scope",
-                undefined.token or self.file_info,
-                code=str(_E_SYMBOL_NOT_DEFINED),
-                hint=_did_you_mean_hint(str(undefined), self.resolver.current_scope),
-            ) from undefined
+            raise undefined_symbol_error(undefined, self.file_info, self.resolver.current_scope) from undefined
         except BranchOutOfRangeError as out_of_range:
             raise NodeError(
                 str(out_of_range),

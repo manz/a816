@@ -44,6 +44,8 @@ class SymbolNotDefined(A816Error):
         super().__init__(name)
         self.name = name
         self.token = token
+        self.note: str | None = None
+        """Context for the hint, e.g. the macro argument the name was passed as."""
 
 
 class ExternalSymbolReference(A816Error):
