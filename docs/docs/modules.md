@@ -20,6 +20,10 @@ If only `.s` is available it is compiled to `.o` first, then linked.
 - All other names are **GLOBAL** and exported in the object file.
 - Names declared inside `named_scope { ... }` export as `named_scope.name`.
 - Anonymous `{ ... }` blocks are scoped — labels declared inside never leak.
+- A module sees the constants of the modules it imports, directly or
+  through another import. A constant of a module it does not import
+  still resolves during 1.1.0, with a warning naming the `.import` to
+  add: that visibility depended on compile order and becomes an error.
 
 ## What `.import` actually brings in
 
