@@ -525,6 +525,18 @@ class ObjectFile:
         return out
 
     @staticmethod
+    def read_version(filename: str) -> int | None:
+        """Format version in an object's header, or None when the file isn't
+        an a816 object. Reads the header only: the build cache uses it to
+        rebuild objects from another format instead of failing to load them."""
+        with open(filename, "rb") as f:
+            header = f.read(7)
+        if len(header) < 7:
+            return None
+        magic, version, _flags = struct.unpack("<IHB", header)
+        return version if magic == ObjectFile.MAGIC_NUMBER else None
+
+    @staticmethod
     def from_file(filename: str) -> "ObjectFile":
         with open(filename, "rb") as f:
             header = f.read(7)

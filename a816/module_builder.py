@@ -247,6 +247,9 @@ class ModuleBuilder:
         obj_path = self._get_obj_path(module_name)
         if not obj_path.exists():
             return True
+        # Built by a toolchain with another object format: rebuild, don't fail to load it.
+        if ObjectFile.read_version(str(obj_path)) != ObjectFile.VERSION:
+            return True
 
         deps_path = self._deps_path(module_name)
         if not deps_path.exists():

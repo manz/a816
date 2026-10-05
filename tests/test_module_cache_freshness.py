@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from a816.module_builder import ModuleBuilder
+from a816.object_file import ObjectFile
 
 # Parked-in-the-past object mtime; a rebuild moves it to wall-clock now.
 _SENTINEL = 1_000_000_000  # 2001-09-09
@@ -51,6 +52,40 @@ def test_unchanged_module_is_not_recompiled(tmp_path: Path) -> None:
 
     _build(tmp_path, main)
     assert not _rebuilt(obj), "untouched module should stay cached"
+
+
+def test_object_from_an_older_format_recompiles(tmp_path: Path) -> None:
+    """A toolchain upgrade that bumps the object format must rebuild the cache,
+    not fail reading it ("Unsupported version"): peers used to delete
+    `build/obj` by hand before every build to get around it."""
+    main = tmp_path / "main.s"
+    main.write_text("*= 0x008000\nmain:\n    lda #0x01\n    rts\n")
+    _build(tmp_path, main)
+
+    obj = _obj(tmp_path, "__main__")
+    data = bytearray(obj.read_bytes())
+    data[4:6] = (ObjectFile.VERSION - 1).to_bytes(2, "little")  # header: magic u32, version u16
+    obj.write_bytes(bytes(data))
+    _set_mtime(main, _OLDER)
+    _set_mtime(obj, _SENTINEL)
+
+    _build(tmp_path, main)
+    assert _rebuilt(obj), "an object of another format version must be rebuilt"
+    assert ObjectFile.from_file(str(obj)).sections, "the rebuilt object reads back"
+
+
+def test_a_cached_file_that_is_not_an_object_recompiles(tmp_path: Path) -> None:
+    main = tmp_path / "main.s"
+    main.write_text("*= 0x008000\nmain:\n    rts\n")
+    _build(tmp_path, main)
+
+    obj = _obj(tmp_path, "__main__")
+    obj.write_bytes(b"junk")
+    _set_mtime(main, _OLDER)
+    _set_mtime(obj, _SENTINEL)
+
+    _build(tmp_path, main)
+    assert ObjectFile.read_version(str(obj)) == ObjectFile.VERSION
 
 
 def test_edited_source_recompiles(tmp_path: Path) -> None:
