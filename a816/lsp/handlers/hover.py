@@ -23,7 +23,7 @@ from a816.parse.ast.nodes import (
 )
 from a816.parse.ast.nodes.struct_instance import InitValue
 from a816.parse.ast.visitor import walk
-from a816.parse.codegen.structs import STRUCT_FIELD_SIZES, split_array_type
+from a816.parse.codegen.structs import STRUCT_FIELD_SIZES, split_array_count
 from a816.parse.scanner_states import KEYWORDS
 
 if TYPE_CHECKING:
@@ -220,7 +220,7 @@ class HoverMixin:
         meta = self._struct_field_meta(struct_name, field_name)
         if meta is None:
             return None
-        element_type, _count = split_array_type(meta[0])
+        element_type, _count = split_array_count(meta[0])
         if element_type in STRUCT_FIELD_SIZES or meta[1] is not None:
             return None
         return element_type

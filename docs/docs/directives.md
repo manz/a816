@@ -297,8 +297,10 @@ case the nested layout flattens into dotted offsets
 #### Array fields: `TYPE[N] name`
 
 Any primitive or struct field type takes an `[N]` suffix to declare `N`
-consecutive elements. `N` is an integer literal (`21`, `0x15`) of at
-least 1; bit fields (`uN`) cannot be arrays.
+consecutive elements. `N` is an integer literal (`21`, `0x15`) or a
+constant expression (`[(LINE_CELLS + COPY_CELLS) * TILE_BYTES]`) whose
+constants are defined before the `.struct`, and is at least 1; bit
+fields (`uN`) cannot be arrays.
 
 ```ca65
 .struct Path {

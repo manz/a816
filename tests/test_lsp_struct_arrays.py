@@ -20,6 +20,16 @@ def test_lsp_indexes_array_size_symbol() -> None:
     assert "Hdr.title.__size" in doc.symbols
 
 
+def test_lsp_indexes_size_symbol_of_an_expression_count() -> None:
+    doc = A816Document("file:///arrays.s", "N = 4\n.struct A {\n    byte[N * 2] v\n}\n")
+    assert "A.v.__size" in doc.symbols
+
+
+def test_hover_on_expression_count_field_shows_type() -> None:
+    body = _hover_body("N = 4\n.struct A {\n    byte[N * 2] v\n}\n    lda #A.v\n", "A.v")
+    assert "byte[N * 2]" in body
+
+
 def test_lsp_skips_size_symbol_for_scalars() -> None:
     doc = A816Document("file:///arrays.s", _HEADER)
     assert "Hdr.version.__size" not in doc.symbols
