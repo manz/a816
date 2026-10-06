@@ -8,7 +8,7 @@ bank-0 addresses (LoROM and HiROM both mirror them there):
 
     .import "@std/snes/header"
 
-    .alloc snes_header at SNES_HEADER_BASE size SnesHeader.__size {
+    .alloc snes_header at SNES_HEADER_BASE {
         .istruct SnesHeader {
             title = "MY GAME              "  ; 21 bytes, space padded
             map_mode = 0x20                  ; LoROM, SlowROM
@@ -17,7 +17,7 @@ bank-0 addresses (LoROM and HiROM both mirror them there):
         }
     }
 
-    .alloc vectors at SNES_VECTORS_BASE size SnesVectors.__size {
+    .alloc vectors at SNES_VECTORS_BASE {
         .istruct SnesVectors {
             native = { nmi = nmi_handler, irq = irq_handler }
             emulation = { reset = reset }

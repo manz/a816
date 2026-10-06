@@ -51,7 +51,7 @@ vectors. Emit both with [`.istruct`](directives.md) at
 ```ca65
 .import "@std/snes/header"
 
-.alloc snes_header at SNES_HEADER_BASE size SnesHeader.__size {
+.alloc snes_header at SNES_HEADER_BASE {
     .istruct SnesHeader {
         title = "MY GAME              "  ; 21 bytes, space padded
         map_mode = 0x20  ; LoROM, SlowROM
@@ -60,7 +60,7 @@ vectors. Emit both with [`.istruct`](directives.md) at
     }
 }
 
-.alloc vectors at SNES_VECTORS_BASE size SnesVectors.__size {
+.alloc vectors at SNES_VECTORS_BASE {
     .istruct SnesVectors {
         native = { nmi = nmi_handler, irq = irq_handler }
         emulation = { reset = reset }
