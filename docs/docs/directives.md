@@ -126,7 +126,12 @@ resolves an expression that references an `.extern`.
 | octal      | `0o52`         | 42    |
 | string     | `"abc"`        | compared with `==` / `!=` only |
 
-Prefixes are lowercase. `$2A` and `%101010` are not literals.
+Prefixes are lowercase. `$2A` and `%101010` are not literals, and
+digits take no `_` separator (`0x1_000` is an error).
+
+There is no character literal: `'A'` is a one-character string, so
+`lda #'A'` does not load 0x41. Write the code (`#0x41`), or emit text
+through a `.table` with `.text`.
 
 ### Operators
 
@@ -145,7 +150,9 @@ Tightest first. Binary operators of the same level are left-associative.
 | 9     | `\|`                   | bitwise or |
 
 As in C, comparisons bind tighter than `&` / `^` / `|`: write
-`(flags & MASK) == MASK`, not `flags & MASK == MASK`.
+`(flags & MASK) == MASK`, not `flags & MASK == MASK`. And `+` binds
+tighter than `<<`: `1 << 2 + 3` is `1 << 5`, and `var_1 << 8 + var_2`
+shifts by `8 + var_2`; parenthesise, `(var_1 << 8) + var_2`.
 
 ### Integer semantics
 
