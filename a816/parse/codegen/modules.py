@@ -34,7 +34,7 @@ from a816.parse.ast.nodes import (
     StructAstNode,
     SymbolAffectationAstNode,
 )
-from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, generators, logger
+from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, declared_name, generators, logger
 from a816.parse.codegen.structs import declare_bus_mapping
 from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
@@ -209,17 +209,9 @@ def _register_private_names(nodes: list[AstNode], module_name: str, src_path: Pa
 
     files = frozenset({_canonical_file(str(src_path)), *(_canonical_file(f) for f in _included_files(nodes))})
     for node in _top_level_declarations(nodes):
-        name = _declared_name(node)
+        name = declared_name(node)
         if name is not None and name.startswith("_"):
             resolver.private_owners.setdefault(name, (module_name, files))
-
-
-def _declared_name(node: AstNode) -> str | None:
-    if isinstance(node, MacroAstNode | StructAstNode):
-        return node.name
-    if isinstance(node, SymbolAffectationAstNode | AssignAstNode | LabelDeclAstNode):
-        return node.symbol
-    return None
 
 
 def _included_files(nodes: list[AstNode]) -> list[str]:

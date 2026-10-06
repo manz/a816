@@ -674,6 +674,12 @@ class Resolver:
             return None
         return None if _canonical_file(position.file.filename) in files else module
 
+    def claim_private(self, name: str, token: Token | None) -> None:
+        """A file outside the owning module declares a private name of its
+        own: from here on the name is that file's, not the imported one."""
+        if self.foreign_private_owner(name, token) is not None:
+            del self.private_owners[name.split(".", 1)[0]]
+
     def unimported_constant(self, name: str) -> int | None:
         """A constant of a module this one does not `.import`, or None.
 
