@@ -84,8 +84,11 @@ back-compat.
 To verify what the patch contains:
 
 ```
-$ xdds build/patch.ips
+$ xdds rom.sfc --ips build/patch.ips -s '$00:8000' -d -n 16
 ```
+
+`xdds` reads the ROM, applies the patch in memory (the ROM file is
+untouched) and disassembles from the given address.
 
 ## Lint and format
 

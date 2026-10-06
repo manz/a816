@@ -37,7 +37,8 @@ for backwards compatibility — existing scripts keep working.
 ```
 -o, --output OUTPUT      Output file (default a.out)
 -f FORMAT                Output format (ips, sfc, obj)
--m MAPPING               Address mapping (low, low_rom_2, high_rom)
+-m {low,low2,high}       Default bus when the project declares no map:
+                         LoROM (default), LoROM variant 2, HiROM.
 --copier-header          Add 0x200 address delta for ips writer.
 --dump-symbols           Dump the symbol table.
 -c, --compile-only       Compile to object files without linking.
@@ -48,6 +49,12 @@ for backwards compatibility — existing scripts keep working.
 --obj-dir DIR            Directory for compiled object files (default
                          build/obj).
 --include-path PATH      Add directory to include search path for `.include`.
+--overlap-mode {error,warn,off}
+                         What overlapping writes do (default error).
+--experimental FLAG      Enable an experimental feature (repeatable):
+                         `track_register_size`.
+--no-cache               Compile every module instead of reusing objects.
+--verbose                Show every log level, tracebacks included.
 ```
 
 #### Separate compilation
@@ -86,13 +93,19 @@ notice on stderr — prefer `a816 check` / `a816 format` going forward.
 ### From Python
 
 ```python
-from a816.program import Program
+from pathlib import Path
 
-def build_patch(input, output):
-    program = Program()
-    program.assemble_as_patch(input, output)
-    program.resolver.dump_symbol_map()
+from a816.module_builder import build_with_imports
+
+Path("main.s").write_text(".alloc at 0x008000 {\n    rts\n}\n")  # the program to build
+
+result = build_with_imports("main.s", "patch.ips", output_format="ips")
+assert result.exit_code == 0, result.diagnostics
 ```
+
+`build_with_imports` is what `a816 build` runs: it compiles every
+`.import`ed module, links, and reads `a816.toml`. See
+[Python usage](python_usage.md).
 
 ## Syntax
 
@@ -103,19 +116,20 @@ assembler directives — `*=`, `@=`, `.scope`, `.macro`, `.struct`,
 ### Mnemonics
 
 ```
-adc, and, asl, bcc, bcs, beq, bit, bmi, bne, bpl, bra, brk, brl, bvc, bvs, clc, cld, cli, clv, cmp, cop, cpx, cpy, db, dec, dex, dey, eor, inc, inx, iny, jml, jmp, jsl, jsr, lda, ldx, ldy, lsr, mvn, mvp, nop, ora, pea, pei, per, pha, phb, phd, phk, php, phx, phy, pla, plb, pld, plp, plx, ply, rep, rol, ror, rti, rtl, rts, sbc, sec, sed, sei, sep, sta, stp, stx, sty, stz, tax, tay, tcd, tcs, tdc, trb, tsb, tsc, tsx, txa, txs, txy, tya, tyx, wai, xba, xce
+adc, and, asl, bcc, bcs, beq, bit, bmi, bne, bpl, bra, brk, brl, bvc, bvs, clc, cld, cli, clv, cmp, cop, cpx, cpy, dec, dex, dey, eor, inc, inx, iny, jml, jmp, jsl, jsr, lda, ldx, ldy, lsr, mvn, mvp, nop, ora, pea, pei, per, pha, phb, phd, phk, php, phx, phy, pla, plb, pld, plp, plx, ply, rep, rol, ror, rti, rtl, rts, sbc, sec, sed, sei, sep, sta, stp, stx, sty, stz, tax, tay, tcd, tcs, tdc, trb, tsb, tsc, tsx, txa, txs, txy, tya, tyx, wai, xba, xce
 ```
 
 ## Macros
 
+<!-- example: build -->
 ```ca65
 .macro test(var_1, var_2) {
-    lda.w var_1 << 16 + var_2
+    lda.w (var_1 << 8) | var_2
 }
 
-test(0x10, 0x10)
-; expands to: lda.w 0x10 << 16 + 0x10
-; emits:      lda.w 0x1010
+.alloc at 0x008000 {
+    test(0x12, 0x34)    ; expands to lda.w (0x12 << 8) | 0x34: emits AD 34 12
+}
 ```
 
 ## Code pointer relocation
@@ -344,7 +358,16 @@ $ xdds --help
 $ xdds rom.sfc --low-rom -s 0x008000 -l 256
 $ xdds rom.sfc --low-rom -d --m16 --x16 -n 32   # disassemble 32 instrs
 $ xdds rom.sfc --ips patch.ips -s '$01:FF40'   # apply IPS, dump from SNES addr
+$ xdds rom.sfc --ips patch.ips -d --asm --debug patch.ips.adbg --func main
+                                     # walk `main` as a816 source, symbols named
 ```
+
+Disassembly flags: `-d` disassembles, `--asm` prints a816 syntax,
+`--debug FILE.adbg` names jump targets from the build's debug info,
+`--sym NAME` starts at a symbol, `--func NAME` walks one function
+(following branches, tracking M/X across `rep`/`sep`) and
+`--follow-calls` recurses into `jsr`/`jsl`. `--m16`/`--x16` set the
+initial register widths.
 
 ## xobj
 
