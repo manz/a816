@@ -1,4 +1,5 @@
-"""SNES APU I/O ports ($2140-$2143).
+"""
+SNES APU I/O ports ($2140-$2143).
 
 The CPU↔SPC700 communication channels. Each port is full-duplex: the
 S-CPU writes a byte and the SPC700 reads it (and vice versa) on the
