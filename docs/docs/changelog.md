@@ -59,6 +59,13 @@ player:
 - Every emitted byte needs a placement: an `.alloc` or a preceding `*=`.
   Bytes before the first `*=` used to land at `0x008000`, over whatever
   was there; they are now `E0310`.
+- `brk`, `cop` and `wdm` take their signature byte (`brk #0x00`). 1.0
+  emitted the lone opcode, so returning from the handler skipped the
+  next byte; a bare `brk` is now an error instead.
+- Errors that 1.0 printed and then ignored (a parse error, an unknown
+  directive such as `.dd`) now fail the build. 1.0 exited 0 with
+  missing output, so a build that "passed" may now report what it
+  always got wrong.
 - Assembling from Python in direct (single-pass) mode is deprecated;
   build through `build_with_imports` or the CLI.
 
@@ -167,8 +174,9 @@ player:
   docstrings and strings intact and settles in one pass.
 - `a816 check`: docstring rules (`DOC001` to `DOC007`), naming (`N801`,
   `N802`), struct casts (`S001`, `S003`, `S004`), line length (`E501`),
-  redundant size suffixes (`OP001`) and legacy placement (`UP001`);
-  `; noqa: RULE` to suppress.
+  redundant size suffixes (`OP001`), program structure (`ST001` for a
+  placement nested in an `.alloc`, `ST002` for an `.import` outside the
+  prelude) and legacy placement (`UP001`); `; noqa: RULE` to suppress.
 - `a816 fix` applies the autofixes, also offered as LSP code actions.
 
 ### Language server
@@ -185,3 +193,11 @@ player:
   and the format identity.
 - `xdds` disassembles with the same instruction table the assembler uses.
 - `A816_EMIT_TRACE=1` logs where every region landed.
+
+### Documentation
+
+- Every example in the docs is checked by the test suite: snippets
+  parse, complete programs build, and the multi-file tutorials are real
+  projects under `docs/examples/` built against a golden patch.
+- New pages for placement and this changelog; `.map`, expressions,
+  modules and the lint rules are documented against the code.
