@@ -132,3 +132,26 @@ def test_if_with_only_code_is_dropped_from_the_importer(tmp_path: Path) -> None:
     mod = "*=0x009000\n.if 1 {\n    nop\n    rts\n}\n"
     _build(tmp_path, mod, _MAIN)
     assert _main_code(tmp_path) == b"\x60"
+
+
+_EXT_IN_IF = ".if 1 {\n    .extern br\n}\n"
+_OWNER = '.import "ext"\n.alloc owner_block at 0x018000 {\n    .scope br {\n        K = 6\n        rts\n    }\n}\n'
+
+
+def _build_scoped_user(root: Path, use: str) -> BuildResult:
+    """An imported module's conditional `.extern br` must not turn the
+    owner's own `.scope br` constants into link symbols for its importers."""
+    (root / "ext.s").write_text(_EXT_IN_IF, encoding="utf-8")
+    (root / "mod.s").write_text(_OWNER, encoding="utf-8")
+    (root / "main.s").write_text('.import "mod"\n.alloc user_block at 0x018100 {\n' + use + "}\n", encoding="utf-8")
+    return build_with_imports(root / "main.s", root / "out.ips", module_paths=[root], output_dir=root / "obj")
+
+
+def test_a_conditional_extern_in_an_import_leaves_scoped_constants_constant(tmp_path: Path) -> None:
+    result = _build_scoped_user(tmp_path, "    .for i := 0, br.K {\n        nop\n    }\n")
+    assert (result.exit_code, _main_code(tmp_path)) == (0, b"\xea" * 6), result.diagnostics
+
+
+def test_a_conditional_extern_in_an_import_leaves_scoped_immediates_folded(tmp_path: Path) -> None:
+    result = _build_scoped_user(tmp_path, "    lda.b #br.K\n")
+    assert (result.exit_code, _main_code(tmp_path)) == (0, b"\xa9\x06"), result.diagnostics
