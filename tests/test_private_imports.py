@@ -120,6 +120,14 @@ def test_an_importer_s_own_private_name_shadows_the_imported_one(
     assert (rc, rom[: len(expected.split())].hex(" ")) == (0, expected), caplog.text
 
 
+def test_an_imported_struct_sizes_its_arrays_with_the_owner_s_private_constants(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    lib = "_SLOTS = 11\n_TILE = 32\n.struct MenuVwf {\n    byte[_SLOTS * _TILE] tiles\n}\n"
+    rc, rom, log = _build(tmp_path, "    lda.w #MenuVwf.__size\n", caplog, lib=lib)
+    assert (rc, rom[:3].hex(" ")) == (0, "a9 60 01"), log
+
+
 def test_an_importer_s_own_private_label_shadows_the_imported_one(tmp_path: Path) -> None:
     main = BANK_40_MAP + '.import "lib"\n.alloc c at 0x400000 {\n_entry:\n    jmp.w _entry\n}\n'
     rc, rom = build_rom(tmp_path, {"main.s": main, "lib.s": "_entry = 0x123456\n"})

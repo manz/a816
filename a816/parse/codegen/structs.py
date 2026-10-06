@@ -109,6 +109,12 @@ def split_array_count(field_type: str) -> tuple[str, str | None]:
     return match.group(1), match.group(2)
 
 
+def _filename(token: Token) -> str:
+    """The file `token` was written in: names in a re-parsed count resolve as written there."""
+    position = token.position
+    return position.file.filename if position is not None and position.file is not None else "memory"
+
+
 def _array_count(
     node: StructAstNode, field_name: str, count: str | None, resolver: Resolver, file_info: Token
 ) -> int | None:
@@ -116,7 +122,7 @@ def _array_count(
     if count is None:
         return None
     try:
-        value = eval_expression_str(count, resolver)
+        value = eval_expression_str(count, resolver, _filename(file_info))
     except (ExternalExpressionReference, SymbolNotDefined):
         value = None
     if not isinstance(value, int) or value < 1:

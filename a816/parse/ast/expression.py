@@ -418,14 +418,15 @@ def _render_term(node: ExprNode, resolver: Resolver | None) -> str:
     return node.token.value if hasattr(node, "token") else str(node)
 
 
-def expr_to_ast(expr_str: str) -> ExpressionAstNode:
+def expr_to_ast(expr_str: str, filename: str = "memory") -> ExpressionAstNode:
+    """Parse `expr_str` alone; `filename` is the file its names are written in."""
     from a816.parse.parser import Parser
     from a816.parse.parser_states import parse_expression_ep
     from a816.parse.scanner import Scanner
     from a816.parse.scanner_states import lex_standalone_expression
 
     scanner = Scanner(lex_standalone_expression)
-    tokens = scanner.scan("memory", expr_str)
+    tokens = scanner.scan(filename, expr_str)
     if scanner.errors:
         raise scanner.errors[0]
     parser = Parser(tokens, parse_expression_ep)
@@ -435,6 +436,6 @@ def expr_to_ast(expr_str: str) -> ExpressionAstNode:
     return first_node
 
 
-def eval_expression_str(expr_str: str, resolver: Resolver) -> int | str:
-    expr_node = expr_to_ast(expr_str)
+def eval_expression_str(expr_str: str, resolver: Resolver, filename: str = "memory") -> int | str:
+    expr_node = expr_to_ast(expr_str, filename)
     return eval_expression(expr_node, resolver)
