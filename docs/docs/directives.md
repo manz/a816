@@ -365,11 +365,6 @@ An explicit `.b` / `.w` / `.l` on the opcode always wins. Compound
 operands (`p.field + 1`, raw addresses, casts) keep using the
 existing operand-string heuristic.
 
-If the field's declared width disagrees with the current REP/SEP
-register width (e.g. `lda p.word_field` while `.a8` is in effect),
-the assembler emits a warning suggesting the `rep` / `sep` flip
-the user probably wants.
-
 Lint hooks:
 
 - `S001`: a cast or `.istruct` targets a struct type the file never declared.
@@ -390,11 +385,14 @@ lda #0x1234       ; A9 34 12
 ldx #0x5678       ; A2 78 56
 ```
 
-#### Inference from `rep` / `sep`
+#### Inference from `rep` / `sep` (experimental)
+
+Off by default: turn it on with `--experimental track_register_size`
+or `track_register_size = true` under `[experimental]` in `a816.toml`.
 
 `rep #N` and `sep #N` mutate the CPU's `M` / `X` flags at runtime;
-the assembler mirrors that at assembly time so source doesn't have
-to repeat itself:
+with tracking on, the assembler mirrors that at assembly time so
+source doesn't have to repeat itself:
 
 ```ca65
 rep #0x30         ; clears M+X -> A and X are 16-bit
@@ -408,6 +406,12 @@ Bit `0x20` controls `A`, bit `0x10` controls `X`/`Y`. `rep` clears
 immediate operands; symbolic constants resolved at assembly time
 count, but forward references and non-immediate forms are left
 alone (and explicit `.a*` / `.i*` always wins).
+
+When the width is known (a `.a*` / `.i*` directive, or tracking) and
+an immediate is written with a suffix that disagrees (`lda.b #0x12`
+under `.a16`), the assembler warns once per line with the `rep` /
+`sep` or suffix to fix. Width only sizes immediates: a memory operand
+keeps its own size (`lda 0x12` is direct page under `.a16` too).
 
 ## Code
 

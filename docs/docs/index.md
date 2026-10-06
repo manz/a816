@@ -23,7 +23,7 @@ The `a816` CLI is subcommand-driven (`ruff` / `cargo` style):
 
 ```
 $ a816 build   <files> -o <output>    # assemble + link
-$ a816 check   <paths>                # lint with fluff (DOC*, E501, N801, N802, S00*, UP001)
+$ a816 check   <paths>                # lint with fluff (DOC*, E501, N80*, OP001, S00*, ST00*, UP001)
 $ a816 format  <paths>                # format .s / .i sources with fluff
 $ a816 fix     <paths>                # apply fluff autofixes (--diff / --check / --select / --unsafe-fixes)
 $ a816 explain <CODE>                 # rule rationale + good/bad example pair

@@ -93,7 +93,7 @@ untouched) and disassembles from the given address.
 ## Lint and format
 
 ```
-$ a816 check src/         # report DOC* / E501 / N801 / N802 hits
+$ a816 check src/         # report lint hits (see Fluff for the rules)
 $ a816 format src/        # rewrite in place (idempotent)
 $ a816 format --check src/   # CI mode: exit non-zero if changes pending
 ```

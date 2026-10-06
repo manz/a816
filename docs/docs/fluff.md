@@ -35,7 +35,9 @@ What it deliberately does not touch:
 ## Lint rules
 
 Codes follow `ruff` conventions: `DOC*` for docstring coverage and
-placement, `E***` for physical layout, `N***` for naming.
+placement, `E***` for physical layout, `N***` for naming, `S***` for
+struct casts, `OP***` for opcodes, `ST***` for program structure and
+`UP***` for upgrades from legacy syntax.
 
 | Code | What it flags |
 |------|---------------|
@@ -52,13 +54,16 @@ placement, `E***` for physical layout, `N***` for naming.
 | `S001` | `(expr as T).field` / `p := (expr as T)` / `.istruct T { ... }` references a struct type that isn't declared in the current translation unit. |
 | `S003` | Redundant cast: `(p as T).field` when `p` is already typed-bound to `T`. |
 | `S004` | The same `(expr as T)` cast appears more than once in the file — promote it to a `:=` typed bind. |
+| `OP001` | Explicit `.w` / `.l` size suffix the operand would get anyway. |
+| `ST001` | Placement directive (`*=`, `.alloc ... at`, `.relocate`) nested inside an `.alloc` body: it re-anchors the code the alloc was placing. |
+| `ST002` | `.import` outside the file prelude (after a placement or inside a block); the build rejects it with `E0311`. |
 | `UP001` | Legacy `*= ADDR` placement should be `.alloc at ADDR { ... }`. |
 
 Rules marked fixable in `a816 check` output carry `[*]` (safe) or
-`[!]` (unsafe). Today: `S003`, `DOC003`, `DOC004`, `DOC006`, `DOC007`
-ship a safe fix; `DOC005` and `UP001` ship an unsafe fix.
+`[!]` (unsafe). Today: `S003`, `OP001`, `DOC003`, `DOC004`, `DOC006`,
+`DOC007` ship a safe fix; `DOC005` and `UP001` ship an unsafe fix.
 
-## Autofix — `a816 fix`
+## Autofix: `a816 fix`
 
 ```
 $ a816 fix src/                       # apply safe fixes in place
@@ -149,10 +154,9 @@ formatting rules as on public targets.
 A trailing `; noqa` comment silences every rule on that line. Pass codes
 to suppress selectively, ruff-style:
 
-<!-- example: skip -->
 ```ca65
-.db 0x16, 0x20, 0x17, 0x20, 0x17, 0x20, ... ; noqa: E501
-MyLabel:                                    ; noqa: N801
+.db 0x16, 0x20, 0x17, 0x20, 0x17, 0x20  ; long line of data  ; noqa: E501
+MyLabel:                                ; noqa: N801
 ```
 
 Code lists are case-insensitive: `; noqa: e501,n801` works the same.
@@ -168,10 +172,12 @@ same way they do under `a816 build`.
 include-paths = ["src/include"]
 ```
 
-This means a project that already configures the LSP via `a816.toml`
-gets the same module / include resolution from fluff with no extra
-flags. `module-paths` lets struct-type rules follow `.import` chains;
-`entrypoint` is only used by the LSP.
+`a816.toml` is the project file: `a816 build`, fluff and the LSP all
+read it, so the three resolve `.include` and `.import` the same way.
+`module-paths` lets struct-type rules follow `.import` chains;
+`entrypoint` is only used by the LSP. See
+[Project configuration](index.md#project-configuration-a816toml) for
+every key.
 
 ## Editor integration
 
