@@ -6,7 +6,7 @@ It speaks to any LSP-capable editor (VS Code, Neovim, Helix, Emacs).
 ## Features
 
 - **Diagnostics** on open / save / change. Parser errors plus
-  `a816 fluff` lint hits (DOC*, E501, N801, N802) reported with rule
+  `a816 fluff` lint hits (DOC*, E501, N80*, OP001, S00*, ST00*, UP001) reported with rule
   codes and `source = "a816 fluff"`.
 - **Goto-definition** for labels, symbols, macros, struct fields, and
   `.import` / `.include` targets.
@@ -23,7 +23,7 @@ It speaks to any LSP-capable editor (VS Code, Neovim, Helix, Emacs).
 - **Code actions** — every fluff rule that ships a fix surfaces in the
   editor's lightbulb / quick-fix menu. Safe fixes are marked preferred
   so editors default to them; unsafe fixes carry an `(unsafe)` suffix
-  in the title. See [Fluff — autofix](fluff.md#autofix--a816-fix) for
+  in the title. See [Fluff autofix](fluff.md#autofix-a816-fix) for
   the rule list and applicability rules.
 - **Workspace-aware module resolution** via `a816.toml`.
 

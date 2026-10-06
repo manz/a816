@@ -54,19 +54,60 @@ WARNING write at $000004..$00000b overlaps previous write at
         $000000..$000009 ($000004..$000009 would be silently overwritten)
 ```
 
-### `.map` — memory map
+### `.map`: memory map
 
-Declares one bus region. Affects how `*=` / `.alloc` addresses
-translate into a physical ROM offset and which banks are writable.
+Declares one bus region: which banks and addresses it covers, and where
+those bytes sit in the ROM file.
 
-```ca65
-.map identifier=1 bank_range=0xc0, 0xfd addr_range=0x0000, 0xffff mask=0x10000 mirror_bank_range=0x40, 0x7d
-.map identifier=3 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=1
+```
+.map identifier=N bank_range=LO, HI addr_range=LO, HI mask=M [mirror_bank_range=LO, HI] [writable=1]
 ```
 
-Without any region the bus follows `-m` (LoROM when `-m` is absent).
-The layout is usually project-wide: declare it once in `a816.toml`
-(`board` and `[map.N]`) instead of repeating it in every module.
+| Attribute | Meaning |
+|-----------|---------|
+| `identifier` | region number; the same `N` as `[map.N]` in `a816.toml` |
+| `bank_range` | first and last bank of the region |
+| `addr_range` | the window the region serves inside each bank |
+| `mask` | bytes of ROM per bank: an address lands at `(bank - first bank) * mask + (address & ~mask & 0xFFFF)` in the file |
+| `mirror_bank_range` | banks that show the same bytes (`$80-$FF` mirroring `$00-$7F`) |
+| `writable` | `1` for RAM: the region has addresses but no file offset |
+
+Values are number literals. LoROM and HiROM ROM regions, and WRAM:
+
+<!-- example: build -->
+```ca65
+.map identifier=1 bank_range=0x00, 0x7d addr_range=0x8000, 0xffff mask=0x8000 mirror_bank_range=0x80, 0xff
+.map identifier=3 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=1
+
+.alloc reset at 0x008000 {
+    sei              ; file offset 0x000000
+}
+.alloc bank1 at 0x018000 {
+    rts              ; file offset 0x008000: one 0x8000 bank further
+}
+```
+
+```ca65
+.map identifier=1 bank_range=0xc0, 0xff addr_range=0x0000, 0xffff mask=0x10000 mirror_bank_range=0x40, 0x7f
+```
+
+Where a `.map` applies:
+
+- It changes the bus of the translation unit that declares it, from
+  that line on. Without any region the bus follows `-m` (LoROM when
+  `-m` is absent); declaring one replaces that default, so declare
+  every region the code uses.
+- `.import` brings the imported module's regions along, so a module
+  can rely on the maps of a shared prelude it imports.
+- In object mode each region is written into the `.o`; the linker
+  replays them and keeps one copy of each identical region. The same
+  identifier with a different shape, in one unit or across modules, is
+  `E0308`. An address in a bank no region covers is `E0317`.
+- The layout belongs to the project, not to each module: declare it
+  once in `a816.toml` with `board` (a real cartridge board) and/or
+  `[map.N]` tables, see [Bus map](index.md#bus-map-board-and-mapn).
+  The toml regions are on every unit's bus before its first line; a
+  source `.map` with the same identifier and shape is a no-op there.
 
 ## Expressions
 
@@ -85,7 +126,12 @@ resolves an expression that references an `.extern`.
 | octal      | `0o52`         | 42    |
 | string     | `"abc"`        | compared with `==` / `!=` only |
 
-Prefixes are lowercase. `$2A` and `%101010` are not literals.
+Prefixes are lowercase. `$2A` and `%101010` are not literals, and
+digits take no `_` separator (`0x1_000` is an error).
+
+There is no character literal: `'A'` is a one-character string, so
+`lda #'A'` does not load 0x41. Write the code (`#0x41`), or emit text
+through a `.table` with `.text`.
 
 ### Operators
 
@@ -104,7 +150,9 @@ Tightest first. Binary operators of the same level are left-associative.
 | 9     | `\|`                   | bitwise or |
 
 As in C, comparisons bind tighter than `&` / `^` / `|`: write
-`(flags & MASK) == MASK`, not `flags & MASK == MASK`.
+`(flags & MASK) == MASK`, not `flags & MASK == MASK`. And `+` binds
+tighter than `<<`: `1 << 2 + 3` is `1 << 5`, and `var_1 << 8 + var_2`
+shifts by `8 + var_2`; parenthesise, `(var_1 << 8) + var_2`.
 
 ### Integer semantics
 
@@ -140,10 +188,27 @@ MAX_HP   = 0xFF
 font_ptr = target + 0x40   ; target may be `.extern`
 ```
 
-### `name := expr` — assign
+### `name := expr`: assign now
 
-Same shape as `=` but the resolver treats the binding as mutable
-during a build (rebinds allowed). Prefer `=` unless you need this.
+Both forms bind a name and both may be rebound; they differ in *when*
+the right-hand side is evaluated:
+
+- `=` is lazy: the value is computed when the name is used, so the
+  right-hand side may name a label defined further down, and in object
+  mode an `.extern` (the name becomes a link-time alias).
+- `:=` evaluates at once, where it is written. That is what a typed
+  bind needs (`p := (base as T)` expands one symbol per field), and it
+  rejects a forward reference with `E0210`.
+
+```ca65
+early = later + 1      ; fine: evaluated on use
+later:
+    rts
+now := 0x2100          ; evaluated here
+ppu := (0x2100 as PPU) ; typed bind: needs `:=`
+```
+
+Prefer `=` unless you need the value fixed at that point.
 
 ### `.label NAME = ADDR`
 
@@ -300,11 +365,6 @@ An explicit `.b` / `.w` / `.l` on the opcode always wins. Compound
 operands (`p.field + 1`, raw addresses, casts) keep using the
 existing operand-string heuristic.
 
-If the field's declared width disagrees with the current REP/SEP
-register width (e.g. `lda p.word_field` while `.a8` is in effect),
-the assembler emits a warning suggesting the `rep` / `sep` flip
-the user probably wants.
-
 Lint hooks:
 
 - `S001`: a cast or `.istruct` targets a struct type the file never declared.
@@ -325,11 +385,14 @@ lda #0x1234       ; A9 34 12
 ldx #0x5678       ; A2 78 56
 ```
 
-#### Inference from `rep` / `sep`
+#### Inference from `rep` / `sep` (experimental)
+
+Off by default: turn it on with `--experimental track_register_size`
+or `track_register_size = true` under `[experimental]` in `a816.toml`.
 
 `rep #N` and `sep #N` mutate the CPU's `M` / `X` flags at runtime;
-the assembler mirrors that at assembly time so source doesn't have
-to repeat itself:
+with tracking on, the assembler mirrors that at assembly time so
+source doesn't have to repeat itself:
 
 ```ca65
 rep #0x30         ; clears M+X -> A and X are 16-bit
@@ -343,6 +406,12 @@ Bit `0x20` controls `A`, bit `0x10` controls `X`/`Y`. `rep` clears
 immediate operands; symbolic constants resolved at assembly time
 count, but forward references and non-immediate forms are left
 alone (and explicit `.a*` / `.i*` always wins).
+
+When the width is known (a `.a*` / `.i*` directive, or tracking) and
+an immediate is written with a suffix that disagrees (`lda.b #0x12`
+under `.a16`), the assembler warns once per line with the `rep` /
+`sep` or suffix to fix. Width only sizes immediates: a memory operand
+keeps its own size (`lda 0x12` is direct page under `.a16` too).
 
 ## Code
 
@@ -408,14 +477,17 @@ Compile-time loop. Body is expanded once per integer in
 
 ## Data
 
-### `.db` / `.dw` / `.dl` / `.dd`
+### `.db` / `.dw` / `.dl` / `.pointer`
 
-Emit raw bytes / words / 24-bit longs / 32-bit dwords.
+Emit raw bytes / 16-bit words / 24-bit longs. `.pointer` is `.dl`
+under a name that says what the value is. There is no 32-bit data
+directive; a `dword` struct field (`.istruct`) emits four bytes.
 
 ```ca65
 .db 0x16, 0x20, 0x17, 0x20
 .dw 0x2000, 0x2500
 .dl 0x010000
+.pointer handler      ; 24-bit address of `handler`
 ```
 
 ### `.istruct Type { field = value, ... }`
@@ -512,6 +584,16 @@ join the current scope. Use `.import` for module-style separation.
 
 Replays the records of an existing IPS patch into the current build.
 
+### `.debug "message {expr}"`
+
+Prints the message when the line is emitted, with each `{expr}`
+replaced by its value (hex for numbers). Emits no bytes. Handy to see
+where a label or a pooled alloc landed:
+
+```ca65
+.debug "font table at {font_table}, {font_table__size} bytes"
+```
+
 ## Modules
 
 See the dedicated [Modules](modules.md) page for `.import` / `.extern`
@@ -563,6 +645,23 @@ legacy `*=` shape).
 
 Overlap with any other pinned region (legacy `*=` included) trips
 the overlap auditor with both locations named.
+
+### `.res N`
+
+Inside a `bss` alloc body, reserves `N` bytes of address space without
+emitting any; `.reserve` is the one-line form.
+
+<!-- example: build -->
+```ca65
+.pool wram { bss  range 0x7e2000 0x7e2fff }
+
+.alloc buffers in wram {
+    text_buffer:
+        .res 0x100
+    scroll_x:
+        .res 2
+}
+```
 
 ### `.reserve NAME SIZE [at ADDR] in POOL`
 

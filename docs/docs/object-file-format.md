@@ -39,6 +39,7 @@ cache rebuilds any other one instead of failing to load it.
 After the header comes one `WireObject` record, encoded from its type
 annotations by `a816/object_codec.py`:
 
+<!-- example: skip -->
 ```python
 @dataclass
 class WireObject:
@@ -49,10 +50,11 @@ class WireObject:
     pool_decls: list[PoolDecl]
     pool_allocs: list[PoolAlloc]
     bus_mappings: list[BusMapping]
+    asserts: list[LinkAssert] = []
 ```
 
 The record types (`WireSection`, `PoolDecl`, `PoolAlloc`,
-`BusMapping`) are dataclasses in `a816/object_file.py`; their
+`BusMapping`, `LinkAssert`) are dataclasses in `a816/object_file.py`; their
 annotations are the format. Encoding rules:
 
 | Type | Bytes |
