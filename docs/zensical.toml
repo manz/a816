@@ -24,6 +24,7 @@ nav = [
     { "Object file format (.o)" = "object-file-format.md" },
     { "Debug info (.adbg)" = "adbg-format.md" },
     { "Python usage" = "python_usage.md" },
+    { "Changelog" = "changelog.md" },
 ]
 
 [project.theme]
