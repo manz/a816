@@ -46,11 +46,13 @@ mode).
   ROM, plus a `fill` byte and an allocation strategy. Ranges of one
   pool may sit in different banks, but each range must stay inside
   one bank, and ranges of the same pool must not overlap.
-- **Bank rule**: an allocation is always placed inside a single
-  free chunk, so a block never straddles a bank boundary or spans
-  two separate (non-adjacent) ranges. An alloc larger than the
-  pool's largest range can never fit, however much space is free
-  in total.
+- **Bank rule**: an allocation is placed inside a single free
+  chunk, so a block never straddles a bank boundary or spans two
+  separate (non-adjacent) ranges. An alloc larger than the pool's
+  largest range can never fit, however much space is free in total.
+  The one exception is a data blob marked
+  [`cross_bank`](#cross_bank-data-blobs-across-bank-edges), which may
+  run over bank edges where the ROM is contiguous.
 - **Allocation** — a named request for `N` bytes inside a specific
   pool. After `Pool.allocate()` runs, every allocation has a final
   ROM address.
@@ -203,13 +205,12 @@ auto-generates a stable identifier for anonymous allocs. Optional
 hard error pointing at the offending byte. Without `size`, the body
 extends to the bank end.
 
-<!-- example: skip -->
 ```ca65
 .alloc vector_table at 0x00FFE0 size 0x20 {
     .dw 0, 0
-    .dw brk, brk, brk, nmi_handler
-    .dw 0, irq
-    .dw 0, 0, brk, 0, brk, 0, reset, brk
+    .dw brk_handler, brk_handler, brk_handler, nmi_handler
+    .dw 0, irq_handler
+    .dw 0, 0, brk_handler, 0, brk_handler, 0, reset, brk_handler
 }
 
 .alloc at 0x07FFFF size 0x01 {
@@ -345,8 +346,8 @@ Under `a816 build`, a module that `.import`s both sees two `.pool
 slack` declarations with different ranges and rejects them; there,
 declare the pool once in a shared include with all its ranges.
 
-The `.o` format (version 0x000C) carries `PoolDecl` and `PoolAlloc`
-records (visible via `xobj`).
+Objects carry the `PoolDecl` and `PoolAlloc` records (`xobj` lists
+them); see [Object file format](object-file-format.md).
 
 ## Python API
 
@@ -399,28 +400,31 @@ print(f"free={pool.free} used={pool.used} fragments={pool.fragments}")
 
 The legacy pattern:
 
-<!-- example: skip -->
 ```ca65
 *= 0x01ff35
-fn_a: ...
-fn_b: ...
+fn_a:
+    rts
+fn_b:
+    rts
 _end_of_free_space:
 .if _end_of_free_space > 0x01ffff {
-    .debug 'Error: end of free space reached!'
+    .debug "Error: end of free space reached!"
 }
 ```
 
 becomes:
 
-<!-- example: skip -->
+<!-- example: build -->
 ```ca65
 .pool bank01_slack {
     range 0x01ff35 0x01ffff
 }
 
 .alloc bank01_slack_block in bank01_slack {
-    fn_a: ...
-    fn_b: ...
+    fn_a:
+        rts
+    fn_b:
+        rts
 }
 ```
 
@@ -440,8 +444,6 @@ to the legacy layout modulo build-date timestamp drift.
   over unused chunk tails and reclaimed ranges aren't written. Pool
   ranges that aren't `.alloc`'d stay as whatever the unpatched ROM
   contained.
-- **`.relocate` in object mode** — only direct mode for now; link-time
-  reclaim coordination is a follow-up.
 - **Live `.free` / `.used` stats** — only `.capacity` / `.fragments` /
   `.largest_chunk` are snapshotted at decl time.
 - **LSP "find references" for pool / alloc names** — outline shows

@@ -50,10 +50,11 @@ class WireObject:
     pool_decls: list[PoolDecl]
     pool_allocs: list[PoolAlloc]
     bus_mappings: list[BusMapping]
+    asserts: list[LinkAssert] = []
 ```
 
 The record types (`WireSection`, `PoolDecl`, `PoolAlloc`,
-`BusMapping`) are dataclasses in `a816/object_file.py`; their
+`BusMapping`, `LinkAssert`) are dataclasses in `a816/object_file.py`; their
 annotations are the format. Encoding rules:
 
 | Type | Bytes |
