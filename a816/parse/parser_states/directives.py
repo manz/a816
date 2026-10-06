@@ -61,6 +61,7 @@ from a816.parse.ast.nodes import (
     StructInstanceAstNode,
     Term,
 )
+from a816.parse.ast.nodes.struct import StructBodyItem
 from a816.parse.errors import ParserSyntaxError
 from a816.parse.parser import (
     Parser,
@@ -212,20 +213,88 @@ def parse_struct(p: Parser) -> StructAstNode:
     variable = p.next()
     expect_token(variable, TokenType.IDENTIFIER)
 
-    expect_token(p.next(), TokenType.LBRACE)
+    open_brace = p.next()
+    expect_token(open_brace, TokenType.LBRACE)
     fields: list[tuple[str, str]] = []
+    body = _StructBody(_line_of(open_brace))
     seen: set[str] = set()
     while p.current().type != TokenType.EOF:
-        if p.current().type in (TokenType.COMMENT, TokenType.COMMA):
+        token = p.current()
+        if token.type == TokenType.COMMA:
             p.next()
             continue
-        if p.current().type == TokenType.RBRACE:
+        if token.type == TokenType.COMMENT:
+            body.comment(token)
+            p.next()
+            continue
+        if token.type == TokenType.RBRACE:
             break
-        fields.append(_parse_struct_field(p, seen))
+        name, field_type = _parse_struct_field(p, seen)
+        fields.append((name, field_type))
+        body.field(f"{field_type} {name}", _line_of(token))
 
     expect_token(p.next(), TokenType.RBRACE)
 
-    return StructAstNode(variable.value, fields, current)
+    return StructAstNode(variable.value, fields, current, body.items)
+
+
+class _StructBody:
+    """Collects a struct body in source order for the formatter: a comment on
+    a field's line trails that field, any other comment stands alone, and a
+    gap of blank lines between items is kept as one."""
+
+    def __init__(self, open_line: int) -> None:
+        self.items: list[StructBodyItem] = []
+        self._last_line = open_line
+        self._last_field_line: int | None = None
+        self._trailing_column: int | None = None
+
+    def _continues_trailing(self, token: Token, line: int) -> bool:
+        """A comment on the next line, at the column of the trailing comment
+        just above it, continues that comment."""
+        return (
+            self._trailing_column is not None
+            and line == self._last_line + 1
+            and _column_of(token) == self._trailing_column
+        )
+
+    def _gap(self, line: int) -> None:
+        if self.items and line > self._last_line + 1:
+            self.items.append(("blank", "", None))
+        self._last_line = line
+
+    def field(self, text: str, line: int) -> None:
+        self._trailing_column = None
+        self._gap(line)
+        self.items.append(("field", text, None))
+        self._last_field_line = line
+
+    def comment(self, token: Token) -> None:
+        line = _line_of(token)
+        if line == self._last_field_line and self.items[-1][0] == "field":
+            kind, text, _ = self.items[-1]
+            self.items[-1] = (kind, text, token.value)
+            self._trailing_column = _column_of(token)
+            self._last_line = line + token.value.count("\n")
+            return
+        if self._continues_trailing(token, line):
+            self.items.append(("continuation", token.value, None))
+            self._last_line = line
+            return
+        self._trailing_column = None
+        self._gap(line)
+        self.items.append(("comment", token.value, None))
+        self._last_line = line + token.value.count("\n")
+
+
+def _line_of(token: Token) -> int:
+    position = token.position
+    return position.line if position is not None else 0
+
+
+def _column_of(token: Token) -> int:
+    position = token.position
+    return position.column if position is not None else 0
 
 
 def _parse_struct_field(p: Parser, seen: set[str]) -> tuple[str, str]:
