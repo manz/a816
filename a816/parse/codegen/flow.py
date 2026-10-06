@@ -113,6 +113,31 @@ def _macro_hint(name: str, macro_definitions: MacroDefinitions) -> str | None:
     return "define it with `.macro NAME(args) { ... }` before calling it"
 
 
+def _callable_macro(
+    node: MacroApplyAstNode, resolver: Resolver, macro_definitions: MacroDefinitions, file_info: Token
+) -> MacroAstNode:
+    """The macro `node` calls, once it is known, visible from the call site
+    and given the right number of arguments."""
+    macro_def: MacroAstNode | None = macro_definitions.get(node.name)
+    owner = resolver.foreign_private_owner(node.name, file_info) if macro_def is not None else None
+    if macro_def is None or owner is not None:
+        from a816.parse.ast.expression import private_hint
+
+        raise NodeError(
+            f"macro `{node.name}` is not defined",
+            file_info,
+            code=str(E_SYMBOL_UNKNOWN_MACRO),
+            hint=private_hint(node.name, owner) if owner is not None else _macro_hint(node.name, macro_definitions),
+        )
+    if len(node.args) != len(macro_def.args):
+        raise NodeError(
+            f"Macro '{node.name}' expects {len(macro_def.args)} argument(s), got {len(node.args)}",
+            file_info,
+            code=str(E_SYMBOL_MACRO_ARITY),
+        )
+    return macro_def
+
+
 def generate_macro_application(
     node: MacroApplyAstNode,
     resolver: Resolver,
@@ -120,24 +145,10 @@ def generate_macro_application(
     file_info: Token,
 ) -> GenNodes:
     code: GenNodes = []
-    macro_def: MacroAstNode | None = macro_definitions.get(node.name)
-    if macro_def is None:
-        raise NodeError(
-            f"macro `{node.name}` is not defined",
-            file_info,
-            code=str(E_SYMBOL_UNKNOWN_MACRO),
-            hint=_macro_hint(node.name, macro_definitions),
-        )
+    macro_def = _callable_macro(node, resolver, macro_definitions, file_info)
     macro_code = macro_def.block
     macro_args = macro_def.args
     macro_args_values = node.args
-
-    if len(macro_args_values) != len(macro_args):
-        raise NodeError(
-            f"Macro '{node.name}' expects {len(macro_args)} argument(s), got {len(macro_args_values)}",
-            file_info,
-            code=str(E_SYMBOL_MACRO_ARITY),
-        )
 
     resolver.append_scope()
     resolver.use_next_scope()

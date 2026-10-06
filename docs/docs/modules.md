@@ -16,7 +16,11 @@ If only `.s` is available it is compiled to `.o` first, then linked.
 
 ## Symbol visibility
 
-- Names starting with `_` are **LOCAL** to their module.
+- Names starting with `_` are **private** to their module: labels are
+  not exported, and an importer cannot name the module's private
+  constants, macros, structs or `.label`s either (`E0200` / `E0207`,
+  with a hint naming the owner). The module's own public macros and
+  constants may still use them: they expand from the owner's files.
 - All other names are **GLOBAL** and exported in the object file.
 - Names declared inside `named_scope { ... }` export as `named_scope.name`.
 - Anonymous `{ ... }` blocks are scoped — labels declared inside never leak.

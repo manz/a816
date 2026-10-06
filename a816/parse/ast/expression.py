@@ -221,13 +221,23 @@ def _lookup(name: str, token: Token, resolver: Resolver) -> int | str | BlockAst
     located token keeps it: that is where the undefined name was written.
     """
     try:
-        return resolver.current_scope.value_for(name)
+        value = resolver.current_scope.value_for(name)
     except SymbolNotDefined as exc:
         if exc.name == name:
             _raise_for_macro_argument(name, token, resolver)
         if exc.token is None or exc.token.position is None:
             exc.token = token
         raise
+    owner = resolver.foreign_private_owner(name, token)
+    if owner is not None:
+        hidden = SymbolNotDefined(name, token)
+        hidden.note = private_hint(name, owner)
+        raise hidden
+    return value
+
+
+def private_hint(name: str, module: str) -> str:
+    return f"`{name}` is private to module `{module}`; drop the leading `_` there to export it"
 
 
 def _raise_for_macro_argument(name: str, use: Token, resolver: Resolver) -> None:
