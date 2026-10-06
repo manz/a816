@@ -54,19 +54,60 @@ WARNING write at $000004..$00000b overlaps previous write at
         $000000..$000009 ($000004..$000009 would be silently overwritten)
 ```
 
-### `.map` — memory map
+### `.map`: memory map
 
-Declares one bus region. Affects how `*=` / `.alloc` addresses
-translate into a physical ROM offset and which banks are writable.
+Declares one bus region: which banks and addresses it covers, and where
+those bytes sit in the ROM file.
 
-```ca65
-.map identifier=1 bank_range=0xc0, 0xfd addr_range=0x0000, 0xffff mask=0x10000 mirror_bank_range=0x40, 0x7d
-.map identifier=3 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=1
+```
+.map identifier=N bank_range=LO, HI addr_range=LO, HI mask=M [mirror_bank_range=LO, HI] [writable=1]
 ```
 
-Without any region the bus follows `-m` (LoROM when `-m` is absent).
-The layout is usually project-wide: declare it once in `a816.toml`
-(`board` and `[map.N]`) instead of repeating it in every module.
+| Attribute | Meaning |
+|-----------|---------|
+| `identifier` | region number; the same `N` as `[map.N]` in `a816.toml` |
+| `bank_range` | first and last bank of the region |
+| `addr_range` | the window the region serves inside each bank |
+| `mask` | bytes of ROM per bank: an address lands at `(bank - first bank) * mask + (address & ~mask & 0xFFFF)` in the file |
+| `mirror_bank_range` | banks that show the same bytes (`$80-$FF` mirroring `$00-$7F`) |
+| `writable` | `1` for RAM: the region has addresses but no file offset |
+
+Values are number literals. LoROM and HiROM ROM regions, and WRAM:
+
+<!-- example: build -->
+```ca65
+.map identifier=1 bank_range=0x00, 0x7d addr_range=0x8000, 0xffff mask=0x8000 mirror_bank_range=0x80, 0xff
+.map identifier=3 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=1
+
+.alloc reset at 0x008000 {
+    sei              ; file offset 0x000000
+}
+.alloc bank1 at 0x018000 {
+    rts              ; file offset 0x008000: one 0x8000 bank further
+}
+```
+
+```ca65
+.map identifier=1 bank_range=0xc0, 0xff addr_range=0x0000, 0xffff mask=0x10000 mirror_bank_range=0x40, 0x7f
+```
+
+Where a `.map` applies:
+
+- It changes the bus of the translation unit that declares it, from
+  that line on. Without any region the bus follows `-m` (LoROM when
+  `-m` is absent); declaring one replaces that default, so declare
+  every region the code uses.
+- `.import` brings the imported module's regions along, so a module
+  can rely on the maps of a shared prelude it imports.
+- In object mode each region is written into the `.o`; the linker
+  replays them and keeps one copy of each identical region. The same
+  identifier with a different shape, in one unit or across modules, is
+  `E0308`. An address in a bank no region covers is `E0317`.
+- The layout belongs to the project, not to each module: declare it
+  once in `a816.toml` with `board` (a real cartridge board) and/or
+  `[map.N]` tables, see [Bus map](index.md#bus-map-board-and-mapn).
+  The toml regions are on every unit's bus before its first line; a
+  source `.map` with the same identifier and shape is a no-op there.
 
 ## Expressions
 
