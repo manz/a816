@@ -128,6 +128,16 @@ def generate_macro_application(
             code=str(E_SYMBOL_UNKNOWN_MACRO),
             hint=_macro_hint(node.name, macro_definitions),
         )
+    owner = resolver.foreign_private_owner(node.name, file_info)
+    if owner is not None:
+        from a816.parse.ast.expression import private_hint
+
+        raise NodeError(
+            f"macro `{node.name}` is not defined",
+            file_info,
+            code=str(E_SYMBOL_UNKNOWN_MACRO),
+            hint=private_hint(node.name, owner),
+        )
     macro_code = macro_def.block
     macro_args = macro_def.args
     macro_args_values = node.args

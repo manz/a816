@@ -388,6 +388,11 @@ class Resolver:
         # owned by its dependencies - the owner's `.o` is the single
         # source of truth, downstream `.o`s carry externs.
         self.imported_symbol_names: set[str] = set()
+        # Private (`_`) declarations inlined from imported modules: name ->
+        # (module, the files of that module). The owner's own declarations
+        # (a public macro or constant built on a private one) still use them;
+        # a reference written in any other file is an error.
+        self.private_owners: dict[str, tuple[str, frozenset[str]]] = {}
         # Constants of already-built modules this one does not import
         # (name -> (value, owning module)). Still resolved during 1.1.0 so
         # projects relying on compile order keep building, with a warning
@@ -655,6 +660,20 @@ class Resolver:
                         seen.add(exported)
         return symbols
 
+    def foreign_private_owner(self, name: str, token: Token | None) -> str | None:
+        """The module owning `name` when `name` is another module's private
+        (`_`) declaration referenced from outside it, else None."""
+        if not name.startswith("_") or not self.private_owners:
+            return None
+        owner = self.private_owners.get(name.split(".", 1)[0])
+        if owner is None:
+            return None
+        module, files = owner
+        position = token.position if token is not None else None
+        if position is None or position.file is None:
+            return None
+        return None if _canonical_file(position.file.filename) in files else module
+
     def unimported_constant(self, name: str) -> int | None:
         """A constant of a module this one does not `.import`, or None.
 
@@ -689,3 +708,14 @@ class Resolver:
                 if qualified in root.symbols or qualified in root.labels:
                     return True
         return False
+
+
+def _canonical_file(filename: str) -> str:
+    """A source path as `private_owners` stores it (absolute, normalised)."""
+    import os
+
+    if filename.startswith("file://"):
+        from urllib.parse import unquote, urlparse
+
+        filename = unquote(urlparse(filename).path)
+    return os.path.realpath(filename)

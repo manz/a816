@@ -165,6 +165,7 @@ def _import_from_source(
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
     direct_mode: bool,
+    module_name: str,
 ) -> GenNodes | None:
     """Bring an `.import`ed source module into the importer.
 
@@ -194,7 +195,51 @@ def _import_from_source(
         return []
     if direct_mode:
         return _code_gen(result.nodes, resolver, macro_definitions)
+    _register_private_names(result.nodes, module_name, src_path, resolver)
     return _import_object_mode(result.nodes, resolver, macro_definitions)
+
+
+_PRIVATE_DECLARATION_TYPES = (SymbolAffectationAstNode, AssignAstNode, LabelDeclAstNode, MacroAstNode, StructAstNode)
+
+
+def _register_private_names(nodes: list[AstNode], module_name: str, src_path: Path, resolver: Resolver) -> None:
+    """Record the module owning each private (`_`) declaration it hands to
+    the importer: the importer may not name them (`Resolver.foreign_private_owner`)."""
+    from a816.symbols import _canonical_file
+
+    files = frozenset({_canonical_file(str(src_path)), *(_canonical_file(f) for f in _included_files(nodes))})
+    for node in _top_level_declarations(nodes):
+        name = _declared_name(node)
+        if name is not None and name.startswith("_"):
+            resolver.private_owners.setdefault(name, (module_name, files))
+
+
+def _declared_name(node: AstNode) -> str | None:
+    if isinstance(node, MacroAstNode | StructAstNode):
+        return node.name
+    if isinstance(node, SymbolAffectationAstNode | AssignAstNode | LabelDeclAstNode):
+        return node.symbol
+    return None
+
+
+def _included_files(nodes: list[AstNode]) -> list[str]:
+    out: list[str] = []
+    for node in nodes:
+        if isinstance(node, IncludeAstNode):
+            if node.resolved_path:
+                out.append(node.resolved_path)
+            out.extend(_included_files(node.included_nodes))
+    return out
+
+
+def _top_level_declarations(nodes: list[AstNode]) -> list[AstNode]:
+    out: list[AstNode] = []
+    for node in nodes:
+        if isinstance(node, _PRIVATE_DECLARATION_TYPES):
+            out.append(node)
+        elif isinstance(node, IncludeAstNode):
+            out.extend(_top_level_declarations(node.included_nodes))
+    return out
 
 
 def _import_object_mode(
@@ -207,7 +252,7 @@ def _import_object_mode(
     Inlines compile-time-only nodes (struct, macro, constant, typed
     bind, `.label`, nested `.import`) into the importer's resolver so
     codegen of this module sees their effects; `.if` / `.scope` /
-    `.for` are inlined with their bodies cut down to declarations
+    `.for` / `.include` are inlined with their bodies cut down to declarations
     (`_declarations_only`). Emits `ExternNode` for runtime-bound names
     so cross-module references resolve at link time.
 
@@ -229,7 +274,7 @@ def _import_object_mode(
         if isinstance(node, _INLINE_IMPORT_TYPES):
             out.extend(_code_gen([node], resolver, macro_definitions) or [])
             continue
-        if isinstance(node, IfAstNode | ScopeAstNode | ForAstNode):
+        if isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode):
             out.extend(_code_gen(_declarations_only([node], bare_names=True), resolver, macro_definitions) or [])
             continue
         for name in _runtime_extern_names(node):
@@ -501,7 +546,9 @@ def _paired_object_and_source_import(
         return []
     _mark_imported(src_path, resolver)
     extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode=False, file_info=file_info) or []
-    inline_nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode=False) or []
+    inline_nodes = (
+        _import_from_source(src_path, resolver, macro_definitions, direct_mode=False, module_name=module_name) or []
+    )
     return extern_nodes + inline_nodes
 
 
@@ -517,7 +564,7 @@ def _source_import(
         if _is_imported(src_path, resolver, module_name):
             return []
         _mark_imported(src_path, resolver)
-    nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode)
+    nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode, module_name)
     if nodes is None:
         raise NodeError(f'Module not found: "{module_name}"', file_info)
     return nodes
