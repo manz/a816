@@ -140,8 +140,47 @@ def test_bit_field_array_reports_e0121() -> None:
     assert "[E0121]" in _parse_error(".struct A {\n    u4[2] v\n}\n")
 
 
-def test_non_number_count_is_rejected() -> None:
-    assert "[E0101]" in _parse_error(".struct A {\n    byte[N] v\n}\n")
+_PANEL = """
+LINE_CELLS = 30
+COPY_CELLS = 12
+TILE_BYTES = 16
+.struct PanelVwf {
+    byte[(LINE_CELLS + COPY_CELLS) * TILE_BYTES] line_strip
+    byte[LINE_CELLS] line_chars
+}
+"""
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("PanelVwf.line_strip.__size", 672),
+        ("PanelVwf.line_chars", 672),
+        ("PanelVwf.__size", 702),
+    ],
+)
+def test_count_takes_a_constant_expression(name: str, expected: int) -> None:
+    assert _symbols(_PANEL)[name] == expected
+
+
+def test_istruct_fills_an_expression_sized_array() -> None:
+    src = "N = 2\n.struct A {\n    word[N + 1] v\n}\n.istruct A { v = [1, 2, 3] }\n"
+    writer = StubWriter()
+    Program().assemble_string_with_emitter(src, "arrays.s", writer)
+    assert b"".join(writer.data) == bytes([1, 0, 2, 0, 3, 0])
+
+
+def test_formatter_keeps_an_expression_count() -> None:
+    src = ".struct A {\n    byte[N * 2] v\n}\n"
+    assert A816Formatter().format_text(src) == src
+
+
+def test_undefined_constant_count_reports_e0120() -> None:
+    assert "E0120" in str(_codegen_error(".struct A {\n    byte[N] v\n}\n"))
+
+
+def test_non_positive_expression_count_reports_e0120() -> None:
+    assert "E0120" in str(_codegen_error("N = 1\n.struct A {\n    byte[N - 1] v\n}\n"))
 
 
 def test_unclosed_count_is_rejected() -> None:

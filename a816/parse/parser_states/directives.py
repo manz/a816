@@ -322,7 +322,11 @@ def _parse_struct_field(p: Parser, seen: set[str]) -> tuple[str, str]:
 
 
 def _parse_struct_array_suffix(p: Parser, type_token: Token) -> str:
-    """Consume `[N]` after a field type; return it verbatim for the type string."""
+    """Consume `[N]` after a field type; return it for the type string.
+
+    `N` is a number literal or a constant expression (`[LINE_CELLS * 16]`);
+    codegen evaluates an expression and checks its value.
+    """
     if _BIT_FIELD_TYPE_RE.fullmatch(type_token.value):
         raise ParserSyntaxError(
             f"bit-field `{type_token.value}` cannot be an array",
@@ -331,8 +335,11 @@ def _parse_struct_array_suffix(p: Parser, type_token: Token) -> str:
             hint="declare one `uN` field per bit run, or use a `byte[N]` array",
         )
     p.next()
+    if p.current().type != TokenType.NUMBER or p.peek().type != TokenType.RBRAKET:
+        count = parse_expression(p)
+        expect_token(p.next(), TokenType.RBRAKET)
+        return f"[{count.to_canonical()}]"
     count_token = p.next()
-    expect_token(count_token, TokenType.NUMBER)
     if eval_number(count_token.value) < 1:
         raise ParserSyntaxError(
             f"struct array count must be a positive integer, found `{count_token.value}`",

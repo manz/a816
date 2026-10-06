@@ -7,10 +7,11 @@ from dataclasses import dataclass, field
 
 from a816.context import AssemblyMode
 from a816.cpu.mapping import Bus
-from a816.error_codes import E_CODEGEN_MAP_CONFLICT
+from a816.error_codes import E_CODEGEN_MAP_CONFLICT, E_PARSER_STRUCT_ARRAY_COUNT
+from a816.exceptions import ExternalExpressionReference, SymbolNotDefined
 from a816.mappers import map_on_bus
 from a816.object_file import BusMapping
-from a816.parse.ast.expression import eval_number
+from a816.parse.ast.expression import eval_expression_str, eval_number
 from a816.parse.ast.nodes import MapAstNode, StructAstNode
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, generators
 from a816.parse.nodes import NodeError, PopScopeNode, ScopeNode
@@ -28,8 +29,9 @@ STRUCT_FIELD_SIZES = {"byte": 1, "word": 2, "long": 3, "dword": 4}
 _BIT_FIELD_TYPE_RE = re.compile(r"u(\d+)$")
 
 # Array fields carry their element count in the type string: `byte[21]`,
-# `Pt[0x03]`. The parser has already validated the count literal.
-_ARRAY_TYPE_RE = re.compile(r"(\w+)\[(\w+)\]", re.ASCII)
+# `Pt[0x03]`, `byte[LINE_CELLS * 16]`. The parser has validated a count
+# literal; codegen evaluates an expression and stores the literal count.
+_ARRAY_TYPE_RE = re.compile(r"(\w+)\[(.+)\]", re.ASCII)
 
 
 def bit_width_from_type(field_type: str) -> int | None:
@@ -58,6 +60,8 @@ class _StructLayout:
     offset: int = 0
     bit_buffer: list[tuple[str, int, int]] = field(default_factory=list)
     bit_position: int = 0
+    # The declared fields with every array count evaluated (`byte[672]`).
+    fields: list[tuple[str, str]] = field(default_factory=list)
 
     def add_bit_field(self, name: str, width: int) -> None:
         self.bit_buffer.append((name, self.bit_position, width))
@@ -92,11 +96,37 @@ class _ElementLayout:
 
 
 def split_array_type(field_type: str) -> tuple[str, int | None]:
-    """Split `T[N]` into `(T, N)`; a scalar type yields `(T, None)`."""
+    """Split `T[N]` (a literal count) into `(T, N)`; a scalar type yields `(T, None)`."""
+    element_type, count = split_array_count(field_type)
+    return element_type, None if count is None else eval_number(count)
+
+
+def split_array_count(field_type: str) -> tuple[str, str | None]:
+    """Split `T[N]` into `(T, "N")`, the count as written (literal or expression)."""
     match = _ARRAY_TYPE_RE.fullmatch(field_type)
     if match is None:
         return field_type, None
-    return match.group(1), eval_number(match.group(2))
+    return match.group(1), match.group(2)
+
+
+def _array_count(
+    node: StructAstNode, field_name: str, count: str | None, resolver: Resolver, file_info: Token
+) -> int | None:
+    """Evaluate a field's array count; constants defined before the struct are enough."""
+    if count is None:
+        return None
+    try:
+        value = eval_expression_str(count, resolver)
+    except (ExternalExpressionReference, SymbolNotDefined):
+        value = None
+    if not isinstance(value, int) or value < 1:
+        raise NodeError(
+            f"{node.name}.{field_name} array count `{count}` is not a positive constant",
+            file_info,
+            code=str(E_PARSER_STRUCT_ARRAY_COUNT),
+            hint="define the constants it uses before the `.struct`",
+        )
+    return value
 
 
 def _element_layout(
@@ -144,11 +174,14 @@ def _layout_struct_fields(node: StructAstNode, resolver: Resolver, file_info: To
         bit_width = bit_width_from_type(field_type)
         if bit_width is not None:
             layout.add_bit_field(field_name, bit_width)
+            layout.fields.append((field_name, field_type))
             continue
         layout.flush_bits()
-        element_type, count = split_array_type(field_type)
+        element_type, count_text = split_array_count(field_type)
+        count = _array_count(node, field_name, count_text, resolver, file_info)
         element = _element_layout(node, field_name, element_type, resolver, file_info)
         layout.add_field(field_name, element, count)
+        layout.fields.append((field_name, field_type if count is None else f"{element_type}[{count}]"))
     layout.flush_bits()
     return layout
 
@@ -209,7 +242,7 @@ def generate_struct(
         )
     resolver.struct_layouts[node.name] = entries
     resolver.struct_sizes[node.name] = total_size
-    resolver.struct_fields[node.name] = list(node.fields)
+    resolver.struct_fields[node.name] = layout.fields
     if bit_meta:
         resolver.struct_bitfields[node.name] = bit_meta
     if layout.array_sizes:
