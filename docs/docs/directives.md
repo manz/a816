@@ -140,10 +140,27 @@ MAX_HP   = 0xFF
 font_ptr = target + 0x40   ; target may be `.extern`
 ```
 
-### `name := expr` — assign
+### `name := expr`: assign now
 
-Same shape as `=` but the resolver treats the binding as mutable
-during a build (rebinds allowed). Prefer `=` unless you need this.
+Both forms bind a name and both may be rebound; they differ in *when*
+the right-hand side is evaluated:
+
+- `=` is lazy: the value is computed when the name is used, so the
+  right-hand side may name a label defined further down, and in object
+  mode an `.extern` (the name becomes a link-time alias).
+- `:=` evaluates at once, where it is written. That is what a typed
+  bind needs (`p := (base as T)` expands one symbol per field), and it
+  rejects a forward reference with `E0210`.
+
+```ca65
+early = later + 1      ; fine: evaluated on use
+later:
+    rts
+now := 0x2100          ; evaluated here
+ppu := (0x2100 as PPU) ; typed bind: needs `:=`
+```
+
+Prefer `=` unless you need the value fixed at that point.
 
 ### `.label NAME = ADDR`
 
@@ -408,14 +425,17 @@ Compile-time loop. Body is expanded once per integer in
 
 ## Data
 
-### `.db` / `.dw` / `.dl` / `.dd`
+### `.db` / `.dw` / `.dl` / `.pointer`
 
-Emit raw bytes / words / 24-bit longs / 32-bit dwords.
+Emit raw bytes / 16-bit words / 24-bit longs. `.pointer` is `.dl`
+under a name that says what the value is. There is no 32-bit data
+directive; a `dword` struct field (`.istruct`) emits four bytes.
 
 ```ca65
 .db 0x16, 0x20, 0x17, 0x20
 .dw 0x2000, 0x2500
 .dl 0x010000
+.pointer handler      ; 24-bit address of `handler`
 ```
 
 ### `.istruct Type { field = value, ... }`
@@ -512,6 +532,16 @@ join the current scope. Use `.import` for module-style separation.
 
 Replays the records of an existing IPS patch into the current build.
 
+### `.debug "message {expr}"`
+
+Prints the message when the line is emitted, with each `{expr}`
+replaced by its value (hex for numbers). Emits no bytes. Handy to see
+where a label or a pooled alloc landed:
+
+```ca65
+.debug "font table at {font_table}, {font_table__size} bytes"
+```
+
 ## Modules
 
 See the dedicated [Modules](modules.md) page for `.import` / `.extern`
@@ -563,6 +593,23 @@ legacy `*=` shape).
 
 Overlap with any other pinned region (legacy `*=` included) trips
 the overlap auditor with both locations named.
+
+### `.res N`
+
+Inside a `bss` alloc body, reserves `N` bytes of address space without
+emitting any; `.reserve` is the one-line form.
+
+<!-- example: build -->
+```ca65
+.pool wram { bss  range 0x7e2000 0x7e2fff }
+
+.alloc buffers in wram {
+    text_buffer:
+        .res 0x100
+    scroll_x:
+        .res 2
+}
+```
 
 ### `.reserve NAME SIZE [at ADDR] in POOL`
 

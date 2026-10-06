@@ -153,10 +153,11 @@ some_address = 0x54
 
 ### Named scopes
 
-<!-- example: skip -->
+`.scope name { ... }` exports its labels as `name.label`:
+
 ```ca65
 *=0x009000
-named_scope {
+.scope named_scope {
    addr = 0x1234
    youhou_text:
    .text 'youhou'
