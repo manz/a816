@@ -52,6 +52,13 @@ injected constants or third-party `.o` drops.
 
 ## Placement
 
+`.import` goes in the file prelude, before the first placement: inside
+an `.alloc` body or after a `*=` it is `E0311`. An import never places
+the imported module; each module owns its placement. The old pattern
+of `*= ADDR` followed by `.import "module"` to put the module at
+`ADDR` does not work any more: give the module its own
+`.alloc at ADDR` or `.alloc in POOL`.
+
 Under `a816 build <entry>.s` every emitted byte needs an explicit home,
 in the entrypoint and in every imported module alike: an `.alloc`
 (`at ADDR` or `in POOL`) or a preceding `*= ADDR`. Bytes emitted before
@@ -164,8 +171,9 @@ callers can do bounds checks without tracking the length manually.
 
 `.pool NAME { range ... }` declared in one module is visible to any
 module that `.import`s it. The decl serialises into both files'
-`.o`; the linker merges decls by name (identical shape required —
-mismatched ranges / fill / strategy is a hard error) so a shared
+`.o`; the linker merges decls by name: the ranges are unioned, and
+`fill`, `strategy` and `contexts` must agree (a mismatch is an error),
+so a shared
 preamble can hand out pool names like `client` and `engine` and
 sub-modules `.alloc … in client` against them without redeclaring.
 

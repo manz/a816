@@ -3,26 +3,26 @@
 Once a patch grows past one screen, splitting it into modules pays off:
 faster incremental builds, scoped symbol namespaces, and reusable
 helpers across hacks. This walkthrough builds a two-module project
-end to end.
+end to end. The project is in the repository under
+`docs/examples/modules-walkthrough/`; the test suite builds it and
+checks the patch, so what you read here is what assembles.
 
 ## Starting layout
 
 ```
-my-hack/
+modules-walkthrough/
 ├── a816.toml
-├── src/
-│   ├── main.s
-│   └── modules/
-│       └── vwf.s
-└── build/
+└── src/
+    ├── main.s
+    └── modules/
+        └── vwf.s
 ```
 
-`a816.toml`:
+`a816.toml` names the entry file, where `.import` looks, and the
+cartridge (a 512 KB LoROM board):
 
 ```toml
-entrypoint    = "src/main.s"
-include-paths = ["src/include"]
-module-paths  = ["src/modules"]
+--8<-- "modules-walkthrough/a816.toml"
 ```
 
 ## A reusable module
@@ -30,23 +30,7 @@ module-paths  = ["src/modules"]
 `src/modules/vwf.s` exports a small variable-width-font init routine:
 
 ```ca65
-"""VWF helpers shared across the hack."""
-
-.alloc vwf_code at 0x018000 {
-    .scope vwf {
-        init:
-            """Initialise VRAM tile slots used by the VWF renderer."""
-            lda.b #0x00
-            sta.w 0x2115
-            rtl
-
-        ; private, only callable from inside this module.
-        _zero_pad:
-            rep #0x20
-            lda.w #0x0000
-            rts
-    }
-}
+--8<-- "modules-walkthrough/src/modules/vwf.s"
 ```
 
 The module owns its placement: `.alloc vwf_code at 0x018000 { ... }`
@@ -63,24 +47,18 @@ reference it through the linker.
 `src/main.s`:
 
 ```ca65
-"""Top-level patch."""
-
-.import "vwf"
-
-*= 0x008000
-main:
-    """Entry — run the VWF init then loop."""
-    jsl vwf.init
-    bra main
+--8<-- "modules-walkthrough/src/main.s"
 ```
 
-`.import "vwf"` resolves in this order:
+`.import` sits in the file prelude, before any placement; inside an
+`.alloc` or after a `*=` it is `E0311`. Importing a module does not
+place it: `vwf.s` owns its address through its own `.alloc`.
 
-1. `vwf.o` in `--obj-dir` (default `build/obj`).
-2. `vwf.s` on a search path (`-I` / `--module-path` or the same directory).
-
-When only `.s` is available, the build driver compiles to `.o` first
-on the fly.
+`.import "vwf"` resolves `vwf.o` in `--obj-dir` (default `build/obj`)
+or `vwf.s` on the module paths (`module-paths` in `a816.toml`, `-I` on
+the command line), compiling it first when only the source exists. The
+importing file's own directory is not searched: a module in a
+subdirectory is imported by its path (`.import "ingame/items"`).
 
 ## Build
 
@@ -89,6 +67,10 @@ A single command does compile + link with auto-imports:
 ```
 $ a816 build src/main.s -o build/patch.ips
 ```
+
+The patch has two records: the entry at file offset `0x000000`
+(`jsl $01:8000` then `bra main`) and the VWF routine at `0x008000`,
+bank `$01` of the LoROM image.
 
 If you want to inspect the intermediates:
 
@@ -106,14 +88,8 @@ per-node import classifier emits the extern stubs from B's `.o` and
 inlines B's compile-time content (structs, macros, typed binds,
 pool decls) for codegen.
 
-```ca65
-.import "vwf"
-
-*= 0x008000
-main:
-    jsl vwf.init     ; resolves through the auto-extern
-    rts
-```
+`main.s` above does exactly that: `jsl vwf.init` resolves through the
+extern stub the import created.
 
 `.extern name` is still useful for symbols you don't want to import
 the owning module for — build-script-injected constants, third-party
@@ -136,11 +112,10 @@ font_ptr  = target + 0x40
 font_high = (target >> 16) & 0xFF
 ```
 
-Caveats: the alias's expression has to evaluate to a constant at link
-time. Macros that reference externals via `source >> 16` generally
-work; constant assignments that the assembler tries to fold into a
-single literal during compile (e.g., `font_ptr := assets_menu_font_dat`)
-don't, so use the external symbol directly in the instruction.
+The expression may use any operator; the linker evaluates it once
+`target` has its address. Use `=` here: `:=` wants its value at once,
+which a module importing this one can't give it. Typed views over an
+extern (`view := (target as T)`) are the exception and link as well.
 
 ## Preamble
 

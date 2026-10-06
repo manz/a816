@@ -1,0 +1,4 @@
+entrypoint   = "src/main.s"
+module-paths = ["src/modules"]
+board        = "SHVC-1A0N-30"
+rom_size     = 0x80000

@@ -62,6 +62,8 @@ def _examples() -> list[Example]:
             before = text[: match.start()].rstrip("\n").rsplit("\n", 1)[-1]
             marker = _MARKER.search(before)
             language, code = match.group(1), match.group(2)
+            if code.lstrip().startswith("--8<--"):
+                continue  # a file of a docs/examples project: built by test_docs_example_project
             default = "parse" if language == "ca65" else "run"
             out.append(Example(path, line, language, code, marker.group(1) if marker else default))
     return out
