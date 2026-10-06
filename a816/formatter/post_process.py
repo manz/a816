@@ -83,13 +83,15 @@ def separate_labels(lines: list[str]) -> list[str]:
         if in_doc:
             adjusted.append(line)
             continue
-        stripped = line.strip()
-        is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
+        semicolon = comment_start(line)
+        code = (line if semicolon < 0 else line[:semicolon]).strip()
+        # Only a bare `name:` line; comment text ending in `:` is prose.
+        is_label = semicolon < 0 and code.endswith(":") and not code.startswith((":", "."))
         at_top_level = depth == 0
         if is_label and at_top_level and adjusted and adjusted[-1].strip():
             adjusted.append("")
         adjusted.append(line)
-        depth += stripped.count("{") - stripped.count("}")
+        depth += code.count("{") - code.count("}")
         depth = max(depth, 0)
     return adjusted
 
