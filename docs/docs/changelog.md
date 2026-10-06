@@ -104,8 +104,9 @@ player:
 ### Language
 
 - `.struct` with `byte`, `word`, `long`, `dword`, `uN` bit fields
-  (with `.mask` and `.shift`), nested structs and `TYPE[N]` arrays;
-  every field publishes its offset, and `Name.__size` gives the size.
+  (with `.mask` and `.shift`), nested structs and `TYPE[N]` arrays,
+  where `N` may be a constant expression (`byte[ROWS * 16]`); every
+  field publishes its offset, and `Name.__size` gives the size.
 - `(expr as T).field` casts and `view := (expr as T)` typed binds,
   over constants, labels and `.extern` symbols alike; the operand size
   follows the bind's base.
@@ -134,7 +135,10 @@ player:
   evaluates them once placed.
 - Transitive imports are deduplicated, and modules are found on the
   module paths only, so a same-named file next door can't shadow one.
-- Private `_labels` stay private per module and per alloc.
+- A module's `_` names are private. Its importers can't name them
+  (the error says which module owns the name), and a module's own
+  `_name` shadows an imported one. A `_label` is also private to its
+  alloc.
 - The linker writes `.sym` and `.adbg` debug info with source mapping.
 
 ### Builds
@@ -150,6 +154,7 @@ player:
   `module-paths`, a cartridge `board` from ares' `boards.bml` (LoROM,
   HiROM, ExHiROM, SA-1 and the rest), `[map.N]` regions in bsnes form,
   `rom_size` and `[experimental]` flags.
+- An `.sfc` image is padded to `rom_size`.
 
 ### Diagnostics
 
