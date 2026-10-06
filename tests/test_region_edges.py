@@ -1,4 +1,4 @@
-"""A block may end exactly where its region's window (or the ROM) ends."""
+"""A block may end exactly where its region's window (or the ROM) ends; an `.sfc` image fills `rom_size`."""
 
 from pathlib import Path
 
@@ -54,6 +54,15 @@ def test_a_cross_bank_alloc_may_end_at_the_edge(tmp_path: Path, pool: str, start
 def test_running_past_the_window_edge_still_fails(tmp_path: Path) -> None:
     source = ".alloc vecs at 0x00FFFE {\n    .dw 0\n    .db 1\n}\n"
     assert _build(tmp_path, source).exit_code != 0
+
+
+def test_sfc_image_fills_rom_size(tmp_path: Path) -> None:
+    assert len(_rom(tmp_path, _VECTORS)) == 0x80000
+
+
+def test_ips_patch_is_not_padded(tmp_path: Path) -> None:
+    _build(tmp_path, _VECTORS, "ips")
+    assert len((tmp_path / "out.ips").read_bytes()) < 0x100
 
 
 def _end_address() -> EndAddress:

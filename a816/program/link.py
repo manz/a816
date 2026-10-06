@@ -157,16 +157,23 @@ class LinkMixin:
             self.resolver.rom_type = address_mapping[mapping]
 
         self.import_linked_symbols(linked_obj)
-        return self._emit_linked(linked_obj, sfc_file, SFCWriter, "SFC file")
+        rom_size = max((m.rom_size for m in linked_obj.bus_mappings if not m.writeable), default=0)
+        return self._emit_linked(linked_obj, sfc_file, SFCWriter, "SFC file", pad_to=rom_size)
 
     def _emit_linked(
-        self, linked_obj: ObjectFile, output_path: Path, make_writer: Callable[[BinaryIO], Writer], label: str
+        self,
+        linked_obj: ObjectFile,
+        output_path: Path,
+        make_writer: Callable[[BinaryIO], Writer],
+        label: str,
+        pad_to: int = 0,
     ) -> int:
         """Write every linked section through an overlap-audited writer.
 
         Bytes land in memory first and reach `output_path` only once the
         whole image emitted cleanly, so an `OverlapError` (raised under
-        `overlap_mode="error"`) leaves no truncated artefact behind.
+        `overlap_mode="error"`) leaves no truncated artefact behind. A
+        `pad_to` (the ROM image's `rom_size`) zero-fills the image up to it.
         """
         buffer = io.BytesIO()
         emitter = self._wrap_emitter_for_overlap_audit(make_writer(buffer))
@@ -175,6 +182,9 @@ class LinkMixin:
             if section.code:
                 emitter.write_block(section.code, self._to_physical(section.placed_base))
         emitter.end()
+        if buffer.getbuffer().nbytes < pad_to:
+            buffer.seek(0, io.SEEK_END)
+            buffer.write(bytes(pad_to - buffer.tell()))
         try:
             output_path.write_bytes(buffer.getvalue())
         except OSError:
