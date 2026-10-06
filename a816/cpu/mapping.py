@@ -339,13 +339,40 @@ class Address:
         if isinstance(other, int):
             mapping = self._get_mapping()
             physical_address = mapping.physical_address(self.logical_value)
-            if physical_address is not None:
+            if physical_address is None:
+                return Address(self.bus, self.logical_value + other)
+            try:
                 logical_address = mapping.logical_address(physical_address + other, near=self.logical_value)
-            else:
-                logical_address = self.logical_value + other
+            except ValueError:
+                return EndAddress(self, other, physical_address + other)
             return Address(self.bus, logical_address)
         else:
             raise ValueError("Address can only be added with ints.")  # noqa: TRY004
+
+
+class EndAddress(Address):
+    """One past the last byte a region serves: `$00:FFFF + 1` under HiROM, the last ROM byte + 1.
+
+    A block may end exactly there, so it is a valid PC; nothing may be emitted
+    at it. It keeps the region of the byte before it, `physical` stays one past
+    that byte's file offset (sizes measure right), and the logical value runs on
+    linearly for labels placed after the last byte.
+    """
+
+    def __init__(self, before: Address, distance: int, physical: int) -> None:
+        self.bus = before.bus
+        self.logical_value = before.logical_value + distance
+        self.mapping = before.mapping
+        self._physical = physical
+
+    @property
+    def physical(self) -> int:
+        return self._physical
+
+    def __add__(self, other: Any) -> "Address":
+        if other == 0:
+            return self
+        raise ValueError(f"physical ${self._physical:06X} is not reachable through this region")
 
 
 class LinearAddress(Address):
