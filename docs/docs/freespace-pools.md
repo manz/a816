@@ -203,6 +203,7 @@ auto-generates a stable identifier for anonymous allocs. Optional
 hard error pointing at the offending byte. Without `size`, the body
 extends to the bank end.
 
+<!-- example: skip -->
 ```ca65
 .alloc vector_table at 0x00FFE0 size 0x20 {
     .dw 0, 0
@@ -398,6 +399,7 @@ print(f"free={pool.free} used={pool.used} fragments={pool.fragments}")
 
 The legacy pattern:
 
+<!-- example: skip -->
 ```ca65
 *= 0x01ff35
 fn_a: ...
@@ -410,6 +412,7 @@ _end_of_free_space:
 
 becomes:
 
+<!-- example: skip -->
 ```ca65
 .pool bank01_slack {
     range 0x01ff35 0x01ffff

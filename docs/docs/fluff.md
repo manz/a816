@@ -149,6 +149,7 @@ formatting rules as on public targets.
 A trailing `; noqa` comment silences every rule on that line. Pass codes
 to suppress selectively, ruff-style:
 
+<!-- example: skip -->
 ```ca65
 .db 0x16, 0x20, 0x17, 0x20, 0x17, 0x20, ... ; noqa: E501
 MyLabel:                                    ; noqa: N801

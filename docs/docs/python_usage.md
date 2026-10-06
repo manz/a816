@@ -1,5 +1,6 @@
 # Python usage
 
+<!-- example: skip -->
 ```python
 from a816.writers import IPSWriter
 from a816.program import Program

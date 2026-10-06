@@ -139,6 +139,7 @@ some_address = 0x54
 
 ### Named scopes
 
+<!-- example: skip -->
 ```ca65
 *=0x009000
 named_scope {

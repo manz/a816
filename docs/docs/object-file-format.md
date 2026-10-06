@@ -39,6 +39,7 @@ cache rebuilds any other one instead of failing to load it.
 After the header comes one `WireObject` record, encoded from its type
 annotations by `a816/object_codec.py`:
 
+<!-- example: skip -->
 ```python
 @dataclass
 class WireObject:
