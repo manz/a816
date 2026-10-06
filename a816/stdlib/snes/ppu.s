@@ -1,4 +1,5 @@
-"""SNES PPU registers ($2100-$213F).
+"""
+SNES PPU registers ($2100-$213F).
 
 Comprehensive layout of the PPU register block exposed as `.struct PPU`.
 Bind it to its base address to get typed field access:
@@ -208,4 +209,3 @@ PPU_BASE = 0x2100
     u1 ntsc_pal
     u1 interlace_field
 }
-

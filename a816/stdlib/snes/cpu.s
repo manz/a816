@@ -1,4 +1,5 @@
-"""SNES CPU-side I/O registers ($4200-$421F).
+"""
+SNES CPU-side I/O registers ($4200-$421F).
 
 Covers NMI / IRQ / joypad enables, the multiplier and divider math
 pair, the joypad auto-read buffers, and the H/V counters. Bind to
@@ -112,4 +113,3 @@ CPU_REGS_BASE = 0x4200
     u1 ch6
     u1 ch7
 }
-

@@ -1,4 +1,5 @@
-"""SNES DMA channels ($4300-$437F).
+"""
+SNES DMA channels ($4300-$437F).
 
 Each of the eight DMA channels has a 16-byte register slice; the first
 12 bytes are documented (the remaining four are reserved / unmapped).
@@ -64,4 +65,3 @@ DMA_BASE = 0x4300
     u1 hdma_address_mode
     u1 transfer_direction
 }
-

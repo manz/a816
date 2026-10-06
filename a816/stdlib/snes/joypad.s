@@ -1,4 +1,5 @@
-"""SNES joypad serial / manual-read registers ($4016-$4017).
+"""
+SNES joypad serial / manual-read registers ($4016-$4017).
 
 These are the raw serial interface; the auto-read shadow registers
 ($4218-$421F) live in `@std/snes/cpu` as `PAD1L/PAD1H` etc.

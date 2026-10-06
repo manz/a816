@@ -1,4 +1,5 @@
-"""SNES cartridge header ($FFB0-$FFDF) and interrupt vectors ($FFE0-$FFFF).
+"""
+SNES cartridge header ($FFB0-$FFDF) and interrupt vectors ($FFE0-$FFFF).
 
 `SnesHeader` covers the extended header ($FFB0-$FFBF) and the standard
 header ($FFC0-$FFDF), `SnesVectors` the native ($FFE0) and emulation

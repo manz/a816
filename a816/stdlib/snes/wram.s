@@ -1,4 +1,5 @@
-"""SNES WRAM access registers ($2180-$2183).
+"""
+SNES WRAM access registers ($2180-$2183).
 
 The serial WRAM port — useful when DMA isn't an option (e.g. inside
 NMI / IRQ when the DMA controller is committed elsewhere). Set
