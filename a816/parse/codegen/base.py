@@ -11,7 +11,15 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol
 
-from a816.parse.ast.nodes import AstNode
+from a816.parse.ast.nodes import (
+    AssignAstNode,
+    AstNode,
+    LabelAstNode,
+    LabelDeclAstNode,
+    MacroAstNode,
+    StructAstNode,
+    SymbolAffectationAstNode,
+)
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
@@ -40,10 +48,25 @@ def _get_file_info(node: AstNode) -> Token:
     return node.file_info
 
 
+def declared_name(node: AstNode) -> str | None:
+    """The name a declaration node binds (constant, label, macro, struct), else None."""
+    if isinstance(node, MacroAstNode | StructAstNode):
+        return node.name
+    if isinstance(node, SymbolAffectationAstNode | AssignAstNode | LabelDeclAstNode):
+        return node.symbol
+    if isinstance(node, LabelAstNode):
+        return node.label
+    return None
+
+
 def _code_gen(ast_nodes: list[AstNode], resolver: Resolver, macro_definitions: MacroDefinitions) -> list[NodeProtocol]:
     code = []
     for node in ast_nodes:
         file_info = _get_file_info(node)
+        if resolver.private_owners:
+            name = declared_name(node)
+            if name is not None:
+                resolver.claim_private(name, file_info)
         generator = generators.get(node.kind)
         if generator:
             code += generator(node, resolver, macro_definitions, file_info)
