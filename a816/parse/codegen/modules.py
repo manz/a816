@@ -60,11 +60,6 @@ _INLINE_IMPORT_TYPES: tuple[type[AstNode], ...] = (
     CommentAstNode,
 )
 
-# Declarations kept when they sit inside an `.if` / `.scope` / `.for`
-# body. `.extern` is body-only: a conditional extern block is how a
-# module opts into another module's symbols under a feature flag.
-_INLINE_BODY_TYPES: tuple[type[AstNode], ...] = (*_INLINE_IMPORT_TYPES, ExternAstNode)
-
 
 def _import_search_paths(resolver: Resolver) -> list[Path]:
     """Where `.import` looks, in order.
@@ -317,7 +312,7 @@ def _declarations_only(nodes: list[AstNode], bare_names: bool) -> list[AstNode]:
 
 
 def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
-    if isinstance(node, _INLINE_BODY_TYPES):
+    if isinstance(node, _INLINE_IMPORT_TYPES):
         return [node]
     if isinstance(node, IfAstNode):
         return _pruned_if(node, bare_names)
