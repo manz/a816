@@ -44,6 +44,8 @@ for backwards compatibility — existing scripts keep working.
 -c, --compile-only       Compile to object files without linking.
 -D KEY=VALUE [KEY=VALUE ...]
                          Define symbols (numeric values use int(., 0)).
+                         KEY must be a symbol name (`scope.name` allowed);
+                         anything else is rejected.
 --no-auto-imports        Disable automatic import resolution.
 -I, --module-path PATH   Add a module search path (repeatable).
 --obj-dir DIR            Directory for compiled object files (default

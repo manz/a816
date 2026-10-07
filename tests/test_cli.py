@@ -154,6 +154,34 @@ main:
 
             self.assertEqual(exit_code, 0, f"CLI failed: {stderr}")
 
+    def _run_with_define(self, define: str) -> tuple[int, str]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm_file = Path(tmpdir) / "test.s"
+            asm_file.write_text("*= 0x8000\nmain:\n    rts\n", encoding="utf-8")
+            exit_code, _, stderr = self._run_cli([str(asm_file), "-o", str(Path(tmpdir) / "out.ips"), "-D", define])
+        return exit_code, stderr
+
+    def test_define_with_a_space_in_its_name_is_rejected(self) -> None:
+        """`-D " DEBUG_INPUT=1"` as one shell word used to define ` DEBUG_INPUT`."""
+        exit_code, _ = self._run_with_define(" DEBUG_INPUT=1")
+
+        self.assertEqual(exit_code, 2)
+
+    def test_rejected_define_names_the_bad_name(self) -> None:
+        _, stderr = self._run_with_define(" DEBUG_INPUT=1")
+
+        self.assertIn("' DEBUG_INPUT' is not a symbol name", stderr)
+
+    def test_define_without_a_value_is_rejected(self) -> None:
+        exit_code, _ = self._run_with_define("DEBUG_INPUT")
+
+        self.assertEqual(exit_code, 2)
+
+    def test_dotted_define_is_accepted(self) -> None:
+        exit_code, stderr = self._run_with_define("scope.flag=1")
+
+        self.assertEqual(exit_code, 0, stderr)
+
     def test_invalid_file_type_error(self) -> None:
         """Test error handling for invalid file types."""
         with tempfile.TemporaryDirectory() as tmpdir:
