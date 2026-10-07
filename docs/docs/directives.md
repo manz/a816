@@ -328,6 +328,33 @@ addressing (`lda [dp]`), so element `i` is plain arithmetic,
 array fields the same way: the field symbol points at element 0 and
 the reservation spans the whole array.
 
+#### Sizes: `sizeof(...)` and `countof(...)`
+
+`sizeof` gives a size in bytes, `countof` an array field's element
+count. Both work in any expression, `.for` bounds and struct array
+lengths included.
+
+```ca65
+.struct Path {
+    byte count
+    Pt[3] points
+    word[4] flags
+}
+.reserve path_buf as Path in wram
+.reserve text_ring 0x100 in wram
+
+    lda.w #sizeof(Path)          ; the struct, like Path.__size
+    lda.w #sizeof(Path.points)   ; an array field: all 3 elements
+    lda.w #sizeof(Path.count)    ; any other field: its width
+    ldx.w #countof(Path.flags)   ; 4 elements, not 8 bytes
+    ldx.w #sizeof(text_ring) - 1 ; a reservation's size
+```
+
+`sizeof` takes a struct, a struct field (nested paths too) or a
+reservation (`.reserve NAME SIZE` or `as TYPE`); a bit field has no byte
+size. `countof` takes an array field. Anything else is `E0321`. A
+reservation from another module resolves at link, like its address.
+
 #### Typed access: `as` casts and `:=` binds
 
 A `(expr as T)` cast tags an address with a struct type so a postfix

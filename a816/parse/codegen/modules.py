@@ -253,6 +253,7 @@ def _import_object_mode(
     before_labels = set(root.labels.keys())
     before_symbols = set(root.symbols.keys())
     runtime = _runtime_names_in(nodes) | {node.symbol for node in nodes if isinstance(node, ExternAstNode)}
+    _record_imported_reservations(nodes, resolver)
 
     for node in nodes:
         if isinstance(node, AssignAstNode) and _is_runtime_typed_bind(node, runtime):
@@ -270,6 +271,22 @@ def _import_object_mode(
     resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)
     resolver.imported_symbol_names.update(set(root.symbols.keys()) - before_symbols)
     return out
+
+
+def _record_imported_reservations(nodes: list[AstNode], resolver: Resolver) -> None:
+    """Make an imported module's reservations known to `sizeof`.
+
+    A typed one's size is its (inlined) struct's; a flat one's is the
+    owner's `NAME.__size`, which reaches the importer as an extern.
+    """
+    from a816.parse.ast.nodes import AllocAstNode, ReserveTypedAstNode
+    from a816.parse.ast.visitor import walk
+
+    for node in walk(nodes):
+        if isinstance(node, ReserveTypedAstNode) and not node.name.startswith("_"):
+            resolver.reservation_sizes[node.name] = resolver.struct_sizes.get(node.type_name)
+        elif isinstance(node, AllocAstNode) and node.reserve and node.name and not node.name.startswith("_"):
+            resolver.reservation_sizes[node.name] = None
 
 
 def _is_runtime_typed_bind(node: AssignAstNode, runtime: set[str]) -> bool:

@@ -144,6 +144,9 @@ separate blocks separated by a blank line.
   a matching hint; the caret sits on the `.alloc` name.
 - `E0319` operator applied to a string and a number.
 - `E0320` `~` operand wider than 32 bits.
+- `E0321` `sizeof(...)` / `countof(...)` names no struct, struct
+  field or reservation, `sizeof` names a bit field, or `countof` names a
+  field that is not an array. The caret sits on the argument.
 - `E0330` `.istruct` names a struct type that is not declared (or
   imported) yet; the caret sits on the type.
 - `E0331` `.istruct` initializer names a field the struct does not
