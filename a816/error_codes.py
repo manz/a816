@@ -37,6 +37,7 @@ class ErrorCode:
 E_SCANNER_INVALID_INPUT = ErrorCode("E0001", "scanner", "invalid input character")
 E_SCANNER_UNTERMINATED_STRING = ErrorCode("E0002", "scanner", "unterminated string literal")
 E_SCANNER_UNKNOWN_KEYWORD = ErrorCode("E0003", "scanner", "unknown directive keyword")
+E_SCANNER_UNTERMINATED_COMMENT = ErrorCode("E0004", "scanner", "unterminated block comment")
 
 # --- Parser (E0100..) ---
 E_PARSER_UNEXPECTED_TOKEN = ErrorCode("E0100", "parser", "unexpected token")

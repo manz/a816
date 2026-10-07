@@ -47,6 +47,8 @@ separate blocks separated by a blank line.
   matching quote character.
 - `E0003` unknown directive keyword — `.directive` not in the
   supported set; see [directives.md](directives.md).
+- `E0004` unterminated block comment: a `/*` with no closing `*/`. The
+  caret sits on the opening `/*`.
 
 ### Parser
 

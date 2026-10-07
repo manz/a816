@@ -6,6 +6,7 @@ from a816.cpu.cpu_65c816 import (
 from a816.error_codes import (
     E_SCANNER_INVALID_INPUT,
     E_SCANNER_UNKNOWN_KEYWORD,
+    E_SCANNER_UNTERMINATED_COMMENT,
     E_SCANNER_UNTERMINATED_STRING,
 )
 from a816.parse.errors import ScannerException
@@ -503,10 +504,17 @@ def _lex_brace(s: Scanner) -> bool:
 
 
 def _lex_block_comment(s: Scanner) -> bool:
+    start = s.get_position()
     if not s.accept_prefix("/*"):
         return False
     while not s.accept_prefix("*/"):
-        s.next()
+        if s.next() is None:
+            raise ScannerException(
+                "unterminated block comment",
+                start,
+                code=str(E_SCANNER_UNTERMINATED_COMMENT),
+                hint="close it with `*/`",
+            )
     s.emit(TokenType.COMMENT)
     return True
 
