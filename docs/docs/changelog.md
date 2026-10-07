@@ -22,7 +22,7 @@ around them, and the layout is checked at link.
     .incbin "assets/keep_font_packed.dat"
 }
 
-.assert dialogue_stream + assets_stream_dat__size <= 0x5d0000, "the stream overruns the gap"
+.assert dialogue_stream + sizeof(dialogue_stream) <= 0x5d0000, "the stream overruns the gap"
 ```
 
 `bss` pools lay out WRAM, SRAM and VRAM without emitting bytes. Memory
@@ -66,19 +66,37 @@ player:
   directive such as `.dd`) now fail the build. 1.0 exited 0 with
   missing output, so a build that "passed" may now report what it
   always got wrong.
-- Assembling from Python in direct (single-pass) mode is deprecated;
-  build through `build_with_imports` or the CLI.
+- Overlapping writes fail the build (`E0408`). In 1.0, two `*=` blocks
+  writing the same bytes silently overwrote each other; `--overlap-mode
+  warn | off` brings back a warning or silence.
+- A `.b` immediate that doesn't fit a byte is `E0309`; 1.0 masked it
+  (`lda.b #0x1234` emitted `a9 34`). `.w` and `.l` still mask.
+- `a816 file.s` builds through modules: it writes objects and their
+  dependency sidecars under `build/obj` (`--obj-dir`, `--no-cache`) and
+  `.sym` / `.adbg` next to the output.
+- Two fixes change output: `ora.w #imm` now encodes `$09` (1.0 emitted
+  `lda`'s `$A9`), and a `-D` value that reads as a number is a number.
+- Python API:
+  - `assemble_string_with_emitter` raises `A816Error` (`AssemblyError`,
+    `NodeError`) instead of returning an error string, and
+    `assemble_with_emitter` no longer swallows errors.
+  - `MZParser` is now `A816Parser`; the old name is a deprecated alias,
+    removed in 1.2.
+  - `assemble` / `assemble_as_patch` and direct (single-pass) assembly
+    are deprecated; build through `build_with_imports` or the CLI.
 
 ### Placement
 
-- `.pool NAME { range LO HI ... }` declares freespace, with `fill`,
-  `strategy pack | order`, and ranges over several banks, split along
-  the windows the bus serves.
+- `.pool NAME { range LO HI ... }` declares freespace, with
+  `strategy pack | order` and ranges over several banks, split along
+  the windows the bus serves. `<pool>.capacity`, `.fragments` and
+  `.largest_chunk` read its state, e.g. in an `.if` guard.
 - `.alloc NAME in POOL { ... }` lets the allocator choose the address;
   `.alloc [NAME] at ADDR [size N] { ... }` pins it, with `size` as a hard
   bound.
-- `.alloc NAME at ADDR in POOL` pins a block inside a pool, which then
-  places everything else around it.
+- A pool places its blocks around every pin inside its ranges:
+  `.alloc at ADDR` with or without `in POOL`, from any module, `*=`
+  blocks and other pools' pins.
 - `align N` places a block on an `N`-byte boundary.
 - `cross_bank` lets a data blob run over bank edges where the ROM is
   contiguous on the bus; code and labels are refused (`E0336`).
@@ -88,13 +106,16 @@ player:
   is final; every failed assert is reported (`E0407`).
 - Pools merge across modules by name, and the linker places allocs from
   every object in one pass.
-- Overlapping writes fail the build by default, naming both spans
-  (`--overlap-mode warn | off`).
+- Overlapping writes fail the build by default (`E0408`), checked
+  before any byte is written. The error names each block (alloc and
+  pool, or the address of an anonymous one), its `file:line` and the
+  bytes they share (`--overlap-mode warn | off`).
 - An empty alloc body binds its label and takes no space.
 
 ### Memory pools
 
-- `bss` pools reserve address space and emit nothing.
+- `bss` pools reserve address space and emit nothing; `.res N`
+  reserves `N` bytes inside an alloc body.
 - `.reserve NAME SIZE [at ADDR] in POOL` and `.reserve NAME as TYPE`,
   which publishes `NAME.<field>` for each struct field.
 - `contexts A, B` on a pool lets memory used in turns overlap; overlap
@@ -106,7 +127,12 @@ player:
 - `.struct` with `byte`, `word`, `long`, `dword`, `uN` bit fields
   (with `.mask` and `.shift`), nested structs and `TYPE[N]` arrays,
   where `N` may be a constant expression (`byte[ROWS * 16]`); every
-  field publishes its offset, and `Name.__size` gives the size.
+  field publishes its offset. Redeclaring an identical struct is a no-op.
+- `sizeof(T)`, `sizeof(T.field)`, `sizeof(NAME)` for a reservation or a
+  named alloc, and `countof(T.arr)` for an array's element count, in any
+  expression (`.assert`, `.for` bounds and array lengths included). An
+  alloc or reservation from another module resolves at link. Misuse is
+  `E0321`.
 - `(expr as T).field` casts and `view := (expr as T)` typed binds,
   over constants, labels and `.extern` symbols alike; the operand size
   follows the bind's base.
@@ -115,7 +141,8 @@ player:
 - `.label NAME = ADDR` names an address for debuggers and the LSP
   without emitting anything.
 - `.a8` / `.a16` / `.i8` / `.i16`, and `rep` / `sep` tracking behind
-  `--experimental track_register_size`, size immediates.
+  `--experimental track_register_size`, size immediates; an immediate
+  whose width disagrees with the known size warns.
 - The rest of the 65c816 instruction set: `brl`, `bvc`, `bvs`, `cld`,
   `cli`, `clv`, `cop`, `mvn`, `mvp`, `per` and `wdm`, plus `jsl` / `jml`
   as aliases of `jsr.l` / `jmp.l`. `brk`, `cop` and `wdm` take their
@@ -123,18 +150,28 @@ player:
 - One expression grammar everywhere, with C precedence and semantics:
   truncating `/`, `%`, comparisons, `~` within 8, 16 or 32 bits;
   division by zero is `E0312`.
-- Aliases inside a named scope publish as `scope.name`.
+- `.scope NAME { ... }` publishes its labels, constants, aliases and
+  the labels of macros called inside it as `NAME.x`; `_` names stay
+  private.
 
 ### Modules and linking
 
 - Separate compilation: `a816 build -c` writes objects, and the linker
   combines them. `a816 build main.s` discovers and builds every import.
+  New flags: `-f obj`, `-I` / `--module-path`, `--include-path`,
+  `--obj-dir`, `--no-auto-imports`.
 - `.import "@std/snes/ppu"` (and `cpu`, `dma`, `apu`, `joypad`, `wram`,
   `header`): typed SNES registers.
 - `.extern` symbols work in any expression, macro or alias; the linker
   evaluates them once placed.
 - Transitive imports are deduplicated, and modules are found on the
   module paths only, so a same-named file next door can't shadow one.
+- A module's `.map` regions travel with `.import` and its object; the
+  linker merges identical ones, and a conflicting one is `E0308`.
+- `.incbin` symbols and `scope.label` names reach importers.
+- Using a constant from a module you don't `.import` still resolves in
+  1.1.0, with a warning naming the import to add; it will become an
+  error.
 - A module's `_` names are private. Its importers can't name them
   (the error says which module owns the name), and a module's own
   `_name` shadows an imported one. A `_label` is also private to its
@@ -176,7 +213,8 @@ player:
 ### Fluff: lint, format, fix
 
 - `a816 format [--check]`: a canonical formatter that keeps comments,
-  docstrings and strings intact and settles in one pass.
+  docstrings and strings intact and settles in one pass; it takes
+  several paths, or `-` for stdin.
 - `a816 check`: docstring rules (`DOC001` to `DOC007`), naming (`N801`,
   `N802`), struct casts (`S001`, `S003`, `S004`), line length (`E501`),
   redundant size suffixes (`OP001`), program structure (`ST001` for a
@@ -196,8 +234,26 @@ player:
 
 - `xobj` inspects object files: sections, symbols, relocations, pools
   and the format identity.
-- `xdds` disassembles with the same instruction table the assembler uses.
+- `xdds` (new) disassembles with the assembler's instruction table:
+  `--func` walks a routine's control flow tracking M/X, `--follow-calls`
+  follows its calls, `--debug FILE.adbg` / `--sym` name addresses, and
+  the output reassembles through `a816 format -`.
 - `A816_EMIT_TRACE=1` logs where every region landed.
+
+### Fixes from 1.0
+
+- `ora.w #imm16` encoded `lda`'s opcode (`$A9`), silently loading
+  instead of or-ing.
+- About 25 addressing modes were missing on `ora`, `and`, `eor`, `adc`,
+  `sbc`, `cmp`, `sta` and `jsr`; `cmp 0x03, s` crashed.
+- A `.map` line swallowed the next line when it began with a name.
+- `|`, `^`, `~`, `/` and `%` failed or crashed in constants, `.db`,
+  `.if` and immediates (`X = 1|2`, `lda.w #10/2`).
+- One-line blocks (`.scope x { rts }`, `{ nop nop }`) didn't parse.
+- A constant inside `.scope sc { K = 6 }` was unreachable as `sc.K`.
+- `-D NAME=VALUE` always defined a string, so `lda #NAME` failed.
+- `-f sfc` ignored `-m`, so SFC output was always LoROM.
+- An unknown `-m` value crashed; it now lists `low`, `low2`, `high`.
 
 ### Documentation
 
