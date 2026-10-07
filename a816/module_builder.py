@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from a816.object_file import BusMapping
+    from a816.parse.codegen.modules import ParsedImport
     from a816.program import Program
 
 from a816.build_cache import BuildCache, BuildSettings, ModuleInputs
@@ -136,7 +137,7 @@ class ModuleBuilder:
         self._imports: dict[str, list[str]] = {}
         # Every module re-reads the imports of its imports: parse each
         # imported source once per build, not once per importer.
-        self._import_asts: dict[str, tuple[ParserResult, set[str]]] = {}
+        self._import_asts: dict[str, ParsedImport] = {}
         # Lookups that missed while parsing a module during discovery: the
         # compile reuses that AST, so they belong to the module's inputs.
         self._discovery_misses: dict[str, set[str]] = {}

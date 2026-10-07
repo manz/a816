@@ -225,18 +225,34 @@ def _import_from_source(
 
     Per-node split lives in `_import_object_mode`.
     """
-    result = _parse_import(src_path, resolver)
-    if result is None:
+    parsed = _parse_import(src_path, resolver)
+    if parsed is None:
         return None
-    if not result.nodes:
+    nodes = parsed.result.nodes
+    if not nodes:
         return []
     if direct_mode:
-        return _code_gen(result.nodes, resolver, macro_definitions)
-    _register_private_names(result.nodes, module_name, src_path, resolver)
-    return _import_object_mode(result.nodes, resolver, macro_definitions)
+        return _code_gen(nodes, resolver, macro_definitions)
+    _register_private_names(nodes, module_name, src_path, resolver)
+    return _import_object_mode(parsed.object_mode_plan(), resolver, macro_definitions)
 
 
-def _parse_import(src_path: Path, resolver: Resolver) -> ParserResult | None:
+@dataclass
+class ParsedImport:
+    """One imported source as the build caches it: its AST, the lookups that
+    missed while parsing it, and its object-mode plan once first needed."""
+
+    result: ParserResult
+    misses: set[str]
+    plan: _ImportPlan | None = None
+
+    def object_mode_plan(self) -> _ImportPlan:
+        if self.plan is None:
+            self.plan = _plan_object_mode(self.result.nodes)
+        return self.plan
+
+
+def _parse_import(src_path: Path, resolver: Resolver) -> ParsedImport | None:
     """The imported source's AST, from the build's shared cache when there is
     one. A cache hit replays the lookups that missed while parsing, so the
     importer's recorded inputs match a fresh parse. None when unreadable."""
@@ -246,19 +262,19 @@ def _parse_import(src_path: Path, resolver: Resolver) -> ParserResult | None:
     cache = resolver.context.import_asts
     key = str(src_path)
     if cache is not None and key in cache:
-        result, misses = cache[key]
-        replay_misses(misses)
-        return result
+        parsed = cache[key]
+        replay_misses(parsed.misses)
+        return parsed
     try:
         content = src_path.read_text(encoding="utf-8")
     except OSError:
         return None
     with recording_misses() as misses:
-        result = A816Parser.parse_as_ast(content, key)
+        parsed = ParsedImport(A816Parser.parse_as_ast(content, key), misses)
     replay_misses(misses)
     if cache is not None:
-        cache[key] = (result, misses)
-    return result
+        cache[key] = parsed
+    return parsed
 
 
 _PRIVATE_DECLARATION_TYPES = (SymbolAffectationAstNode, AssignAstNode, LabelDeclAstNode, MacroAstNode, StructAstNode)
@@ -296,19 +312,66 @@ def _top_level_declarations(nodes: list[AstNode]) -> list[AstNode]:
     return out
 
 
-def _import_object_mode(
-    nodes: list[AstNode],
-    resolver: Resolver,
-    macro_definitions: MacroDefinitions,
-) -> GenNodes:
+@dataclass(frozen=True)
+class _Externs:
+    """Runtime names the imported `.o` owns: extern stubs in the importer."""
+
+    names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _TypedBind:
+    """`view := (base as T)` over an imported runtime name: the view and its
+    fields become externs, named from the importer's struct layout."""
+
+    node: AssignAstNode
+
+
+@dataclass(frozen=True)
+class _Inline:
+    """Compile-time nodes the importer's resolver evaluates itself."""
+
+    nodes: list[AstNode]
+
+
+@dataclass(frozen=True)
+class _ImportPlan:
+    """What an object-mode `.import` does with one source, worked out once
+    from its AST and replayed against every importer's resolver.
+
+    `reservations` pairs each public reservation with its struct type (None
+    for a flat one); `steps` keeps the source order of externs and inlines.
+    """
+
+    reservations: tuple[tuple[str, str | None], ...]
+    steps: tuple[_Externs | _TypedBind | _Inline, ...]
+
+
+def _plan_object_mode(nodes: list[AstNode]) -> _ImportPlan:
     """Per-node classifier for object-mode `.import`s.
 
     Inlines compile-time-only nodes (struct, macro, constant, typed
-    bind, `.label`, nested `.import`) into the importer's resolver so
-    codegen of this module sees their effects; `.if` / `.scope` /
-    `.for` / `.include` are inlined with their bodies cut down to declarations
-    (`_declarations_only`). Emits `ExternNode` for runtime-bound names
-    so cross-module references resolve at link time.
+    bind, `.label`, nested `.import`); `.if` / `.scope` / `.for` /
+    `.include` are inlined with their bodies cut down to declarations
+    (`_declarations_only`). Runtime-bound names become externs so
+    cross-module references resolve at link time.
+    """
+    runtime = _runtime_names_in(nodes) | {node.symbol for node in nodes if isinstance(node, ExternAstNode)}
+    steps: list[_Externs | _TypedBind | _Inline] = []
+    for node in nodes:
+        if isinstance(node, AssignAstNode) and _is_runtime_typed_bind(node, runtime):
+            steps.append(_TypedBind(node))
+        elif isinstance(node, _INLINE_IMPORT_TYPES):
+            steps.append(_Inline([node]))
+        elif isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode):
+            steps.append(_Inline(_declarations_only([node], bare_names=True)))
+        elif names := _runtime_extern_names(node):
+            steps.append(_Externs(tuple(names)))
+    return _ImportPlan(_reservations_in(nodes), tuple(steps))
+
+
+def _import_object_mode(plan: _ImportPlan, resolver: Resolver, macro_definitions: MacroDefinitions) -> GenNodes:
+    """Replay an import plan against the importer's resolver.
 
     Names contributed by the inline pass land in
     `Resolver.imported_symbol_names`; `_export_object_symbols` skips
@@ -319,41 +382,44 @@ def _import_object_mode(
     root = resolver.scopes[0]
     before_labels = set(root.labels.keys())
     before_symbols = set(root.symbols.keys())
-    runtime = _runtime_names_in(nodes) | {node.symbol for node in nodes if isinstance(node, ExternAstNode)}
-    _record_imported_reservations(nodes, resolver)
+    _record_imported_reservations(plan.reservations, resolver)
 
-    for node in nodes:
-        if isinstance(node, AssignAstNode) and _is_runtime_typed_bind(node, runtime):
-            out.extend(ExternNode(name, resolver) for name in _typed_bind_names(node, resolver))
-            continue
-        if isinstance(node, _INLINE_IMPORT_TYPES):
-            out.extend(_code_gen([node], resolver, macro_definitions) or [])
-            continue
-        if isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode):
-            out.extend(_code_gen(_declarations_only([node], bare_names=True), resolver, macro_definitions) or [])
-            continue
-        for name in _runtime_extern_names(node):
-            out.append(ExternNode(name, resolver))
+    for step in plan.steps:
+        if isinstance(step, _Inline):
+            out.extend(_code_gen(step.nodes, resolver, macro_definitions) or [])
+        elif isinstance(step, _TypedBind):
+            out.extend(ExternNode(name, resolver) for name in _typed_bind_names(step.node, resolver))
+        else:
+            out.extend(ExternNode(name, resolver) for name in step.names)
 
     resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)
     resolver.imported_symbol_names.update(set(root.symbols.keys()) - before_symbols)
     return out
 
 
-def _record_imported_reservations(nodes: list[AstNode], resolver: Resolver) -> None:
+def _reservations_in(nodes: list[AstNode]) -> tuple[tuple[str, str | None], ...]:
+    """An imported module's public reservations, each with its struct type
+    (None for a flat one)."""
+    from a816.parse.ast.nodes import AllocAstNode, ReserveTypedAstNode
+    from a816.parse.ast.visitor import walk
+
+    found: list[tuple[str, str | None]] = []
+    for node in walk(nodes):
+        if isinstance(node, ReserveTypedAstNode) and not node.name.startswith("_"):
+            found.append((node.name, node.type_name))
+        elif isinstance(node, AllocAstNode) and node.reserve and node.name and not node.name.startswith("_"):
+            found.append((node.name, None))
+    return tuple(found)
+
+
+def _record_imported_reservations(reservations: tuple[tuple[str, str | None], ...], resolver: Resolver) -> None:
     """Make an imported module's reservations known to `sizeof`.
 
     A typed one's size is its (inlined) struct's; a flat one's is the
     owner's `NAME.__size`, which reaches the importer as an extern.
     """
-    from a816.parse.ast.nodes import AllocAstNode, ReserveTypedAstNode
-    from a816.parse.ast.visitor import walk
-
-    for node in walk(nodes):
-        if isinstance(node, ReserveTypedAstNode) and not node.name.startswith("_"):
-            resolver.reservation_sizes[node.name] = resolver.struct_sizes.get(node.type_name)
-        elif isinstance(node, AllocAstNode) and node.reserve and node.name and not node.name.startswith("_"):
-            resolver.reservation_sizes[node.name] = None
+    for name, type_name in reservations:
+        resolver.reservation_sizes[name] = None if type_name is None else resolver.struct_sizes.get(type_name)
 
 
 def _is_runtime_typed_bind(node: AssignAstNode, runtime: set[str]) -> bool:

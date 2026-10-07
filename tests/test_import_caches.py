@@ -3,7 +3,8 @@
 Every module of a build imports the same core modules, and each import
 used to decode the imported `.o` and re-parse its source again, once per
 importer: a cold build grew quadratically with the module count. These
-tests pin that both are read once, and that a rewritten `.o` is noticed.
+tests pin that both are read once, that a rewritten `.o` is noticed, and
+that the import plan worked out from a parse is reused.
 """
 
 from __future__ import annotations
@@ -13,7 +14,12 @@ from pathlib import Path
 
 from a816.build_inputs import recording_misses
 from a816.module_builder import ModuleBuilder
-from a816.parse.codegen.modules import _import_view, _parse_import
+from a816.parse.codegen.modules import (
+    ParsedImport,
+    _import_view,
+    _parse_import,
+    _record_imported_reservations,
+)
 from a816.parse.mzparser import A816Parser
 from a816.symbols import Resolver
 
@@ -67,8 +73,8 @@ def test_the_build_parses_each_import_once(tmp_path: Path) -> None:
 def test_a_cached_parse_is_served_without_reading(tmp_path: Path) -> None:
     resolver = Resolver()
     missing = tmp_path / "gone.s"
-    parsed = A816Parser.parse_as_ast("X = 1\n", str(missing))
-    resolver.context.import_asts = {str(missing): (parsed, set())}
+    parsed = ParsedImport(A816Parser.parse_as_ast("X = 1\n", str(missing)), set())
+    resolver.context.import_asts = {str(missing): parsed}
 
     assert _parse_import(missing, resolver) is parsed
 
@@ -77,8 +83,8 @@ def test_a_cached_parse_replays_its_misses(tmp_path: Path) -> None:
     """The importer's recorded inputs must match a fresh parse's."""
     resolver = Resolver()
     source = tmp_path / "core.s"
-    parsed = A816Parser.parse_as_ast("X = 1\n", str(source))
-    resolver.context.import_asts = {str(source): (parsed, {"/probe/missing.i"})}
+    parsed = ParsedImport(A816Parser.parse_as_ast("X = 1\n", str(source)), {"/probe/missing.i"})
+    resolver.context.import_asts = {str(source): parsed}
 
     with recording_misses() as misses:
         _parse_import(source, resolver)
@@ -94,7 +100,7 @@ def test_a_fresh_parse_fills_the_cache(tmp_path: Path) -> None:
 
     parsed = _parse_import(source, resolver)
 
-    assert resolver.context.import_asts[str(source)] == (parsed, set())
+    assert resolver.context.import_asts[str(source)] is parsed
 
 
 def test_without_a_cache_each_import_parses_afresh(tmp_path: Path) -> None:
@@ -107,3 +113,42 @@ def test_without_a_cache_each_import_parses_afresh(tmp_path: Path) -> None:
 
 def test_an_unreadable_import_is_none(tmp_path: Path) -> None:
     assert _parse_import(tmp_path / "gone.s", Resolver()) is None
+
+
+def _plan_of(source: Path) -> ParsedImport:
+    parsed = _parse_import(source, Resolver())
+    assert parsed is not None
+    return parsed
+
+
+def test_the_import_plan_is_worked_out_once(tmp_path: Path) -> None:
+    source = tmp_path / "core.s"
+    source.write_text("X = 1\n", encoding="utf-8")
+    parsed = _plan_of(source)
+
+    assert parsed.object_mode_plan() is parsed.object_mode_plan()
+
+
+def test_the_plan_lists_public_reservations(tmp_path: Path) -> None:
+    source = tmp_path / "core.s"
+    source.write_text(
+        ".struct Actor {\n    word hp\n}\n"
+        ".reserve hero as Actor in wram\n"
+        ".reserve buffer 0x10 in wram\n"
+        ".reserve _scratch 0x04 in wram\n",
+        encoding="utf-8",
+    )
+
+    plan = _plan_of(source).object_mode_plan()
+
+    assert plan.reservations == (("hero", "Actor"), ("buffer", None))
+
+
+def test_a_replayed_plan_sizes_typed_reservations_per_importer() -> None:
+    """The struct size comes from the importer's resolver, not the plan."""
+    resolver = Resolver()
+    resolver.struct_sizes["Actor"] = 2
+
+    _record_imported_reservations((("hero", "Actor"), ("buffer", None)), resolver)
+
+    assert resolver.reservation_sizes == {"hero": 2, "buffer": None}
