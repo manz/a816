@@ -14,6 +14,7 @@ from typing import Literal, cast
 
 from a816.build_inputs import record_miss, recording_misses, replay_misses
 from a816.error_codes import (
+    E_PARSER_EXPECTED_TOKEN,
     E_PARSER_ISTRUCT_DUPLICATE_FIELD,
     E_PARSER_ISTRUCT_STRING_IN_LIST,
     E_PARSER_POOL_NO_RANGES,
@@ -457,7 +458,15 @@ def parse_directive_with_quoted_string(p: Parser) -> str:
 def parse_assert(p: Parser, keyword: Token) -> AssertAstNode:
     """`.assert EXPR, "message"`."""
     expression = parse_expression(p)
-    expect_token(p.next(), TokenType.COMMA)
+    comma = p.next()
+    if comma.type != TokenType.COMMA:
+        raise ParserSyntaxError(
+            "`.assert` needs a message after its condition",
+            comma,
+            TokenType.COMMA,
+            code=str(E_PARSER_EXPECTED_TOKEN),
+            hint='write `.assert EXPR, "what must hold"`; the message is what a failure reports',
+        )
     return AssertAstNode(expression, parse_directive_with_quoted_string(p), keyword)
 
 

@@ -21,6 +21,8 @@ from a816.parse.nodes.errors import NodeError
 from a816.pool import Allocation, Pool, PoolOverflowError
 from a816.section import PINNED_POOL_PREFIX, Placement
 
+_SIZE_SYMBOL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\.__size\b")
+
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
 
@@ -616,9 +618,21 @@ class Linker:
                     )
                     continue
                 if not holds:
-                    failures.append((check.message, check.expression, check.source))
+                    shown = self._show_sizes(check.expression, local_overlay)
+                    failures.append((check.message, shown, check.source))
         if failures:
             raise LinkAssertError(failures)
+
+    def _show_sizes(self, expression: str, local_overlay: dict[str, int] | None) -> str:
+        """An assert as a user reads it: the internal `NAME.__size` symbols
+        (what `sizeof(NAME)` of an alloc becomes) show as their values."""
+
+        def value(match: Match[str]) -> str:
+            name = match.group(0)
+            size = (local_overlay or {}).get(name, self.symbol_map.get(name))
+            return f"{size:#x}" if isinstance(size, int) else f"sizeof({match.group(1)})"
+
+        return _SIZE_SYMBOL_RE.sub(value, expression)
 
     def _resolve_aliases(self) -> None:
         if not self.linked_aliases:
