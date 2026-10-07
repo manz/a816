@@ -111,10 +111,14 @@ class LinkerError(A816Error):
 class DuplicateSymbolError(LinkerError):
     """Raised when the same global symbol is defined in multiple object files."""
 
-    def __init__(self, symbol_name: str, definitions: list[tuple[str, int]] | None = None) -> None:
+    def __init__(
+        self, symbol_name: str, definitions: list[tuple[str, int | None]] | None = None, hint: str | None = None
+    ) -> None:
         self.symbol_name = symbol_name
-        # (where, value) per clashing definition, first one first
+        # (where, value) per clashing definition, first one first; no value
+        # for an alloc, whose address the allocator has yet to pick.
         self.definitions = definitions or []
+        self.hint = hint or "each global symbol can only be defined once across all object files"
         super().__init__(f"duplicate symbol '{symbol_name}'")
 
     def format(self) -> str:
@@ -123,8 +127,10 @@ class DuplicateSymbolError(LinkerError):
         from a816.errors import format_error_simple
 
         details = [("symbol", self.symbol_name)]
-        details += [("defined", f"{where} = {value:#x}") for where, value in self.definitions]
-        details.append(("hint", "each global symbol can only be defined once across all object files"))
+        details += [
+            ("defined", where if value is None else f"{where} = {value:#x}") for where, value in self.definitions
+        ]
+        details.append(("hint", self.hint))
         return format_error_simple(
             f"{LINKER_ERROR_LABEL}[{E_LINKER_DUPLICATE_SYMBOL}]",
             f"symbol '{self.symbol_name}' is already defined",

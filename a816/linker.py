@@ -222,6 +222,8 @@ class Linker:
                     raise UndeclaredPoolError(req.pool_name, req.symbol_name)
                 key = (req.pool_name, req.symbol_name)
                 alloc_obj = first_placed.get(key)
+                if alloc_obj is not None:
+                    _reject_a_second_alloc(req, self._alloc_sources[key])
                 if alloc_obj is None:
                     pinned = req.pinned_addr if req.pinned_addr >= 0 else None
                     alloc_obj = pool.request(
@@ -816,3 +818,14 @@ def _pin_start(pool: Pool, alloc: Allocation) -> int | None:
     if pool.name.startswith(PINNED_POOL_PREFIX) and alloc.placed:
         return alloc.addr
     return None
+
+
+def _reject_a_second_alloc(request: PoolAlloc, first_source: str) -> None:
+    """The same (pool, name) reached from another `file:line` is a second alloc
+    reusing the name, not one module's request seen through two importers."""
+    if request.source and first_source and request.source != first_source:
+        raise DuplicateSymbolError(
+            request.symbol_name,
+            [(first_source, None), (request.source, None)],
+            hint="alloc names are global: rename one of the allocs",
+        )
