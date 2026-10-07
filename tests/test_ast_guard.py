@@ -14,7 +14,9 @@ def _nodes() -> list[object]:
 
 
 def test_the_same_tree_has_one_fingerprint() -> None:
-    assert fingerprint(_nodes()) == fingerprint(_nodes())
+    first, second = _nodes(), _nodes()
+
+    assert fingerprint(first) == fingerprint(second)
 
 
 def test_a_reassigned_attribute_changes_it() -> None:
