@@ -97,7 +97,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dump-symbols", action="store_true", help="Dumps symbol table")
     parser.add_argument("-c", "--compile-only", action="store_true", help="Compile to object files without linking.")
-    parser.add_argument("-D", "--defines", metavar="KEY=VALUE", nargs="+", type=_define, help="Defines symbols.")
+    # `extend`: every `-D` adds to the list. Plain `nargs="+"` kept only the
+    # last flag's values, so `-D A=1 -D B=2` silently dropped A.
+    parser.add_argument(
+        "-D", "--defines", metavar="KEY=VALUE", nargs="+", action="extend", type=_define, help="Defines symbols."
+    )
     parser.add_argument(
         "--no-auto-imports",
         action="store_true",

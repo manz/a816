@@ -182,6 +182,27 @@ main:
 
         self.assertEqual(exit_code, 0, stderr)
 
+    def test_every_repeated_define_is_kept(self) -> None:
+        """`-D A=1 -D B=2` used to keep only the last flag's values."""
+        from a816.cli import _build_arg_parser
+
+        args = _build_arg_parser().parse_args(["x.s", "-D", "A=1", "B=2", "-D", "C=3"])
+
+        self.assertEqual(args.defines, ["A=1", "B=2", "C=3"])
+
+    def test_repeated_defines_all_reach_the_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asm_file = Path(tmpdir) / "test.s"
+            asm_file.write_text("*= 0x8000\nmain:\n    .db FIRST, SECOND\n", encoding="utf-8")
+            out = Path(tmpdir) / "out.sfc"
+
+            exit_code, _, stderr = self._run_cli(
+                [str(asm_file), "-f", "sfc", "-o", str(out), "-D", "FIRST=0x11", "-D", "SECOND=0x22"]
+            )
+
+            self.assertEqual(exit_code, 0, stderr)
+            self.assertEqual(out.read_bytes()[:2], b"\x11\x22")
+
     def test_invalid_file_type_error(self) -> None:
         """Test error handling for invalid file types."""
         with tempfile.TemporaryDirectory() as tmpdir:

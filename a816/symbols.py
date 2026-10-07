@@ -202,15 +202,15 @@ class Scope:
         the dotted prefix per `Resolver._export_name`). Avoids forcing
         consumers to `.extern Foo.x` per member.
         """
-        if symbol in self.external_symbols:
+        if self._declares_external(symbol):
             return True
-        if "." in symbol:
-            head = symbol.split(".", 1)[0]
-            if head in self.external_symbols:
-                return True
         if self.parent:
             return self.parent.is_external_symbol(symbol)
         return False
+
+    def _declares_external(self, symbol: str) -> bool:
+        """`.extern`ed in this scope itself (the whole `Foo` namespace for `Foo.bar`)."""
+        return symbol in self.external_symbols or symbol.split(".", 1)[0] in self.external_symbols
 
     def __getitem__(self, item: str) -> int | str | BlockAstNode:
         try:
@@ -244,6 +244,10 @@ class Scope:
             # an extern expression) needs to be visible here so eval can defer.
             if symbol in self.external_aliases:
                 return self[symbol]
+            # `.extern` inside an alloc body or block: the parent never sees
+            # this scope's externs, so the lookup must stop here.
+            if self._declares_external(symbol):
+                raise ExternalSymbolReference(symbol)
             return self.parent.value_for(symbol)
         try:
             return self[symbol]
@@ -320,6 +324,12 @@ class Resolver:
         # sizes drive the immediate-width mismatch warning.
         self.a_size_known: bool = False
         self.i_size_known: bool = False
+        # Whether `a_size` / `i_size` came from a tracked `rep`/`sep` rather
+        # than a `.a*`/`.i*` declaration. A flag-set size is runtime state of
+        # the routine that set it, so it ends where control flow leaves
+        # (`end_of_flow`); a declared size holds until redeclared.
+        self.a_size_from_flags: bool = False
+        self.i_size_from_flags: bool = False
         # Per-pool sandbox cursor for object-mode `.alloc` body labels.
         # Each `.alloc NAME in POOL` advances this so successive allocs
         # bind their bodies at distinct addresses inside the pool's
@@ -339,6 +349,10 @@ class Resolver:
         self.reloc_address: Address
         self.context = AssemblyContext()
         self.pools: dict[str, Pool] = {}
+        # Source file of each pool's first `.pool` declaration: a second one
+        # from another file contributes ranges, one from the same file is a
+        # mistake (`.reclaim` adds ranges there).
+        self.pool_sources: dict[str, str] = {}
         # (pool, alloc name) -> source token of the `.alloc` that requested
         # the slot, so an allocator overflow can point back at it.
         self.alloc_sites: dict[tuple[str, str], Token] = {}
@@ -455,7 +469,20 @@ class Resolver:
         """
         self.a_size = 8
         self.i_size = 8
+        self.a_size_from_flags = False
+        self.i_size_from_flags = False
         self.forget_register_sizes()
+
+    def end_of_flow(self) -> None:
+        """Leaving the current flow (`rts`, `jmp`, `bra`, `plp`, ...): code
+        after it is reached from elsewhere, so a size a tracked `rep`/`sep`
+        set goes back to the 8-bit default. Declared sizes stay."""
+        if self.a_size_from_flags:
+            self.a_size = 8
+            self.a_size_from_flags = False
+        if self.i_size_from_flags:
+            self.i_size = 8
+            self.i_size_from_flags = False
 
     def forget_register_sizes(self) -> None:
         """Mark A/X sizes unknown (new placement block, `plp`, ...)."""

@@ -192,14 +192,18 @@ def _object_provided_names(obj_file: ObjectFile) -> list[str]:
 
 def _register_imported_object_pools(pool_decls: tuple[PoolDecl, ...], resolver: Resolver) -> None:
     """Mirror the imported `.o`'s pool decls into the importer's
-    resolver.pools so `.alloc ... in POOL` sites resolve at codegen.
-    Idempotent: identical re-registrations are skipped silently."""
+    resolver.pools so `.alloc ... in POOL` sites resolve at codegen, and
+    publish their `.capacity` / `.fragments` / `.largest_chunk` as a
+    local `.pool` does. Idempotent: identical re-registrations are skipped."""
+    from a816.parse.codegen.pool import _publish_pool_stats
     from a816.pool import Pool
 
     for decl in pool_decls:
         if decl.name in resolver.pools:
             continue
-        resolver.pools[decl.name] = Pool.from_decl(decl)
+        pool = Pool.from_decl(decl)
+        resolver.pools[decl.name] = pool
+        _publish_pool_stats(decl.name, pool, resolver)
 
 
 def _import_from_source(
@@ -376,8 +380,8 @@ def _plan_object_mode(nodes: list[AstNode]) -> _ImportPlan:
     runtime = _runtime_names_in(nodes) | {node.symbol for node in nodes if isinstance(node, ExternAstNode)}
     steps: list[_Externs | _TypedBind | _Inline] = []
     for node in nodes:
-        if isinstance(node, AssignAstNode) and _is_runtime_typed_bind(node, runtime):
-            steps.append(_TypedBind(node))
+        if isinstance(node, AssignAstNode) and _mentions(node.value, runtime):
+            steps.append(_TypedBind(node) if _is_typed_bind(node) else _Externs((node.symbol,)))
         elif isinstance(node, _INLINE_IMPORT_TYPES):
             steps.append(_Inline([node]))
         elif isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode):
@@ -439,15 +443,9 @@ def _record_imported_reservations(reservations: tuple[tuple[str, str | None], ..
         resolver.reservation_sizes[name] = None if type_name is None else resolver.struct_sizes.get(type_name)
 
 
-def _is_runtime_typed_bind(node: AssignAstNode, runtime: set[str]) -> bool:
-    """`view := (base as T)` whose base is a runtime name of the imported
-    module (a label, an alloc, an `.extern`): the importer can't evaluate it,
-    the owning `.o` exports the view and its fields."""
-    return (
-        len(node.value.tokens) == 1
-        and isinstance(node.value.tokens[0], CastValueExprNode)
-        and _mentions(node.value, runtime)
-    )
+def _is_typed_bind(node: AssignAstNode) -> bool:
+    """`view := (base as T)`: binds the view and one name per field."""
+    return len(node.value.tokens) == 1 and isinstance(node.value.tokens[0], CastValueExprNode)
 
 
 def _typed_bind_names(node: AssignAstNode, resolver: Resolver) -> list[str]:

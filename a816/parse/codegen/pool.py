@@ -97,20 +97,9 @@ def generate_pool(
             bss=node.bss,
         )
         if node.pool_name in resolver.pools:
-            existing = resolver.pools[node.pool_name]
-            same_shape = (
-                [(r.start, r.end) for r in existing.ranges] == [(r.start, r.end) for r in pool.ranges]
-                and existing.fill == pool.fill
-                and existing.strategy == pool.strategy
-                and existing.bss == pool.bss
-                and _declared_contexts(node.pool_name, resolver) == sorted(node.contexts)
-            )
-            if not same_shape:
-                raise NodeError(f"pool {node.pool_name!r} already declared with different shape", file_info)
-            # Identical re-declaration: importer picked up the same pool
-            # via two paths (extern .o + inline source). Skip silently —
-            # the existing decl is authoritative.
+            _merge_pool_declaration(resolver.pools[node.pool_name], pool, node, resolver, file_info)
             return []
+        resolver.pool_sources[node.pool_name] = _source_file(file_info)
     except NodeError:
         raise
     except Exception as exc:  # PoolError, PoolInvalidRangeError, PoolOverlapError
@@ -160,6 +149,53 @@ def _bank_local_ranges(lo: int, hi: int, node: PoolAstNode, resolver: Resolver, 
             if start <= end:
                 pieces.append(PoolRange(start=start, end=end))
     return pieces
+
+
+def _merge_pool_declaration(
+    existing: Pool, pool: Pool, node: PoolAstNode, resolver: Resolver, file_info: Token
+) -> None:
+    """A pool declared again, by an import or by this module: union the
+    ranges, as the linker does across objects (`Linker._merge_pool_decls`).
+
+    Two modules may each contribute ranges to one pool; an identical
+    re-declaration adds nothing. Fill, strategy, `bss` and `contexts` must
+    agree, and a range may not overlap one the pool already has.
+    """
+    disagreement = _pool_disagreement(existing, pool, node, resolver)
+    if disagreement is not None:
+        raise NodeError(f"pool {node.pool_name!r} already declared with a different {disagreement}", file_info)
+    known = {(r.start, r.end) for r in existing.ranges}
+    added = [r for r in pool.ranges if (r.start, r.end) not in known]
+    if not added:
+        return
+    if resolver.pool_sources.get(node.pool_name) == _source_file(file_info):
+        raise NodeError(
+            f"pool {node.pool_name!r} already declared in this file",
+            file_info,
+            hint=f"declare it once; `.reclaim {node.pool_name} START END` adds a range",
+        )
+    for context_pool in [existing, *(resolver.pools[f"{node.pool_name}.{ctx}"] for ctx in node.contexts)]:
+        for r in added:
+            context_pool.reclaim(PoolRange(start=r.start, end=r.end))
+    _publish_pool_stats(existing.name, existing, resolver)
+
+
+def _source_file(file_info: Token) -> str:
+    position = file_info.position
+    return position.file.filename if position is not None and position.file is not None else ""
+
+
+def _pool_disagreement(existing: Pool, pool: Pool, node: PoolAstNode, resolver: Resolver) -> str | None:
+    """The first pool property two declarations disagree on, or None."""
+    if existing.fill != pool.fill:
+        return "fill"
+    if existing.strategy != pool.strategy:
+        return "strategy"
+    if existing.bss != pool.bss:
+        return "bss flag"
+    if _declared_contexts(node.pool_name, resolver) != sorted(node.contexts):
+        return "contexts list"
+    return None
 
 
 def _declared_contexts(pool_name: str, resolver: Resolver) -> list[str]:
