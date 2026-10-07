@@ -63,3 +63,30 @@ def test_a_failed_module_is_reported_once(tmp_path: Path, caplog: pytest.LogCapt
 
 def test_a_failed_module_still_reports_its_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     assert "E0200" in _failed_build(tmp_path, ".alloc at 0x008000 {\n    lda #undefined\n}\n", caplog)
+
+
+# Names a generator needs while expanding; a miss used to escape as `Build failed: NAME`.
+ESCAPING = {
+    "sizeof-in-for-bound": (
+        (
+            ".alloc dte at 0x008000 {\n    .db 1, 2\n}\n.alloc pad at 0x008100 {\n"
+            "    .for i := 0, 8 - sizeof(dte) {\n        .db 0xFF\n    }\n}\n"
+        ),
+        "E0321",
+    ),
+    "undefined-for-bound": (".alloc a at 0x008000 {\n    .for i := 0, nowhere {\n        .db 0\n    }\n}\n", "E0200"),
+}
+
+
+@pytest.mark.parametrize("source", [case[0] for case in ESCAPING.values()], ids=list(ESCAPING))
+def test_an_error_while_expanding_is_never_a_bare_build_failure(
+    tmp_path: Path, source: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert "Build failed" not in _failed_build(tmp_path, source, caplog)
+
+
+@pytest.mark.parametrize(("source", "code"), list(ESCAPING.values()), ids=list(ESCAPING))
+def test_an_error_while_expanding_carries_its_code(
+    tmp_path: Path, source: str, code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert f"error[{code}]" in _failed_build(tmp_path, source, caplog)
