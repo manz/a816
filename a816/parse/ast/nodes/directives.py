@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Literal, TypedDict
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
@@ -160,21 +161,20 @@ class MapAstNode(AstNode):
 
 
 class DataNode(AstNode):
-    data: list[ExpressionAstNode]
+    data: tuple[ExpressionAstNode, ...]
 
     def __init__(
         self,
         kind: str,
-        data: list[ExpressionAstNode | BlockAstNode],
+        data: Sequence[ExpressionAstNode | BlockAstNode],
         file_info: Token,
     ):
         super().__init__(kind, file_info)
-
-        self.data = []
-
+        expressions = []
         for d in data:
             assert isinstance(d, ExpressionAstNode)
-            self.data.append(d)
+            expressions.append(d)
+        self.data = tuple(expressions)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, [d.to_representation()[0] for d in self.data]
@@ -253,13 +253,13 @@ class TableAstNode(AstNode):
 
 class IncludeAstNode(AstNode):
     file_path: str
-    included_nodes: list[AstNode]
+    included_nodes: tuple[AstNode, ...]
     resolved_path: str | None
 
     def __init__(
         self,
         file_path: str,
-        included_nodes: list[AstNode],
+        included_nodes: Sequence[AstNode],
         file_info: Token,
         resolved_path: str | None = None,
     ):
@@ -272,7 +272,7 @@ class IncludeAstNode(AstNode):
         """
         super().__init__("include", file_info)
         self.file_path = file_path
-        self.included_nodes = included_nodes
+        self.included_nodes = tuple(included_nodes)
         self.resolved_path = resolved_path
 
     def to_representation(self) -> tuple[Any, ...]:

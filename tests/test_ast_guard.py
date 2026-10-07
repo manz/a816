@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from a816.parse.mzparser import A816Parser
 from a816.parse.tokens import File
 from tests.conftest import fingerprint
@@ -28,13 +30,20 @@ def test_a_reassigned_attribute_changes_it() -> None:
     assert fingerprint(nodes) != before
 
 
-def test_a_nested_append_changes_it() -> None:
+def test_a_nested_change_changes_it() -> None:
     nodes = _nodes()
     before = fingerprint(nodes)
 
-    nodes[0].body.body.append(nodes[1])  # type: ignore[attr-defined]
+    nodes[0].body.body[0].docstring = "changed"  # type: ignore[attr-defined]
 
     assert fingerprint(nodes) != before
+
+
+def test_a_parsed_body_cannot_grow() -> None:
+    scope = _nodes()[0]
+
+    with pytest.raises(AttributeError):
+        scope.body.body.append(scope)  # type: ignore[attr-defined]
 
 
 def test_source_text_behind_tokens_is_not_walked() -> None:

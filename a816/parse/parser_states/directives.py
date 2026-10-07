@@ -542,7 +542,7 @@ def _resolve_include_path(p: Parser, keyword: Token, include_path: str) -> str:
 
 
 #: (resolved path, search paths) -> (content hash, parsed body, lookup misses of its nested includes).
-_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[str, list[AstNode], set[str]]] = {}
+_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[str, tuple[AstNode, ...], set[str]]] = {}
 
 
 def clear_include_ast_cache() -> None:
@@ -573,7 +573,7 @@ def _parse_include_file(resolved_path: str, include_paths: list[Path]) -> list[A
     return parser.parse()
 
 
-def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode]:
+def _included_ast(resolved_path: str, include_paths: list[Path]) -> tuple[AstNode, ...]:
     """The parsed body of an include, memoised per file revision.
 
     A header pulled in from thirty sites was scanned and parsed thirty
@@ -581,8 +581,9 @@ def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode
     The body only depends on the file's bytes and the search paths used to
     resolve its own nested includes, so it is shared between sites.
 
-    Codegen reads these nodes and emits fresh ones rather than mutating
-    them, which is what makes sharing safe."""
+    Nodes are immutable (tuple bodies, no writes after `__init__`), which
+    is what makes sharing safe; a tuple body also passes through
+    `IncludeAstNode` uncopied, so every site holds the same one."""
     key = (resolved_path, tuple(str(path) for path in include_paths))
     stamp = _include_stamp(resolved_path)
     if stamp is not None:
@@ -593,7 +594,7 @@ def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode
             replay_misses(cached[2])
             return cached[1]
     with recording_misses() as misses:
-        sub_ast = _parse_include_file(resolved_path, include_paths)
+        sub_ast = tuple(_parse_include_file(resolved_path, include_paths))
     replay_misses(misses)
     if stamp is not None:
         # Keyed per file, so the cache stays the size of the project rather

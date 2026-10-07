@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
@@ -9,11 +10,11 @@ from a816.parse.tokens import Token
 
 
 class BlockAstNode(AstNode):
-    body: list[AstNode]
+    body: tuple[AstNode, ...]
 
-    def __init__(self, body: list[AstNode], file_info: Token) -> None:
+    def __init__(self, body: Sequence[AstNode], file_info: Token) -> None:
         super().__init__("block", file_info)
-        self.body = body
+        self.body = tuple(body)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, [node.to_representation() for node in self.body]
@@ -23,11 +24,11 @@ class BlockAstNode(AstNode):
 
 
 class CompoundAstNode(AstNode):
-    body: list[AstNode]
+    body: tuple[AstNode, ...]
 
-    def __init__(self, body: list[AstNode], file_info: Token):
+    def __init__(self, body: Sequence[AstNode], file_info: Token):
         super().__init__("compound", file_info)
-        self.body = body
+        self.body = tuple(body)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, [node.to_representation() for node in self.body]
@@ -120,17 +121,19 @@ class ForAstNode(AstNode):
 
 class MacroAstNode(AstNode):
     name: str
-    args: list[str]
+    args: tuple[str, ...]
     block: BlockAstNode
 
-    def __init__(self, name: str, args: list[str], block: BlockAstNode, file_info: Token, docstring: str | None = None):
+    def __init__(
+        self, name: str, args: Sequence[str], block: BlockAstNode, file_info: Token, docstring: str | None = None
+    ):
         super().__init__("macro", file_info, docstring)
         self.name = name
-        self.args = args
+        self.args = tuple(args)
         self.block = block
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.name, ("args", self.args), self.block.to_representation()
+        return self.kind, self.name, ("args", list(self.args)), self.block.to_representation()
 
     def to_canonical(self) -> str:
         args_str = ", ".join(self.args) if self.args else ""

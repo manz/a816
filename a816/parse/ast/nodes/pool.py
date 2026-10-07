@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
@@ -23,24 +24,24 @@ class PoolAstNode(AstNode):
     def __init__(
         self,
         name: str,
-        ranges: list[PoolRangeExpr],
+        ranges: Sequence[PoolRangeExpr],
         fill: ExpressionAstNode,
         strategy: str,
         file_info: Token,
         bss: bool = False,
         close_token: Token | None = None,
-        contexts: list[str] | None = None,
+        contexts: Sequence[str] = (),
     ) -> None:
         super().__init__("pool", file_info)
         # Closing `}`: a trailing comment on its line folds onto the brace.
         self.close_token = close_token
         self.pool_name = name
-        self.ranges = ranges
+        self.ranges = tuple(ranges)
         self.fill = fill
         self.strategy = strategy
         self.bss = bss
         # Mutually exclusive users of a bss pool's memory (`contexts A, B`).
-        self.contexts = contexts or []
+        self.contexts = tuple(contexts)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.pool_name, len(self.ranges), self.strategy

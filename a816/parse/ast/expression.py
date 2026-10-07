@@ -1,6 +1,6 @@
 import ctypes
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from a816.error_codes import (
     E_CODEGEN_DIVISION_BY_ZERO,
@@ -76,7 +76,7 @@ def _pop_until_lparen(operator_stack: list[ExprNode], output_queue: list[ExprNod
     operator_stack.pop()
 
 
-def shunting_yard(expr_nodes: list[ExprNode]) -> list[ExprNode]:
+def shunting_yard(expr_nodes: Sequence[ExprNode]) -> list[ExprNode]:
     output_queue: list[ExprNode] = []
     operator_stack: list[ExprNode] = []
 
@@ -200,7 +200,7 @@ def _apply_binary(operator: BinOp, v1: int | str, v2: int | str) -> int:
     )
 
 
-def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> set[str]:
+def _collect_external_symbols(ordered: Sequence[ExprNode], resolver: Resolver) -> set[str]:
     external_symbols: set[str] = set()
     for current in ordered:
         if isinstance(current, CastAccessExprNode | CastValueExprNode):
@@ -276,7 +276,7 @@ def _raise_for_macro_argument(name: str, use: Token, resolver: Resolver) -> None
         raise
 
 
-def _eval_inner(inner: list[ExprNode], resolver: Resolver) -> int | str:
+def _eval_inner(inner: Sequence[ExprNode], resolver: Resolver) -> int | str:
     return eval_expression(ExpressionAstNode(list(inner)), resolver)
 
 
@@ -433,7 +433,7 @@ def _inline_aliases(expression_str: str, resolver: Resolver, depth: int = 0) -> 
     return _IDENT_RE.sub(replace, expression_str)
 
 
-def identifier_tokens(terms: list[ExprNode]) -> list[Token]:
+def identifier_tokens(terms: Sequence[ExprNode]) -> list[Token]:
     """Every name an expression mentions, the ones inside a cast's
     `(inner as T)` included: a pooled label there relocates like any other."""
     found: list[Token] = []

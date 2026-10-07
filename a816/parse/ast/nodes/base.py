@@ -8,6 +8,7 @@ expression-token sub-tree (`ExprNode` + `Term`/`BinOp`/`UnaryOp`/
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -62,7 +63,7 @@ class Parenthesis(ExprNode):
     """Represents a Parenthesis expression"""
 
 
-def _inner_canonical(inner: list[ExprNode]) -> str:
+def _inner_canonical(inner: Sequence[ExprNode]) -> str:
     """Terms joined by spaces, a unary operator kept against its operand (`~3`, `-x`)."""
     parts: list[str] = []
     after_unary = False
@@ -91,19 +92,19 @@ class CastAccessExprNode(ExprNode):
     def __init__(
         self,
         token: Token,
-        inner: list[ExprNode],
+        inner: Sequence[ExprNode],
         type_name: str,
-        field_path: list[str],
+        field_path: Sequence[str],
         close_token: Token | None = None,
-        field_tokens: list[Token] | None = None,
+        field_tokens: Sequence[Token] = (),
     ):
         super().__init__(token)
-        self.inner = inner
+        self.inner = tuple(inner)
         self.type_name = type_name
-        self.field_path = field_path
+        self.field_path = tuple(field_path)
         self.close_token = close_token
         # One token per `field_path` entry; diagnostics underline the leaf.
-        self.field_tokens = field_tokens or []
+        self.field_tokens = tuple(field_tokens)
 
     @property
     def leaf_token(self) -> Token:
@@ -126,12 +127,12 @@ class CastValueExprNode(ExprNode):
     def __init__(
         self,
         token: Token,
-        inner: list[ExprNode],
+        inner: Sequence[ExprNode],
         type_name: str,
         close_token: Token | None = None,
     ):
         super().__init__(token)
-        self.inner = inner
+        self.inner = tuple(inner)
         self.type_name = type_name
         self.close_token = close_token
 
@@ -140,11 +141,11 @@ class CastValueExprNode(ExprNode):
 
 
 class ExpressionAstNode(AstNode):
-    tokens: list[ExprNode]
+    tokens: tuple[ExprNode, ...]
 
-    def __init__(self, tokens: list[ExprNode]) -> None:
+    def __init__(self, tokens: Sequence[ExprNode]) -> None:
         super().__init__("expression", tokens[0].token)
-        self.tokens = tokens
+        self.tokens = tuple(tokens)
 
     def to_representation(self) -> tuple[Any, ...]:
         return (_inner_canonical(self.tokens),)

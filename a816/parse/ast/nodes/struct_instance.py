@@ -42,9 +42,9 @@ class StringInitAstNode(AstNode):
 class ListInitAstNode(AstNode):
     """`[v, v, ...]` initializer for an array field."""
 
-    def __init__(self, items: list[InitItem], file_info: Token, close_token: Token | None = None) -> None:
+    def __init__(self, items: Sequence[InitItem], file_info: Token, close_token: Token | None = None) -> None:
         super().__init__("list_init", file_info)
-        self.items = items
+        self.items = tuple(items)
         self.close_token = close_token
 
     @property
@@ -76,9 +76,9 @@ class StructFieldInitAstNode(AstNode):
 class StructInitAstNode(AstNode):
     """`{ name = value, ... }` initializer for a struct (or nested struct field)."""
 
-    def __init__(self, items: list[StructInitItem], file_info: Token, close_token: Token | None = None) -> None:
+    def __init__(self, items: Sequence[StructInitItem], file_info: Token, close_token: Token | None = None) -> None:
         super().__init__("struct_init", file_info)
-        self.items = items
+        self.items = tuple(items)
         self.close_token = close_token
 
     @property

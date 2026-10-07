@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from a816.parse.ast.nodes.base import AstNode
@@ -25,23 +26,23 @@ class StructAstNode(AstNode):
     def __init__(
         self,
         name: str,
-        fields: list[tuple[str, str]],
+        fields: Sequence[tuple[str, str]],
         file_info: Token,
-        body: list[StructBodyItem] | None = None,
+        body: Sequence[StructBodyItem] = (),
     ) -> None:
         super().__init__("struct", file_info)
         self.name = name
         # Formatting view of the body: fields with their comments and the
         # blank lines between groups. Without one (built programmatically),
         # the fields alone are the body.
-        self.body: list[StructBodyItem] = list(body) if body is not None else []
+        self.body: tuple[StructBodyItem, ...] = tuple(body)
         # Insertion-ordered `(name, type)` entries. Bit-field widths live in
         # the type string itself (`uN`), as do array counts (`byte[21]`);
         # the codegen extracts the digits.
-        # List instead of dict so downstream consumers can rely on the
+        # A sequence instead of a dict so downstream consumers can rely on the
         # declared order without poking at dict semantics, and so duplicate
         # names get caught at parse time.
-        self.fields: list[tuple[str, str]] = list(fields)
+        self.fields: tuple[tuple[str, str], ...] = tuple(fields)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, list(self.fields)

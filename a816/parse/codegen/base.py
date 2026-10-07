@@ -9,6 +9,7 @@ delegates to `_code_gen`.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from a816.parse.ast.nodes import (
@@ -59,7 +60,9 @@ def declared_name(node: AstNode) -> str | None:
     return None
 
 
-def _code_gen(ast_nodes: list[AstNode], resolver: Resolver, macro_definitions: MacroDefinitions) -> list[NodeProtocol]:
+def _code_gen(
+    ast_nodes: Sequence[AstNode], resolver: Resolver, macro_definitions: MacroDefinitions
+) -> list[NodeProtocol]:
     code = []
     for node in ast_nodes:
         file_info = _get_file_info(node)
@@ -76,7 +79,7 @@ def _code_gen(ast_nodes: list[AstNode], resolver: Resolver, macro_definitions: M
 
 
 def _code_gen_placement_body(
-    ast_nodes: list[AstNode], resolver: Resolver, macro_definitions: MacroDefinitions
+    ast_nodes: Sequence[AstNode], resolver: Resolver, macro_definitions: MacroDefinitions
 ) -> list[NodeProtocol]:
     """Generate an `.alloc` / `.relocate` body, tracking the nesting
     depth so `.import` can refuse to run inside a placement body."""

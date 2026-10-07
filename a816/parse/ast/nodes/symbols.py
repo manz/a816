@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
@@ -116,17 +117,17 @@ class CodeLookupAstNode(AstNode):
 
 class MacroApplyAstNode(AstNode):
     name: str
-    args: list[ExpressionAstNode | BlockAstNode]
+    args: tuple[ExpressionAstNode | BlockAstNode, ...]
 
     def __init__(
         self,
         name: str,
-        args: list[ExpressionAstNode | BlockAstNode],
+        args: Sequence[ExpressionAstNode | BlockAstNode],
         file_info: Token,
     ):
         super().__init__("macro_apply", file_info)
         self.name = name
-        self.args = args
+        self.args = tuple(args)
 
     def to_representation(self) -> tuple[Any, ...]:
         apply_args = []

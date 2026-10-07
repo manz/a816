@@ -398,10 +398,10 @@ class ParseTest(unittest.TestCase):
         ips_node = cast(IncludeIpsAstNode, node)
         self.assertEqual("whee.ips", ips_node.file_path)
         self.assertEqual(
-            [
+            (
                 UnaryOp(token=Token(TokenType.OPERATOR, "-")),
                 Term(token=Token(TokenType.NUMBER, "0x200")),
-            ],
+            ),
             ips_node.expression.tokens,
         )
 

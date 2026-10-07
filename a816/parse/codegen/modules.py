@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -292,7 +293,7 @@ def _register_private_names(nodes: list[AstNode], module_name: str, src_path: Pa
             resolver.private_owners.setdefault(name, (module_name, files))
 
 
-def _included_files(nodes: list[AstNode]) -> list[str]:
+def _included_files(nodes: Sequence[AstNode]) -> list[str]:
     out: list[str] = []
     for node in nodes:
         if isinstance(node, IncludeAstNode):
@@ -302,7 +303,7 @@ def _included_files(nodes: list[AstNode]) -> list[str]:
     return out
 
 
-def _top_level_declarations(nodes: list[AstNode]) -> list[AstNode]:
+def _top_level_declarations(nodes: Sequence[AstNode]) -> list[AstNode]:
     out: list[AstNode] = []
     for node in nodes:
         if isinstance(node, _PRIVATE_DECLARATION_TYPES):
@@ -440,7 +441,7 @@ def _typed_bind_names(node: AssignAstNode, resolver: Resolver) -> list[str]:
     return [node.symbol, *(f"{node.symbol}.{field_path}" for field_path, _offset, _width in fields)]
 
 
-def _declarations_only(nodes: list[AstNode], bare_names: bool) -> list[AstNode]:
+def _declarations_only(nodes: Sequence[AstNode], bare_names: bool) -> list[AstNode]:
     """Copy of `nodes` with every byte-emitting statement dropped.
 
     `.if` / `.scope` / `.for` / `.include` keep their shape so the
@@ -487,7 +488,7 @@ def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
 _IDENT_HEAD_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)", re.ASCII)
 
 
-def _drop_runtime_bound(declarations: list[AstNode], scope_body: list[AstNode]) -> list[AstNode]:
+def _drop_runtime_bound(declarations: list[AstNode], scope_body: Sequence[AstNode]) -> list[AstNode]:
     """Drop `=` / `:=` declarations that depend on the scope's own runtime names.
 
     The importer never sees the scope's labels (they're dropped with the
@@ -509,7 +510,7 @@ def _mentions(value: ExpressionAstNode, names: set[str]) -> bool:
     return any(match in names for match in _IDENT_HEAD_RE.findall(value.to_canonical()))
 
 
-def _runtime_names_in(nodes: list[AstNode]) -> set[str]:
+def _runtime_names_in(nodes: Sequence[AstNode]) -> set[str]:
     """Labels and other runtime names a scope body binds in its own scope,
     including those declared in `.if` / `.else` bodies (no scope of their own)."""
     names: set[str] = set()
@@ -523,7 +524,7 @@ def _runtime_names_in(nodes: list[AstNode]) -> set[str]:
 
 
 def _if_branches(node: IfAstNode) -> list[AstNode]:
-    return node.block.body + (node.else_block.body if node.else_block else [])
+    return [*node.block.body, *(node.else_block.body if node.else_block else ())]
 
 
 def _pruned_if(node: IfAstNode, bare_names: bool) -> list[AstNode]:
@@ -780,7 +781,7 @@ def _emit_symbols_for_node(node: AstNode, prefix: str, symbols: list[str]) -> No
         _record_public_symbol(symbols, prefix, f"{base}__size")
 
 
-def _visit_for_public_symbols(nodes: list[AstNode], prefix: str, symbols: list[str]) -> None:
+def _visit_for_public_symbols(nodes: Sequence[AstNode], prefix: str, symbols: list[str]) -> None:
     """Walk `nodes`, emitting symbols and recursing into child containers.
 
     `.scope name { ... }` opens a dotted prefix for its members; every
@@ -811,10 +812,10 @@ def _descend_into_children(node: AstNode, prefix: str, symbols: list[str]) -> No
         child = getattr(node, attr, None)
         if isinstance(child, BlockAstNode | CompoundAstNode):
             _visit_for_public_symbols(child.body, prefix, symbols)
-        elif isinstance(child, list):
+        elif isinstance(child, list | tuple):
             _visit_for_public_symbols(child, prefix, symbols)
     included = getattr(node, "included_nodes", None)
-    if isinstance(included, list):
+    if isinstance(included, list | tuple):
         _visit_for_public_symbols(included, prefix, symbols)
 
 
