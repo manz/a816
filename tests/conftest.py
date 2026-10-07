@@ -74,10 +74,10 @@ def cached_asts_stay_untouched(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
             remember(f"import {src_path}", parsed.result.nodes)
         return parsed
 
-    def watched_included_ast(resolved_path: str, include_paths: list[Path]) -> tuple[Any, ...]:
-        body = included_ast(resolved_path, include_paths)
-        remember(f"include {resolved_path}", body)
-        return body
+    def watched_included_ast(resolved_path: str, include_paths: list[Path]) -> directives.IncludedAst:
+        included = included_ast(resolved_path, include_paths)
+        remember(f"include {resolved_path}", included.body)
+        return included
 
     monkeypatch.setattr(modules, "_parse_import", watched_parse_import)
     monkeypatch.setattr(directives, "_included_ast", watched_included_ast)

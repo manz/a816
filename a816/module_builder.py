@@ -201,6 +201,8 @@ class ModuleBuilder:
             )
         self._parsed[module_name] = parsed
         self._discovery_misses[module_name] = misses
+        if parsed.imports is not None:
+            return list(parsed.imports)
         return self._collect_imports(parsed.nodes)
 
     def _cached_imports(self, module_name: str) -> list[str] | None:

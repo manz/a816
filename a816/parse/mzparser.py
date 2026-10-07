@@ -23,6 +23,9 @@ class ParserResult:
     nodes: list[AstNode]
     parse_error: ParseError | None = None
     parse_errors: list[ParseError] | None = None
+    # `.import` names in source order, recorded while parsing; None when the
+    # parse had errors (recovery may drop a recorded import's node).
+    imports: list[str] | None = None
 
     @property
     def error(self) -> str | None:
@@ -87,7 +90,8 @@ class A816Parser:
         if parse_error is None and all_errors:
             parse_error = all_errors[0]
         parse_errors = all_errors or None
-        return ParserResult(nodes=ast, parse_error=parse_error, parse_errors=parse_errors)
+        imports = parser.imports if parser is not None and parse_errors is None else None
+        return ParserResult(nodes=ast, parse_error=parse_error, parse_errors=parse_errors, imports=imports)
 
 
 def _scanner_error_to_parse_error(e: ScannerException) -> ParseError:

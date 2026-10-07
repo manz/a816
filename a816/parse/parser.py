@@ -70,6 +70,9 @@ class Parser:
         # ParserSyntaxError it survives so callers can render *all* of them
         # instead of only the first one.
         self.errors: list[ParserSyntaxError] = []
+        # Every `.import` module name in source order, `.include`d files
+        # included: module discovery reads it instead of walking the AST.
+        self.imports: list[str] = []
 
     def parse(self) -> list[AstNode]:
         try:
