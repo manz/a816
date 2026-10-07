@@ -25,6 +25,7 @@ Usage:
 
 import argparse
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -96,7 +97,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dump-symbols", action="store_true", help="Dumps symbol table")
     parser.add_argument("-c", "--compile-only", action="store_true", help="Compile to object files without linking.")
-    parser.add_argument("-D", "--defines", metavar="KEY=VALUE", nargs="+", help="Defines symbols.")
+    parser.add_argument("-D", "--defines", metavar="KEY=VALUE", nargs="+", type=_define, help="Defines symbols.")
     parser.add_argument(
         "--no-auto-imports",
         action="store_true",
@@ -157,6 +158,27 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(bus_map=[])
     return parser
+
+
+# A symbol name a source can spell: identifiers, optionally dotted (`scope.name`).
+_DEFINE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
+
+
+def _define(text: str) -> str:
+    """One `-D NAME=VALUE`, checked as argparse reads it.
+
+    A name no source can spell used to become a symbol nobody can reach:
+    `-D " DEBUG_INPUT=1"` (one shell word) defined ` DEBUG_INPUT`, every
+    `.if DEBUG_INPUT` dropped out, and the debug ROM built as the release one.
+    """
+    name, sep, _value = text.partition("=")
+    if not sep:
+        raise argparse.ArgumentTypeError(f"{text!r}: expected NAME=VALUE")
+    if not _DEFINE_NAME.match(name):
+        raise argparse.ArgumentTypeError(
+            f"{name!r} is not a symbol name; pass each definition as its own argument, -D NAME=VALUE"
+        )
+    return text
 
 
 def _parse_defines(defines: list[str] | None) -> dict[str, int | str]:
