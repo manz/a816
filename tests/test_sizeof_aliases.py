@@ -55,6 +55,35 @@ def test_sizeof_of_an_alloc_in_its_own_module_before_it_is_measured(src: str, co
     assert b"".join(section.code for section in sections).endswith(code)
 
 
+_LONG_MACRO = ".macro load_long(n) {\n    lda.l n, x\n}\n"
+
+
+def test_a_macro_argument_mixing_a_local_label_and_sizeof() -> None:
+    src = _BLOB + _LONG_MACRO + ".alloc user in code {\n    load_long(blob + sizeof(blob) - 2)\n}\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        linked = _link(src, tmp)
+    blob = {name: value for name, value, *_ in linked.symbols}["blob"] + 6
+    code = b"".join(section.code for section in linked.sections)
+    assert code.endswith(bytes([0xBF, blob & 0xFF, blob >> 8 & 0xFF, blob >> 16]))
+
+
+def test_a_macro_argument_mixing_a_declared_label_and_sizeof() -> None:
+    src = (
+        _BLOB + _LONG_MACRO + ".label fixed = 0xc18000\n.alloc user in code {\n    load_long(fixed + sizeof(blob))\n}\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        code = b"".join(section.code for section in _link(src, tmp).sections)
+    assert code.endswith(b"\xbf\x08\x80\xc1")
+
+
+def test_a_macro_argument_mixing_an_imported_label_and_sizeof(tmp_path: Path) -> None:
+    main = '.import "data"\n' + _LONG_MACRO + ".alloc user at 0xc1f000 {\n    load_long(blob + sizeof(blob))\n}\n"
+    result = _build(tmp_path, main)
+    assert result.exit_code == 0, result.diagnostics
+    blob = result.symbol_map["blob"] + 8
+    assert _ips_tail(tmp_path / "out.ips", 4) == bytes([0xBF, blob & 0xFF, blob >> 8 & 0xFF, blob >> 16])
+
+
 def test_sizeof_of_an_imported_alloc_in_a_macro_argument(tmp_path: Path) -> None:
     result = _build(tmp_path, '.import "data"\n' + _MACRO + ".alloc user at 0xc1f000 {\n    load(sizeof(blob))\n}\n")
     assert result.exit_code == 0, result.diagnostics
