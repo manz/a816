@@ -252,11 +252,12 @@ class ModuleBuilder:
         source_path: Path,
         obj_path: Path,
         constants: dict[str, int],
-        fallback: dict[str, tuple[int, str]],
-    ) -> tuple[set[str], set[str], set[str]]:
+        owners: dict[str, str],
+    ) -> tuple[set[str], set[str]]:
         """Compile one module to its `.o`; return the asset paths it read
-        (absolute `.incbin` / `.table` paths), the lookups that missed and
-        the unimported modules whose constants it used."""
+        (absolute `.incbin` / `.table` paths) and the lookups that missed.
+        `owners` names the module of each constant it does not import, for
+        the hint of an E0200 on one."""
         from a816.program import Program
 
         logger.info(f"Compiling {module_name}: {source_path} -> {obj_path}")
@@ -281,23 +282,16 @@ class ModuleBuilder:
             # re-publish them here - otherwise every downstream `.o` gains
             # a duplicate GLOBAL and the linker rejects the build.
             program.resolver.imported_symbol_names.add(name)
-        program.resolver.unimported_constants = dict(fallback)
+        program.resolver.constant_owners = dict(owners)
         with recording_misses() as misses:
             result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
         if result != 0:
             # The cache key must not outlive the object it described.
             obj_path.with_suffix(".deps").unlink(missing_ok=True)
             raise RuntimeError(f"Failed to compile module '{module_name}'")
-        used = program.resolver.used_unimported
-        for name, owner in sorted(used.items()):
-            logger.warning(
-                f"module `{module_name}` uses `{_spelled(name)}` from `{owner}` without importing it; "
-                f'add `.import "{owner}"` (this becomes an error in a816 1.1.0)'
-            )
         return (
             set(program.resolver.dependency_files),
             misses | self._discovery_misses.pop(module_name, set()),
-            set(used.values()),
         )
 
     def _build_module(
@@ -305,7 +299,7 @@ class ModuleBuilder:
         module_name: str,
         keys: dict[str, str],
         constants: dict[str, int],
-        fallback: dict[str, tuple[int, str]],
+        owners: dict[str, str],
     ) -> ObjectFile:
         """Reuse or compile one module; record its key in `keys`.
 
@@ -323,16 +317,12 @@ class ModuleBuilder:
             logger.info(f"Module {module_name} is up to date")
             keys[module_name] = self.cache.key(obj_path) or ""
             return ObjectFile.from_file(str(obj_path))
-        asset_files, misses, owners = self._compile_module(module_name, source_path, obj_path, constants, fallback)
+        asset_files, misses = self._compile_module(module_name, source_path, obj_path, constants, owners)
         obj = ObjectFile.from_file(str(obj_path))
-        # An unimported owner whose constants were used: its `.o` is an input,
-        # so changing those constants rebuilds this module.
-        owner_objects = {os.path.abspath(self._get_obj_path(owner)) for owner in owners}
         files = {
             os.path.abspath(str(source_path)),
             *(os.path.abspath(f) for f in obj.files),
             *asset_files,
-            *owner_objects,
         }
         keys[module_name] = self.cache.record(obj_path, ModuleInputs(files, misses, imports, import_keys))
         return obj
@@ -366,21 +356,21 @@ class ModuleBuilder:
 
     def _constants_for(
         self, module_name: str, compilation_order: list[str], exported: dict[str, dict[str, int]]
-    ) -> tuple[dict[str, int], dict[str, tuple[int, str]]]:
-        """Constants a module sees: those of what it imports, directly or
-        not, plus the deprecated fallback of every other module built so far
-        (resolved with a warning, see `Resolver.unimported_constant`)."""
+    ) -> tuple[dict[str, int], dict[str, str]]:
+        """Constants a module sees, those of what it imports directly or not,
+        and the owning module of every other constant built so far: never
+        visible, only named by the E0200 hint."""
         reachable = self._transitive_imports(module_name)
         constants: dict[str, int] = {}
-        fallback: dict[str, tuple[int, str]] = {}
+        owners: dict[str, str] = {}
         for name in compilation_order:
             if name not in exported:
                 continue
             if name in reachable:
                 constants.update(exported[name])
             else:
-                fallback.update({symbol: (value, name) for symbol, value in exported[name].items()})
-        return constants, fallback
+                owners.update(dict.fromkeys(exported[name], name))
+        return constants, owners
 
     def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
         """Build all modules in topo order, then link."""
@@ -397,8 +387,8 @@ class ModuleBuilder:
         exported: dict[str, dict[str, int]] = {}
         keys: dict[str, str] = {}
         for module_name in compilation_order:
-            constants, fallback = self._constants_for(module_name, compilation_order, exported)
-            obj = self._build_module(module_name, keys, constants, fallback)
+            constants, owners = self._constants_for(module_name, compilation_order, exported)
+            obj = self._build_module(module_name, keys, constants, owners)
             exported[module_name] = self._exported_constants(obj)
             object_files.append(obj)
 
@@ -460,11 +450,6 @@ def apply_experimental_flags(program: "Program", flags: list[str] | None) -> Non
 
 # Public API: peer build scripts pass these by keyword; a grouping object
 # would break every caller for no gain.
-def _spelled(name: str) -> str:
-    """A symbol as source writes it: the internal `NAME.__size` is `sizeof(NAME)`."""
-    return f"sizeof({name.removesuffix('.__size')})" if name.endswith(".__size") else name
-
-
 def build_with_imports(
     main_source: str | Path,  # NOSONAR python:S107 (Sonar anchors it here)
     output_file: str | Path,
