@@ -94,7 +94,8 @@ player:
 - `.pool NAME { range LO HI ... }` declares freespace, with
   `strategy pack | order` and ranges over several banks, split along
   the windows the bus serves. `<pool>.capacity`, `.fragments` and
-  `.largest_chunk` read its state, e.g. in an `.if` guard.
+  `.largest_chunk` read its state, e.g. in an `.if` guard, also from a
+  module that imports the pool.
 - `.alloc NAME in POOL { ... }` lets the allocator choose the address;
   `.alloc [NAME] at ADDR [size N] { ... }` pins it, with `size` as a hard
   bound.
@@ -114,8 +115,10 @@ player:
 - Alloc names are global: the same pool and name from two different
   places is a duplicate symbol (`E0400`), not one block silently
   replacing the other.
-- Pools merge across modules by name, and the linker places allocs from
-  every object in one pass.
+- Pools merge across modules by name, whether the build goes through
+  `a816 build` or links objects, and the linker places allocs from every
+  object in one pass. Fill, strategy, `bss` and contexts must agree; a
+  second declaration in the same file is still an error.
 - Overlapping writes fail the build by default (`E0408`), checked
   before any byte is written. The error names each block (alloc and
   pool, or the address of an anonymous one), its `file:line` and the
@@ -147,14 +150,19 @@ player:
   `.extern` symbols alike; the operand size follows the bind's base.
   `view := (expr as T)` binds eagerly; `view = (expr as T)` is a lazy
   view, which also works over a module's own pooled labels (placed at
-  link): its fields relocate with the label.
+  link): its fields relocate with the label. A module's `:=` over a name
+  placed at link (`font_ptr := target + 0x40`) reaches its importers as
+  that module's symbol, instead of failing there.
 - `.istruct Type { ... }` emits an initialized instance: strings,
   lists, nested structs and bit fields, zero-filling the rest.
 - `.label NAME = ADDR` names an address for debuggers and the LSP
   without emitting anything.
 - `.a8` / `.a16` / `.i8` / `.i16`, and `rep` / `sep` tracking behind
   `--experimental track_register_size`, size immediates; an immediate
-  whose width disagrees with the known size warns.
+  whose width disagrees with the known size warns. A size a tracked
+  `rep` / `sep` set ends at `rts`, `jmp`, `bra`, `plp` and the like,
+  where the next routine starts; a declared `.a16` holds until
+  redeclared.
 - The rest of the 65c816 instruction set: `brl`, `bvc`, `bvs`, `cld`,
   `cli`, `clv`, `cop`, `mvn`, `mvp`, `per` and `wdm`, plus `jsl` / `jml`
   as aliases of `jsr.l` / `jmp.l`. `brk`, `cop` and `wdm` take their
@@ -174,7 +182,8 @@ player:
   `--obj-dir`, `--no-auto-imports`.
 - `.import "@std/snes/ppu"` (and `cpu`, `dma`, `apu`, `joypad`, `wram`,
   `header`): typed SNES registers.
-- `.extern` symbols work in any expression, macro or alias; the linker
+- `.extern` symbols work in any expression, macro or alias, declared at
+  the top of a module or inside an `.alloc` body or block; the linker
   evaluates them once placed.
 - Transitive imports are deduplicated, and modules are found on the
   module paths only, so a same-named file next door can't shadow one.
@@ -273,6 +282,8 @@ player:
 - One-line blocks (`.scope x { rts }`, `{ nop nop }`) didn't parse.
 - A constant inside `.scope sc { K = 6 }` was unreachable as `sc.K`.
 - `-D NAME=VALUE` always defined a string, so `lda #NAME` failed.
+- Repeated `-D` flags kept only the last one's values: `-D A=1 -D B=2`
+  defined `B` alone, and every `.if A` silently dropped out.
 - `-f sfc` ignored `-m`, so SFC output was always LoROM.
 - An unknown `-m` value crashed; it now lists `low`, `low2`, `high`.
 
