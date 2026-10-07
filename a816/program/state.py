@@ -9,7 +9,7 @@ from dataclasses import dataclass
 class EmitState:
     """Mutable state threaded through Program.emit's per-node helpers."""
 
-    current_block: bytes
+    current_block: bytearray  # grows in place, see ObjectEmitState
     current_block_addr: int
     current_block_logical: int = 0
 
