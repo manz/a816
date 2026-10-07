@@ -202,15 +202,15 @@ class Scope:
         the dotted prefix per `Resolver._export_name`). Avoids forcing
         consumers to `.extern Foo.x` per member.
         """
-        if symbol in self.external_symbols:
+        if self._declares_external(symbol):
             return True
-        if "." in symbol:
-            head = symbol.split(".", 1)[0]
-            if head in self.external_symbols:
-                return True
         if self.parent:
             return self.parent.is_external_symbol(symbol)
         return False
+
+    def _declares_external(self, symbol: str) -> bool:
+        """`.extern`ed in this scope itself (the whole `Foo` namespace for `Foo.bar`)."""
+        return symbol in self.external_symbols or symbol.split(".", 1)[0] in self.external_symbols
 
     def __getitem__(self, item: str) -> int | str | BlockAstNode:
         try:
@@ -244,6 +244,10 @@ class Scope:
             # an extern expression) needs to be visible here so eval can defer.
             if symbol in self.external_aliases:
                 return self[symbol]
+            # `.extern` inside an alloc body or block: the parent never sees
+            # this scope's externs, so the lookup must stop here.
+            if self._declares_external(symbol):
+                raise ExternalSymbolReference(symbol)
             return self.parent.value_for(symbol)
         try:
             return self[symbol]
