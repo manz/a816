@@ -275,6 +275,8 @@ class ModuleBuilder:
         with recording_misses() as misses:
             result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
         if result != 0:
+            # The cache key must not outlive the object it described.
+            obj_path.with_suffix(".deps").unlink(missing_ok=True)
             raise RuntimeError(f"Failed to compile module '{module_name}'")
         used = program.resolver.used_unimported
         for name, owner in sorted(used.items()):
