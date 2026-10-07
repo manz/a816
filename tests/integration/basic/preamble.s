@@ -1,10 +1,10 @@
 """
-ROM-wide preamble: prepended to every module compilation and to
-`main.s` via the `prelude` setting in `a816.toml`.
+Shared declarations every module imports: the SNES register binds, the
+bank pools, the WRAM pool and the engine state's layout, and the named
+constants.
 
-Declares the bank pools, the WRAM layout, named constants, the SNES
-stdlib struct imports, and the typed-register binds every module
-shares. No explicit `.import "layout"` at module heads.
+The engine state itself is reserved once, in `engine_state.s`; this
+module only declares its type, so importing it emits nothing.
 """
 
 
@@ -13,17 +13,17 @@ shares. No explicit `.import "layout"` at module heads.
 .import "@std/snes/dma"
 
 ; --- Typed register binds --------------------------------------------------
-; Modules use `screen.<field>` / `cpu_regs.<field>` instead of repeating
-; `BASE + Struct.field` everywhere. Names chosen to read at the call
-; site without colliding with the underlying stdlib struct identifiers.
+; Modules write `screen.<field>`, `cpu_regs.<field>` and `dma0.<field>`
+; instead of repeating `BASE + Struct.field` or raw `$43xx` addresses.
 screen := (PPU_BASE as PPU)
 cpu_regs := (CPU_REGS_BASE as CPU_REGS)
+dma0 := (DMA_BASE as DMAChannel)
 
 ; --- Pools -----------------------------------------------------------------
-; Bank-per-role split: client (bank 0) holds reset + NMI thunk (it stops
-; short of the $FFB0 cartridge header + vectors);
-; data (bank 1) holds font/strings; engine (bank 2) holds the engine
-; code that NMI long-calls into.
+; Bank-per-role split: client (bank 0) holds reset and the interrupt
+; thunks, stopping short of the $FFB0 cartridge header and vectors;
+; data (bank 1) holds the font and strings; engine (bank 2) holds the
+; engine code that NMI long-calls into.
 .pool client {
     range 0x008000 0x00FFAF
     strategy order
@@ -39,18 +39,25 @@ cpu_regs := (CPU_REGS_BASE as CPU_REGS)
     strategy order
 }
 
-; --- WRAM layout -----------------------------------------------------------
-; $7E:0000-$01FF reserved for direct page + stack. Buffers live past that.
-tilemap_buffer = 0x7E2000  ; 0x800 bytes (32x32 BG1 entries)
-tilemap_dirty = 0x7E2800  ; non-zero => NMI flushes tilemap
-palette_buffer = 0x7E2C00  ; 0x200 bytes (256 CGRAM entries)
-palette_dirty = 0x7E2E00  ; non-zero => NMI flushes palette
+; $7E:0000-$01FF hold the direct page and the stack; WRAM state lives past
+; them, laid out by the allocator.
+.pool wram {
+    bss
+    range 0x7E2000 0x7EFFFF
+    strategy order
+}
+
+; --- Engine state ----------------------------------------------------------
+.struct Engine {
+    word[32 * 32] tilemap  ; BG1 shadow: one entry per 8x8 cell
+    word[256] palette  ; CGRAM shadow
+    byte tilemap_dirty  ; non-zero: NMI flushes the tilemap
+    byte palette_dirty  ; non-zero: NMI flushes the palette
+}
 
 ; --- Constants -------------------------------------------------------------
 STRINGS_BANK = 0x01  ; bank holding font + strings (DB)
 FONT_VRAM_WORD = 0x1000  ; BG1 char base (word address)
 TILEMAP_WORD = 0x0000  ; BG1 tilemap base (word address)
-TILEMAP_BYTES = 0x0800  ; 32x32 entries * 2 bytes
-PALETTE_BYTES = 0x0200  ; 256 entries * 2 bytes
 COLOR_BLACK = 0x0000
 COLOR_WHITE = 0x7FFF

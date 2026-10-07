@@ -1,38 +1,31 @@
 """
-Engine entry points + BRK trap.
+Engine entry points.
 
-Engine code lives in its own bank (`engine` pool). Cross-bank
-callers use the `_l` long wrappers  ; engine-internal callers use the
-bare names with plain `jsr`/`rts`.
-
-Imports `ppu_tools` + `draw_string` so per-module precompile can
-resolve the routines wrapped here as externs.
+Engine code lives in its own bank (`engine` pool). Callers in other
+banks use the `_l` long entries; engine-internal callers use the bare
+names with `jsr.w` / `rts`.
 """
 
 
-.import "@std/snes/ppu"
-.import "@std/snes/cpu"
-.import "@std/snes/dma"
 .import "preamble"
-
+.import "engine_state"
 .import "ppu_tools"
 .import "draw_string"
 
 .alloc engine_update in engine {
 """
-Per-frame entry. Walks dirty flags and DMAs the WRAM shadows
-    that advertise themselves into PPU (`tilemap_dirty`,
-    `palette_dirty`).
+Per-frame entry: DMA each WRAM shadow whose dirty flag is set into the
+    PPU, then clear the flag.
 
-    Caller convention: NMI prologue already saved A/X/Y/B/D and
-    set M = 8 / X = 16. No further reg save here.
+    Caller convention: the NMI prologue already saved A/X/Y/B/D and set
+    M = 8 / X = 16. No further register save here.
 """
 
 
     .a8
     .i16
 
-    lda.l tilemap_dirty
+    lda.l engine_state.tilemap_dirty
     beq _engine_skip_tilemap
 
     lda.b #TILEMAP_WORD & 0xFF
@@ -43,70 +36,64 @@ Per-frame entry. Walks dirty flags and DMAs the WRAM shadows
     sta.l screen.VMAIN
 
     lda #0x01
-    sta.l 0x4300  ; DMAP0: 2-reg auto-increment
+    sta.l dma0.DMAP  ; 2-register auto-increment
     lda #0x18
-    sta.l 0x4301  ; BBAD0 -> $2118 (VMDATAL)
+    sta.l dma0.BBAD  ; -> $2118 (VMDATAL)
 
-    lda.b #tilemap_buffer & 0xFF
-    sta.l 0x4302
-    lda.b #( tilemap_buffer >> 8 ) & 0xFF
-    sta.l 0x4303
-    lda.b #( tilemap_buffer >> 16 ) & 0xFF
-    sta.l 0x4304
+    lda.b #engine_state.tilemap & 0xFF
+    sta.l dma0.A1TL
+    lda.b #( engine_state.tilemap >> 8 ) & 0xFF
+    sta.l dma0.A1TH
+    lda.b #( engine_state.tilemap >> 16 ) & 0xFF
+    sta.l dma0.A1B
 
-    lda.b #TILEMAP_BYTES & 0xFF
-    sta.l 0x4305
-    lda.b #( TILEMAP_BYTES >> 8 ) & 0xFF
-    sta.l 0x4306
+    lda.b #sizeof(Engine.tilemap) & 0xFF
+    sta.l dma0.DASL
+    lda.b #( sizeof(Engine.tilemap) >> 8 ) & 0xFF
+    sta.l dma0.DASH
 
     lda #0x01
     sta.l cpu_regs.MDMAEN
 
     lda #0
-    sta.l tilemap_dirty
+    sta.l engine_state.tilemap_dirty
 
 _engine_skip_tilemap:
-    lda.l palette_dirty
+    lda.l engine_state.palette_dirty
     beq _engine_done
 
     lda #0x00
-    sta.l screen.CGADD  ; CGRAM addr = 0
+    sta.l screen.CGADD  ; CGRAM address 0
 
     lda #0x00
-    sta.l 0x4300  ; DMAP0: 1-reg auto-increment
+    sta.l dma0.DMAP  ; 1-register auto-increment
     lda #0x22
-    sta.l 0x4301  ; BBAD0 -> $2122 (CGDATA)
+    sta.l dma0.BBAD  ; -> $2122 (CGDATA)
 
-    lda.b #palette_buffer & 0xFF
-    sta.l 0x4302
-    lda.b #( palette_buffer >> 8 ) & 0xFF
-    sta.l 0x4303
-    lda.b #( palette_buffer >> 16 ) & 0xFF
-    sta.l 0x4304
+    lda.b #engine_state.palette & 0xFF
+    sta.l dma0.A1TL
+    lda.b #( engine_state.palette >> 8 ) & 0xFF
+    sta.l dma0.A1TH
+    lda.b #( engine_state.palette >> 16 ) & 0xFF
+    sta.l dma0.A1B
 
-    lda.b #PALETTE_BYTES & 0xFF
-    sta.l 0x4305
-    lda.b #( PALETTE_BYTES >> 8 ) & 0xFF
-    sta.l 0x4306
+    lda.b #sizeof(Engine.palette) & 0xFF
+    sta.l dma0.DASL
+    lda.b #( sizeof(Engine.palette) >> 8 ) & 0xFF
+    sta.l dma0.DASH
 
     lda #0x01
     sta.l cpu_regs.MDMAEN
 
     lda #0
-    sta.l palette_dirty
+    sta.l engine_state.palette_dirty
 
 _engine_done:
     rts
 }
 
 .alloc engine_update_l in engine {
-"""
-Long entry: callers outside the engine bank use `jsr.l
-    engine_update_l`. Trampolines into the bare `engine_update`
-    impl and returns with `rtl`.
-"""
-
-
+"""Long entry to `engine_update`, for the NMI thunk in bank 0."""
     jsr.w engine_update
     rtl
 }

@@ -1,9 +1,7 @@
 """
-Bank-1 data blobs: font tiles + greeting string.
-
-Allocated into the shared `bank1` pool declared in `layout.s`. Palette
-init values are not stored here — they're written into the WRAM shadow
-at runtime via `set_palette_color` (see `ppu_tools.s`).
+Bank-1 data: the font tiles and the greeting string, placed by the
+`data` pool. Palette colours aren't stored here: the boot path writes
+them into the WRAM shadow with `set_palette_color` (`ppu_tools.s`).
 """
 
 
@@ -16,8 +14,7 @@ at runtime via `set_palette_color` (see `ppu_tools.s`).
 }
 
 .alloc hello_string in data {
-"""Table-encoded greeting drawn by the boot path  ; null-terminated."""
+"""Table-encoded greeting drawn by the boot path, null-terminated."""
     .text "Gyshal Whistle"
     .db 0
 }
-

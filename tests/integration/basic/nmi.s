@@ -1,17 +1,10 @@
 """
-Interrupt thunks in bank 0: BRK→STP, NMI→engine_update_l.
-
-Imports `engine` so per-module precompile (object mode) can resolve
-`engine_update_l` to an extern. Main's direct-mode import inlines
-both anyway.
+Interrupt thunks in bank 0: BRK and the other traps stop the CPU, NMI
+long-calls `engine_update_l`.
 """
 
 
-.import "@std/snes/ppu"
-.import "@std/snes/cpu"
-.import "@std/snes/dma"
 .import "preamble"
-
 .import "engine"
 
 .alloc brk_handler in client {
@@ -20,7 +13,7 @@ both anyway.
 }
 
 .alloc nmi_handler in client {
-"""Vblank entry. Save regs, long-call engine, ack RDNMI, return."""
+"""Vblank entry: save registers, long-call the engine, ack RDNMI, return."""
     .a8
     .i16
     pha
@@ -29,7 +22,7 @@ both anyway.
     phb
     phd
     jsr.l engine_update_l
-    lda.l cpu_regs.RDNMI  ; ack vblank-NMI
+    lda.l cpu_regs.RDNMI  ; ack the vblank NMI
     pld
     plb
     ply
