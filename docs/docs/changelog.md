@@ -190,9 +190,10 @@ player:
 - A module's `.map` regions travel with `.import` and its object; the
   linker merges identical ones, and a conflicting one is `E0308`.
 - `.incbin` symbols and `scope.label` names reach importers.
-- Using a constant from a module you don't `.import` still resolves in
-  1.1.0, with a warning naming the import to add; it will become an
-  error.
+- A module sees the constants of what it imports, directly or through
+  another import, and nothing else. Using a constant of a module it
+  doesn't import is `E0200`, with the `.import` to add as the hint
+  (alphas 42 to 51 resolved it with a warning).
 - A module's `_` names are private. Its importers can't name them
   (the error says which module owns the name), and a module's own
   `_name` shadows an imported one. A `_label` is also private to its

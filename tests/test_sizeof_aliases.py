@@ -108,13 +108,3 @@ def test_an_importer_uses_an_alias_built_on_sizeof(tmp_path: Path, use: str, exp
     assert callable(expected)
     want = expected(blob)
     assert _ips_tail(tmp_path / "out.ips", len(want)) == want
-
-
-@pytest.mark.parametrize(
-    ("name", "spelled"),
-    [("vwf_font.__size", "sizeof(vwf_font)"), ("LEAK", "LEAK")],
-)
-def test_the_unimported_use_warning_spells_sizes_as_sizeof(name: str, spelled: str) -> None:
-    from a816.module_builder import _spelled
-
-    assert _spelled(name) == spelled
