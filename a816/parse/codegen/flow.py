@@ -11,7 +11,7 @@ from a816.exceptions import (
     ExternalSymbolReference,
     SymbolNotDefined,
 )
-from a816.parse.ast.expression import eval_expression
+from a816.parse.ast.expression import eval_expression, identifier_tokens
 from a816.parse.ast.nodes import (
     BlockAstNode,
     CodeLookupAstNode,
@@ -96,13 +96,7 @@ def _expression_touches_local_label(expr: ExpressionAstNode, resolver: Resolver)
     """Return True if any identifier in ``expr`` resolves to a module-local CODE label."""
     if not resolver.context.is_object_mode:
         return False
-    for term in expr.tokens:
-        tok = getattr(term, "token", None)
-        if tok is None or tok.type != TokenType.IDENTIFIER:
-            continue
-        if resolver.current_scope.find_label_scope(tok.value) is not None:
-            return True
-    return False
+    return any(resolver.current_scope.find_label_scope(tok.value) is not None for tok in identifier_tokens(expr.tokens))
 
 
 def _macro_hint(name: str, macro_definitions: MacroDefinitions) -> str | None:

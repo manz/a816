@@ -143,17 +143,14 @@ class SymbolNode(NodeBase):
         return current_pc
 
     def _references_local_label(self) -> bool:
-        from a816.parse.tokens import TokenType
+        from a816.parse.ast.expression import identifier_tokens
 
         if not isinstance(self.expression, ExpressionAstNode):
             return False
-        for term in self.expression.tokens:
-            tok = getattr(term, "token", None)
-            if tok is None or tok.type != TokenType.IDENTIFIER:
-                continue
-            if self.resolver.current_scope.find_label_scope(tok.value) is not None:
-                return True
-        return False
+        return any(
+            self.resolver.current_scope.find_label_scope(tok.value) is not None
+            for tok in identifier_tokens(self.expression.tokens)
+        )
 
     def __str__(self) -> str:
         return f"SymbolNode({self.symbol_name}, {self.expression})"
