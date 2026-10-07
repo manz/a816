@@ -76,6 +76,10 @@ player:
   `.sym` / `.adbg` next to the output.
 - Two fixes change output: `ora.w #imm` now encodes `$09` (1.0 emitted
   `lda`'s `$A9`), and a `-D` value that reads as a number is a number.
+- A `-D` name must be a symbol name (`scope.name` allowed). A name no
+  source can spell is a usage error: `-D " DEBUG=1"` passed as one shell
+  word used to define ` DEBUG`, leading space included, so every
+  `.if DEBUG` dropped out without a word.
 - Python API:
   - `assemble_string_with_emitter` raises `A816Error` (`AssemblyError`,
     `NodeError`) instead of returning an error string, and
@@ -103,7 +107,13 @@ player:
 - `.relocate SYMBOL OLD_START OLD_END into POOL` moves a routine and
   gives its old space back; `.reclaim POOL START END` adds slack.
 - `.assert EXPR, "message"` checks layout invariants once every address
-  is final; every failed assert is reported (`E0407`).
+  is final; every failed assert is reported (`E0407`), with the size of
+  each alloc it mentions. An `.assert` without its message says so.
+- An alloc whose body emits more or fewer bytes than the slot it was
+  given is `E0337`, instead of shifting what follows.
+- Alloc names are global: the same pool and name from two different
+  places is a duplicate symbol (`E0400`), not one block silently
+  replacing the other.
 - Pools merge across modules by name, and the linker places allocs from
   every object in one pass.
 - Overlapping writes fail the build by default (`E0408`), checked
@@ -133,9 +143,11 @@ player:
   expression (`.assert`, `.for` bounds and array lengths included). An
   alloc or reservation from another module resolves at link. Misuse is
   `E0321`.
-- `(expr as T).field` casts and `view := (expr as T)` typed binds,
-  over constants, labels and `.extern` symbols alike; the operand size
-  follows the bind's base.
+- `(expr as T).field` casts and typed binds, over constants, labels and
+  `.extern` symbols alike; the operand size follows the bind's base.
+  `view := (expr as T)` binds eagerly; `view = (expr as T)` is a lazy
+  view, which also works over a module's own pooled labels (placed at
+  link): its fields relocate with the label.
 - `.istruct Type { ... }` emits an initialized instance: strings,
   lists, nested structs and bit fields, zero-filling the rest.
 - `.label NAME = ADDR` names an address for debuggers and the LSP
@@ -192,6 +204,12 @@ player:
   HiROM, ExHiROM, SA-1 and the rest), `[map.N]` regions in bsnes form,
   `rom_size` and `[experimental]` flags.
 - An `.sfc` image is padded to `rom_size`.
+- Cold multi-module builds scale with the project instead of its square:
+  each imported module's object, source and import plan are read once
+  per build, not once per importer. A 100-module project went from 19 s
+  to 2.3 s, ff4 from 3.7 s to 1.5 s, cacheguard from 1.8 s to 0.8 s.
+  Scanning is about 1.8x faster, and parsed nodes are immutable, so the
+  build shares them between modules safely.
 
 ### Diagnostics
 
@@ -205,6 +223,8 @@ player:
 - An undefined symbol passed to a macro is reported where the caller
   wrote it, with the macro parameter it was bound to.
 - Several errors from one pass are reported together.
+- An unterminated `/* ...` block comment is `E0004`, pointing at where
+  it opens, instead of hanging the scanner.
 - Pool overflows say whether the block is too big, the pool fragmented
   or full, and what to try.
 - A duplicate global names both definitions and their values (`E0400`).
@@ -214,7 +234,8 @@ player:
 
 - `a816 format [--check]`: a canonical formatter that keeps comments,
   docstrings and strings intact and settles in one pass; it takes
-  several paths, or `-` for stdin.
+  several paths, or `-` for stdin. A unary operator stays against its
+  operand (`~3`, `-x`).
 - `a816 check`: docstring rules (`DOC001` to `DOC007`), naming (`N801`,
   `N802`), struct casts (`S001`, `S003`, `S004`), line length (`E501`),
   redundant size suffixes (`OP001`), program structure (`ST001` for a
