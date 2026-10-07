@@ -22,79 +22,15 @@ from a816.parse.ast.nodes import (
     Term,
     UnaryOp,
 )
+from a816.parse.ast.nodes.base import shunting_yard
 from a816.parse.tokens import Token, TokenType
 from a816.symbols import Resolver
 
-OPERATOR_PRECEDENCE = {
-    # unary 1
-    "(": 1,
-    ")": 1,
-    "~": 2,
-    "*": 3,
-    "/": 3,
-    "%": 3,
-    "+": 4,
-    "-": 4,
-    "<<": 5,
-    ">>": 5,
-    ">=": 6,
-    "<=": 6,
-    ">": 6,
-    "<": 6,
-    "==": 7,
-    "!=": 7,
-    "&": 8,
-    "^": 9,
-    "|": 10,
-}
 
-
-def reverse_find_token(items: list[ExprNode], value: str) -> int:
-    for pos in range(len(items) - 1, -1, -1):
-        if items[pos].token.value == value:
-            return pos
-    return -1
-
-
-def _pop_higher_precedence(
-    operator_stack: list[ExprNode], output_queue: list[ExprNode], current_precedence: int
-) -> None:
-    while (
-        operator_stack
-        and OPERATOR_PRECEDENCE[operator_stack[-1].token.value] <= current_precedence
-        and operator_stack[-1].token.value != "("
-    ):
-        output_queue.append(operator_stack.pop())
-
-
-def _pop_until_lparen(operator_stack: list[ExprNode], output_queue: list[ExprNode]) -> None:
-    lparen_index = reverse_find_token(operator_stack, "(")
-    if lparen_index < 0:
-        raise ValueError("mismatched parenthesis")
-    while len(operator_stack) > lparen_index + 1:
-        output_queue.append(operator_stack.pop())
-    operator_stack.pop()
-
-
-def shunting_yard(expr_nodes: Sequence[ExprNode]) -> list[ExprNode]:
-    output_queue: list[ExprNode] = []
-    operator_stack: list[ExprNode] = []
-
-    for expr in expr_nodes:
-        if isinstance(expr, Term | CastAccessExprNode | CastValueExprNode | SizeofExprNode):
-            output_queue.append(expr)
-        elif isinstance(expr, BinOp | UnaryOp):
-            current_precedence = OPERATOR_PRECEDENCE[expr.token.value] if isinstance(expr, BinOp) else 2
-            _pop_higher_precedence(operator_stack, output_queue, current_precedence)
-            operator_stack.append(expr)
-        elif expr.token.type == TokenType.LPAREN:
-            operator_stack.append(expr)
-        elif expr.token.type == TokenType.RPAREN:
-            _pop_until_lparen(operator_stack, output_queue)
-
-    while operator_stack:
-        output_queue.append(operator_stack.pop())
-    return output_queue
+def _ordered(expression: ExpressionAstNode) -> list[ExprNode] | tuple[ExprNode, ...]:
+    """The expression in evaluation order: the RPN its node worked out at
+    parse time, or a fresh ordering that reports its mismatched parenthesis."""
+    return expression.rpn if expression.rpn is not None else shunting_yard(expression.tokens)
 
 
 _NUMBER_BASES = {"0x": 16, "0b": 2, "0o": 8}
@@ -338,7 +274,7 @@ def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | s
 
 def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | str:
     """Evaluate an expression, detecting external symbol references"""
-    ordered = shunting_yard(expression.tokens)
+    ordered = _ordered(expression)
 
     if resolver.context.is_object_mode:
         external_symbols = _collect_external_symbols(ordered, resolver)
@@ -359,7 +295,7 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
 TermPusher = Callable[[ExprNode, list[int | str]], None]
 
 
-def _fold_rpn(ordered: list[ExprNode], push_term: TermPusher) -> int | str:
+def _fold_rpn(ordered: Sequence[ExprNode], push_term: TermPusher) -> int | str:
     """Evaluate a shunting-yard output queue; `push_term` resolves operands."""
     values_stack: list[int | str] = []
     for current in ordered:
@@ -388,7 +324,7 @@ def eval_constant_expression(expr_str: str) -> int:
     identifier, `ScannerException` / `ParserSyntaxError` for malformed text
     and `NodeError` for a division by zero or an over-wide `~` operand.
     """
-    ordered = shunting_yard(expr_to_ast(expr_str).tokens)
+    ordered = _ordered(expr_to_ast(expr_str))
     return int(_fold_rpn(ordered, _push_number))
 
 
