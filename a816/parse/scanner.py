@@ -19,6 +19,7 @@ class Scanner:
     state: Optional["ScannerStateFunc"] = None
     start = 0
     pos = 0
+    end = 0  # len(input), read by every primitive
 
     line = 0
     column = 0
@@ -45,6 +46,7 @@ class Scanner:
         # lines already consumed up to the failure point would be available).
         self.file.lines = input_.split("\n")
         self.input = input_
+        self.end = len(input_)
         self._line_starts = [0]
         offset = 0
         for line in self.file.lines[:-1]:
@@ -53,7 +55,7 @@ class Scanner:
         self.state = self.initial_state
         self.tokens = []
         self.errors = []
-        while self.pos < len(self.input):
+        while self.pos < self.end:
             if self.state is None:
                 break
             try:
@@ -71,7 +73,7 @@ class Scanner:
 
     def next(self) -> str | None:
         pos = self.pos
-        if pos < len(self.input):
+        if pos < self.end:
             self.pos = pos + 1
             return self.input[pos]
         return None
@@ -81,13 +83,13 @@ class Scanner:
 
     def peek(self, k: int = 0) -> str:
         i = self.pos + k
-        return self.input[i] if i < len(self.input) else EOF
+        return self.input[i] if i < self.end else EOF
 
     def accept(self, candidates: str, negate: bool = False) -> bool:
         pos = self.pos
-        ch = self.input[pos] if pos < len(self.input) else EOF
+        ch = self.input[pos] if pos < self.end else EOF
         if (ch in candidates) != negate:
-            if pos < len(self.input):
+            if pos < self.end:
                 self.pos = pos + 1
             return True
         return False
@@ -99,7 +101,12 @@ class Scanner:
         return False
 
     def accept_run(self, candidates: str, negate: bool = False) -> None:
-        match = _run_pattern(candidates, negate).match(self.input, self.pos)
+        pos = self.pos
+        # Most runs are empty (no blank before the next token): settle
+        # those on one character before reaching for the regex.
+        if pos >= self.end or (self.input[pos] in candidates) == negate:
+            return
+        match = _run_pattern(candidates, negate).match(self.input, pos)
         if match is not None:
             self.pos = match.end()
 
@@ -107,7 +114,9 @@ class Scanner:
         self._sync_start()
 
     def ignore_run(self, candidates: str) -> None:
-        self.accept_run(candidates)
+        pos = self.pos
+        if pos < self.end and self.input[pos] in candidates:
+            self.accept_run(candidates)
         self.start = self.pos
 
     def current_token_text(self) -> str:
