@@ -512,10 +512,12 @@ the unselected branch isn't emitted.
 ### `.for var := lo, hi { ... }`
 
 Compile-time loop. Body is expanded once per integer in
-`[lo, hi]`. `var` is a binding visible inside the body.
+`[lo, hi)`: `hi` itself is excluded, so `.for i := 0, 8` runs for
+`i = 0` to `7`, eight times, and `lo >= hi` runs nothing. `var` is a
+binding visible inside the body.
 
 ```ca65
-.for i := 0, 7 {
+.for i := 0, 8 {
     lda.b #i
     sta.l 0x2100 + i
 }
