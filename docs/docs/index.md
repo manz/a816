@@ -348,7 +348,11 @@ editor setup.
 
 ## Built-in symbols
 
-- `BUILD_DATE` — set automatically to the current date.
+- `BUILD_DATE`: the UTC date and time a module is compiled
+  (`YYYY-MM-DD HH:MM:SS`). With `SOURCE_DATE_EPOCH` set (seconds since
+  1970) it is that time instead, so two builds give the same bytes; a
+  malformed value is an error. A module served from the build cache
+  keeps the date it was compiled with.
 
 `.text` strings expand `${VAR}` references against defined symbols.
 
