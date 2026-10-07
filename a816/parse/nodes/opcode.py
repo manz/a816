@@ -199,6 +199,7 @@ class OpcodeNode(NodeBase):
         """
         if self.opcode in _FORGETS_REGISTER_SIZES:
             self.resolver.forget_register_sizes()
+            self.resolver.end_of_flow()
             return
         flags = self._rep_sep_flags()
         if flags is None:
@@ -224,9 +225,13 @@ class OpcodeNode(NodeBase):
         self._maybe_update_register_sizes()
         opcode_emitter = self._get_emitter()
         try:
-            return current_pc + opcode_emitter.supposed_length(self.value_node, self.size, self.resolver)
+            after = current_pc + opcode_emitter.supposed_length(self.value_node, self.size, self.resolver)
         except UndecidableOperandSizeError as undecidable:
             raise self._undecidable_size_error(undecidable, opcode_emitter) from undecidable
+        if self.opcode in _FORGETS_REGISTER_SIZES:
+            # Same boundary as `emit`, or labels bind at other widths than the bytes.
+            self.resolver.end_of_flow()
+        return after
 
     def _undecidable_size_error(self, error: UndecidableOperandSizeError, emitter: object) -> NodeError:
         """`jmp target` with `target` placed by another module: which form to
@@ -271,8 +276,10 @@ class OpcodeNode(NodeBase):
         new_size = 16 if self.opcode == "rep" else 8
         if value & 0x20:
             self.resolver.a_size = new_size
+            self.resolver.a_size_from_flags = True
         if value & 0x10:
             self.resolver.i_size = new_size
+            self.resolver.i_size_from_flags = True
 
     def __str__(self) -> str:
         return f"OpcodeNode({self.opcode}, {self.addressing_mode}, {self.index}, {self.value_node})"

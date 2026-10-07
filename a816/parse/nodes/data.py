@@ -25,10 +25,12 @@ class RegisterSizeNode(NodeBase):
     def _apply(self, mark_known: bool) -> None:
         if self.register == "a":
             self.resolver.a_size = self.size
+            self.resolver.a_size_from_flags = False
             if mark_known:
                 self.resolver.a_size_known = True
         else:
             self.resolver.i_size = self.size
+            self.resolver.i_size_from_flags = False
             if mark_known:
                 self.resolver.i_size_known = True
 

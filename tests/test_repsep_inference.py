@@ -95,3 +95,31 @@ class TestSymbolicImmediateStillUpdatesSize:
         src = "FLAGS = 0x30\n*=0x008000\nrep #FLAGS\nlda #0xbeef\n"
         writer = _assemble(src)
         assert _emitted_bytes(writer) == b"\xc2\x30\xa9\xef\xbe"
+
+
+class TestFlagSizesEndWithTheFlow:
+    """A tracked `rep`/`sep` is the routine's runtime state: the code after an
+    `rts`/`jmp`/`bra`/`plp` is reached from elsewhere, back at 8 bits."""
+
+    def test_rts_ends_a_rep_widened_accumulator(self) -> None:
+        """ff4 `libmz`: `_enable_display`'s `lda #0` emitted 16-bit after another routine's `rep`."""
+        writer = _assemble("*=0x008000\nrep #0x20\nlda #0x1234\nrts\nlda #0x00\nrts\n")
+
+        assert _emitted_bytes(writer) == b"\xc2\x20\xa9\x34\x12\x60\xa9\x00\x60"
+
+    def test_jmp_ends_a_rep_widened_index(self) -> None:
+        writer = _assemble("*=0x008000\nrep #0x10\njmp.w 0x8000\nldx #0x01\n")
+
+        assert _emitted_bytes(writer) == b"\xc2\x10\x4c\x00\x80\xa2\x01"
+
+    def test_a_declared_size_outlives_rts(self) -> None:
+        """`.a16` over a file of 16-bit routines must hold across their `rts`."""
+        writer = _assemble("*=0x008000\n.a16\nlda #0x01\nrts\nlda #0x02\n")
+
+        assert _emitted_bytes(writer) == b"\xa9\x01\x00\x60\xa9\x02\x00"
+
+    def test_a_label_after_the_boundary_binds_where_its_bytes_land(self) -> None:
+        """Label passes reset at the same boundary as emit, or labels shift."""
+        writer = _assemble("*=0x008000\nrep #0x20\nrts\nlda #0x00\ntarget:\nbra target\n")
+
+        assert _emitted_bytes(writer) == b"\xc2\x20\x60\xa9\x00\x80\xfe"

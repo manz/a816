@@ -320,6 +320,12 @@ class Resolver:
         # sizes drive the immediate-width mismatch warning.
         self.a_size_known: bool = False
         self.i_size_known: bool = False
+        # Whether `a_size` / `i_size` came from a tracked `rep`/`sep` rather
+        # than a `.a*`/`.i*` declaration. A flag-set size is runtime state of
+        # the routine that set it, so it ends where control flow leaves
+        # (`end_of_flow`); a declared size holds until redeclared.
+        self.a_size_from_flags: bool = False
+        self.i_size_from_flags: bool = False
         # Per-pool sandbox cursor for object-mode `.alloc` body labels.
         # Each `.alloc NAME in POOL` advances this so successive allocs
         # bind their bodies at distinct addresses inside the pool's
@@ -455,7 +461,20 @@ class Resolver:
         """
         self.a_size = 8
         self.i_size = 8
+        self.a_size_from_flags = False
+        self.i_size_from_flags = False
         self.forget_register_sizes()
+
+    def end_of_flow(self) -> None:
+        """Leaving the current flow (`rts`, `jmp`, `bra`, `plp`, ...): code
+        after it is reached from elsewhere, so a size a tracked `rep`/`sep`
+        set goes back to the 8-bit default. Declared sizes stay."""
+        if self.a_size_from_flags:
+            self.a_size = 8
+            self.a_size_from_flags = False
+        if self.i_size_from_flags:
+            self.i_size = 8
+            self.i_size_from_flags = False
 
     def forget_register_sizes(self) -> None:
         """Mark A/X sizes unknown (new placement block, `plp`, ...)."""
