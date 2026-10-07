@@ -422,7 +422,7 @@ def _runtime_extern_names(node: object) -> list[str]:
     if isinstance(node, LabelAstNode):
         return _public([node.label])
     if isinstance(node, AllocAstNode):
-        return list(_public([node.name])) if node.name else []
+        return _public([node.name, f"{node.name}.__size"]) if node.name else []
     if isinstance(node, RelocateAstNode):
         return list(_public([node.symbol]))
     if isinstance(node, IncludeBinaryAstNode):

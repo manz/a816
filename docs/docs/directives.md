@@ -619,7 +619,9 @@ together share its memory (`.reserve x 4 in POOL.A`). See
 ### `.alloc NAME in POOL { body }`
 
 Reserves space for `body` in the named pool; the allocator picks the
-address and binds `NAME` there.
+address and binds `NAME` there. `NAME.__size` is the body's byte count,
+like `Type.__size` for a struct; every named alloc publishes it, pinned
+ones and `.reserve` included.
 
 ### `.alloc [NAME] at ADDR [size N] { body }`
 
@@ -681,6 +683,9 @@ address; nothing is emitted into the image.
   you still want overlap checking across the whole layout.
 * `.reserve NAME as TYPE [at ADDR] in POOL`: reserves `sizeof(TYPE)` and publishes
   `NAME.<field>` at each struct offset; `at ADDR` pins it like the flat form.
+
+`NAME.__size` is the reserved size, so code clearing or copying the
+buffer needs no second constant: `ldx.w #bg_char.__size - 1`.
 
 ```ca65
 .pool vram { bss  range 0x0000 0x7fff  strategy order }
