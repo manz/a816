@@ -18,7 +18,9 @@ class EmitState:
 class ObjectEmitState:
     """Mutable state threaded through Program.emit_with_relocations."""
 
-    current_block: bytes
+    # Grows in place: a `bytes` would be copied whole on every node, which
+    # is quadratic over a section.
+    current_block: bytearray
     placed: bool = False
     """True once the emit cursor has a home (`*=` at root, inside an
     `.alloc` body, or from the start when the context does not require
