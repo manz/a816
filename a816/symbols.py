@@ -345,6 +345,10 @@ class Resolver:
         self.reloc_address: Address
         self.context = AssemblyContext()
         self.pools: dict[str, Pool] = {}
+        # Source file of each pool's first `.pool` declaration: a second one
+        # from another file contributes ranges, one from the same file is a
+        # mistake (`.reclaim` adds ranges there).
+        self.pool_sources: dict[str, str] = {}
         # (pool, alloc name) -> source token of the `.alloc` that requested
         # the slot, so an allocator overflow can point back at it.
         self.alloc_sites: dict[tuple[str, str], Token] = {}
