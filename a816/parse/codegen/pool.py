@@ -14,7 +14,7 @@ from a816.exceptions import (
     ExternalSymbolReference,
     SymbolNotDefined,
 )
-from a816.parse.ast.expression import eval_expression, expr_to_ast
+from a816.parse.ast.expression import eval_expression, expr_to_ast, reconstruct_expression
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AssertAstNode,
@@ -291,7 +291,7 @@ def _reserved_size(node: AllocAstNode, resolver: Resolver) -> int | None:
         return None
     try:
         size = eval_expression(reserve.size, resolver)
-    except (A816Error, ExternalExpressionReference):
+    except A816Error:
         return None
     return size if isinstance(size, int) else None
 
@@ -532,7 +532,10 @@ def generate_assert(
     Parse-only runs (LSP) skip it."""
     from a816.object_file import LinkAssert
 
-    check = LinkAssert(node.expression.to_canonical(), node.message, _source_of_token(file_info))
+    # Rendered with the resolver: `sizeof` / `countof` fold to numbers and
+    # casts to arithmetic here, since the linker has no struct layouts.
+    expression = reconstruct_expression(node.expression, resolver)
+    check = LinkAssert(expression, node.message, _source_of_token(file_info))
     if resolver.context.is_object_mode and resolver.context.object_writer is not None:
         resolver.context.object_writer.asserts.append(check)
     elif resolver.context.is_direct_mode:

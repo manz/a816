@@ -1,10 +1,10 @@
-"""`sizeof(...)` / `countof(...)`: sizes read from struct layouts and reservations.
+"""`sizeof(...)` / `countof(...)`: sizes of structs, struct fields, reservations and allocs.
 
 A struct, a struct field or a reservation declared in this module (or a
-typed one from an import) has a size known now, an `int`. A flat
-reservation whose size isn't known yet stands for its `NAME.__size`
-symbol, returned as a `str` for the caller to look up (an import's
-resolves at link).
+typed one from an import) has a size known now, an `int`. An alloc, or a
+flat reservation whose size isn't known yet, stands for its internal
+`NAME.__size` symbol, returned as a `str` for the caller to look up (an
+import's resolves at link). User code writes `sizeof(NAME)`, never the dunder.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 import difflib
 
 from a816.error_codes import E_CODEGEN_SIZE_OPERAND
-from a816.exceptions import A816Error
+from a816.exceptions import A816Error, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.nodes import SizeofExprNode
 from a816.symbols import Resolver
 
@@ -20,7 +20,7 @@ _COUNT_HINT = "countof counts the elements of a `TYPE[N]` field; sizeof gives by
 
 
 def size_of(node: SizeofExprNode, resolver: Resolver) -> int | str:
-    """The operator's value, or the `NAME.__size` symbol standing for it."""
+    """The operator's value, or the internal `NAME.__size` symbol standing for it."""
     split = _split_struct(node.path, resolver)
     if node.kind == "countof":
         return _count(node, split, resolver)
@@ -30,7 +30,13 @@ def size_of(node: SizeofExprNode, resolver: Resolver) -> int | str:
     if node.path in resolver.reservation_sizes:
         size = resolver.reservation_sizes[node.path]
         return f"{node.path}.__size" if size is None else size
-    raise _error(node, f"`sizeof({node.path})`: `{node.path}` is not a struct, struct field or reservation", resolver)
+    if _is_alloc(node.path, resolver):
+        return f"{node.path}.__size"
+    if "." in node.path:
+        raise _not_visible(node, node.path.split(".", 1)[0], resolver)
+    raise _error(
+        node, f"`sizeof({node.path})`: no struct, reservation or alloc `{node.path}` is visible here", resolver
+    )
 
 
 def _split_struct(path: str, resolver: Resolver) -> tuple[str, str] | None:
@@ -58,6 +64,8 @@ def _field_size(node: SizeofExprNode, type_name: str, field: str, resolver: Reso
 
 
 def _count(node: SizeofExprNode, split: tuple[str, str] | None, resolver: Resolver) -> int:
+    if split is None and "." in node.path:
+        raise _not_visible(node, node.path.split(".", 1)[0], resolver)
     if split is None or not split[1]:
         raise _error(node, f"`countof({node.path})` needs an array field, `Type.field`", resolver, _COUNT_HINT)
     type_name, field = split
@@ -80,12 +88,36 @@ def _entry_width(node: SizeofExprNode, type_name: str, field: str, resolver: Res
     raise _error(node, f"`{node.kind}({node.path})`: struct `{type_name}` has no field `{field}`", resolver, hint)
 
 
+def _is_alloc(name: str, resolver: Resolver) -> bool:
+    """`name` is an alloc (it publishes `name.__size`), here or imported."""
+    try:
+        resolver.current_scope.value_for(f"{name}.__size")
+    except ExternalSymbolReference:
+        return True
+    except SymbolNotDefined:
+        return False
+    return True
+
+
+def _not_visible(node: SizeofExprNode, head: str, resolver: Resolver) -> A816Error:
+    """`T.field` whose `T` is no struct here: usually a struct from a module not imported."""
+    return _error(
+        node,
+        f"`{node.kind}({node.path})`: no struct `{head}` is visible here",
+        resolver,
+        hint=_close_name(head, resolver) or f"declare `.struct {head}` first, or `.import` the module that does",
+    )
+
+
+def _close_name(name: str, resolver: Resolver) -> str | None:
+    close = difflib.get_close_matches(name, [*resolver.struct_sizes, *resolver.reservation_sizes], n=1)
+    return f"did you mean `{close[0]}`?" if close else None
+
+
 def _error(node: SizeofExprNode, message: str, resolver: Resolver, hint: str | None = None) -> A816Error:
     # Late import: `a816.parse.nodes` imports the expression module, which imports this one.
     from a816.parse.nodes.errors import NodeError
 
     if hint is None:
-        names = [*resolver.struct_sizes, *resolver.reservation_sizes]
-        close = difflib.get_close_matches(node.path, names, n=1)
-        hint = f"did you mean `{close[0]}`?" if close else "sizeof takes a struct, a struct field or a reservation"
+        hint = _close_name(node.path, resolver) or "declare it first, or `.import` the module that does"
     return NodeError(message, node.path_token, code=str(E_CODEGEN_SIZE_OPERAND), hint=hint)

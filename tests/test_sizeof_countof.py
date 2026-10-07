@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from a816.exceptions import LinkAssertError
 from a816.formatter import A816Formatter
 from a816.module_builder import BuildResult, build_with_imports
 from a816.parse.nodes import NodeError
@@ -65,7 +66,9 @@ def _error(expr: str) -> NodeError:
 @pytest.mark.parametrize(
     ("expr", "message", "hint"),
     [
-        ("sizeof(Pth)", "`Pth` is not a struct, struct field or reservation", "did you mean `Path`?"),
+        ("sizeof(Pth)", "no struct, reservation or alloc `Pth` is visible here", "did you mean `Path`?"),
+        ("sizeof(Nope.x)", "no struct `Nope` is visible here", "`.import` the module that does"),
+        ("countof(Nope.x)", "no struct `Nope` is visible here", "`.import` the module that does"),
         ("sizeof(Path.cnt)", "struct `Path` has no field `cnt`", "did you mean `Path.count`?"),
         ("sizeof(Path.kind)", "`kind` is a bit field and has no byte size", "`Path.kind.mask`"),
         ("countof(Path.count)", "`count` is not an array field", "countof counts the elements"),
@@ -115,10 +118,32 @@ def test_sizeof_a_reservation(reserve: str, code: bytes) -> None:
     assert _object_code(reserve + ".alloc user in code {\n    ldx.w #sizeof(buf)\n}\n") == code
 
 
-def test_sizeof_a_code_alloc_is_refused() -> None:
-    src = _PREAMBLE + ".alloc blob in code {\n    .db 1\n}\n.alloc user in code {\n    ldx.w #sizeof(blob)\n}\n"
-    with pytest.raises(NodeError, match="`blob` is not a struct, struct field or reservation"):
-        Program().assemble_string_with_emitter(src, "m.s", StubWriter())
+@pytest.mark.parametrize(
+    "alloc",
+    [".alloc blob in code {\n    .db 1, 2, 3\n}\n", ".alloc blob at 0xc1e000 {\n    .db 1, 2, 3\n}\n"],
+    ids=["pooled", "pinned"],
+)
+def test_sizeof_an_alloc(alloc: str) -> None:
+    assert _object_code(alloc + ".alloc user in code {\n    ldx.w #sizeof(blob)\n}\n").endswith(b"\xa2\x03\x00")
+
+
+def test_sizeof_inside_an_assert_is_folded_before_the_link() -> None:
+    src = '.struct Pt {\n    word x\n    word y\n}\n.assert sizeof(Pt) == 4, "Pt is 4 bytes"\n'
+    assert _object_code(src + ".alloc user in code {\n    nop\n}\n") == b"\xea"
+
+
+def test_an_assert_the_linker_cannot_evaluate_keeps_its_message_and_line() -> None:
+    src = '.assert 1 / 0 == 0, "never zero"\n.alloc user in code {\n    nop\n}\n'
+    with pytest.raises(LinkAssertError) as exc_info:
+        _object_code(src)
+    message, _expression, source = exc_info.value.failures[0]
+    assert (message.split(" (")[0], source.rsplit("/", 1)[-1]) == ("never zero", "m.s:6")
+
+
+def test_a_failing_assert_with_sizeof_names_its_message() -> None:
+    src = '.struct Pt {\n    word x\n}\n.assert sizeof(Pt) == 4, "Pt is 4 bytes"\n.alloc user in code {\n    nop\n}\n'
+    with pytest.raises(LinkAssertError, match="Pt is 4 bytes"):
+        _object_code(src)
 
 
 def _build(root: Path, files: dict[str, str]) -> BuildResult:
@@ -150,6 +175,14 @@ def test_sizeof_an_imported_reservation(tmp_path: Path, reserve: str, code: byte
     result = _build(tmp_path, {"lib.s": _PREAMBLE + reserve, "main.s": main})
     assert result.exit_code == 0, result.diagnostics
     assert _ips_bytes(tmp_path / "out.ips") == code
+
+
+def test_sizeof_an_imported_alloc_resolves_at_link(tmp_path: Path) -> None:
+    lib = _PREAMBLE + ".alloc blob in code {\n    .db 1, 2, 3, 4, 5\n}\n"
+    main = '.import "lib"\n.alloc user at 0xc1f000 {\n    ldx.w #sizeof(blob)\n}\n'
+    result = _build(tmp_path, {"lib.s": lib, "main.s": main})
+    assert result.exit_code == 0, result.diagnostics
+    assert _ips_bytes(tmp_path / "out.ips").endswith(b"\xa2\x05\x00")
 
 
 def test_sizeof_folds_into_a_link_time_expression(tmp_path: Path) -> None:

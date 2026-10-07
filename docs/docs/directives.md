@@ -323,7 +323,7 @@ fields (`uN`) cannot be arrays.
 its total byte size as `Name.field.__size`, mirroring `Name.__size`.
 There is no indexing syntax: brackets already mean indirect-long
 addressing (`lda [dp]`), so element `i` is plain arithmetic,
-`Path.points + i * Inner.__size`, or an indexed operand
+`Path.points + i * sizeof(Inner)`, or an indexed operand
 (`lda path.title, x`). Typed binds and `.reserve NAME as TYPE` honour
 array fields the same way: the field symbol points at element 0 and
 the reservation spans the whole array.
@@ -331,7 +331,8 @@ the reservation spans the whole array.
 #### Sizes: `sizeof(...)` and `countof(...)`
 
 `sizeof` gives a size in bytes, `countof` an array field's element
-count. Both work in any expression, `.for` bounds and struct array
+count. Prefer them to the `.__size` symbols, which are the assembler's
+internal spelling. Both work in any expression, `.for` bounds and struct array
 lengths included.
 
 ```ca65
@@ -348,11 +349,13 @@ lengths included.
     lda.w #sizeof(Path.count)    ; any other field: its width
     ldx.w #countof(Path.flags)   ; 4 elements, not 8 bytes
     ldx.w #sizeof(text_ring) - 1 ; a reservation's size
+    lda.w #sizeof(intro_tiles)   ; an alloc's body size
 ```
 
-`sizeof` takes a struct, a struct field (nested paths too) or a
-reservation (`.reserve NAME SIZE` or `as TYPE`); a bit field has no byte
-size. `countof` takes an array field. Anything else is `E0321`. A
+`sizeof` takes a struct, a struct field (nested paths too), a
+reservation (`.reserve NAME SIZE` or `as TYPE`) or a named alloc; a bit
+field has no byte size. `countof` takes an array field. Anything else,
+or a name not visible in this module, is `E0321`. An alloc or
 reservation from another module resolves at link, like its address.
 
 #### Typed access: `as` casts and `:=` binds
@@ -646,9 +649,9 @@ together share its memory (`.reserve x 4 in POOL.A`). See
 ### `.alloc NAME in POOL { body }`
 
 Reserves space for `body` in the named pool; the allocator picks the
-address and binds `NAME` there. `NAME.__size` is the body's byte count,
-like `Type.__size` for a struct; every named alloc publishes it, pinned
-ones and `.reserve` included.
+address and binds `NAME` there. `sizeof(NAME)` is the body's byte
+count, for every named alloc, pinned ones and `.reserve` included (the
+internal symbol behind it is `NAME.__size`).
 
 ### `.alloc [NAME] at ADDR [size N] { body }`
 
@@ -711,8 +714,8 @@ address; nothing is emitted into the image.
 * `.reserve NAME as TYPE [at ADDR] in POOL`: reserves `sizeof(TYPE)` and publishes
   `NAME.<field>` at each struct offset; `at ADDR` pins it like the flat form.
 
-`NAME.__size` is the reserved size, so code clearing or copying the
-buffer needs no second constant: `ldx.w #bg_char.__size - 1`.
+`sizeof(NAME)` is the reserved size, so code clearing or copying the
+buffer needs no second constant: `ldx.w #sizeof(bg_char) - 1`.
 
 ```ca65
 .pool vram { bss  range 0x0000 0x7fff  strategy order }
