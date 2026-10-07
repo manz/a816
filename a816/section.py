@@ -34,6 +34,16 @@ if TYPE_CHECKING:
     from a816.object_file import RelocationType
 
 
+ANONYMOUS_PREFIX = "__anon_pin_"
+"""Name prefix of a section with no source name (`*=`, `.alloc at ADDR`)."""
+
+ANONYMOUS_ALLOC_PREFIX = "__anon_alloc_"
+"""Name prefix of the symbol a nameless `.alloc` is placed under."""
+
+PINNED_POOL_PREFIX = "__pinned_at_"
+"""Name prefix of the one-slot pool a `.alloc NAME at ADDR` is placed through."""
+
+
 class Placement(Enum):
     """Where the linker should land a section's bytes."""
 
@@ -130,6 +140,10 @@ class Section:
     lines: list[tuple[int, int, int, int, int]] = field(default_factory=list)
     """Source-line provenance for adbg debug info."""
 
+    source: str = ""
+    """`file:line` the block was declared at, for link-time diagnostics.
+    In memory only: the linker fills it from the pool request."""
+
     bss: bool = False
     """Byte-less reservation section (a `.alloc` into a `bss` pool).
 
@@ -211,7 +225,7 @@ class Section:
         site can supply a real name, this can shrink.
         """
         return cls(
-            name=f"__anon_pin_{base_address:06X}",
+            name=f"{ANONYMOUS_PREFIX}{base_address:06X}",
             placement=Placement.PINNED,
             code=code,
             base_address=base_address,

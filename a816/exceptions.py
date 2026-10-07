@@ -273,6 +273,69 @@ def _describe_span(span: PlacedSpan) -> str:
     return f"`{span.alloc}` in pool `{span.pool}` (0x{span.start:06x}..0x{span.end - 1:06x}){where}"
 
 
+@dataclass(frozen=True)
+class EmittedBlock:
+    """One placed block of ROM bytes, as the overlap check sees it."""
+
+    name: str  # `name in pool p`, `name`, or `alloc at $40:8000`
+    logical: int  # first byte, as the source addresses it
+    start: int  # file offset of the first byte
+    end: int  # file offset, exclusive
+    source: str = ""  # `file:line` of the block's first line, when known
+    pinned_outside_pool: bool = False
+
+
+class BlockOverlapLinkError(LinkerError):
+    """Raised when two placed blocks would write the same ROM bytes."""
+
+    def __init__(self, clashes: list[tuple[EmittedBlock, EmittedBlock]]) -> None:
+        self.clashes = clashes
+        first, second = clashes[0]
+        more = f" (+{len(clashes) - 1} more)" if len(clashes) > 1 else ""
+        super().__init__(f"{first.name} overlaps {second.name}{more}")
+
+    def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.error_codes import E_LINKER_BLOCK_OVERLAP
+        from a816.errors import format_error_simple
+
+        details: list[tuple[str, str]] = []
+        for first, second in self.clashes:
+            details.append(("overlap", f"{_describe_block(first)} x {_describe_block(second)}"))
+            details.append(("shared", _shared_bytes(first, second)))
+        details.append(("hint", _overlap_hint(self.clashes[0])))
+        return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_BLOCK_OVERLAP}]", str(self), details)
+
+
+def _snes_address(address: int) -> str:
+    return f"${address >> 16:02X}:{address & 0xFFFF:04X}"
+
+
+def _describe_block(block: EmittedBlock) -> str:
+    where = f" at {block.source}" if block.source else ""
+    size = _bytes(block.end - block.start)
+    span = size if block.name.startswith("block at ") else f"{size} from {_snes_address(block.logical)}"
+    return f"{block.name} ({span}){where}"
+
+
+def _shared_bytes(first: EmittedBlock, second: EmittedBlock) -> str:
+    """The bytes both blocks write; `second` starts inside `first`."""
+    return f"{_bytes(min(first.end, second.end) - second.start)} from {_snes_address(second.logical)}"
+
+
+def _bytes(count: int) -> str:
+    return f"{count} byte" if count == 1 else f"{count} bytes"
+
+
+def _overlap_hint(clash: tuple[EmittedBlock, EmittedBlock]) -> str:
+    pins = [block for block in clash if block.pinned_outside_pool]
+    if len(pins) == 1 and " in pool " in clash[clash.index(pins[0]) - 1].name:
+        return (
+            "a pool does not place around a pin it does not own; pin it inside the pool: `.alloc ... at ADDR in POOL`"
+        )
+    return "move or shrink one of the blocks so their bytes stay apart"
+
+
 class LinkAssertError(LinkerError):
     """Raised when `.assert` checks fail once every address is final."""
 

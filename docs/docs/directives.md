@@ -38,20 +38,22 @@ ram_routine:
 When two `*=` regions (or one `*=` block plus a `.alloc` placement,
 etc.) produce byte spans that share addresses, the assembler emits a
 diagnostic so a routine that silently grew past its expected end is
-caught early. **Default mode is `error`**: the build fails on the
-first overlap, naming both byte ranges. Override with
+caught early. **Default mode is `error`** (`E0408`): the build fails,
+naming both blocks the way the source names them, with their sizes,
+addresses, `file:line` and the bytes they share. Override with
 `--overlap-mode warn` (logged, build continues) or
 `--overlap-mode off` (silent) on the CLI, or via
 `Program(overlap_mode=...)` from the Python API.
 
 The check runs on the final link (`a816 build`, object + link), across
 every module's sections, so two modules pinning bytes at the same spot
-fail the build too. Addresses in the message are ROM file offsets. On
-error no output file is written.
+fail the build too. On error no output file is written.
 
 ```
-WARNING write at $000004..$00000b overlaps previous write at
-        $000000..$000009 ($000004..$000009 would be silently overwritten)
+linker error[E0408]: `floating` in pool `p` overlaps `pinned`
+  overlap: `floating` in pool `p` (2 bytes from $40:8000) at main.s:8 x `pinned` (4 bytes from $40:8000) at main.s:5
+  shared: 2 bytes from $40:8000
+  hint: a pool does not place around a pin it does not own; pin it inside the pool: `.alloc ... at ADDR in POOL`
 ```
 
 ### `.map`: memory map

@@ -61,7 +61,7 @@ def test_overlapping_modules_fail_the_build_by_default(tmp_path: Path, output_fo
 
 def test_overlap_error_names_the_shared_bytes(tmp_path: Path) -> None:
     result = _build(_write_project(tmp_path, _OVERLAPPING_MODULES), overlap_mode="error")
-    assert any("$000001..$000001" in d for d in result.diagnostics)
+    assert any("shared: 1 byte from $00:8001" in d for d in result.diagnostics)
 
 
 def test_overlap_error_leaves_no_partial_output(tmp_path: Path) -> None:
