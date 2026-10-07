@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from a816.error_codes import E_SYMBOL_EXTERNAL_NOT_ALLOWED, E_SYMBOL_NOT_DEFINED
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import ExpressionAstNode
@@ -84,7 +85,11 @@ class ExpressionNode(ValueNodeProtocol):
                 self._external_symbols = e.external_symbols
                 self.external_symbols = set(e.external_symbols)
                 return 0
-            raise NodeError(f"Expression contains external symbols: {e.expression_str}", self.file_info) from e
+            raise NodeError(
+                f"Expression contains external symbols: {e.expression_str}",
+                self.file_info,
+                code=str(E_SYMBOL_EXTERNAL_NOT_ALLOWED),
+            ) from e
         except ExternalSymbolReference as e:
             if self.resolver.context.is_object_mode:
                 # Inline-substitute any aliases so macro-arg names
@@ -102,7 +107,9 @@ class ExpressionNode(ValueNodeProtocol):
                 )
                 self.external_symbols = {e.symbol_name}
                 return 0
-            raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e
+            raise NodeError(
+                f"{e} ({self}) is not defined in the current scope.", self.file_info, code=str(E_SYMBOL_NOT_DEFINED)
+            ) from e
         except SymbolNotDefined as e:
             raise undefined_symbol_error(e, self.file_info, self.resolver.current_scope) from e
 

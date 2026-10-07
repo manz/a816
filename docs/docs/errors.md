@@ -2,9 +2,9 @@
 
 Assembler diagnostics carry a stable error code so you can search docs
 by code, suppress individual rules in tooling, and correlate output
-across CLI runs. Some older codegen diagnostics still render as a plain
-`error:` with a located caret but no code; they get codes as they are
-touched.
+across CLI runs. Every assembler diagnostic carries one; the test suite
+fails if a new error is raised without a code or a code is missing from
+the catalog below.
 
 ## Anatomy
 
@@ -100,6 +100,12 @@ separate blocks separated by a blank line.
 - `E0210` `:=` references a symbol not yet defined. `:=` evaluates
   its right-hand side immediately (typed binds need the address up
   front); use `=` for a forward reference.
+- `E0211` symbol names a value, not a block: `{{NAME}}` inlines a block
+  argument, and `NAME` holds an expression instead.
+- `E0212` `.import` names a module found on no module path (`-I`,
+  `module-paths` in `a816.toml`, or the bundled `@std` modules).
+- `E0213` `.text` with no `.table` in scope: declare the character table
+  before encoding text with it.
 
 ### Codegen
 
@@ -167,6 +173,24 @@ separate blocks separated by a blank line.
 - `E0337` an alloc body emitted a different number of bytes than the slot
   it reserved. Measuring and emitting disagree: an a816 bug, please report
   it with the source.
+- `E0338` invalid `.pool` declaration: a range or fill that is not a
+  constant integer, a fill outside `0x00..0xFF`, or ranges that overlap
+  or run backwards.
+- `E0339` a pool declared again with a different fill, strategy, `bss`
+  flag or `contexts` list, or a second declaration with new ranges in the
+  same file. Two modules may each contribute ranges to one pool; within a
+  file, `.reclaim` adds a range.
+- `E0340` invalid `align` on an `.alloc`: not a power of two, or a pinned
+  address off its boundary.
+- `E0341` a placement directive (`*=`, `.alloc`, `.relocate`) nested in an
+  `.alloc` body.
+- `E0342` a range given back to a pool (`.reclaim`, or the old range of a
+  `.relocate`) overlaps a range the pool already has, or runs backwards.
+- `E0343` a size that must be positive is not: `.alloc at ADDR size N`
+  with `N <= 0`, or a negative `.res N`.
+- `E0344` an `.alloc` in a `bss` pool emits bytes; reserve space with
+  `.res` or `.reserve` instead.
+- `E0345` a `.label` address does not evaluate to an integer.
 
 ### Linker
 

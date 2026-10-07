@@ -8,7 +8,13 @@ from typing import cast
 from a816.cpu.cpu_65c816 import BlockMoveOpcode, NoOpcodeForOperandSize, Opcode, guess_value_size, snes_opcode_table
 from a816.cpu.mapping import Address
 from a816.cpu.types import AddressingMode, ValueSize
-from a816.error_codes import E_CODEGEN_BRANCH_RANGE, E_CODEGEN_BRANCH_UNMAPPED, E_CODEGEN_UNDECIDABLE_SIZE
+from a816.error_codes import (
+    E_CODEGEN_BAD_ADDRESSING_MODE,
+    E_CODEGEN_BAD_OPERAND_SIZE,
+    E_CODEGEN_BRANCH_RANGE,
+    E_CODEGEN_BRANCH_UNMAPPED,
+    E_CODEGEN_UNDECIDABLE_SIZE,
+)
 from a816.error_codes import E_CODEGEN_IMMEDIATE_OVERFLOW as _E_IMMEDIATE_OVERFLOW
 from a816.exceptions import (
     BranchOutOfRangeError,
@@ -71,6 +77,7 @@ class OpcodeNode(NodeBase):
             raise NodeError(
                 f"Addressing mode ({self.addressing_mode.name}) for opcode_def ({self.opcode}) is not defined.",
                 file_info=self.file_info,
+                code=str(E_CODEGEN_BAD_ADDRESSING_MODE),
             ) from e
 
         if isinstance(opcode_emitter, dict):
@@ -80,6 +87,7 @@ class OpcodeNode(NodeBase):
                 raise NodeError(
                     f"Addressing mode ({self.addressing_mode.name}) for opcode_def ({self.opcode}) needs an index.",
                     file_info=self.file_info,
+                    code=str(E_CODEGEN_BAD_ADDRESSING_MODE),
                 )
         return opcode_emitter
 
@@ -105,6 +113,7 @@ class OpcodeNode(NodeBase):
             raise NodeError(
                 f"{self.opcode} does not supports size ({guessed_size}).",
                 self.file_info,
+                code=str(E_CODEGEN_BAD_OPERAND_SIZE),
             ) from size_error
         except SymbolNotDefined as undefined:
             raise undefined_symbol_error(undefined, self.file_info, self.resolver.current_scope) from undefined

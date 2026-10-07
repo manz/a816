@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 from typing import cast
 
-from a816.error_codes import E_SYMBOL_MACRO_ARITY, E_SYMBOL_UNKNOWN_MACRO
+from a816.error_codes import E_SYMBOL_MACRO_ARITY, E_SYMBOL_NOT_A_BLOCK, E_SYMBOL_UNKNOWN_MACRO
 from a816.exceptions import (
     ExternalExpressionReference,
     ExternalSymbolReference,
@@ -89,7 +89,7 @@ def generate_code_lookup(
     if isinstance(value, BlockAstNode):
         return _code_gen(value.body, resolver, macro_definitions)
     else:
-        raise NodeError(f"{node.symbol} is not a code block ({value})", file_info)
+        raise NodeError(f"{node.symbol} is not a code block ({value})", file_info, code=str(E_SYMBOL_NOT_A_BLOCK))
 
 
 def _expression_touches_local_label(expr: ExpressionAstNode, resolver: Resolver) -> bool:

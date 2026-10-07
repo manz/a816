@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from a816.cpu.mapping import Address
+from a816.error_codes import E_CODEGEN_BAD_LABEL_ADDRESS, E_SYMBOL_EXTERNAL_NOT_ALLOWED
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
@@ -65,11 +66,13 @@ class LabelDeclNode(NodeBase):
             raise NodeError(
                 f".label {self.symbol_name}: address must be a constant expression (got external reference '{ref}')",
                 self.file_info,
+                code=str(E_SYMBOL_EXTERNAL_NOT_ALLOWED),
             ) from e
         if not isinstance(value, int):
             raise NodeError(
                 f".label {self.symbol_name}: address must evaluate to an int, got {type(value).__name__}",
                 self.file_info,
+                code=str(E_CODEGEN_BAD_LABEL_ADDRESS),
             )
         # The value is an absolute address the user supplied — not the
         # current PC. Record it under `absolute_labels` (separate from
@@ -125,7 +128,8 @@ class SymbolNode(NodeBase):
                 raise NodeError(
                     f"{self.symbol_name} = {self.expression.to_canonical()}: "
                     f"external symbols only allowed in object compilation mode.",
-                    self.expression.file_info if hasattr(self.expression, "file_info") else current_pc,  # type: ignore[arg-type]
+                    getattr(self.expression, "file_info", None),
+                    code=str(E_SYMBOL_EXTERNAL_NOT_ALLOWED),
                 ) from e
             self._register_alias(e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str)
         else:

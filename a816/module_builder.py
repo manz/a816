@@ -35,6 +35,10 @@ from a816.parse.mzparser import A816Parser, ParserResult
 logger = logging.getLogger("a816.module_builder")
 
 
+class ModuleCompileError(RuntimeError):
+    """A module failed to compile; its located diagnostics are already reported."""
+
+
 @dataclass
 class BuildResult:
     """Structured result from build operations."""
@@ -288,7 +292,7 @@ class ModuleBuilder:
         if result != 0:
             # The cache key must not outlive the object it described.
             obj_path.with_suffix(".deps").unlink(missing_ok=True)
-            raise RuntimeError(f"Failed to compile module '{module_name}'")
+            raise ModuleCompileError(f"Failed to compile module '{module_name}'")
         return (
             set(program.resolver.dependency_files),
             misses | self._discovery_misses.pop(module_name, set()),
@@ -556,6 +560,9 @@ def build_with_imports(
         # human-readable diagnostic; prefer it over the bare `str()` so the
         # build output is actionable rather than e.g. `Build failed: 252`.
         formatted = e.format() if isinstance(e, A816Error) and hasattr(e, "format") else str(e)
-        logger.error(f"Build failed: {formatted}")  # NOSONAR python:S8572
+        # The module's own errors were reported where they happened; a second
+        # `Build failed: Failed to compile module` line only repeats them.
+        if not isinstance(e, ModuleCompileError):
+            logger.error(f"Build failed: {formatted}")  # NOSONAR python:S8572
         logger.debug("Build traceback", exc_info=True)
         return BuildResult(exit_code=1, diagnostics=[formatted])

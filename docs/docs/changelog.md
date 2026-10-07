@@ -224,9 +224,10 @@ player:
 ### Diagnostics
 
 - Errors carry a stable code (`E0001` to `E0509`), a caret on the
-  offending token, a hint and, for names, a did-you-mean;
-  `a816 explain CODE` documents each one. A few older codegen errors
-  still have no code.
+  offending token, a hint and, for names, a did-you-mean; the
+  [error codes](errors.md) page documents each one. Every diagnostic
+  carries a code, and a failed module is reported once, without a
+  trailing `Build failed` line.
 - An unsized operand naming a symbol resolved at link (`jmp target`
   with `target` from another module) asks for its size (`E0313`), since
   the right form depends on where the linker puts it.

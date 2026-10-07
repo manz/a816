@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from a816.cpu.types import AddressingMode, ValueSize
+from a816.error_codes import E_SYMBOL_NOT_A_VALUE
 from a816.parse.ast.nodes import (
     BlockAstNode,
     ExpressionAstNode,
@@ -51,7 +52,7 @@ def generate_opcode(
     size = None
 
     if isinstance(node.operand, BlockAstNode):
-        raise NodeError("Opcode operand must not be code", file_info)
+        raise NodeError("Opcode operand must not be code", file_info, code=str(E_SYMBOL_NOT_A_VALUE))
 
     size = node.value_size
     if size is None:

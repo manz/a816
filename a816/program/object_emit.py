@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from a816.error_codes import E_CODEGEN_UNPLACED_CODE
+from a816.error_codes import E_CODEGEN_BSS_EMITS, E_CODEGEN_UNPLACED_CODE
 from a816.exceptions import UnmappedBankError
 from a816.parse.nodes import AllocNode, CodePositionNode, IncludeIpsNode, NodeError
 from a816.parse.nodes.errors import node_file_info, unmapped_bank_error
@@ -130,6 +130,7 @@ class ObjectEmitMixin:
                     raise NodeError(
                         f".alloc in bss pool {node.pool_name!r} cannot emit bytes; reserve space with `.res` instead",
                         node.file_info,
+                        code=str(E_CODEGEN_BSS_EMITS),
                     )
                 # Real bytes: not a byte-less section, so don't skip it at emit.
                 section.bss = False

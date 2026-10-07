@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a816.cpu.mapping import Address, LinearAddress
-from a816.error_codes import E_CODEGEN_ALLOC_SIZE_DRIFT, E_SYMBOL_UNKNOWN_POOL
+from a816.error_codes import E_CODEGEN_ALLOC_SIZE_DRIFT, E_CODEGEN_BAD_RECLAIM, E_SYMBOL_UNKNOWN_POOL
 from a816.exceptions import SymbolNotDefined
 from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.symbols import SymbolNode
@@ -346,6 +346,7 @@ class RelocateNode(AllocNode):
                 raise NodeError(
                     f".relocate {self.name!r} reclaim 0x{self.old_start:06x}..0x{self.old_end:06x}: {exc}",
                     self.file_info,
+                    code=str(E_CODEGEN_BAD_RECLAIM),
                 ) from exc
             self._reclaimed = True
         super()._request_slot()
