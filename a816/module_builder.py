@@ -4,9 +4,12 @@ This module handles the automatic discovery, compilation, and linking of
 modules referenced via .import directives.
 """
 
+import gc
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -379,6 +382,10 @@ class ModuleBuilder:
 
     def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
         """Build all modules in topo order, then link."""
+        with _rare_collections():
+            return self._build(main_source, parsed_main_nodes)
+
+    def _build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None) -> ObjectFile:
         self.discover_imports(main_source, parsed_main_nodes)
         compilation_order = self.graph.topological_sort()
         logger.info(f"Compilation order: {compilation_order}")
@@ -397,6 +404,23 @@ class ModuleBuilder:
             return object_files[0]
         logger.info(f"Linking {len(object_files)} module(s)")
         return Linker(object_files).link(base_address=0x8000)
+
+
+# A build allocates millions of short-lived nodes that die by refcount; the
+# default gen0 threshold scans them about a thousand times for little garbage.
+_BUILD_GC_THRESHOLD = (50_000, 20, 20)
+
+
+@contextmanager
+def _rare_collections() -> Iterator[None]:
+    """Collect cycles rarely while a build runs, then restore the thresholds
+    so a long-lived host (the LSP) keeps its own."""
+    saved = gc.get_threshold()
+    gc.set_threshold(*_BUILD_GC_THRESHOLD)
+    try:
+        yield
+    finally:
+        gc.set_threshold(*saved)
 
 
 def _object_needs_linking(obj: ObjectFile) -> bool:
