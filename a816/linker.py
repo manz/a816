@@ -21,6 +21,8 @@ from a816.parse.nodes.errors import NodeError
 from a816.pool import Allocation, Pool, PoolOverflowError
 from a816.section import PINNED_POOL_PREFIX, Placement
 
+_SIZE_SYMBOL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\.__size\b")
+
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
 
@@ -220,12 +222,10 @@ class Linker:
                     raise UndeclaredPoolError(req.pool_name, req.symbol_name)
                 key = (req.pool_name, req.symbol_name)
                 alloc_obj = first_placed.get(key)
-                if alloc_obj is None:
-                    pinned = req.pinned_addr if req.pinned_addr >= 0 else None
-                    alloc_obj = pool.request(
-                        req.symbol_name, req.size, pinned, align=req.align, cross_bank=req.cross_bank
-                    )
-                    first_placed[key] = alloc_obj
+                if alloc_obj is not None:
+                    _reject_a_second_alloc(req, self._alloc_sources[key])
+                else:
+                    alloc_obj = first_placed[key] = _request(pool, req)
                     request_sites[key] = (obj_idx, req.section_idx)
                     self._alloc_sources[key] = req.source
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
@@ -616,9 +616,21 @@ class Linker:
                     )
                     continue
                 if not holds:
-                    failures.append((check.message, check.expression, check.source))
+                    shown = self._show_sizes(check.expression, local_overlay)
+                    failures.append((check.message, shown, check.source))
         if failures:
             raise LinkAssertError(failures)
+
+    def _show_sizes(self, expression: str, local_overlay: dict[str, int] | None) -> str:
+        """An assert as a user reads it: the internal `NAME.__size` symbols
+        (what `sizeof(NAME)` of an alloc becomes) show as their values."""
+
+        def value(match: Match[str]) -> str:
+            name = match.group(0)
+            size = (local_overlay or {}).get(name, self.symbol_map.get(name))
+            return f"{size:#x}" if isinstance(size, int) else f"sizeof({match.group(1)})"
+
+        return _SIZE_SYMBOL_RE.sub(value, expression)
 
     def _resolve_aliases(self) -> None:
         if not self.linked_aliases:
@@ -802,3 +814,20 @@ def _pin_start(pool: Pool, alloc: Allocation) -> int | None:
     if pool.name.startswith(PINNED_POOL_PREFIX) and alloc.placed:
         return alloc.addr
     return None
+
+
+def _request(pool: Pool, request: PoolAlloc) -> Allocation:
+    """Queue one alloc request in its merged pool."""
+    pinned = request.pinned_addr if request.pinned_addr >= 0 else None
+    return pool.request(request.symbol_name, request.size, pinned, align=request.align, cross_bank=request.cross_bank)
+
+
+def _reject_a_second_alloc(request: PoolAlloc, first_source: str) -> None:
+    """The same (pool, name) reached from another `file:line` is a second alloc
+    reusing the name, not one module's request seen through two importers."""
+    if request.source and first_source and request.source != first_source:
+        raise DuplicateSymbolError(
+            request.symbol_name,
+            [(first_source, None), (request.source, None)],
+            hint="alloc names are global: rename one of the allocs",
+        )

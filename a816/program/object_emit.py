@@ -133,6 +133,7 @@ class ObjectEmitMixin:
                     )
                 # Real bytes: not a byte-less section, so don't skip it at emit.
                 section.bss = False
+                node.check_emitted_size(len(section.code))
         finally:
             self.resolver.pc = saved_pc
             self.resolver.reloc_address = saved_reloc

@@ -44,14 +44,11 @@ class ExpressionNode(ValueNodeProtocol):
         which mirrors `_export_name`: NamedScope members become `Name.label`,
         anonymous nested scopes get the `__sc<idx>__` mangle, and root /
         AllocBodyScope labels keep their bare name."""
-        from a816.parse.tokens import TokenType
+        from a816.parse.ast.expression import identifier_tokens
 
         rename: dict[str, str] = {}
         touches_label = False
-        for t in self.expression.tokens:
-            tok = getattr(t, "token", None)
-            if tok is None or tok.type != TokenType.IDENTIFIER:
-                continue
+        for tok in identifier_tokens(self.expression.tokens):
             if self.resolver.current_scope.find_label_scope(tok.value) is None:
                 continue
             touches_label = True

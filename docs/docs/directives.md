@@ -358,7 +358,7 @@ field has no byte size. `countof` takes an array field. Anything else,
 or a name not visible in this module, is `E0321`. An alloc or
 reservation from another module resolves at link, like its address.
 
-#### Typed access: `as` casts and `:=` binds
+#### Typed access: `as` casts, `:=` binds and `=` views
 
 A `(expr as T)` cast tags an address with a struct type so a postfix
 `.field` resolves through the struct's layout. The two forms share one
@@ -381,6 +381,18 @@ q := 0x010000 as Pt
 of `T`, so `p.field` is just a flat symbol after the bind. Nested
 struct fields chain cleanly: `(o as Outer).pos.y` and
 `o.pos.y` both resolve to `base + Outer.pos + Inner.y`.
+
+`:=` needs its base now. Over a label whose address is only known later
+(a pooled alloc, placed at link, or a forward reference) write the lazy
+view with `=`: `p.field` then resolves whenever the base does.
+
+```ca65
+.alloc tbl in data {
+    .incbin "tbl.bin"
+}
+entries = (tbl as Entry)            ; tbl is placed at link
+    lda.l entries.bank, x            ; relocated with tbl
+```
 
 #### Auto-sized opcodes on typed accesses
 

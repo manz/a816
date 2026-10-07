@@ -433,6 +433,18 @@ def _inline_aliases(expression_str: str, resolver: Resolver, depth: int = 0) -> 
     return _IDENT_RE.sub(replace, expression_str)
 
 
+def identifier_tokens(terms: list[ExprNode]) -> list[Token]:
+    """Every name an expression mentions, the ones inside a cast's
+    `(inner as T)` included: a pooled label there relocates like any other."""
+    found: list[Token] = []
+    for term in terms:
+        if isinstance(term, CastAccessExprNode | CastValueExprNode):
+            found.extend(identifier_tokens(term.inner))
+        elif isinstance(term, Term) and term.token.type == TokenType.IDENTIFIER:
+            found.append(term.token)
+    return found
+
+
 def reconstruct_expression(expression: ExpressionAstNode, resolver: Resolver | None = None) -> str:
     """Reconstruct the original expression string from the AST.
 

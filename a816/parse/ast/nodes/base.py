@@ -63,7 +63,17 @@ class Parenthesis(ExprNode):
 
 
 def _inner_canonical(inner: list[ExprNode]) -> str:
-    return " ".join(node.to_canonical() for node in inner)
+    """Terms joined by spaces, a unary operator kept against its operand (`~3`, `-x`)."""
+    parts: list[str] = []
+    after_unary = False
+    for node in inner:
+        text = node.to_canonical()
+        if after_unary:
+            parts[-1] += text
+        else:
+            parts.append(text)
+        after_unary = isinstance(node, UnaryOp)
+    return " ".join(parts)
 
 
 class CastAccessExprNode(ExprNode):
@@ -137,10 +147,10 @@ class ExpressionAstNode(AstNode):
         self.tokens = tokens
 
     def to_representation(self) -> tuple[Any, ...]:
-        return (" ".join([expr_node.to_canonical() for expr_node in self.tokens]),)
+        return (_inner_canonical(self.tokens),)
 
     def to_canonical(self) -> str:
-        return " ".join([expr_node.to_canonical() for expr_node in self.tokens])
+        return _inner_canonical(self.tokens)
 
 
 SIZE_OPERATORS = ("sizeof", "countof")

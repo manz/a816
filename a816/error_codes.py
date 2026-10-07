@@ -37,6 +37,7 @@ class ErrorCode:
 E_SCANNER_INVALID_INPUT = ErrorCode("E0001", "scanner", "invalid input character")
 E_SCANNER_UNTERMINATED_STRING = ErrorCode("E0002", "scanner", "unterminated string literal")
 E_SCANNER_UNKNOWN_KEYWORD = ErrorCode("E0003", "scanner", "unknown directive keyword")
+E_SCANNER_UNTERMINATED_COMMENT = ErrorCode("E0004", "scanner", "unterminated block comment")
 
 # --- Parser (E0100..) ---
 E_PARSER_UNEXPECTED_TOKEN = ErrorCode("E0100", "parser", "unexpected token")
@@ -95,6 +96,7 @@ E_CODEGEN_ISTRUCT_TOO_LONG = ErrorCode("E0333", "codegen", "initializer longer t
 E_CODEGEN_ISTRUCT_NON_ASCII = ErrorCode("E0334", "codegen", "non-ASCII character in a string initializer")
 E_CODEGEN_ISTRUCT_BIT_RUN_TOO_WIDE = ErrorCode("E0335", "codegen", "initialized bit-field run wider than 32 bits")
 E_CODEGEN_CROSS_BANK_BODY = ErrorCode("E0336", "codegen", "`cross_bank` body holds something other than data")
+E_CODEGEN_ALLOC_SIZE_DRIFT = ErrorCode("E0337", "codegen", "alloc body emitted a size other than its reserved slot")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")

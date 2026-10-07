@@ -203,3 +203,17 @@ def test_the_language_server_colours_the_operator_as_a_keyword() -> None:
     content = ".struct Pt {\n    word x\n}\nSIZE = sizeof(Pt)\n"
     tokens = A816LanguageServer()._extract_semantic_tokens_from_ast(A816Document("file:///s.s", content))
     assert {"line": 3, "char": 7, "length": 6, "type": 0} in tokens
+
+
+def test_a_failing_assert_shows_an_alloc_size_as_its_value() -> None:
+    src = '.alloc blob in code {\n    .db 1, 2, 3\n}\n.alloc user in code {\n    nop\n}\n.assert sizeof(blob) == 1, "probe"\n'
+    with pytest.raises(LinkAssertError) as exc_info:
+        _object_code(src)
+    assert exc_info.value.failures[0][1] == "0x3 == 1"
+
+
+def test_an_assert_without_a_message_says_so() -> None:
+    from a816.parse.mzparser import A816Parser
+
+    error = A816Parser.parse_as_ast(".assert 1 == 1\n", "m.s").error or ""
+    assert "`.assert` needs a message after its condition" in error
