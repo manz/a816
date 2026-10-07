@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
 from a816.module_loader import resolve_module
@@ -41,6 +41,9 @@ from a816.parse.codegen.structs import declare_bus_mapping
 from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
 from a816.symbols import Resolver, _is_exportable
+
+if TYPE_CHECKING:
+    from a816.parse.mzparser import ParserResult
 
 # Declarations whose effect must be visible to codegen of the importer
 # (struct/macro/const defs, `.map` bus layout, nested imports, pool
@@ -222,19 +225,40 @@ def _import_from_source(
 
     Per-node split lives in `_import_object_mode`.
     """
-    from a816.parse.mzparser import A816Parser
-
-    try:
-        content = src_path.read_text(encoding="utf-8")
-    except OSError:
+    result = _parse_import(src_path, resolver)
+    if result is None:
         return None
-    result = A816Parser.parse_as_ast(content, str(src_path))
     if not result.nodes:
         return []
     if direct_mode:
         return _code_gen(result.nodes, resolver, macro_definitions)
     _register_private_names(result.nodes, module_name, src_path, resolver)
     return _import_object_mode(result.nodes, resolver, macro_definitions)
+
+
+def _parse_import(src_path: Path, resolver: Resolver) -> ParserResult | None:
+    """The imported source's AST, from the build's shared cache when there is
+    one. A cache hit replays the lookups that missed while parsing, so the
+    importer's recorded inputs match a fresh parse. None when unreadable."""
+    from a816.build_inputs import recording_misses, replay_misses
+    from a816.parse.mzparser import A816Parser
+
+    cache = resolver.context.import_asts
+    key = str(src_path)
+    if cache is not None and key in cache:
+        result, misses = cache[key]
+        replay_misses(misses)
+        return result
+    try:
+        content = src_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    with recording_misses() as misses:
+        result = A816Parser.parse_as_ast(content, key)
+    replay_misses(misses)
+    if cache is not None:
+        cache[key] = (result, misses)
+    return result
 
 
 _PRIVATE_DECLARATION_TYPES = (SymbolAffectationAstNode, AssignAstNode, LabelDeclAstNode, MacroAstNode, StructAstNode)

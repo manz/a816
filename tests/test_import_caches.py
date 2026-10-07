@@ -1,9 +1,9 @@
 """Behaviour pins for the object-mode `.import` caches.
 
 Every module of a build imports the same core modules, and each import
-used to decode the imported `.o` again, once per importer: a cold build
-grew quadratically with the module count. These tests pin that it is
-read once, and that a rewritten `.o` is noticed.
+used to decode the imported `.o` and re-parse its source again, once per
+importer: a cold build grew quadratically with the module count. These
+tests pin that both are read once, and that a rewritten `.o` is noticed.
 """
 
 from __future__ import annotations
@@ -11,8 +11,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from a816.build_inputs import recording_misses
 from a816.module_builder import ModuleBuilder
-from a816.parse.codegen.modules import _import_view
+from a816.parse.codegen.modules import _import_view, _parse_import
+from a816.parse.mzparser import A816Parser
+from a816.symbols import Resolver
 
 
 def _build(root: Path, main: Path) -> None:
@@ -51,3 +54,56 @@ def test_a_rebuilt_object_is_decoded_again(tmp_path: Path) -> None:
 
     assert "second" in _import_view(obj).provided_names
     assert "second" not in before.provided_names
+
+
+def test_the_build_parses_each_import_once(tmp_path: Path) -> None:
+    builder = ModuleBuilder(module_paths=[tmp_path], include_paths=[tmp_path], output_dir=tmp_path / "obj")
+
+    builder.build(_write_modules(tmp_path, "first:\n    rts\n"))
+
+    assert list(builder._import_asts) == [str(tmp_path / "core.s")]
+
+
+def test_a_cached_parse_is_served_without_reading(tmp_path: Path) -> None:
+    resolver = Resolver()
+    missing = tmp_path / "gone.s"
+    parsed = A816Parser.parse_as_ast("X = 1\n", str(missing))
+    resolver.context.import_asts = {str(missing): (parsed, set())}
+
+    assert _parse_import(missing, resolver) is parsed
+
+
+def test_a_cached_parse_replays_its_misses(tmp_path: Path) -> None:
+    """The importer's recorded inputs must match a fresh parse's."""
+    resolver = Resolver()
+    source = tmp_path / "core.s"
+    parsed = A816Parser.parse_as_ast("X = 1\n", str(source))
+    resolver.context.import_asts = {str(source): (parsed, {"/probe/missing.i"})}
+
+    with recording_misses() as misses:
+        _parse_import(source, resolver)
+
+    assert misses == {"/probe/missing.i"}
+
+
+def test_a_fresh_parse_fills_the_cache(tmp_path: Path) -> None:
+    resolver = Resolver()
+    resolver.context.import_asts = {}
+    source = tmp_path / "core.s"
+    source.write_text("X = 1\n", encoding="utf-8")
+
+    parsed = _parse_import(source, resolver)
+
+    assert resolver.context.import_asts[str(source)] == (parsed, set())
+
+
+def test_without_a_cache_each_import_parses_afresh(tmp_path: Path) -> None:
+    resolver = Resolver()
+    source = tmp_path / "core.s"
+    source.write_text("X = 1\n", encoding="utf-8")
+
+    assert _parse_import(source, resolver) is not _parse_import(source, resolver)
+
+
+def test_an_unreadable_import_is_none(tmp_path: Path) -> None:
+    assert _parse_import(tmp_path / "gone.s", Resolver()) is None

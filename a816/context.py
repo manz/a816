@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from a816.object_file import BusMapping
+    from a816.parse.mzparser import ParserResult
     from a816.writers import ObjectWriter
 
 
@@ -41,6 +42,10 @@ class AssemblyContext:
     # `mapper` or `[map.N]` regions from `a816.toml`, declared on the bus
     # of every translation unit before its own `.map` lines.
     bus_map: list["BusMapping"] = field(default_factory=list)
+    # Object-mode `.import` parses shared by every module of one build, keyed
+    # by source path, each with the lookups that missed while parsing it.
+    # `ModuleBuilder` owns it; None parses every import afresh.
+    import_asts: "dict[str, tuple[ParserResult, set[str]]] | None" = None
 
     @property
     def is_object_mode(self) -> bool:

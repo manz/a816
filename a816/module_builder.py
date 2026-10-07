@@ -134,6 +134,9 @@ class ModuleBuilder:
         # so compile reuses the AST instead of scanning + parsing twice.
         self._parsed: dict[str, ParserResult] = {}
         self._imports: dict[str, list[str]] = {}
+        # Every module re-reads the imports of its imports: parse each
+        # imported source once per build, not once per importer.
+        self._import_asts: dict[str, tuple[ParserResult, set[str]]] = {}
         # Lookups that missed while parsing a module during discovery: the
         # compile reuses that AST, so they belong to the module's inputs.
         self._discovery_misses: dict[str, set[str]] = {}
@@ -255,6 +258,7 @@ class ModuleBuilder:
         apply_experimental_flags(program, self.experimental)
         program.resolver.context.require_placement = True
         program.resolver.context.bus_map = list(self.bus_map)
+        program.resolver.context.import_asts = self._import_asts
         program.add_module_path(self.output_dir)
         for path in self.module_paths:
             program.add_module_path(path)
