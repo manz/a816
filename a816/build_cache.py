@@ -19,7 +19,7 @@ import hashlib
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -45,17 +45,21 @@ class BuildSettings:
     bus_map: list[BusMapping]
     include_paths: list[Path]
     module_paths: list[Path]
+    # `BUILD_DATE` comes from it, so a new value must rebuild the objects.
+    source_date_epoch: str | None = field(default_factory=lambda: os.environ.get("SOURCE_DATE_EPOCH"))
 
     def digest(self) -> str:
-        return _sha(
-            {
-                "symbols": sorted((name, repr(value)) for name, value in self.symbols.items()),
-                "experimental": sorted(self.experimental),
-                "bus_map": [repr(mapping.shape()) for mapping in self.bus_map],
-                "include_paths": [os.path.abspath(path) for path in self.include_paths],
-                "module_paths": [os.path.abspath(path) for path in self.module_paths],
-            }
-        )
+        settings: dict[str, object] = {
+            "symbols": sorted((name, repr(value)) for name, value in self.symbols.items()),
+            "experimental": sorted(self.experimental),
+            "bus_map": [repr(mapping.shape()) for mapping in self.bus_map],
+            "include_paths": [os.path.abspath(path) for path in self.include_paths],
+            "module_paths": [os.path.abspath(path) for path in self.module_paths],
+        }
+        # Only when set: caches built without it keep their keys.
+        if self.source_date_epoch is not None:
+            settings["source_date_epoch"] = self.source_date_epoch
+        return _sha(settings)
 
 
 @dataclass(frozen=True)

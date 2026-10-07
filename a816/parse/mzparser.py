@@ -1,9 +1,11 @@
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from time import gmtime, strftime
 from typing import Any
 
+from a816.exceptions import A816Error
 from a816.parse.ast.nodes import AstNode
 from a816.parse.codegen import code_gen
 from a816.parse.codegen.structs import seed_bus_map
@@ -16,6 +18,21 @@ from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
 
 logger = logging.getLogger("a816.parser")
+
+
+def build_date() -> str:
+    """`BUILD_DATE`, UTC: `SOURCE_DATE_EPOCH` when set, so two builds of the
+    same sources give the same bytes (reproducible-builds convention), else
+    the time this module compiles. A module kept in the build cache keeps
+    the date it was compiled at."""
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch is None:
+        return strftime("%Y-%m-%d %H:%M:%S", gmtime())
+    try:
+        seconds = int(epoch)
+    except ValueError:
+        raise A816Error(f"SOURCE_DATE_EPOCH={epoch!r} is not a number of seconds since 1970") from None
+    return strftime("%Y-%m-%d %H:%M:%S", gmtime(seconds))
 
 
 @dataclass
@@ -53,7 +70,7 @@ class A816Parser:
     ) -> tuple[str | None, list[NodeProtocol]]:
         include_paths = self.resolver.context.include_paths
         ast = parsed or self.parse_as_ast(program, filename, include_paths=include_paths, verbose_errors=True)
-        self.resolver.current_scope.add_symbol("BUILD_DATE", strftime("%Y-%m-%d %H:%M:%S", gmtime()))
+        self.resolver.current_scope.add_symbol("BUILD_DATE", build_date())
         seed_bus_map(self.resolver)
         return ast.error, code_gen(ast.nodes, self.resolver)
 
