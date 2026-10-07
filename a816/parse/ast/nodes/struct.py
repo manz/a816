@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Final
 
 from a816.parse.ast.nodes.base import AstNode
 from a816.parse.tokens import Token
@@ -31,18 +31,18 @@ class StructAstNode(AstNode):
         body: Sequence[StructBodyItem] = (),
     ) -> None:
         super().__init__("struct", file_info)
-        self.name = name
+        self.name: Final = name
         # Formatting view of the body: fields with their comments and the
         # blank lines between groups. Without one (built programmatically),
         # the fields alone are the body.
-        self.body: tuple[StructBodyItem, ...] = tuple(body)
+        self.body: Final[tuple[StructBodyItem, ...]] = tuple(body)
         # Insertion-ordered `(name, type)` entries. Bit-field widths live in
         # the type string itself (`uN`), as do array counts (`byte[21]`);
         # the codegen extracts the digits.
         # A sequence instead of a dict so downstream consumers can rely on the
         # declared order without poking at dict semantics, and so duplicate
         # names get caught at parse time.
-        self.fields: tuple[tuple[str, str], ...] = tuple(fields)
+        self.fields: Final[tuple[tuple[str, str], ...]] = tuple(fields)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, list(self.fields)

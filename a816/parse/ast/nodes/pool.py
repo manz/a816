@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Final
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
 from a816.parse.ast.nodes.containers import BlockAstNode, _indent_block_body
@@ -34,14 +34,14 @@ class PoolAstNode(AstNode):
     ) -> None:
         super().__init__("pool", file_info)
         # Closing `}`: a trailing comment on its line folds onto the brace.
-        self.close_token = close_token
-        self.pool_name = name
-        self.ranges = tuple(ranges)
-        self.fill = fill
-        self.strategy = strategy
-        self.bss = bss
+        self.close_token: Final = close_token
+        self.pool_name: Final = name
+        self.ranges: Final = tuple(ranges)
+        self.fill: Final = fill
+        self.strategy: Final = strategy
+        self.bss: Final = bss
         # Mutually exclusive users of a bss pool's memory (`contexts A, B`).
-        self.contexts = tuple(contexts)
+        self.contexts: Final = tuple(contexts)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.pool_name, len(self.ranges), self.strategy
@@ -97,21 +97,21 @@ class AllocAstNode(AstNode):
     ) -> None:
         super().__init__("alloc", file_info)
         # Data blob allowed to straddle bank edges where the ROM is contiguous.
-        self.cross_bank = cross_bank
+        self.cross_bank: Final = cross_bank
         # `align N`: the allocator places the block on a multiple of N.
-        self.align = align
+        self.align: Final = align
         # Closing `}`: a trailing comment on its line folds onto the brace.
-        self.close_token = close_token
+        self.close_token: Final = close_token
         # Desugared from `.reserve NAME SIZE [at ADDR] in POOL`; the
         # formatter writes it back in that form.
-        self.reserve = reserve
-        self.name = name
-        self.pool_name = pool_name
+        self.reserve: Final = reserve
+        self.name: Final = name
+        self.pool_name: Final = pool_name
         # Source token of POOL; unknown-pool diagnostics underline it.
-        self.pool_token = pool_token
-        self.body = body
-        self.at_address = at_address
-        self.at_size = at_size
+        self.pool_token: Final = pool_token
+        self.body: Final = body
+        self.at_address: Final = at_address
+        self.at_size: Final = at_size
 
     @property
     def is_pinned(self) -> bool:
@@ -166,12 +166,12 @@ class RelocateAstNode(AstNode):
         pool_token: Token | None = None,
     ) -> None:
         super().__init__("relocate", file_info)
-        self.symbol = symbol
-        self.old_start = old_start
-        self.old_end = old_end
-        self.pool_name = pool_name
-        self.pool_token = pool_token
-        self.body = body
+        self.symbol: Final = symbol
+        self.old_start: Final = old_start
+        self.old_end: Final = old_end
+        self.pool_name: Final = pool_name
+        self.pool_token: Final = pool_token
+        self.body: Final = body
 
     def to_representation(self) -> tuple[Any, ...]:
         return (
@@ -195,8 +195,8 @@ class AssertAstNode(AstNode):
 
     def __init__(self, expression: ExpressionAstNode, message: str, file_info: Token) -> None:
         super().__init__("assert", file_info)
-        self.expression = expression
-        self.message = message
+        self.expression: Final = expression
+        self.message: Final = message
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.message
@@ -221,9 +221,9 @@ class ReclaimAstNode(AstNode):
         file_info: Token,
     ) -> None:
         super().__init__("reclaim", file_info)
-        self.pool_name = pool_name
-        self.start = start
-        self.end = end
+        self.pool_name: Final = pool_name
+        self.start: Final = start
+        self.end: Final = end
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.pool_name

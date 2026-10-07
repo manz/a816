@@ -10,18 +10,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from a816.parse.tokens import Token
 
 
 class AstNode(ABC):
-    kind: str
-
     def __init__(self, kind: str, file_info: Token, docstring: str | None = None) -> None:
-        self.kind = kind
-        self.file_info = file_info
-        self.docstring = docstring
+        self.kind: Final[str] = kind
+        self.file_info: Final = file_info
+        self.docstring: Final = docstring
 
     @abstractmethod
     def to_representation(self) -> tuple[Any, ...]:
@@ -99,12 +97,12 @@ class CastAccessExprNode(ExprNode):
         field_tokens: Sequence[Token] = (),
     ):
         super().__init__(token)
-        self.inner = tuple(inner)
-        self.type_name = type_name
-        self.field_path = tuple(field_path)
-        self.close_token = close_token
+        self.inner: Final = tuple(inner)
+        self.type_name: Final = type_name
+        self.field_path: Final = tuple(field_path)
+        self.close_token: Final = close_token
         # One token per `field_path` entry; diagnostics underline the leaf.
-        self.field_tokens = tuple(field_tokens)
+        self.field_tokens: Final = tuple(field_tokens)
 
     @property
     def leaf_token(self) -> Token:
@@ -132,20 +130,18 @@ class CastValueExprNode(ExprNode):
         close_token: Token | None = None,
     ):
         super().__init__(token)
-        self.inner = tuple(inner)
-        self.type_name = type_name
-        self.close_token = close_token
+        self.inner: Final = tuple(inner)
+        self.type_name: Final = type_name
+        self.close_token: Final = close_token
 
     def to_canonical(self) -> str:
         return f"({_inner_canonical(self.inner)} as {self.type_name})"
 
 
 class ExpressionAstNode(AstNode):
-    tokens: tuple[ExprNode, ...]
-
     def __init__(self, tokens: Sequence[ExprNode]) -> None:
         super().__init__("expression", tokens[0].token)
-        self.tokens = tuple(tokens)
+        self.tokens: Final[tuple[ExprNode, ...]] = tuple(tokens)
 
     def to_representation(self) -> tuple[Any, ...]:
         return (_inner_canonical(self.tokens),)
@@ -167,8 +163,8 @@ class SizeofExprNode(ExprNode):
 
     def __init__(self, token: Token, path_token: Token, close_token: Token | None = None) -> None:
         super().__init__(token)
-        self.path_token = path_token
-        self.close_token = close_token
+        self.path_token: Final = path_token
+        self.close_token: Final = close_token
 
     @property
     def kind(self) -> str:

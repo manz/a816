@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import Any, Final
 
 from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
@@ -23,13 +23,13 @@ class OpcodeAstNode(AstNode):
         operand2: ExpressionAstNode | None = None,
     ):
         super().__init__("opcode", file_info)
-        self.addressing_mode = addressing_mode
-        self.opcode = opcode
-        self.value_size = value_size
-        self.operand = operand
+        self.addressing_mode: Final = addressing_mode
+        self.opcode: Final = opcode
+        self.value_size: Final = value_size
+        self.operand: Final = operand
         # Second operand for block-move (`mvn src, dst`); None otherwise.
-        self.operand2 = operand2
-        self.index = index
+        self.operand2: Final = operand2
+        self.index: Final = index
 
     @property
     def opcode_value(self) -> tuple[str, ValueSize] | str:
