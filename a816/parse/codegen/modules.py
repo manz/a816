@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import overload
 
 from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
 from a816.module_loader import resolve_module
-from a816.object_file import ObjectFile, SymbolType
+from a816.object_file import BusMapping, ObjectFile, PoolDecl, SymbolType
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
@@ -78,11 +80,44 @@ def _import_search_paths(resolver: Resolver) -> list[Path]:
     return list(resolver.context.module_paths)
 
 
+@dataclass(frozen=True)
+class _ImportView:
+    """What an object-mode importer reads from an imported `.o`."""
+
+    provided_names: tuple[str, ...]
+    pool_decls: tuple[PoolDecl, ...]
+    bus_mappings: tuple[BusMapping, ...]
+    has_pool_allocs: bool
+
+
+def _import_view(obj_path: Path) -> _ImportView:
+    """The imported `.o`'s import view, decoded once per file version.
+
+    Every module of a build imports the same core `.o` files; decoding each
+    one again per importer made a cold build quadratic in modules. The stat
+    in the cache key picks up a `.o` rebuilt earlier in the same build.
+    Raises like `ObjectFile.from_file`.
+    """
+    stat = obj_path.stat()
+    return _decode_import_view(str(obj_path), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=1024)
+def _decode_import_view(path: str, _mtime_ns: int, _size: int) -> _ImportView:
+    obj_file = ObjectFile.from_file(path)
+    return _ImportView(
+        provided_names=tuple(_object_provided_names(obj_file)),
+        pool_decls=tuple(obj_file.pool_decls),
+        bus_mappings=tuple(obj_file.bus_mappings),
+        has_pool_allocs=bool(obj_file.pool_allocs),
+    )
+
+
 def _object_has_pool_allocs(obj_path: Path) -> bool:
-    """Cheap check: parse the .o header to see if it carries any
-    `.alloc` requests. Used to gate the direct-mode `.o` shortcut."""
+    """Cheap check: does the .o carry any `.alloc` requests? Used to
+    gate the direct-mode `.o` shortcut."""
     try:
-        return bool(ObjectFile.from_file(str(obj_path)).pool_allocs)
+        return _import_view(obj_path).has_pool_allocs
     except (FileNotFoundError, ValueError):
         return False
 
@@ -94,31 +129,21 @@ def _import_from_object(
     direct_mode: bool,
     file_info: Token,
 ) -> GenNodes | None:
+    if direct_mode:
+        return _import_linked_module(module_name, obj_path, resolver, file_info)
     try:
-        obj_file = ObjectFile.from_file(str(obj_path))
+        view = _import_view(obj_path)
     except (FileNotFoundError, ValueError):
         return None
 
-    for mapping in obj_file.bus_mappings:
+    for mapping in view.bus_mappings:
         declare_bus_mapping(resolver, mapping, file_info)
-
-    if direct_mode:
-        symbols_data = [
-            (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
-        ]
-        node = LinkedModuleNode(module_name, obj_file.sections, symbols_data, resolver, obj_file.relocatable)
-        # Direct mode collapses object compilation + link into a single
-        # resolver pass: surface the .o's pool decls so top-level
-        # `.alloc` sites (and subsequent imports) can find the pools.
-        node.imported_pool_decls = list(obj_file.pool_decls)
-        return [node]
-
     # Object mode: importer is being compiled to its own `.o`. Surface
     # the imported `.o`'s pool decls in the importer's resolver so any
     # `.alloc NAME in <pool>` site at the importer's top level resolves
     # at codegen. Tagged as imported so the resolver knows the linker
     # will handle final placement.
-    _register_imported_object_pools(obj_file, resolver)
+    _register_imported_object_pools(view.pool_decls, resolver)
 
     # Each `.o` owns only what it defines (GLOBAL). EXTERNAL re-export
     # cascades quadratically across diamond imports — a module that
@@ -127,7 +152,25 @@ def _import_from_object(
     # past the `<H>` 65535 limit within 3-4 hops. Importers must
     # `.import` direct deps explicitly; the resolver's own dedup
     # (`imported_module_paths`) handles the diamond.
-    return [ExternNode(name, resolver) for name in _object_provided_names(obj_file)]
+    return [ExternNode(name, resolver) for name in view.provided_names]
+
+
+def _import_linked_module(module_name: str, obj_path: Path, resolver: Resolver, file_info: Token) -> GenNodes | None:
+    """Direct mode collapses object compilation + link into a single
+    resolver pass: the whole `.o` comes in, and its pool decls surface so
+    top-level `.alloc` sites (and subsequent imports) can find the pools."""
+    try:
+        obj_file = ObjectFile.from_file(str(obj_path))
+    except (FileNotFoundError, ValueError):
+        return None
+    for mapping in obj_file.bus_mappings:
+        declare_bus_mapping(resolver, mapping, file_info)
+    symbols_data = [
+        (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
+    ]
+    node = LinkedModuleNode(module_name, obj_file.sections, symbols_data, resolver, obj_file.relocatable)
+    node.imported_pool_decls = list(obj_file.pool_decls)
+    return [node]
 
 
 def _object_provided_names(obj_file: ObjectFile) -> list[str]:
@@ -143,13 +186,13 @@ def _object_provided_names(obj_file: ObjectFile) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def _register_imported_object_pools(obj_file: ObjectFile, resolver: Resolver) -> None:
+def _register_imported_object_pools(pool_decls: tuple[PoolDecl, ...], resolver: Resolver) -> None:
     """Mirror the imported `.o`'s pool decls into the importer's
     resolver.pools so `.alloc ... in POOL` sites resolve at codegen.
     Idempotent: identical re-registrations are skipped silently."""
     from a816.pool import Pool
 
-    for decl in obj_file.pool_decls:
+    for decl in pool_decls:
         if decl.name in resolver.pools:
             continue
         resolver.pools[decl.name] = Pool.from_decl(decl)
