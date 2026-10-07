@@ -37,6 +37,20 @@ def test_a_failed_compile_leaves_no_object(project: Path, caplog: pytest.LogCapt
     assert sorted(path.name for path in (project / "obj").glob("lib.*")) == []
 
 
+def test_an_internal_failure_leaves_no_object(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from a816.program import Program
+
+    def broken(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeError("invariant broke")
+
+    program = Program()
+    monkeypatch.setattr(program, "assemble_with_object_emitter", broken)
+    (tmp_path / "m.s").write_text(_LIB, encoding="utf-8")
+    obj = tmp_path / "m.o"
+    obj.write_bytes(b"stale")
+    assert (program.assemble_as_object(str(tmp_path / "m.s"), obj), obj.exists()) == (-1, False)
+
+
 def test_fixing_the_source_rebuilds_the_module(project: Path, caplog: pytest.LogCaptureFixture) -> None:
     _break_lib(project, caplog)
     (project / "lib.s").write_text(_LIB, encoding="utf-8")
