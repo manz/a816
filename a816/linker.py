@@ -224,12 +224,8 @@ class Linker:
                 alloc_obj = first_placed.get(key)
                 if alloc_obj is not None:
                     _reject_a_second_alloc(req, self._alloc_sources[key])
-                if alloc_obj is None:
-                    pinned = req.pinned_addr if req.pinned_addr >= 0 else None
-                    alloc_obj = pool.request(
-                        req.symbol_name, req.size, pinned, align=req.align, cross_bank=req.cross_bank
-                    )
-                    first_placed[key] = alloc_obj
+                else:
+                    alloc_obj = first_placed[key] = _request(pool, req)
                     request_sites[key] = (obj_idx, req.section_idx)
                     self._alloc_sources[key] = req.source
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
@@ -818,6 +814,12 @@ def _pin_start(pool: Pool, alloc: Allocation) -> int | None:
     if pool.name.startswith(PINNED_POOL_PREFIX) and alloc.placed:
         return alloc.addr
     return None
+
+
+def _request(pool: Pool, request: PoolAlloc) -> Allocation:
+    """Queue one alloc request in its merged pool."""
+    pinned = request.pinned_addr if request.pinned_addr >= 0 else None
+    return pool.request(request.symbol_name, request.size, pinned, align=request.align, cross_bank=request.cross_bank)
 
 
 def _reject_a_second_alloc(request: PoolAlloc, first_source: str) -> None:
