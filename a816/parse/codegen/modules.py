@@ -234,23 +234,31 @@ def _import_from_source(
         return []
     if direct_mode:
         return _code_gen(nodes, resolver, macro_definitions)
-    _register_private_names(nodes, module_name, src_path, resolver)
+    _register_private_names(parsed.private_names(src_path), module_name, resolver)
     return _import_object_mode(parsed.object_mode_plan(), resolver, macro_definitions)
 
 
 @dataclass
 class ParsedImport:
     """One imported source as the build caches it: its AST, the lookups that
-    missed while parsing it, and its object-mode plan once first needed."""
+    missed while parsing it, and what each importer derives from that AST
+    (object-mode plan, private declarations) once first needed. The AST is
+    immutable, so neither can go stale."""
 
     result: ParserResult
     misses: set[str]
     plan: _ImportPlan | None = None
+    privates: _PrivateNames | None = None
 
     def object_mode_plan(self) -> _ImportPlan:
         if self.plan is None:
             self.plan = _plan_object_mode(self.result.nodes)
         return self.plan
+
+    def private_names(self, src_path: Path) -> _PrivateNames:
+        if self.privates is None:
+            self.privates = _private_names(self.result.nodes, src_path)
+        return self.privates
 
 
 def _parse_import(src_path: Path, resolver: Resolver) -> ParsedImport | None:
@@ -281,16 +289,24 @@ def _parse_import(src_path: Path, resolver: Resolver) -> ParsedImport | None:
 _PRIVATE_DECLARATION_TYPES = (SymbolAffectationAstNode, AssignAstNode, LabelDeclAstNode, MacroAstNode, StructAstNode)
 
 
-def _register_private_names(nodes: list[AstNode], module_name: str, src_path: Path, resolver: Resolver) -> None:
-    """Record the module owning each private (`_`) declaration it hands to
-    the importer: the importer may not name them (`Resolver.foreign_private_owner`)."""
+# A module's private (`_`) top-level names, and the files that may use them.
+_PrivateNames = tuple[tuple[str, ...], frozenset[str]]
+
+
+def _private_names(nodes: Sequence[AstNode], src_path: Path) -> _PrivateNames:
     from a816.symbols import _canonical_file
 
     files = frozenset({_canonical_file(str(src_path)), *(_canonical_file(f) for f in _included_files(nodes))})
-    for node in _top_level_declarations(nodes):
-        name = declared_name(node)
-        if name is not None and name.startswith("_"):
-            resolver.private_owners.setdefault(name, (module_name, files))
+    names = (declared_name(node) for node in _top_level_declarations(nodes))
+    return tuple(name for name in names if name is not None and name.startswith("_")), files
+
+
+def _register_private_names(privates: _PrivateNames, module_name: str, resolver: Resolver) -> None:
+    """Record the module owning each private (`_`) declaration it hands to
+    the importer: the importer may not name them (`Resolver.foreign_private_owner`)."""
+    names, files = privates
+    for name in names:
+        resolver.private_owners.setdefault(name, (module_name, files))
 
 
 def _included_files(nodes: Sequence[AstNode]) -> list[str]:

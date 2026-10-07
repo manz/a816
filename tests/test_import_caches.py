@@ -152,3 +152,20 @@ def test_a_replayed_plan_sizes_typed_reservations_per_importer() -> None:
     _record_imported_reservations((("hero", "Actor"), ("buffer", None)), resolver)
 
     assert resolver.reservation_sizes == {"hero": 2, "buffer": None}
+
+
+def test_private_names_are_worked_out_once(tmp_path: Path) -> None:
+    source = tmp_path / "core.s"
+    source.write_text("_hidden = 1\nshown = 2\n", encoding="utf-8")
+    parsed = _plan_of(source)
+
+    assert parsed.private_names(source) is parsed.private_names(source)
+
+
+def test_private_names_list_only_underscored_declarations(tmp_path: Path) -> None:
+    source = tmp_path / "core.s"
+    source.write_text("_hidden = 1\nshown = 2\n_other = 3\n", encoding="utf-8")
+
+    names, _files = _plan_of(source).private_names(source)
+
+    assert names == ("_hidden", "_other")
