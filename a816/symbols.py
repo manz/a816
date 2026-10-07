@@ -426,6 +426,9 @@ class Resolver:
         # it did (see `OpcodeNode._sized_length`).
         self.provisional_label_value: int | None = None
         self.provisional_label_used = False
+        # The address of the opcode being sized or emitted: a bare `jsr` /
+        # `jmp` picks its form from the target's bank against this one.
+        self.opcode_pc: int | None = None
         # `.assert`s of a direct build, checked once labels are final
         # (object mode hands them to the linker instead).
         self.direct_asserts: list[LinkAssert] = []

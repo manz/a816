@@ -45,9 +45,12 @@ def test_every_code_is_in_the_catalog() -> None:
 
 
 def _failed_build(tmp_path: Path, source: str, caplog: pytest.LogCaptureFixture) -> str:
+    (tmp_path / "m.bin").write_bytes(b"ABCDE")
     main = tmp_path / "main.s"
     main.write_text(source, encoding="utf-8")
-    result = build_with_imports(main, tmp_path / "out.ips", module_paths=[tmp_path], output_dir=tmp_path / "obj")
+    result = build_with_imports(
+        main, tmp_path / "out.ips", module_paths=[tmp_path], include_paths=[tmp_path], output_dir=tmp_path / "obj"
+    )
     assert result.exit_code != 0
     return caplog.text
 
@@ -75,6 +78,13 @@ ESCAPING = {
         "E0321",
     ),
     "undefined-for-bound": (".alloc a at 0x008000 {\n    .for i := 0, nowhere {\n        .db 0\n    }\n}\n", "E0200"),
+    "incbin-size-in-for-bound": (
+        (
+            '.alloc m at 0x008000 {\n    .incbin "m.bin"\n}\n.alloc pad at 0x008100 {\n'
+            "    .for i := 0, 0x20 - m_bin__size {\n        .db 0\n    }\n}\n"
+        ),
+        "E0321",
+    ),
 }
 
 
@@ -90,3 +100,10 @@ def test_an_error_while_expanding_carries_its_code(
     tmp_path: Path, source: str, code: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     assert f"error[{code}]" in _failed_build(tmp_path, source, caplog)
+
+
+def test_a_missing_incbin_file_is_located_and_coded(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """It printed a bare `Build failed: [Errno 2] No such file or directory`."""
+    text = _failed_build(tmp_path, '.alloc m at 0x008000 {\n    .incbin "gone.bin"\n}\n', caplog)
+
+    assert "error[E0500]" in text

@@ -14,6 +14,7 @@ from a816.cpu.cpu_65c816 import (
     OpcodeWithoutOperand,
     RelativeJumpOpcode,
     RelativeLongJumpOpcode,
+    TransferOpcode,
     snes_opcode_table,
 )
 from a816.cpu.types import AddressingMode as _AsmMode
@@ -337,7 +338,7 @@ def _derive_emitters() -> dict[int, Opcode]:
         for asm_mode, emitter in modes.items():
             entries = emitter.items() if isinstance(emitter, dict) else [(None, emitter)]
             for index, em in entries:
-                if type(em) is Opcode:
+                if isinstance(em, Opcode) and type(em) in (Opcode, TransferOpcode):
                     for byte, _mode, _size in _opcode_records(mnemonic, asm_mode, index, em):
                         emitters[byte] = em
     return emitters

@@ -33,6 +33,7 @@ from a816.cpu.cpu_65c816 import (
     Opcode,
     OpcodeWithoutOperand,
     RelativeJumpOpcode,
+    TransferOpcode,
     snes_opcode_table,
 )
 from a816.cpu.mapping import Address
@@ -196,6 +197,12 @@ def _expected_length(entry: Entry, suffix: str | None, operand: Operand, state: 
         return 1
     width = _width(entry, suffix, operand, state)
     assert width is not None
+    if isinstance(emitter, TransferOpcode) and suffix is None and width == "l":
+        # A bare jsr/jmp takes the absolute form in its own bank and is
+        # rejected (E0346) into another one.
+        if int(operand.text, 16) >> 16 != _ORIGIN >> 16:
+            return None
+        width = "w"
     return _sized_length(entry, width, operand)
 
 

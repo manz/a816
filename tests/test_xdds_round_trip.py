@@ -12,7 +12,7 @@ from itertools import product
 
 import pytest
 
-from a816.cpu.disassembler import OPCODE_TABLE, Disassembler
+from a816.cpu.disassembler import OPCODE_TABLE, Disassembler, format_disassembly_block
 from a816.program import Program
 from tests import StubWriter
 
@@ -73,3 +73,16 @@ def test_a_block_move_prints_source_then_destination() -> None:
     assert inst is not None
 
     assert inst.format_a816() == "mvp 0x00,0xFF"
+
+
+def test_a_labelled_block_outside_bank_zero_reassembles_to_its_bytes() -> None:
+    """xdds names targets with 24-bit labels (`jsr _018006`). In a bank above
+    $00 a bare `jsr` to one used to reassemble as JSL (Feda, HiROM)."""
+    org = 0x018000
+    raw = bytes.fromhex("2006804c06806060")  # jsr $8006 / jmp $8006 / rts / target: rts
+    lines = format_disassembly_block(Disassembler().disassemble(raw, org), show_bytes=False, a816_syntax=True)
+    writer = StubWriter()
+
+    Program().assemble_string_with_emitter(f"*= 0x{org:06x}\n" + "\n".join(lines) + "\n", "rt.s", writer)
+
+    assert b"".join(writer.data) == raw

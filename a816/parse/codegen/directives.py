@@ -35,6 +35,7 @@ from a816.parse.nodes import (
     LabelDeclNode,
     LabelNode,
     LongNode,
+    NodeError,
     RegisterSizeNode,
     RelocationAddressNode,
     ReserveNode,
@@ -91,7 +92,19 @@ def generate_incbin(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    return [BinaryNode(node.file_path, resolver)]
+    try:
+        return [BinaryNode(node.file_path, resolver)]
+    except OSError as missing:
+        # Escaped as a bare `Build failed: [Errno 2] ...` before.
+        from a816.error_codes import E_IO_FILE_NOT_FOUND
+
+        searched = ", ".join(str(path) for path in resolver.context.include_paths) or "none"
+        raise NodeError(
+            f"`.incbin` can't read {node.file_path!r}: {missing.strerror or missing}",
+            file_info,
+            code=str(E_IO_FILE_NOT_FOUND),
+            hint=f"the path resolves against the include paths ({searched})",
+        ) from missing
 
 
 def _generate_data(

@@ -42,9 +42,17 @@ def test_a_forward_data_operand_in_bank_zero_is_absolute() -> None:
     assert _bytes("*= 0x008000\n    lda fwd\nfwd:\n    .db 0x42\n") == b"\xad\x03\x80\x42"
 
 
-def test_a_target_outside_the_block_asks_for_the_size() -> None:
-    """The PC guessed bank $00; the label landed in bank $01 and needs a long form."""
+def test_a_target_in_another_bank_is_reported() -> None:
+    """The PC guessed bank $00; the label landed in bank $01: a bare jsr can't reach it."""
     source = "*= 0x008000\n    jsr far\n    rts\n*= 0x018000\nfar:\n    rtl\n"
+
+    with pytest.raises(NodeError, match="E0346"):
+        _bytes(source)
+
+
+def test_a_target_outside_the_block_with_another_size_asks_for_the_size() -> None:
+    """Same bank, different class: guessed absolute (PC >= $0100), landed in direct page."""
+    source = "*= 0x008000\n    lda fwd\n    rts\n*= 0x000010\nfwd:\n    .db 0\n"
 
     with pytest.raises(NodeError, match="sized as 3 bytes before its target was placed"):
         _bytes(source)

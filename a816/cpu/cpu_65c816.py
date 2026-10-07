@@ -6,6 +6,7 @@ from a816.cpu.types import AddressingMode, RomType, ValueSize
 from a816.exceptions import (
     BranchOutOfRangeError,
     BranchTargetUnmappedError,
+    CrossBankTransferError,
     MissingOperandError,
     UndecidableOperandSizeError,
 )
@@ -257,6 +258,37 @@ class Opcode(OpcodeBase):
         return node_bytes
 
 
+class TransferOpcode(Opcode):
+    """`jsr` / `jmp` with an absolute and a long form.
+
+    A bare operand used to be sized by its value like data, so a 24-bit
+    label in the caller's own bank (every label in HiROM) emitted JSL / JML:
+    a same-bank call became a long one whose callee must return with `rtl`.
+    A target is now judged against the caller's bank: a 16-bit value is an
+    address in the current bank (absolute, as before), a 24-bit one in the
+    same bank takes the absolute form, and one in another bank is an error
+    asking for `jsl` / `jml`. Explicit `.w` / `.l` still win.
+    """
+
+    def __init__(self, opcode_def: list[int | None], mnemonic: str) -> None:
+        super().__init__(opcode_def)
+        self.mnemonic = mnemonic
+
+    def value_size(
+        self, value_node: "ValueNodeProtocol", size: ValueSize | None, resolver: "Resolver | None"
+    ) -> ValueSize:
+        inferred = super().value_size(value_node, size, resolver)
+        if size is not None or inferred != "l" or resolver is None or resolver.opcode_pc is None:
+            return inferred
+        target = value_node.get_value()
+        if not isinstance(target, int):
+            return inferred
+        caller_bank = resolver.opcode_pc >> 16 & 0xFF
+        if target >> 16 & 0xFF == caller_bank:
+            return "w"
+        raise CrossBankTransferError(self.mnemonic, target, caller_bank)
+
+
 class LongOpcode(Opcode):
     """Always emits the 24-bit long form, regardless of inferred operand size.
 
@@ -407,11 +439,11 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {"x": Opcode([0x56, 0x5E])},
     },
     "jsr": {
-        AddressingMode.direct: Opcode([None, 0x20, 0x22]),
+        AddressingMode.direct: TransferOpcode([None, 0x20, 0x22], "jsr"),
         AddressingMode.dp_or_sr_indirect_indexed: Opcode([None, 0xFC]),
     },
     "jmp": {
-        AddressingMode.direct: Opcode([None, 0x4C, 0x5C]),
+        AddressingMode.direct: TransferOpcode([None, 0x4C, 0x5C], "jmp"),
         AddressingMode.indirect: Opcode([None, 0x6C, None]),
         AddressingMode.indirect_long: Opcode([None, 0xDC, None]),
         AddressingMode.dp_or_sr_indirect_indexed: Opcode([None, 0x7C, None]),

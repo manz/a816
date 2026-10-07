@@ -473,6 +473,21 @@ class UndecidableOperandSizeError(OpcodeError):
         super().__init__(f"operand size can't be inferred: {names} is resolved at link")
 
 
+class CrossBankTransferError(OpcodeError):
+    """A bare `jsr` / `jmp` names a target in another bank: the absolute form
+    can't reach it, and the long form changes what the code means (`jsl`
+    returns with `rtl`), so the source must say."""
+
+    def __init__(self, mnemonic: str, target: int, caller_bank: int) -> None:
+        self.mnemonic = mnemonic
+        self.target = target
+        self.caller_bank = caller_bank
+        super().__init__(
+            f"`{mnemonic}` into bank ${target >> 16 & 0xFF:02X} from bank ${caller_bank:02X}: "
+            f"a bare `{mnemonic}` only reaches its own bank"
+        )
+
+
 class MissingOperandError(OpcodeError):
     """Raised when an opcode requires an operand but none was provided."""
 

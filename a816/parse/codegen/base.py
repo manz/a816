@@ -95,10 +95,12 @@ def _located_missing_symbol(missing: SymbolNotDefined, file_info: Token, resolve
     from a816.parse.nodes.errors import undefined_symbol_error
 
     name = str(missing)
-    if name.endswith(".__size"):
-        alloc = name.removesuffix(".__size")
+    if name.endswith("__size"):
+        # `blob.__size` is what `sizeof(blob)` reads; `path_bin__size` is an
+        # `.incbin` path-name size. Both are bound when the bytes are laid out.
+        spelled = f"sizeof({name.removesuffix('.__size')})" if name.endswith(".__size") else name
         return NodeError(
-            f"`sizeof({alloc})` is only known after layout, and this needs it while expanding",
+            f"`{spelled}` is only known after layout, and this needs it while expanding",
             missing.token or file_info,
             code=str(E_CODEGEN_SIZE_OPERAND),
             hint="`.for` bounds, `.if` conditions and constants are evaluated before any alloc is placed; "

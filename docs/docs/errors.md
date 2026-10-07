@@ -191,6 +191,11 @@ separate blocks separated by a blank line.
 - `E0344` an `.alloc` in a `bss` pool emits bytes; reserve space with
   `.res` or `.reserve` instead.
 - `E0345` a `.label` address does not evaluate to an integer.
+- `E0346` a bare `jsr` / `jmp` names a target in another bank. A bare
+  operand takes the absolute form in the caller's own bank (a 16-bit value
+  is always an address there); into another bank, write `jsl` / `jml` (a
+  `jsl` callee returns with `rtl`), or `jsr.w` / `jmp.w` when that bank
+  mirrors this one.
 
 ### Linker
 
