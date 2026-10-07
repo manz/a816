@@ -192,14 +192,18 @@ def _object_provided_names(obj_file: ObjectFile) -> list[str]:
 
 def _register_imported_object_pools(pool_decls: tuple[PoolDecl, ...], resolver: Resolver) -> None:
     """Mirror the imported `.o`'s pool decls into the importer's
-    resolver.pools so `.alloc ... in POOL` sites resolve at codegen.
-    Idempotent: identical re-registrations are skipped silently."""
+    resolver.pools so `.alloc ... in POOL` sites resolve at codegen, and
+    publish their `.capacity` / `.fragments` / `.largest_chunk` as a
+    local `.pool` does. Idempotent: identical re-registrations are skipped."""
+    from a816.parse.codegen.pool import _publish_pool_stats
     from a816.pool import Pool
 
     for decl in pool_decls:
         if decl.name in resolver.pools:
             continue
-        resolver.pools[decl.name] = Pool.from_decl(decl)
+        pool = Pool.from_decl(decl)
+        resolver.pools[decl.name] = pool
+        _publish_pool_stats(decl.name, pool, resolver)
 
 
 def _import_from_source(
