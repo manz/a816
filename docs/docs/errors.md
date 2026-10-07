@@ -177,6 +177,12 @@ separate blocks separated by a blank line.
   (see [Freespace pools](freespace-pools.md#memory-pools-bss-and-contexts)).
 - `E0407` a `.assert` is false once every address is final. Lists each
   failed assert with its message, expression and `file:line`.
+- `E0408` two placed blocks would write the same ROM bytes. Names both
+  blocks (an alloc and its pool, or an anonymous block by address) with
+  their sizes, addresses and `file:line`, and the bytes they share.
+  Pools place around every pin inside their ranges, so this is two pins
+  on the same bytes, or two pools whose ranges hand out the same bytes.
+  `--overlap-mode warn` reports it and builds anyway.
 
 ### I/O / config
 

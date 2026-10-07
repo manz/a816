@@ -14,11 +14,12 @@ from a816.exceptions import (
     UndeclaredPoolError,
     UnresolvedSymbolError,
 )
-from a816.object_file import ObjectFile, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
+from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
 from a816.parse.ast.expression import eval_constant_expression
 from a816.parse.errors import ParserSyntaxError, ScannerException
 from a816.parse.nodes.errors import NodeError
-from a816.pool import Pool, PoolOverflowError
+from a816.pool import Allocation, Pool, PoolOverflowError
+from a816.section import PINNED_POOL_PREFIX, Placement
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
@@ -112,14 +113,58 @@ class Linker:
         self._section_pool_alloc: dict[tuple[int, int], object] = {}
         request_sites = self._request_pool_allocs(merged)
         self._index_alloc_labels()
+        # Pins first: every pool then keeps its floating blocks off the pins
+        # it does not own, wherever they were declared.
         for pool in merged.values():
-            try:
-                pool.allocate()
-            except PoolOverflowError as exc:
-                site = request_sites.get((exc.pool_name, exc.alloc_name))
-                raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
+            if pool.name.startswith(PINNED_POOL_PREFIX):
+                self._allocate(pool, request_sites)
+        self._occupy_foreign_pins(merged)
+        for pool in merged.values():
+            self._allocate(pool, request_sites)
         self._check_cross_pool_overlaps(merged, self._alloc_sources)
         self._merged_pools_after_alloc = merged
+
+    def _allocate(self, pool: Pool, request_sites: dict[tuple[str, str], tuple[int, int]]) -> None:
+        try:
+            pool.allocate()
+        except PoolOverflowError as exc:
+            site = request_sites.get((exc.pool_name, exc.alloc_name))
+            raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
+
+    def _occupy_foreign_pins(self, merged: dict[str, Pool]) -> None:
+        """Mark every pinned span inside a pool's ranges as taken in that pool.
+
+        A pin written without `in POOL` (`.alloc at ADDR`, `*=`) or pinned in
+        another pool used to be invisible to the pool, which then placed a
+        floating block over it. Pools that may share memory (contexts of one
+        pool) do not block each other.
+        """
+        pins = self._pinned_spans(merged)
+        for pool in merged.values():
+            if pool.name.startswith(PINNED_POOL_PREFIX):
+                continue
+            for start, end, owner in pins:
+                if owner == pool.name or (owner in merged and _may_share(pool, merged[owner])):
+                    continue
+                if any(r.start <= end and start <= r.end for r in pool.ranges):
+                    pool.occupy(start, end)
+
+    def _pinned_spans(self, merged: dict[str, Pool]) -> list[tuple[int, int, str | None]]:
+        """(start, end inclusive, owning pool) of every block whose address is fixed before allocation."""
+        return [*_pool_pins(merged), *self._unpooled_pins()]
+
+    def _unpooled_pins(self) -> list[tuple[int, int, str | None]]:
+        """Sections of fixed-address objects that no pool places (`*=` blocks)."""
+        spans: list[tuple[int, int, str | None]] = []
+        for obj_idx, obj_file in enumerate(self.object_files):
+            if obj_file.relocatable:
+                continue
+            spans.extend(
+                (section.placed_base, section.placed_base + len(section.code) - 1, None)
+                for section_idx, section in enumerate(obj_file.sections)
+                if section.code and (obj_idx, section_idx) not in self._section_pool_alloc
+            )
+        return spans
 
     @staticmethod
     def _check_cross_pool_overlaps(merged: "dict[str, Pool]", sources: dict[tuple[str, str], str]) -> None:
@@ -167,6 +212,7 @@ class Linker:
         first_placed: dict[tuple[str, str], object] = {}
         request_sites: dict[tuple[str, str], tuple[int, int]] = {}
         self._alloc_sources: dict[tuple[str, str], str] = {}
+        self._section_requests: dict[tuple[int, int], PoolAlloc] = {}
         for obj_idx, obj_file in enumerate(self.object_files):
             for req in obj_file.pool_allocs:
                 pool = merged.get(req.pool_name)
@@ -183,6 +229,7 @@ class Linker:
                     request_sites[key] = (obj_idx, req.section_idx)
                     self._alloc_sources[key] = req.source
                 self._section_pool_alloc[(obj_idx, req.section_idx)] = alloc_obj
+                self._section_requests[(obj_idx, req.section_idx)] = req
         return request_sites
 
     def _rom_contiguity(self) -> Callable[[int, int], bool] | None:
@@ -364,6 +411,25 @@ class Linker:
             existing.reclaim(PoolRange(start=start, end=end))
             existing_ranges.add((start, end))
 
+    def _name_linked_section(
+        self, section: Section, obj_idx: int, local_idx: int, compile_base: int, labels_at: dict[int, str]
+    ) -> None:
+        """Give a linked section the name its source uses, for diagnostics.
+
+        A pooled block is its alloc in its pool, located by the request's
+        `file:line`. A pinned block takes the first label at its start, if any.
+        """
+        request = self._section_requests.get((obj_idx, local_idx))
+        if request is not None:
+            section.name = request.symbol_name
+            section.placement = Placement.POOLED
+            section.pool_name = request.pool_name
+            section.source = request.source
+            return
+        label = labels_at.get(compile_base)
+        if label is not None:
+            section.name = label
+
     def _delta_for(self, obj_file: ObjectFile, running_offset: int) -> int:
         """How much to shift this module's logical addresses by.
 
@@ -383,6 +449,7 @@ class Linker:
             r_idx: alloc for (oi, r_idx), alloc in getattr(self, "_section_pool_alloc", {}).items() if oi == obj_idx
         }
 
+        labels_at = _first_label_at(obj_file)
         for local_section_idx, section in enumerate(obj_file.sections):
             if local_section_idx in pool_allocs_by_section:
                 # Pool-allocated section: linker chose this section's
@@ -406,6 +473,7 @@ class Linker:
                 ],
             )
             new_section.bss = section.bss
+            self._name_linked_section(new_section, obj_idx, local_section_idx, section.placed_base, labels_at)
             self.linked_sections.append(new_section)
             self._section_obj[section_idx] = obj_idx
 
@@ -697,3 +765,33 @@ def _may_share(first: "Pool", second: "Pool") -> bool:
 
 def _context_owner(pool: "Pool") -> str:
     return pool.name.removesuffix(f".{pool.context}")
+
+
+def _first_label_at(obj_file: ObjectFile) -> dict[int, str]:
+    """The first public code label at each address of one object, for naming its blocks."""
+    labels: dict[int, str] = {}
+    for name, value, _sym_type, sym_section in obj_file.symbols:
+        if sym_section is SymbolSection.CODE and not name.startswith("_") and isinstance(value, int):
+            labels.setdefault(value, name)
+    return labels
+
+
+def _pool_pins(merged: dict[str, Pool]) -> list[tuple[int, int, str | None]]:
+    """Pins held by pools: `at ADDR in POOL` requests and the blocks of one-slot pin pools."""
+    spans: list[tuple[int, int, str | None]] = []
+    for pool in merged.values():
+        for alloc in pool.allocations:
+            start = _pin_start(pool, alloc)
+            if start is not None:
+                spans.append((start, start + alloc.size - 1, pool.name))
+    return spans
+
+
+def _pin_start(pool: Pool, alloc: Allocation) -> int | None:
+    if alloc.size <= 0:
+        return None
+    if alloc.pinned:
+        return alloc.pinned_addr
+    if pool.name.startswith(PINNED_POOL_PREFIX) and alloc.placed:
+        return alloc.addr
+    return None

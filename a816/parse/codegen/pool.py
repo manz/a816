@@ -34,6 +34,7 @@ from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
 from a816.pool import Pool, PoolRange, Strategy
 from a816.protocols import NodeProtocol
+from a816.section import ANONYMOUS_ALLOC_PREFIX, PINNED_POOL_PREFIX
 from a816.symbols import Resolver
 
 
@@ -397,7 +398,7 @@ def _anonymous_alloc_name(file_info: Token, pool_name: str) -> str:
     repeat builds don't churn the linker's symbol map."""
     line = getattr(getattr(file_info, "position", None), "line", 0)
     column = getattr(getattr(file_info, "position", None), "column", 0)
-    return f"__anon_alloc_{pool_name}_{line}_{column}"
+    return f"{ANONYMOUS_ALLOC_PREFIX}{pool_name}_{line}_{column}"
 
 
 def _synthesize_pinned_pool(
@@ -424,7 +425,7 @@ def _synthesize_pinned_pool(
         # forms (`at ADDR size N`) keep the single-range strict shape.
         end = (addr & 0xFF0000) | 0xFFFF
     line = getattr(getattr(file_info, "position", None), "line", 0)
-    pool_name = f"__pinned_at_{addr:06X}_L{line}"
+    pool_name = f"{PINNED_POOL_PREFIX}{addr:06X}_L{line}"
     if pool_name in resolver.pools:
         # Idempotent: paired-import inlines the same source into every
         # consumer, so the same `.alloc at ADDR { ... }` site gets

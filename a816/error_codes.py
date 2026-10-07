@@ -104,6 +104,7 @@ E_LINKER_POOL_OVERFLOW = ErrorCode("E0404", "linker", "alloc does not fit in its
 E_LINKER_UNDECLARED_POOL = ErrorCode("E0405", "linker", "alloc request names a pool no object declares")
 E_LINKER_POOL_OVERLAP = ErrorCode("E0406", "linker", "allocs from different pools overlap")
 E_LINKER_ASSERT_FAILED = ErrorCode("E0407", "linker", "a `.assert` is false once addresses are final")
+E_LINKER_BLOCK_OVERLAP = ErrorCode("E0408", "linker", "two placed blocks write the same ROM bytes")
 
 # --- I/O / config (E0500..) ---
 E_IO_FILE_NOT_FOUND = ErrorCode("E0500", "io", "file not found")

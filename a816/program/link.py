@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
 from a816.cpu.cpu_65c816 import RomType
+from a816.exceptions import BlockOverlapLinkError
 from a816.mappers import map_on_bus
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
+from a816.program.block_overlaps import emitted_blocks, overlapping_blocks
 from a816.writers import IPSWriter, SFCWriter, Writer
 
 if TYPE_CHECKING:
@@ -27,7 +29,6 @@ class LinkMixin:
         def _to_physical(self, logical_address: int) -> int: ...
         def _trace_linked_sections(self, linked_obj: ObjectFile) -> None: ...
         def _flush_emit_trace(self, output_path: Path) -> None: ...
-        def _wrap_emitter_for_overlap_audit(self, emitter: Writer) -> Writer: ...
 
     def import_linked_symbols(self, linked_obj: ObjectFile) -> None:
         """Register a linked ObjectFile's symbols into the resolver.
@@ -168,15 +169,16 @@ class LinkMixin:
         label: str,
         pad_to: int = 0,
     ) -> int:
-        """Write every linked section through an overlap-audited writer.
+        """Write every linked section once no two of them share ROM bytes.
 
-        Bytes land in memory first and reach `output_path` only once the
-        whole image emitted cleanly, so an `OverlapError` (raised under
-        `overlap_mode="error"`) leaves no truncated artefact behind. A
+        The overlap check runs before any byte is written, so an overlap
+        (an error under `overlap_mode="error"`) leaves no truncated
+        artefact behind. A
         `pad_to` (the ROM image's `rom_size`) zero-fills the image up to it.
         """
+        self._check_block_overlaps(linked_obj)
         buffer = io.BytesIO()
-        emitter = self._wrap_emitter_for_overlap_audit(make_writer(buffer))
+        emitter = make_writer(buffer)
         emitter.begin()
         for section in linked_obj.sections:
             if section.code:
@@ -195,6 +197,19 @@ class LinkMixin:
         self.write_debug_info_for_linked(linked_obj, output_path)
         self.logger.info(f"Successfully created {label}")
         return 0
+
+    def _check_block_overlaps(self, linked_obj: ObjectFile) -> None:
+        """Report placed blocks that share ROM bytes, per `--overlap-mode`."""
+        mode = self.resolver.context.overlap_mode
+        if mode == "off":
+            return
+        clashes = overlapping_blocks(emitted_blocks(linked_obj, self._to_physical))
+        if not clashes:
+            return
+        error = BlockOverlapLinkError(clashes)
+        if mode == "error":
+            raise error
+        self.logger.warning(error.format())
 
     def _get_code_start_address(self, linked_obj: ObjectFile) -> int:
         """Determine the start address for code from linked object symbols.
