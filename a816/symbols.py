@@ -252,6 +252,9 @@ class Scope:
         try:
             return self[symbol]
         except SymbolNotDefined as missing:
+            if self.resolver.provisional_label_value is not None:
+                self.resolver.provisional_label_used = True
+                return self.resolver.provisional_label_value
             owner = self.resolver.constant_owners.get(symbol)
             if owner is not None:
                 missing.note = f'`{symbol}` is a constant of module `{owner}`: add `.import "{owner}"`'
@@ -418,6 +421,11 @@ class Resolver:
         # resolved (visibility must follow `.import`, not compile order); an
         # E0200 on one of them names the import to add.
         self.constant_owners: dict[str, str] = {}
+        # Set while an opcode sizes itself on a label pass: a name not bound
+        # yet reads as this address, and `provisional_label_used` records that
+        # it did (see `OpcodeNode._sized_length`).
+        self.provisional_label_value: int | None = None
+        self.provisional_label_used = False
         # `.assert`s of a direct build, checked once labels are final
         # (object mode hands them to the linker instead).
         self.direct_asserts: list[LinkAssert] = []
