@@ -14,9 +14,12 @@ from a816.cpu.cpu_65c816 import (
     OpcodeWithoutOperand,
     RelativeJumpOpcode,
     RelativeLongJumpOpcode,
+    TransferOpcode,
     snes_opcode_table,
 )
 from a816.cpu.types import AddressingMode as _AsmMode
+from a816.cpu.types import ValueSize
+from a816.protocols import ValueNodeProtocol
 
 
 class AddrMode(Enum):
@@ -170,31 +173,33 @@ class Instruction:
         if self.mode in (AddrMode.RELATIVE, AddrMode.RELATIVE_LONG):
             return self._format_relative_target(hex_val, label_map)
         if self.mode == AddrMode.BLOCK_MOVE:
-            return f"{hex_val(val & 0xFF, 2)},{hex_val((val >> 8) & 0xFF, 2)}"
+            # Encoded destination bank first. The `$` listing keeps byte order
+            # (bsnes traces); a816 source is written source first (`mvp src, dst`).
+            dest, src = val & 0xFF, (val >> 8) & 0xFF
+            first, second = (src, dest) if use_a816_syntax else (dest, src)
+            return f"{hex_val(first, 2)},{hex_val(second, 2)}"
         return (f"0x{val:X}") if use_a816_syntax else (f"${val:X}")
 
     def get_size_hint(self) -> str:
-        """Get the size hint suffix for a816 syntax (.b, .w, .l).
+        """The size suffix a816 needs to reassemble these exact bytes.
 
-        Minimal-suffix policy aimed at matching idiomatic a816 source:
-        - Bare `lda #imm` for IMMEDIATE_M/IMMEDIATE_X 8-bit, IMMEDIATE_8.
-        - `.w` only when the operand is a 16-bit immediate (forces width).
-        - Bare absolute / direct (no `.w` / `.b` clutter).
-        - `.l` retained for ABSOLUTE_LONG family (a816 needs it to pick jsl).
-        - Block-move / relative / implied: no suffix.
+        Asks the assembler's own sizing rule (`Opcode.value_size`) what a
+        bare operand of this value would assemble to, and writes the encoded
+        size only when the answer differs: `AD 0C 00` needs `lda.w 0x000C`
+        (bare, a816 picks direct page), `AD 34 12` stays `lda 0x1234`. Same
+        rule as the assembler, so the two can't drift, and no suffix fluff's
+        OP001 would call redundant. Immediates are judged without register
+        state, like the output (which carries no `.a16`). Block-move,
+        relative and implied operands take no suffix.
         """
-        mode = self.mode
-
-        # 16-bit immediate forces `.w` so a816 picks the right opcode width.
-        if mode in (AddrMode.IMMEDIATE_M, AddrMode.IMMEDIATE_X):
-            return ".w" if len(self.operand_bytes) == 2 else ""
-        if mode == AddrMode.IMMEDIATE_16:
-            return ".w"
-
-        if mode in (AddrMode.ABSOLUTE_LONG, AddrMode.ABSOLUTE_LONG_X):
-            return ".l"
-
-        return ""
+        if self.opcode in _LONG_TRANSFERS:
+            return ""  # spelled `jsl` / `jml`, see `format_a816`
+        emitter = OPCODE_EMITTERS.get(self.opcode)
+        if emitter is None or not self.operand_bytes:
+            return ""
+        encoded = _SIZE_OF_OPERAND[len(self.operand_bytes)]
+        inferred = emitter.value_size(_Literal(self.operand_value), None, None)
+        return "" if inferred == encoded else f".{encoded}"
 
     def format_a816(self, label_map: dict[int, str] | None = None) -> str:
         """Format instruction in a816-compatible syntax.
@@ -204,10 +209,13 @@ class Instruction:
         """
         operand = self.format_operand(use_a816_syntax=True, label_map=label_map)
         size_hint = self.get_size_hint()
+        # A long call or jump (returns with `rtl` / changes bank) is spelled
+        # `jsl` / `jml`: always long, no suffix, and never mistaken for `jsr`.
+        mnemonic = _LONG_TRANSFERS.get(self.opcode, self.mnemonic)
 
         if operand:
-            return f"{self.mnemonic}{size_hint} {operand}"
-        return self.mnemonic
+            return f"{mnemonic}{size_hint} {operand}"
+        return mnemonic
 
     def __str__(self) -> str:
         operand = self.format_operand()
@@ -320,6 +328,41 @@ def _derive_opcode_table() -> dict[int, tuple[str, AddrMode, int]]:
 
 
 OPCODE_TABLE: dict[int, tuple[str, AddrMode, int]] = _derive_opcode_table()
+
+
+def _derive_emitters() -> dict[int, Opcode]:
+    """Opcode byte -> the size-indexed assembler entry that encodes it (memory
+    and immediate modes), so the disassembler can ask how a816 sizes a value."""
+    emitters: dict[int, Opcode] = {}
+    for mnemonic, modes in snes_opcode_table.items():
+        for asm_mode, emitter in modes.items():
+            entries = emitter.items() if isinstance(emitter, dict) else [(None, emitter)]
+            for index, em in entries:
+                if isinstance(em, Opcode) and type(em) in (Opcode, TransferOpcode):
+                    for byte, _mode, _size in _opcode_records(mnemonic, asm_mode, index, em):
+                        emitters[byte] = em
+    return emitters
+
+
+OPCODE_EMITTERS: dict[int, Opcode] = _derive_emitters()
+_SIZE_OF_OPERAND: dict[int, ValueSize] = {1: "b", 2: "w", 3: "l"}
+_LONG_TRANSFERS: dict[int, str] = {0x22: "jsl", 0x5C: "jml"}
+
+
+class _Literal(ValueNodeProtocol):
+    """A bare literal operand. Sizing is inherited from `ValueNodeProtocol`,
+    the same value rule the assembler applies to an unsuffixed operand."""
+
+    external_symbols = None
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def get_value(self) -> int:
+        return self.value
+
+    def get_value_string_len(self) -> int:
+        return len(hex(self.value)) - 2
 
 
 class Disassembler:

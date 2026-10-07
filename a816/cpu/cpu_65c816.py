@@ -6,6 +6,7 @@ from a816.cpu.types import AddressingMode, RomType, ValueSize
 from a816.exceptions import (
     BranchOutOfRangeError,
     BranchTargetUnmappedError,
+    CrossBankTransferError,
     MissingOperandError,
     UndecidableOperandSizeError,
 )
@@ -139,6 +140,9 @@ def guess_value_size(
     return operand_size
 
 
+_SIZE_ORDER: dict[str, int] = {"b": 0, "w": 1, "l": 2}
+
+
 class Opcode(OpcodeBase):
     def __init__(self, opcode_def: list[int | None], is_a: bool = False, is_x: bool = False, alias: bool = False):
         self.opcode_def = opcode_def
@@ -208,16 +212,24 @@ class Opcode(OpcodeBase):
     def value_size(
         self, value_node: "ValueNodeProtocol", size: ValueSize | None, resolver: "Resolver | None"
     ) -> ValueSize:
-        """`guess_value_size`, except that a link-time operand of an opcode
-        with a single form (`rep #ext`, `pea ext`) takes that form: only a
-        real choice needs the source to spell it."""
+        """`guess_value_size`, except where an opcode has a single form.
+
+        A link-time operand (`rep #ext`, `pea ext`) takes that form: only a
+        real choice needs the source to spell it. An unsized operand whose
+        value is narrower than the form widens to it (`pea 0x0000` was
+        sized as a byte and rejected); one wider than the form keeps its
+        size and fails, since narrowing would drop bytes (`lda (0x1234)`).
+        """
+        forms = self.encodable_sizes()
         try:
-            return guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
+            inferred = guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
         except UndecidableOperandSizeError:
-            forms = self.encodable_sizes()
             if len(forms) == 1:
                 return forms[0]
             raise
+        if size is None and len(forms) == 1 and _SIZE_ORDER[inferred] < _SIZE_ORDER[forms[0]]:
+            return forms[0]
+        return inferred
 
     def get_opcode_byte(self, value_size: str) -> int:
         try:
@@ -244,6 +256,37 @@ class Opcode(OpcodeBase):
         operand_bytes = self.emit_value(value_node, value_size)
         node_bytes = struct.pack("B", opcode_byte) + operand_bytes
         return node_bytes
+
+
+class TransferOpcode(Opcode):
+    """`jsr` / `jmp` with an absolute and a long form.
+
+    A bare operand used to be sized by its value like data, so a 24-bit
+    label in the caller's own bank (every label in HiROM) emitted JSL / JML:
+    a same-bank call became a long one whose callee must return with `rtl`.
+    A target is now judged against the caller's bank: a 16-bit value is an
+    address in the current bank (absolute, as before), a 24-bit one in the
+    same bank takes the absolute form, and one in another bank is an error
+    asking for `jsl` / `jml`. Explicit `.w` / `.l` still win.
+    """
+
+    def __init__(self, opcode_def: list[int | None], mnemonic: str) -> None:
+        super().__init__(opcode_def)
+        self.mnemonic = mnemonic
+
+    def value_size(
+        self, value_node: "ValueNodeProtocol", size: ValueSize | None, resolver: "Resolver | None"
+    ) -> ValueSize:
+        inferred = super().value_size(value_node, size, resolver)
+        if size is not None or inferred != "l" or resolver is None or resolver.opcode_pc is None:
+            return inferred
+        target = value_node.get_value()
+        if not isinstance(target, int):
+            return inferred
+        caller_bank = resolver.opcode_pc >> 16 & 0xFF
+        if target >> 16 & 0xFF == caller_bank:
+            return "w"
+        raise CrossBankTransferError(self.mnemonic, target, caller_bank)
 
 
 class LongOpcode(Opcode):
@@ -396,11 +439,11 @@ snes_opcode_table: dict[str, dict[AddressingMode, OpcodeDef]] = {
         AddressingMode.direct_indexed: {"x": Opcode([0x56, 0x5E])},
     },
     "jsr": {
-        AddressingMode.direct: Opcode([None, 0x20, 0x22]),
+        AddressingMode.direct: TransferOpcode([None, 0x20, 0x22], "jsr"),
         AddressingMode.dp_or_sr_indirect_indexed: Opcode([None, 0xFC]),
     },
     "jmp": {
-        AddressingMode.direct: Opcode([None, 0x4C, 0x5C]),
+        AddressingMode.direct: TransferOpcode([None, 0x4C, 0x5C], "jmp"),
         AddressingMode.indirect: Opcode([None, 0x6C, None]),
         AddressingMode.indirect_long: Opcode([None, 0xDC, None]),
         AddressingMode.dp_or_sr_indirect_indexed: Opcode([None, 0x7C, None]),

@@ -12,6 +12,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
@@ -21,6 +22,7 @@ from a816.parse.ast.nodes import (
     StructAstNode,
     SymbolAffectationAstNode,
 )
+from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
@@ -71,11 +73,40 @@ def _code_gen(
             if name is not None:
                 resolver.claim_private(name, file_info)
         generator = generators.get(node.kind)
-        if generator:
-            code += generator(node, resolver, macro_definitions, file_info)
-        else:
+        if generator is None:
             raise RuntimeError("Left over node", node)
+        try:
+            code += generator(node, resolver, macro_definitions, file_info)
+        except SymbolNotDefined as missing:
+            raise _located_missing_symbol(missing, file_info, resolver) from missing
     return code
+
+
+def _located_missing_symbol(missing: SymbolNotDefined, file_info: Token, resolver: Resolver) -> NodeError:
+    """A name a generator needed while expanding, as a located, coded error.
+
+    Generators evaluate `.for` bounds, `.if` conditions and the like
+    directly; a miss used to escape unconverted and print as a bare
+    `Build failed: NAME`. An alloc's size (`sizeof(blob)` reads
+    `blob.__size`) exists only after layout, so asking for it here gets
+    its own message.
+    """
+    from a816.error_codes import E_CODEGEN_SIZE_OPERAND
+    from a816.parse.nodes.errors import undefined_symbol_error
+
+    name = str(missing)
+    if name.endswith("__size"):
+        # `blob.__size` is what `sizeof(blob)` reads; `path_bin__size` is an
+        # `.incbin` path-name size. Both are bound when the bytes are laid out.
+        spelled = f"sizeof({name.removesuffix('.__size')})" if name.endswith(".__size") else name
+        return NodeError(
+            f"`{spelled}` is only known after layout, and this needs it while expanding",
+            missing.token or file_info,
+            code=str(E_CODEGEN_SIZE_OPERAND),
+            hint="`.for` bounds, `.if` conditions and constants are evaluated before any alloc is placed; "
+            "use a constant, or size the data some other way",
+        )
+    return undefined_symbol_error(missing, file_info, resolver.current_scope)
 
 
 def _code_gen_placement_body(

@@ -108,6 +108,7 @@ E_CODEGEN_BAD_RECLAIM = ErrorCode("E0342", "codegen", "range given back to a poo
 E_CODEGEN_BAD_SIZE = ErrorCode("E0343", "codegen", "size must be a positive integer")
 E_CODEGEN_BSS_EMITS = ErrorCode("E0344", "codegen", "`.alloc` in a `bss` pool emits bytes")
 E_CODEGEN_BAD_LABEL_ADDRESS = ErrorCode("E0345", "codegen", "`.label` address is not an integer")
+E_CODEGEN_CROSS_BANK_TRANSFER = ErrorCode("E0346", "codegen", "bare `jsr` / `jmp` into another bank")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")

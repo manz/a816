@@ -13,12 +13,14 @@ from a816.error_codes import (
     E_CODEGEN_BAD_OPERAND_SIZE,
     E_CODEGEN_BRANCH_RANGE,
     E_CODEGEN_BRANCH_UNMAPPED,
+    E_CODEGEN_CROSS_BANK_TRANSFER,
     E_CODEGEN_UNDECIDABLE_SIZE,
 )
 from a816.error_codes import E_CODEGEN_IMMEDIATE_OVERFLOW as _E_IMMEDIATE_OVERFLOW
 from a816.exceptions import (
     BranchOutOfRangeError,
     BranchTargetUnmappedError,
+    CrossBankTransferError,
     SymbolNotDefined,
     UndecidableOperandSizeError,
 )
@@ -64,6 +66,9 @@ class OpcodeNode(NodeBase):
         # Opcode, mode and index never change: look the emitter up once
         # instead of on both label passes and the emit.
         self._emitter: OpcodeProtocol | None = None
+        # Length chosen on a label pass while the operand named a label not
+        # placed yet; emit checks the real operand keeps it.
+        self._provisional_length: int | None = None
 
     def _get_emitter(self) -> OpcodeProtocol:
         if self._emitter is None:
@@ -103,10 +108,13 @@ class OpcodeNode(NodeBase):
             return cast(BlockMoveOpcode, opcode_emitter).emit_block_move(
                 self.value_node, self.value_node2, self.resolver
             )
+        self.resolver.opcode_pc = current_pc.logical_value
         try:
             emitted = opcode_emitter.emit(self.value_node, self.resolver, self.size)
         except UndecidableOperandSizeError as undecidable:
             raise self._undecidable_size_error(undecidable, opcode_emitter) from undecidable
+        except CrossBankTransferError as cross_bank:
+            raise self._cross_bank_error(cross_bank) from cross_bank
         except NoOpcodeForOperandSize as size_error:
             assert self.value_node is not None
             guessed_size = guess_value_size(self.value_node, self.size)
@@ -126,6 +134,9 @@ class OpcodeNode(NodeBase):
             ) from out_of_range
         except BranchTargetUnmappedError as unmapped:
             raise NodeError(str(unmapped), self._operand_token(), code=str(E_CODEGEN_BRANCH_UNMAPPED)) from unmapped
+        finally:
+            self.resolver.opcode_pc = None
+        self._check_provisional_length(emitted)
         self._check_byte_immediate_overflow(opcode_emitter)
         self._warn_on_immediate_width_mismatch(opcode_emitter)
         return emitted
@@ -234,13 +245,62 @@ class OpcodeNode(NodeBase):
         self._maybe_update_register_sizes()
         opcode_emitter = self._get_emitter()
         try:
-            after = current_pc + opcode_emitter.supposed_length(self.value_node, self.size, self.resolver)
+            after = current_pc + self._sized_length(opcode_emitter, current_pc)
         except UndecidableOperandSizeError as undecidable:
             raise self._undecidable_size_error(undecidable, opcode_emitter) from undecidable
         if self.opcode in _FORGETS_REGISTER_SIZES:
             # Same boundary as `emit`, or labels bind at other widths than the bytes.
             self.resolver.end_of_flow()
         return after
+
+    def _sized_length(self, emitter: OpcodeProtocol, current_pc: Address) -> int:
+        """The opcode's length, sizing a forward reference provisionally.
+
+        Size inference needs only the operand's class (byte, word or 24-bit).
+        A label further down the same block lies at or after the PC, in the
+        same bank (code never crosses a bank edge), so the PC stands in for
+        it and the inference picks what the real address will need. `emit`
+        checks it did: a label that landed elsewhere is an error, not a shift.
+        """
+        resolver = self.resolver
+        resolver.provisional_label_value = current_pc.logical_value
+        resolver.provisional_label_used = False
+        resolver.opcode_pc = current_pc.logical_value
+        try:
+            length = emitter.supposed_length(self.value_node, self.size, resolver)
+        except CrossBankTransferError as cross_bank:
+            raise self._cross_bank_error(cross_bank) from cross_bank
+        finally:
+            resolver.provisional_label_value = None
+            resolver.opcode_pc = None
+        if resolver.provisional_label_used and self._provisional_length is None:
+            self._provisional_length = length
+        return length
+
+    def _cross_bank_error(self, error: CrossBankTransferError) -> NodeError:
+        long_form = {"jsr": "jsl", "jmp": "jml"}.get(error.mnemonic, f"{error.mnemonic}.l")
+        return NodeError(
+            str(error),
+            self._operand_token(),
+            code=str(E_CODEGEN_CROSS_BANK_TRANSFER),
+            hint=f"write `{long_form}` for a long transfer"
+            + (" (the callee returns with `rtl`)" if error.mnemonic == "jsr" else "")
+            + f", or `{error.mnemonic}.w` if bank ${error.target >> 16 & 0xFF:02X} mirrors this one",
+        )
+
+    def _check_provisional_length(self, emitted: bytes) -> None:
+        """A forward reference sized from the PC must keep that size once placed."""
+        if self._provisional_length is None or len(emitted) == self._provisional_length:
+            return
+        suffix = {2: "b", 3: "w", 4: "l"}.get(len(emitted))
+        hint = f"write `{self.opcode}.{suffix}`" if suffix else "write the operand size"
+        raise NodeError(
+            f"`{self.opcode}` was sized as {self._provisional_length} bytes before its target was placed, "
+            f"and the target needs {len(emitted)}",
+            self._operand_token(),
+            code=str(E_CODEGEN_UNDECIDABLE_SIZE),
+            hint=f"{hint}: the target is outside this block, so its size can't be inferred ahead of it",
+        )
 
     def _undecidable_size_error(self, error: UndecidableOperandSizeError, emitter: object) -> NodeError:
         """`jmp target` with `target` placed by another module: which form to
