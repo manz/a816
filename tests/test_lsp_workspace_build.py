@@ -9,6 +9,7 @@ and the buffer stayed uncoloured until the next keystroke.
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -48,6 +49,25 @@ def _server_with_unbuilt_index() -> tuple[A816LanguageServer, WorkspaceIndex]:
     server.workspace_index = index
     server._ensure_workspace_index = lambda: server.workspace_index  # type: ignore[method-assign]
     return server, index
+
+
+def _hold_the_build(server: A816LanguageServer) -> threading.Event:
+    """Keep the background index build from finishing until the test sets
+    the returned event.
+
+    `didOpen` schedules the build, then parses the buffer in a worker
+    thread; on a free-threaded interpreter the build could otherwise finish
+    during that parse, before the test looks at it.
+    """
+    release = threading.Event()
+    rebuild = server._rebuilt_index
+
+    def held(index: WorkspaceIndex, progress: ProgressCallback | None = None) -> WorkspaceIndex:
+        release.wait(timeout=30)
+        return rebuild(index, progress)
+
+    server._rebuilt_index = held  # type: ignore[method-assign]
+    return release
 
 
 def _did_open_params(path: Path) -> DidOpenTextDocumentParams:
@@ -110,6 +130,7 @@ async def test_did_open_answers_before_the_workspace_is_indexed() -> None:
     """The pin: the opened buffer resolves its own symbols straight away,
     while the project walk is still only scheduled."""
     server, _ = _server_with_unbuilt_index()
+    release = _hold_the_build(server)
 
     await server._handle_did_open(_did_open_params(MAIN))
 
@@ -128,6 +149,7 @@ async def test_did_open_answers_before_the_workspace_is_indexed() -> None:
     assert tokens is not None
     assert tokens.data, "semantic tokens must not wait on the project walk"
 
+    release.set()
     await server._workspace_build_task
 
 
@@ -141,9 +163,11 @@ async def test_background_build_swaps_in_a_complete_index() -> None:
         refreshes.append(arg)
 
     server.server.workspace_semantic_tokens_refresh = record_refresh  # type: ignore[assignment]
+    release = _hold_the_build(server)
 
     await server._handle_did_open(_did_open_params(MAIN))
     assert server._workspace_build_task is not None
+    release.set()
     await server._workspace_build_task
 
     rebuilt = server.workspace_index
@@ -157,6 +181,7 @@ async def test_background_build_swaps_in_a_complete_index() -> None:
 
 async def test_build_is_scheduled_once() -> None:
     server, index = _server_with_unbuilt_index()
+    release = _hold_the_build(server)
 
     await server._handle_did_open(_did_open_params(MAIN))
     first = server._workspace_build_task
@@ -165,6 +190,7 @@ async def test_build_is_scheduled_once() -> None:
     server._schedule_workspace_build(index)
     assert server._workspace_build_task is first
 
+    release.set()
     await first
 
 
@@ -285,9 +311,11 @@ def test_rebuild_without_a_callback_still_indexes() -> None:
 
 async def test_build_announces_progress_to_the_client() -> None:
     server, _, channel = _server_reporting_progress()
+    release = _hold_the_build(server)
 
     await server._handle_did_open(_did_open_params(MAIN))
     assert server._workspace_build_task is not None
+    release.set()
     await server._workspace_build_task
 
     assert len(channel.created) == 1
@@ -404,6 +432,7 @@ async def test_requests_wait_for_the_open_parse() -> None:
     """The pin: a request racing didOpen must see the parsed document,
     not an empty table."""
     server, _ = _server_with_unbuilt_index()
+    release = _hold_the_build(server)
     opening = asyncio.create_task(server._handle_did_open(_did_open_params(MAIN)))
     await asyncio.sleep(0)  # let didOpen register its pending parse
 
@@ -415,6 +444,7 @@ async def test_requests_wait_for_the_open_parse() -> None:
 
     await opening
     assert server._workspace_build_task is not None
+    release.set()
     await server._workspace_build_task
 
 
@@ -444,8 +474,10 @@ async def test_a_failed_parse_still_releases_waiters() -> None:
 
 async def test_pending_parse_is_cleared_after_open() -> None:
     server, _ = _server_with_unbuilt_index()
+    release = _hold_the_build(server)
     await server._handle_did_open(_did_open_params(MAIN))
 
     assert server._pending_parses == {}
     assert server._workspace_build_task is not None
+    release.set()
     await server._workspace_build_task

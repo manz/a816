@@ -275,11 +275,13 @@ class ModuleBuilder:
         with recording_misses() as misses:
             result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
         if result != 0:
+            # The cache key must not outlive the object it described.
+            obj_path.with_suffix(".deps").unlink(missing_ok=True)
             raise RuntimeError(f"Failed to compile module '{module_name}'")
         used = program.resolver.used_unimported
         for name, owner in sorted(used.items()):
             logger.warning(
-                f"module `{module_name}` uses `{name}` from `{owner}` without importing it; "
+                f"module `{module_name}` uses `{_spelled(name)}` from `{owner}` without importing it; "
                 f'add `.import "{owner}"` (this becomes an error in a816 1.1.0)'
             )
         return (
@@ -427,6 +429,11 @@ def apply_experimental_flags(program: "Program", flags: list[str] | None) -> Non
 
 # Public API: peer build scripts pass these by keyword; a grouping object
 # would break every caller for no gain.
+def _spelled(name: str) -> str:
+    """A symbol as source writes it: the internal `NAME.__size` is `sizeof(NAME)`."""
+    return f"sizeof({name.removesuffix('.__size')})" if name.endswith(".__size") else name
+
+
 def build_with_imports(
     main_source: str | Path,  # NOSONAR python:S107 (Sonar anchors it here)
     output_file: str | Path,

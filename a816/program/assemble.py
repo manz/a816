@@ -198,11 +198,17 @@ class AssembleMixin:
 
         try:
             exit_code = self.assemble_with_object_emitter(asm_file, object_writer, parsed)
-            object_writer.end()
-            return exit_code
         except RuntimeError as e:
             _log_internal_failure(e)
-            return -1
+            exit_code = -1
+        if exit_code == 0:
+            object_writer.end()
+        else:
+            # A failed compile writes no object, and drops the last good one:
+            # it no longer matches the source, and a build cache keyed on the
+            # source's contents would otherwise keep using it.
+            output_file.unlink(missing_ok=True)
+        return exit_code
 
     def _classify_object_symbol(
         self, name: str, value: int, label_names: set[str], absolute_label_names: set[str]

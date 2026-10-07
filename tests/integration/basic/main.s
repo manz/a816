@@ -1,28 +1,28 @@
 """
-Top-level entry: imports the split modules, declares the reset
-routine, and pins the SNES cartridge header (`$00:FFB0`) and vector
-table (`$00:FFE0`).
+Top-level entry: imports the modules, declares the reset routine, and
+pins the SNES cartridge header (`$00:FFB0`) and vector table
+(`$00:FFE0`).
 
-Layout (one concern per module, all share `layout.s`):
-  * `layout.s`     — pools, WRAM map, named constants.
-  * `data.s`       — font tiles, greeting string (bank 1).
-  * `ppu_tools.s`  — `set_palette_color`, `upload_font`,
-                     `clear_tilemap_buffer`.
-  * `draw_string.s`— tilemap stamper.
-  * `nmi.s`        — `nmi_handler` (flushes both shadows on dirty
-                     flags), `brk_handler` (STP).
+Modules, one concern each:
+  * `preamble.s`: register binds, pools, the `Engine` state layout,
+    named constants.
+  * `engine_state.s`: the engine's WRAM state, reserved once.
+  * `data.s`: font tiles and the greeting string (bank 1).
+  * `ppu_tools.s`: `set_palette_color`, `upload_font`,
+    `clear_tilemap_buffer`.
+  * `draw_string.s`: the tilemap stamper.
+  * `engine.s`: `engine_update` and the long entries other banks call.
+  * `nmi.s`: `nmi_handler` and `brk_handler`.
 
-Boot path: reset configures PPU, primes WRAM shadows (palette +
-tilemap + glyphs), enables NMI + screen, idles. NMI flushes whichever
-shadow the dirty flag advertises.
+Boot path: reset configures the PPU, primes the WRAM shadows (palette,
+tilemap, glyphs), enables NMI and the screen, then idles. NMI flushes
+whichever shadow its dirty flag marks.
 """
 
 
-.import "@std/snes/ppu"
-.import "@std/snes/cpu"
-.import "@std/snes/dma"
 .import "@std/snes/header"
 .import "preamble"
+.import "engine_state"
 .import "data"
 .import "ppu_tools"
 .import "draw_string"
@@ -97,7 +97,7 @@ Cold-boot reset: native mode, kill NMI/DMA, init PPU, prime
     jsr.l draw_string_l
 
     lda #1
-    sta.l tilemap_dirty  ; NMI flushes this frame
+    sta.l engine_state.tilemap_dirty  ; NMI flushes this frame
 
     lda #0x01
     sta.l screen.TM  ; enable BG1 on main screen
@@ -113,7 +113,7 @@ _idle:
 
 ; --- Cartridge header (LoROM, $00:FFB0..$00:FFDF) ------------------------
 ; Checksum fields stay 0: no post-link checksum step yet.
-.alloc snes_header at SNES_HEADER_BASE size SnesHeader.__size {
+.alloc snes_header at SNES_HEADER_BASE {
     .istruct SnesHeader {
         title = "A816 BASIC ROM       "
         map_mode = 0x20  ; LoROM, SlowROM
@@ -123,10 +123,9 @@ _idle:
 }
 
 ; --- Vectors (LoROM, $00:FFE0..$00:FFFF) ----------------------------------
-; Pinned at the hardware-mandated SNES vector address. `size` bounds the
-; body so a stray field past the table fails the build instead of
-; trampling the rest of the bank. Unset vectors stay 0.
-.alloc vector_table at SNES_VECTORS_BASE size SnesVectors.__size {
+; Pinned at the hardware-mandated SNES vector address. Unset vectors
+; stay 0.
+.alloc vector_table at SNES_VECTORS_BASE {
     .istruct SnesVectors {
         native = {
             coprocessor = brk_handler
@@ -142,9 +141,4 @@ _idle:
             irq_brk = brk_handler
         }
     }
-}
-
-; --- Pad ROM to 256KB (kintsuki refuses sub-power-of-two LoROM) -----------
-.alloc rom_pad at 0x07FFFF size 0x01 {
-    .db 0
 }

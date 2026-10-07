@@ -249,8 +249,7 @@ def generate_alloc(
             pinned_addr = _eval_int(node.at_address, resolver, file_info)
 
     _reject_nested_placement(node)
-    if node.reserve and node.name:
-        resolver.reservation_sizes[node.name] = _reserved_size(node, resolver)
+    _record_alloc_name(node, resolver)
     if node.cross_bank:
         _check_cross_bank_body(node)
     align = _eval_align(node, resolver, file_info)
@@ -281,6 +280,15 @@ def generate_alloc(
             cross_bank=node.cross_bank,
         )
     ]
+
+
+def _record_alloc_name(node: AllocAstNode, resolver: Resolver) -> None:
+    """Make a named alloc (and a reservation's size) known to `sizeof` before the body is measured."""
+    if not node.name:
+        return
+    resolver.alloc_names.add(node.name)
+    if node.reserve:
+        resolver.reservation_sizes[node.name] = _reserved_size(node, resolver)
 
 
 def _reserved_size(node: AllocAstNode, resolver: Resolver) -> int | None:

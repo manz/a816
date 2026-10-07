@@ -1,3 +1,8 @@
 entrypoint = "main.s"
 include-paths = [".."]
 module-paths = ["."]
+
+# Cartridge: LoROM without SRAM. 256 KiB: kintsuki refuses a
+# sub-power-of-two LoROM image, and the .sfc is padded to rom_size.
+board = "SHVC-1A0N-30"
+rom_size = 0x40000

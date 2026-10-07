@@ -90,6 +90,8 @@ def _entry_width(node: SizeofExprNode, type_name: str, field: str, resolver: Res
 
 def _is_alloc(name: str, resolver: Resolver) -> bool:
     """`name` is an alloc (it publishes `name.__size`), here or imported."""
+    if name in resolver.alloc_names:
+        return True
     try:
         resolver.current_scope.value_for(f"{name}.__size")
     except ExternalSymbolReference:

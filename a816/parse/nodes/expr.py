@@ -66,7 +66,7 @@ class ExpressionNode(ValueNodeProtocol):
         rename, touches_label = self._compute_local_label_renames()
         if not touches_label:
             return
-        expr_str = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+        expr_str = _inline_aliases(reconstruct_expression(self.expression, self.resolver), self.resolver)
         for short, mangled in rename.items():
             expr_str = re.sub(rf"\b{re.escape(short)}\b", mangled, expr_str)
         self._deferred_expression = expr_str
@@ -100,7 +100,9 @@ class ExpressionNode(ValueNodeProtocol):
                 # name.
                 from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
 
-                self._deferred_expression = _inline_aliases(reconstruct_expression(self.expression), self.resolver)
+                self._deferred_expression = _inline_aliases(
+                    reconstruct_expression(self.expression, self.resolver), self.resolver
+                )
                 self.external_symbols = {e.symbol_name}
                 return 0
             raise NodeError(f"{e} ({self}) is not defined in the current scope.", self.file_info) from e

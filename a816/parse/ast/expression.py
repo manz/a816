@@ -443,11 +443,23 @@ def reconstruct_expression(expression: ExpressionAstNode, resolver: Resolver | N
     return " ".join(_render_term(node, resolver) for node in expression.tokens)
 
 
+def _known_size(symbol: str, resolver: Resolver) -> int | str:
+    """A `NAME.__size` already measured in this module renders as its number;
+    an imported one stays a symbol for the linker."""
+    try:
+        value = resolver.current_scope.value_for(symbol)
+    except (SymbolNotDefined, ExternalSymbolReference):
+        return symbol
+    return value if isinstance(value, int) else symbol
+
+
 def _render_term(node: ExprNode, resolver: Resolver | None) -> str:
     if resolver is not None and isinstance(node, SizeofExprNode):
         from a816.parse.ast.size_of import size_of
 
         size = size_of(node, resolver)
+        if isinstance(size, str):
+            size = _known_size(size, resolver)
         return f"{size:#x}" if isinstance(size, int) else size
     if resolver is not None and isinstance(node, CastAccessExprNode | CastValueExprNode):
         inner = reconstruct_expression(ExpressionAstNode(list(node.inner)), resolver)
