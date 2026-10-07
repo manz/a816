@@ -10,6 +10,7 @@ from a816.parse.nodes.symbols import SymbolNode
 from a816.parse.tokens import Token
 from a816.pool import Allocation
 from a816.protocols import NodeBase, NodeProtocol
+from a816.section import ANONYMOUS_ALLOC_PREFIX
 from a816.symbols import Resolver, Scope
 
 
@@ -118,6 +119,7 @@ class AllocNode(NodeBase):
     def _request_slot(self) -> None:
         pool = self.resolver.pools[self.pool_name]
         self._size = self._measure_body()
+        self._publish_size()
         self._alloc = pool.request(
             self.name, self._size, self.pinned_addr, align=self.align, cross_bank=self.cross_bank
         )
@@ -138,6 +140,15 @@ class AllocNode(NodeBase):
             self.resolver.alloc_sandbox_cursors[self.pool_name] = (
                 self.resolver.alloc_sandbox_cursors.get(self.pool_name, 0) + self._size
             )
+
+    def _publish_size(self) -> None:
+        """`NAME.__size`: the body's byte count, like `Type.__size` for a struct.
+
+        Known once the body is measured, before the alloc is placed, so it is
+        a plain constant whatever the pool picks. Nameless allocs publish none.
+        """
+        if not self.name.startswith(ANONYMOUS_ALLOC_PREFIX):
+            self.resolver.current_scope.add_symbol(f"{self.name}.__size", self._size)
 
     def exported_labels(self) -> list[str]:
         """Names, as the object symbol table exports them, of every label

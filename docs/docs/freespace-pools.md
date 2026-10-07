@@ -147,7 +147,9 @@ same bytes at their canonical address.
 ```
 
 Allocator picks the address. `helper_fn` symbol resolves to that
-address. Body bytes land there.
+address. Body bytes land there. `sizeof(helper_fn)` is the body's
+byte count: it is known before placement, and another module reads it
+through `.import` like the address.
 
 `align N` (a power of two, any constant expression) places the block
 on a multiple of `N`, for data whose layout depends on its base:

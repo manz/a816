@@ -50,6 +50,7 @@ from a816.parse.ast.nodes import (
     RegisterSizeAstNode,
     RelocateAstNode,
     ScopeAstNode,
+    SizeofExprNode,
     StringInitAstNode,
     StructAstNode,
     StructFieldInitAstNode,
@@ -269,6 +270,20 @@ class TokensMixin:
             return
         if isinstance(part, Parenthesis):
             return  # parens carry no semantic colour of their own
+        if isinstance(part, SizeofExprNode):
+            # `sizeof` / `countof` read as keywords; the struct path inside
+            # colours like any other name.
+            if part.token.position:
+                tokens.append(
+                    {
+                        "line": part.token.position.line,
+                        "char": part.token.position.column,
+                        "length": len(part.token.value),
+                        "type": 0,  # keyword
+                    }
+                )
+            self._highlight_expr_part(Term(part.path_token), tokens)
+            return
         if not isinstance(part, Term):
             return
         expr_token = part.token

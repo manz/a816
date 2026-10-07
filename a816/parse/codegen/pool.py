@@ -9,11 +9,12 @@ from a816.error_codes import (
     E_SYMBOL_UNKNOWN_POOL,
 )
 from a816.exceptions import (
+    A816Error,
     ExternalExpressionReference,
     ExternalSymbolReference,
     SymbolNotDefined,
 )
-from a816.parse.ast.expression import eval_expression, expr_to_ast
+from a816.parse.ast.expression import eval_expression, expr_to_ast, reconstruct_expression
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AssertAstNode,
@@ -248,6 +249,8 @@ def generate_alloc(
             pinned_addr = _eval_int(node.at_address, resolver, file_info)
 
     _reject_nested_placement(node)
+    if node.reserve and node.name:
+        resolver.reservation_sizes[node.name] = _reserved_size(node, resolver)
     if node.cross_bank:
         _check_cross_bank_body(node)
     align = _eval_align(node, resolver, file_info)
@@ -278,6 +281,19 @@ def generate_alloc(
             cross_bank=node.cross_bank,
         )
     ]
+
+
+def _reserved_size(node: AllocAstNode, resolver: Resolver) -> int | None:
+    """A flat `.reserve NAME SIZE` size, when SIZE is already a constant here;
+    None leaves `sizeof` to the alloc's measured `NAME.__size`."""
+    reserve = node.body.body[0] if node.body.body else None
+    if not isinstance(reserve, ReserveAstNode):
+        return None
+    try:
+        size = eval_expression(reserve.size, resolver)
+    except A816Error:
+        return None
+    return size if isinstance(size, int) else None
 
 
 def _check_cross_bank_body(node: AllocAstNode) -> None:
@@ -344,6 +360,7 @@ def generate_reserve_typed(
         body.append(ReserveAstNode(expr_to_ast(hex(size - cursor)), file_info))
 
     resolver.typed_instances[node.name] = node.type_name
+    resolver.reservation_sizes[node.name] = size
     alloc = AllocAstNode(
         node.name,
         node.pool_name,
@@ -515,7 +532,10 @@ def generate_assert(
     Parse-only runs (LSP) skip it."""
     from a816.object_file import LinkAssert
 
-    check = LinkAssert(node.expression.to_canonical(), node.message, _source_of_token(file_info))
+    # Rendered with the resolver: `sizeof` / `countof` fold to numbers and
+    # casts to arithmetic here, since the linker has no struct layouts.
+    expression = reconstruct_expression(node.expression, resolver)
+    check = LinkAssert(expression, node.message, _source_of_token(file_info))
     if resolver.context.is_object_mode and resolver.context.object_writer is not None:
         resolver.context.object_writer.asserts.append(check)
     elif resolver.context.is_direct_mode:

@@ -8,6 +8,7 @@ import surface (`from a816.parse.ast.nodes import X`) keeps working.
 from __future__ import annotations
 
 from a816.parse.ast.nodes.base import (
+    SIZE_OPERATORS,
     AstNode,
     BinOp,
     CastAccessExprNode,
@@ -15,6 +16,7 @@ from a816.parse.ast.nodes.base import (
     ExpressionAstNode,
     ExprNode,
     Parenthesis,
+    SizeofExprNode,
     Term,
     UnaryOp,
 )
@@ -78,6 +80,7 @@ from a816.parse.ast.nodes.symbols import (
 from a816.parse.ast.nodes.unions import DeclAstNode, KeywordAstNode
 
 __all__ = [
+    "SIZE_OPERATORS",
     "AllocAstNode",
     "AsciiAstNode",
     "AssertAstNode",
@@ -126,6 +129,7 @@ __all__ = [
     "ReserveAstNode",
     "ReserveTypedAstNode",
     "ScopeAstNode",
+    "SizeofExprNode",
     "StringInitAstNode",
     "StructAstNode",
     "StructFieldInitAstNode",

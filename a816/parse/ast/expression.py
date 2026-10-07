@@ -18,6 +18,7 @@ from a816.parse.ast.nodes import (
     CastValueExprNode,
     ExpressionAstNode,
     ExprNode,
+    SizeofExprNode,
     Term,
     UnaryOp,
 )
@@ -80,7 +81,7 @@ def shunting_yard(expr_nodes: list[ExprNode]) -> list[ExprNode]:
     operator_stack: list[ExprNode] = []
 
     for expr in expr_nodes:
-        if isinstance(expr, Term | CastAccessExprNode | CastValueExprNode):
+        if isinstance(expr, Term | CastAccessExprNode | CastValueExprNode | SizeofExprNode):
             output_queue.append(expr)
         elif isinstance(expr, BinOp | UnaryOp):
             current_precedence = OPERATOR_PRECEDENCE[expr.token.value] if isinstance(expr, BinOp) else 2
@@ -205,6 +206,9 @@ def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> se
         if isinstance(current, CastAccessExprNode | CastValueExprNode):
             external_symbols |= _collect_external_symbols(current.inner, resolver)
             continue
+        if isinstance(current, SizeofExprNode):
+            external_symbols |= _external_size(current, resolver)
+            continue
         if current.token.type != TokenType.IDENTIFIER:
             continue
         try:
@@ -212,6 +216,20 @@ def _collect_external_symbols(ordered: list[ExprNode], resolver: Resolver) -> se
         except ExternalSymbolReference as e:
             external_symbols.add(e.symbol_name)
     return external_symbols
+
+
+def _external_size(node: SizeofExprNode, resolver: Resolver) -> set[str]:
+    """The `NAME.__size` symbol of an imported reservation, which the linker resolves."""
+    from a816.parse.ast.size_of import size_of
+
+    size = size_of(node, resolver)
+    if isinstance(size, int):
+        return set()
+    try:
+        _lookup(size, node.path_token, resolver)
+    except ExternalSymbolReference as e:
+        return {e.symbol_name}
+    return set()
 
 
 def _lookup(name: str, token: Token, resolver: Resolver) -> int | str | BlockAstNode | None:
@@ -282,7 +300,23 @@ def _field_offset(cast: CastAccessExprNode, resolver: Resolver) -> int:
     return offset
 
 
+def _size_value(node: SizeofExprNode, resolver: Resolver) -> int:
+    """`sizeof` / `countof` as a number; a size only a symbol carries is looked up."""
+    from a816.parse.ast.size_of import size_of
+
+    size = size_of(node, resolver)
+    if isinstance(size, int):
+        return size
+    value = _lookup(size, node.path_token, resolver)
+    if not isinstance(value, int):
+        raise RuntimeError(f"{size!r} did not resolve to a size")  # noqa: TRY004 - invariant failure
+    return value
+
+
 def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | str]) -> None:
+    if isinstance(current, SizeofExprNode):
+        values_stack.append(_size_value(current, resolver))
+        return
     if isinstance(current, CastAccessExprNode):
         values_stack.append(_eval_cast_base(current, resolver) + _field_offset(current, resolver))
         return
@@ -410,6 +444,11 @@ def reconstruct_expression(expression: ExpressionAstNode, resolver: Resolver | N
 
 
 def _render_term(node: ExprNode, resolver: Resolver | None) -> str:
+    if resolver is not None and isinstance(node, SizeofExprNode):
+        from a816.parse.ast.size_of import size_of
+
+        size = size_of(node, resolver)
+        return f"{size:#x}" if isinstance(size, int) else size
     if resolver is not None and isinstance(node, CastAccessExprNode | CastValueExprNode):
         inner = reconstruct_expression(ExpressionAstNode(list(node.inner)), resolver)
         if isinstance(node, CastValueExprNode):

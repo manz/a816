@@ -160,7 +160,7 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 3  # 3: extern casts keep field offsets, dp under .a16, no bare bit-field exports
+CODEGEN_REVISION = 4  # 4: named allocs publish NAME.__size
 """Bumped whenever a816 emits different object bytes for unchanged source (a
 codegen fix such as #159's end-marker labels). With the format's schema digest
 it forms the object identity the build cache keys on, so a release that changes

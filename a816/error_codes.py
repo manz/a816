@@ -87,6 +87,7 @@ E_CODEGEN_UNMAPPED_BANK = ErrorCode("E0317", "codegen", "address in a bank no `.
 E_CODEGEN_POOL_OVERFLOW = ErrorCode("E0318", "codegen", "alloc does not fit in its pool")
 E_CODEGEN_MISMATCHED_TYPES = ErrorCode("E0319", "codegen", "operator applied to a string and a number")
 E_CODEGEN_NOT_TOO_WIDE = ErrorCode("E0320", "codegen", "`~` operand wider than 32 bits")
+E_CODEGEN_SIZE_OPERAND = ErrorCode("E0321", "codegen", "`sizeof` / `countof` names nothing it can size")
 E_CODEGEN_ISTRUCT_UNKNOWN_TYPE = ErrorCode("E0330", "codegen", "`.istruct` names an unknown struct type")
 E_CODEGEN_ISTRUCT_UNKNOWN_FIELD = ErrorCode("E0331", "codegen", "initializer names a field the struct lacks")
 E_CODEGEN_ISTRUCT_VALUE_KIND = ErrorCode("E0332", "codegen", "initializer value does not fit the field's type")

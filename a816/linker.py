@@ -608,7 +608,14 @@ class Linker:
         for obj_idx, obj_file in enumerate(self.object_files):
             local_overlay = self._local_by_obj.get(obj_idx)
             for check in obj_file.asserts:
-                if not self._evaluate_expression(check.expression, local_overlay):
+                try:
+                    holds = self._evaluate_expression(check.expression, local_overlay)
+                except ExpressionEvaluationError as exc:
+                    failures.append(
+                        (f"{check.message} (cannot evaluate: {exc.reason})", check.expression, check.source)
+                    )
+                    continue
+                if not holds:
                     failures.append((check.message, check.expression, check.source))
         if failures:
             raise LinkAssertError(failures)

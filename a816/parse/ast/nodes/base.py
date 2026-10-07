@@ -141,3 +141,31 @@ class ExpressionAstNode(AstNode):
 
     def to_canonical(self) -> str:
         return " ".join([expr_node.to_canonical() for expr_node in self.tokens])
+
+
+SIZE_OPERATORS = ("sizeof", "countof")
+
+
+class SizeofExprNode(ExprNode):
+    """`sizeof(PATH)` / `countof(PATH)`: a size, never an address.
+
+    `sizeof` reads a struct, a struct field or a reservation; `countof`
+    reads an array field's element count. `token` is the operator keyword,
+    `path_token` the single identifier between the parentheses (`T.a.b`).
+    """
+
+    def __init__(self, token: Token, path_token: Token, close_token: Token | None = None) -> None:
+        super().__init__(token)
+        self.path_token = path_token
+        self.close_token = close_token
+
+    @property
+    def kind(self) -> str:
+        return self.token.value
+
+    @property
+    def path(self) -> str:
+        return self.path_token.value
+
+    def to_canonical(self) -> str:
+        return f"{self.kind}({self.path})"

@@ -366,6 +366,10 @@ class Resolver:
         # Nested arrays carry their dotted path so an enclosing struct can
         # re-publish them as `Outer.inner.items.__size`.
         self.struct_array_sizes: dict[str, dict[str, int]] = {}
+        # Reservation sizes for `sizeof(NAME)`: the size when it is known at
+        # codegen (a constant flat size, a typed reserve), None when only the
+        # alloc's `NAME.__size` symbol carries it (measured later, or imported).
+        self.reservation_sizes: dict[str, int | None] = {}
         # Declared `(name, type)` fields per struct, in source order. `.istruct`
         # walks these to lay an instance out as bytes.
         self.struct_fields: dict[str, list[tuple[str, str]]] = {}

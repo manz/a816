@@ -8,6 +8,7 @@ from a816.error_codes import (
     E_PARSER_TYPED_BIND_NEEDS_ASSIGN,
 )
 from a816.parse.ast.nodes import (
+    SIZE_OPERATORS,
     AssignAstNode,
     AstNode,
     BinOp,
@@ -18,6 +19,7 @@ from a816.parse.ast.nodes import (
     ExprNode,
     MacroApplyAstNode,
     Parenthesis,
+    SizeofExprNode,
     SymbolAffectationAstNode,
     Term,
     UnaryOp,
@@ -92,11 +94,29 @@ def _parse_lparen_expression(p: Parser, lparen: Token) -> list[ExprNode]:
     return [Parenthesis(lparen), *inner, Parenthesis(rparen)]
 
 
+def _is_size_operator(token: Token, p: Parser) -> bool:
+    """`sizeof(` / `countof(`: only the keyword right before `(` is the operator,
+    so a label named `sizeof` still reads as a label."""
+    return token.type == TokenType.IDENTIFIER and token.value in SIZE_OPERATORS and p.current().type == TokenType.LPAREN
+
+
+def _parse_size_operator(p: Parser, keyword: Token) -> SizeofExprNode:
+    """`sizeof ( PATH )` with PATH one identifier (`T`, `T.field.sub`, `buffer`)."""
+    p.next()  # consume `(`
+    path = p.next()
+    expect_token(path, TokenType.IDENTIFIER)
+    close = p.next()
+    expect_token(close, TokenType.RPAREN)
+    return SizeofExprNode(keyword, path, close_token=close)
+
+
 def _parse_expression(p: Parser) -> list[ExprNode]:
     tokens: list[ExprNode] = []
     current_token = p.next()
     if accept_token(current_token, TokenType.LPAREN):
         tokens += _parse_lparen_expression(p, current_token)
+    elif _is_size_operator(current_token, p):
+        tokens.append(_parse_size_operator(p, current_token))
     elif accept_tokens(
         current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.QUOTED_STRING, TokenType.IDENTIFIER]
     ):
