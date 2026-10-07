@@ -6,6 +6,7 @@ import os
 import re
 
 from a816.cpu.mapping import Address
+from a816.error_codes import E_CODEGEN_BAD_SIZE
 from a816.parse.ast.expression import eval_expression_str
 from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.expr import ExpressionNode
@@ -68,7 +69,9 @@ class ReserveNode(NodeBase):
     def _size(self) -> int:
         size = self.size_node.get_value()
         if not isinstance(size, int) or size < 0:
-            raise NodeError(f".res size must be a non-negative integer, got {size!r}", self.file_info)
+            raise NodeError(
+                f".res size must be a non-negative integer, got {size!r}", self.file_info, code=str(E_CODEGEN_BAD_SIZE)
+            )
         return size
 
     def pc_after(self, current_pc: Address) -> Address:

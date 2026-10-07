@@ -66,6 +66,9 @@ E_SYMBOL_UNKNOWN_MACRO = ErrorCode("E0207", "symbols", "macro not defined")
 E_SYMBOL_MACRO_ARITY = ErrorCode("E0208", "symbols", "macro called with the wrong number of arguments")
 E_SYMBOL_NOT_A_VALUE = ErrorCode("E0209", "symbols", "symbol names a block, not a value")
 E_SYMBOL_EAGER_FORWARD_REF = ErrorCode("E0210", "symbols", "`:=` references a symbol not yet defined")
+E_SYMBOL_NOT_A_BLOCK = ErrorCode("E0211", "symbols", "symbol names a value, not a block")
+E_SYMBOL_MODULE_NOT_FOUND = ErrorCode("E0212", "symbols", "`.import` names a module found on no module path")
+E_SYMBOL_NO_TABLE = ErrorCode("E0213", "symbols", "`.text` with no `.table` in scope")
 
 # --- Codegen (E0300..) ---
 E_CODEGEN_NODE_ERROR = ErrorCode("E0300", "codegen", "node failed during emission")
@@ -97,6 +100,14 @@ E_CODEGEN_ISTRUCT_NON_ASCII = ErrorCode("E0334", "codegen", "non-ASCII character
 E_CODEGEN_ISTRUCT_BIT_RUN_TOO_WIDE = ErrorCode("E0335", "codegen", "initialized bit-field run wider than 32 bits")
 E_CODEGEN_CROSS_BANK_BODY = ErrorCode("E0336", "codegen", "`cross_bank` body holds something other than data")
 E_CODEGEN_ALLOC_SIZE_DRIFT = ErrorCode("E0337", "codegen", "alloc body emitted a size other than its reserved slot")
+E_CODEGEN_BAD_POOL = ErrorCode("E0338", "codegen", "invalid `.pool` declaration")
+E_CODEGEN_POOL_REDECLARED = ErrorCode("E0339", "codegen", "pool declared again with a different shape")
+E_CODEGEN_BAD_ALIGN = ErrorCode("E0340", "codegen", "invalid `align` on an `.alloc`")
+E_CODEGEN_NESTED_PLACEMENT = ErrorCode("E0341", "codegen", "placement directive nested in an `.alloc`")
+E_CODEGEN_BAD_RECLAIM = ErrorCode("E0342", "codegen", "range given back to a pool is invalid")
+E_CODEGEN_BAD_SIZE = ErrorCode("E0343", "codegen", "size must be a positive integer")
+E_CODEGEN_BSS_EMITS = ErrorCode("E0344", "codegen", "`.alloc` in a `bss` pool emits bytes")
+E_CODEGEN_BAD_LABEL_ADDRESS = ErrorCode("E0345", "codegen", "`.label` address is not an integer")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")

@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from a816.error_codes import (
+    E_CODEGEN_BAD_ALIGN,
+    E_CODEGEN_BAD_POOL,
+    E_CODEGEN_BAD_RECLAIM,
+    E_CODEGEN_BAD_SIZE,
     E_CODEGEN_CROSS_BANK_BODY,
+    E_CODEGEN_NESTED_PLACEMENT,
+    E_CODEGEN_NODE_ERROR,
+    E_CODEGEN_POOL_REDECLARED,
+    E_CODEGEN_UNMAPPED_BANK,
     E_SYMBOL_NOT_DEFINED,
     E_SYMBOL_RESERVE_UNKNOWN_TYPE,
     E_SYMBOL_UNKNOWN_POOL,
@@ -53,6 +61,7 @@ def _eval_int(expr: ExpressionAstNode, resolver: Resolver, where: Token) -> int:
         raise NodeError(
             f"pool literal must be a constant expression (got external reference {ref!r})",
             where,
+            code=str(E_CODEGEN_BAD_POOL),
         ) from exc
     except SymbolNotDefined as exc:
         raise NodeError(
@@ -65,6 +74,7 @@ def _eval_int(expr: ExpressionAstNode, resolver: Resolver, where: Token) -> int:
         raise NodeError(
             f"pool literal must evaluate to int, got {type(value).__name__}",
             where,
+            code=str(E_CODEGEN_BAD_POOL),
         )
     return value
 
@@ -88,6 +98,7 @@ def generate_pool(
             raise NodeError(
                 f"pool {node.pool_name!r} fill 0x{fill_value:x} out of byte range",
                 file_info,
+                code=str(E_CODEGEN_BAD_POOL),
             )
         pool = Pool(
             name=node.pool_name,
@@ -103,7 +114,7 @@ def generate_pool(
     except NodeError:
         raise
     except Exception as exc:  # PoolError, PoolInvalidRangeError, PoolOverlapError
-        raise NodeError(f"pool {node.pool_name!r}: {exc}", file_info) from exc
+        raise NodeError(f"pool {node.pool_name!r}: {exc}", file_info, code=str(E_CODEGEN_BAD_POOL)) from exc
     _register_pool(pool, resolver)
     # Each context is its own allocator over the pool's memory: `POOL.CTX`.
     # Contexts of one pool never live at the same time, so the linker lets
@@ -142,6 +153,7 @@ def _bank_local_ranges(lo: int, hi: int, node: PoolAstNode, resolver: Resolver, 
                 f"which no `.map` serves as {'memory' if node.bss else 'ROM'}",
                 file_info,
                 hint="declare the `.map` for these banks before the pool, or end the range before them",
+                code=str(E_CODEGEN_UNMAPPED_BANK),
             )
         bank_lo, bank_hi = max(lo, bank << 16), min(hi, bank << 16 | 0xFFFF)
         for w_lo, w_hi in windows:
@@ -163,7 +175,11 @@ def _merge_pool_declaration(
     """
     disagreement = _pool_disagreement(existing, pool, node, resolver)
     if disagreement is not None:
-        raise NodeError(f"pool {node.pool_name!r} already declared with a different {disagreement}", file_info)
+        raise NodeError(
+            f"pool {node.pool_name!r} already declared with a different {disagreement}",
+            file_info,
+            code=str(E_CODEGEN_POOL_REDECLARED),
+        )
     known = {(r.start, r.end) for r in existing.ranges}
     added = [r for r in pool.ranges if (r.start, r.end) not in known]
     if not added:
@@ -173,6 +189,7 @@ def _merge_pool_declaration(
             f"pool {node.pool_name!r} already declared in this file",
             file_info,
             hint=f"declare it once; `.reclaim {node.pool_name} START END` adds a range",
+            code=str(E_CODEGEN_POOL_REDECLARED),
         )
     for context_pool in [existing, *(resolver.pools[f"{node.pool_name}.{ctx}"] for ctx in node.contexts)]:
         for r in added:
@@ -255,7 +272,9 @@ def generate_reclaim(
     try:
         pool.reclaim(PoolRange(start=start, end=end))
     except Exception as exc:
-        raise NodeError(f"reclaim into pool {node.pool_name!r}: {exc}", file_info) from exc
+        raise NodeError(
+            f"reclaim into pool {node.pool_name!r}: {exc}", file_info, code=str(E_CODEGEN_BAD_RECLAIM)
+        ) from exc
     return []
 
 
@@ -364,9 +383,15 @@ def _eval_align(node: AllocAstNode, resolver: Resolver, file_info: Token) -> int
         return 1
     align = _eval_int(node.align, resolver, file_info)
     if align <= 0 or align & (align - 1):
-        raise NodeError(f"alloc {node.name or ''!s} `align {align}` is not a power of two", file_info)
+        raise NodeError(
+            f"alloc {node.name or ''!s} `align {align}` is not a power of two", file_info, code=str(E_CODEGEN_BAD_ALIGN)
+        )
     if node.at_address is not None and _eval_int(node.at_address, resolver, file_info) % align:
-        raise NodeError(f"alloc {node.name or ''!s} is pinned off its `align {align}` boundary", file_info)
+        raise NodeError(
+            f"alloc {node.name or ''!s} is pinned off its `align {align}` boundary",
+            file_info,
+            code=str(E_CODEGEN_BAD_ALIGN),
+        )
     return align
 
 
@@ -451,6 +476,7 @@ def _reject_nested_placement(node: AllocAstNode) -> None:
             f"nested placement directive {kind} inside `.alloc {outer}` "
             f"(at line {inner_pos}) is not allowed; hoist it outside the alloc body",
             child.file_info,
+            code=str(E_CODEGEN_NESTED_PLACEMENT),
         )
 
 
@@ -472,12 +498,12 @@ def _synthesize_pinned_pool(
     allocs at the same address (likely a bug) collide on pool decl
     rather than silently last-write-wins."""
     if node.at_address is None:  # pragma: no cover (defensive)
-        raise NodeError("pinned alloc without at_address", file_info)
+        raise NodeError("pinned alloc without at_address", file_info, code=str(E_CODEGEN_NODE_ERROR))
     addr = _eval_int(node.at_address, resolver, file_info)
     if node.at_size is not None:
         size = _eval_int(node.at_size, resolver, file_info)
         if size <= 0:
-            raise NodeError(f"`.alloc at` size must be positive, got {size}", file_info)
+            raise NodeError(f"`.alloc at` size must be positive, got {size}", file_info, code=str(E_CODEGEN_BAD_SIZE))
         end = addr + size - 1
     else:
         # Unbounded: range extends to end of bank. The bank-overflow

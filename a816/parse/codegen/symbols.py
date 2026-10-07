@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from a816.error_codes import E_SYMBOL_EAGER_FORWARD_REF
+from a816.error_codes import (
+    E_CODEGEN_TYPED_BIND_NON_INT,
+    E_CODEGEN_TYPED_BIND_UNKNOWN_TYPE,
+    E_SYMBOL_EAGER_FORWARD_REF,
+    E_SYMBOL_EXTERNAL_NOT_ALLOWED,
+)
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.expression import canonicalize_local_label_refs, eval_expression, expr_to_ast
 from a816.parse.ast.nodes import (
@@ -93,7 +98,11 @@ def _lazy_typed_view(node: SymbolAffectationAstNode, resolver: Resolver, file_in
         return None
     cast = tokens[0]
     if cast.type_name not in resolver.struct_layouts:
-        raise NodeError(f"Typed view {node.symbol!r}: unknown struct type {cast.type_name!r}.", file_info)
+        raise NodeError(
+            f"Typed view {node.symbol!r}: unknown struct type {cast.type_name!r}.",
+            file_info,
+            code=str(E_CODEGEN_TYPED_BIND_UNKNOWN_TYPE),
+        )
     filename = _filename(file_info)
     base = ExpressionAstNode(list(cast.inner)).to_canonical()
     nodes: GenNodes = [SymbolNode(node.symbol, ExpressionAstNode(list(cast.inner)), resolver)]
@@ -153,6 +162,7 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
         raise NodeError(
             f"Typed bind {node.symbol!r}: unknown struct type {type_name!r}.",
             file_info,
+            code=str(E_CODEGEN_TYPED_BIND_UNKNOWN_TYPE),
         )
     inner = ExpressionAstNode(list(cast.inner))
     try:
@@ -166,6 +176,7 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
         raise NodeError(
             f"Typed bind {node.symbol!r}: base expression must evaluate to an integer address.",
             file_info,
+            code=str(E_CODEGEN_TYPED_BIND_NON_INT),
         )
     resolver.current_scope.add_symbol(node.symbol, base)
     for field_path, offset, _width in resolver.struct_layouts[type_name]:
@@ -220,6 +231,7 @@ def generate_assign(
                 f"{node.symbol} = {node.value.to_canonical()}: "
                 f"external symbols only allowed in object compilation mode.",
                 file_info,
+                code=str(E_SYMBOL_EXTERNAL_NOT_ALLOWED),
             ) from e
         resolver.register_external_alias(node.symbol, _external_expression(e, resolver))
 

@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, overload
 
-from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
+from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT, E_SYMBOL_MODULE_NOT_FOUND
 from a816.module_loader import resolve_module
 from a816.object_file import BusMapping, ObjectFile, PoolDecl, SymbolType
 from a816.parse.ast.nodes import (
@@ -676,7 +676,7 @@ def _resolve_import(
     if src_path:
         return _source_import(module_name, src_path, resolver, macro_definitions, direct_mode, file_info)
 
-    raise NodeError(f'Module not found: "{module_name}"', file_info)
+    raise NodeError(f'Module not found: "{module_name}"', file_info, code=str(E_SYMBOL_MODULE_NOT_FOUND))
 
 
 def _paired_object_and_source_import(
@@ -718,7 +718,7 @@ def _source_import(
         _mark_imported(src_path, resolver)
     nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode, module_name)
     if nodes is None:
-        raise NodeError(f'Module not found: "{module_name}"', file_info)
+        raise NodeError(f'Module not found: "{module_name}"', file_info, code=str(E_SYMBOL_MODULE_NOT_FOUND))
     return nodes
 
 

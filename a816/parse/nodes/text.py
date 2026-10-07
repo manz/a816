@@ -6,6 +6,7 @@ import re
 import struct
 
 from a816.cpu.mapping import Address
+from a816.error_codes import E_SYMBOL_NO_TABLE
 from a816.parse.nodes.errors import NodeError
 from a816.parse.tokens import Token
 from a816.protocols import NodeBase, ValueNodeProtocol
@@ -82,6 +83,7 @@ class TextNode(AbstractTextNode):
             raise NodeError(
                 f"table_is_not_defined ({self}) is not defined in the current scope.",
                 self.file_info,
+                code=str(E_SYMBOL_NO_TABLE),
             )
         return self.table.to_bytes(variable_expansion(self.text, self.resolver))
 

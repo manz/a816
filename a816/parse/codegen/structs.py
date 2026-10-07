@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 
 from a816.context import AssemblyMode
 from a816.cpu.mapping import Bus
-from a816.error_codes import E_CODEGEN_MAP_CONFLICT, E_PARSER_STRUCT_ARRAY_COUNT
+from a816.error_codes import (
+    E_CODEGEN_MAP_CONFLICT,
+    E_CODEGEN_STRUCT_REDEFINED,
+    E_CODEGEN_STRUCT_SELF_REFERENCE,
+    E_CODEGEN_STRUCT_UNKNOWN_TYPE,
+    E_PARSER_STRUCT_ARRAY_COUNT,
+)
 from a816.exceptions import ExternalExpressionReference, SymbolNotDefined
 from a816.mappers import map_on_bus
 from a816.object_file import BusMapping
@@ -146,12 +152,14 @@ def _element_layout(
         raise NodeError(
             f"Struct {node.name!r} field {field_name!r} cannot reference its own type.",
             file_info,
+            code=str(E_CODEGEN_STRUCT_SELF_REFERENCE),
         )
     if element_type not in resolver.struct_layouts:
         raise NodeError(
             f"Unknown struct field type {element_type!r} for {node.name}.{field_name}; "
             f"declare `.struct {element_type}` before use.",
             file_info,
+            code=str(E_CODEGEN_STRUCT_UNKNOWN_TYPE),
         )
     return _ElementLayout(
         resolver.struct_sizes[element_type],
@@ -245,6 +253,7 @@ def generate_struct(
         raise NodeError(
             f"Struct {node.name!r} redefined with a different field layout.",
             file_info,
+            code=str(E_CODEGEN_STRUCT_REDEFINED),
         )
     resolver.struct_layouts[node.name] = entries
     resolver.struct_sizes[node.name] = total_size
