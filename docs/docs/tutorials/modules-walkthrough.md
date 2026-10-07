@@ -113,9 +113,9 @@ font_high = (target >> 16) & 0xFF
 ```
 
 The expression may use any operator; the linker evaluates it once
-`target` has its address. Use `=` here: `:=` wants its value at once,
-which a module importing this one can't give it. Typed views over an
-extern (`view := (target as T)`) are the exception and link as well.
+`target` has its address. `:=` works too, typed views
+(`view := (target as T)`) included: a module importing this one takes
+the name from its object instead of evaluating it.
 
 ## Preamble
 

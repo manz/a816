@@ -380,8 +380,8 @@ def _plan_object_mode(nodes: list[AstNode]) -> _ImportPlan:
     runtime = _runtime_names_in(nodes) | {node.symbol for node in nodes if isinstance(node, ExternAstNode)}
     steps: list[_Externs | _TypedBind | _Inline] = []
     for node in nodes:
-        if isinstance(node, AssignAstNode) and _is_runtime_typed_bind(node, runtime):
-            steps.append(_TypedBind(node))
+        if isinstance(node, AssignAstNode) and _mentions(node.value, runtime):
+            steps.append(_TypedBind(node) if _is_typed_bind(node) else _Externs((node.symbol,)))
         elif isinstance(node, _INLINE_IMPORT_TYPES):
             steps.append(_Inline([node]))
         elif isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode):
@@ -443,15 +443,9 @@ def _record_imported_reservations(reservations: tuple[tuple[str, str | None], ..
         resolver.reservation_sizes[name] = None if type_name is None else resolver.struct_sizes.get(type_name)
 
 
-def _is_runtime_typed_bind(node: AssignAstNode, runtime: set[str]) -> bool:
-    """`view := (base as T)` whose base is a runtime name of the imported
-    module (a label, an alloc, an `.extern`): the importer can't evaluate it,
-    the owning `.o` exports the view and its fields."""
-    return (
-        len(node.value.tokens) == 1
-        and isinstance(node.value.tokens[0], CastValueExprNode)
-        and _mentions(node.value, runtime)
-    )
+def _is_typed_bind(node: AssignAstNode) -> bool:
+    """`view := (base as T)`: binds the view and one name per field."""
+    return len(node.value.tokens) == 1 and isinstance(node.value.tokens[0], CastValueExprNode)
 
 
 def _typed_bind_names(node: AssignAstNode, resolver: Resolver) -> list[str]:
