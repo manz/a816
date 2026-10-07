@@ -7,7 +7,6 @@ expression-token sub-tree (`ExprNode` + `Term`/`BinOp`/`UnaryOp`/
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Final
@@ -15,15 +14,23 @@ from typing import Any, Final
 from a816.parse.tokens import Token
 
 
-class AstNode(ABC):
+class AstNode:
+    """Base of every parsed node.
+
+    A plain class, not an `ABC`: `ABCMeta.__instancecheck__` is a Python
+    frame, and codegen runs `isinstance` against AST classes millions of
+    times per build. `tests/test_ast_nodes_complete.py` keeps the guarantee
+    the abstract method gave: every node class implements `to_representation`.
+    """
+
     def __init__(self, kind: str, file_info: Token, docstring: str | None = None) -> None:
         self.kind: Final[str] = kind
         self.file_info: Final = file_info
         self.docstring: Final = docstring
 
-    @abstractmethod
     def to_representation(self) -> tuple[Any, ...]:
         """Returns the tuple representation of the node."""
+        raise NotImplementedError(f"{type(self).__name__} has no tuple representation")
 
     def to_canonical(self) -> str:
         """Returns the canonical representation of the node."""
