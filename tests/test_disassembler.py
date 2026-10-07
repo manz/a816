@@ -372,7 +372,7 @@ class TestFormatDisassembly:
         )
         output = format_disassembly(inst, show_bytes=False, a816_syntax=True)
         assert "_008000:" in output
-        assert "jsl.l 0x018000" in output
+        assert "jsl 0x018000" in output
 
 
 class TestInstructionA816Format:
@@ -412,7 +412,7 @@ class TestInstructionA816Format:
             operand_value=0x018000,
             length=4,
         )
-        assert inst.format_a816() == "jsl.l 0x018000"
+        assert inst.format_a816() == "jsl 0x018000"
 
     def test_format_a816_implied(self) -> None:
         inst = Instruction(
@@ -477,7 +477,7 @@ class TestA816BlockFormat:
         data = bytes.fromhex("5c008001")
         instructions = disasm.disassemble(data, 0x008000)
         lines = format_disassembly_block(instructions, show_bytes=False, a816_syntax=True)
-        jmp_line = next(line for line in lines if "jmp" in line)
+        jmp_line = next(line for line in lines if "jml" in line)
         assert "_018000" in jmp_line
 
     def test_minimal_suffixes_round_trip(self) -> None:
@@ -490,7 +490,7 @@ class TestA816BlockFormat:
         assert "lda #0x42" in joined
         assert "sta 0x1234" in joined
         assert "lda 0x10" in joined
-        assert "jsr.l _018000" in joined
+        assert "jsl _018000" in joined
         assert "nop" in joined
         assert ".w" not in joined  # no verbose word suffix on absolute / direct
 
