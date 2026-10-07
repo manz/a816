@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable
 
 from a816.cpu.cpu_65c816 import (
@@ -265,16 +266,14 @@ def lex_opcode_size(s: "Scanner") -> None:
         )
 
 
+# Blanks, then maybe a `;` comment, then a line end, `}` or end of input.
+_STATEMENT_END = re.compile(r"[ \t]*(?:;[^\n\0]*)?(?:[\n}\0]|\Z)")
+
+
 def _ends_statement(s: "Scanner") -> bool:
     """True when only blanks / a comment separate the cursor from a line end,
     end of input, or a closing `}` (`{ inc }` on one line)."""
-    saved_pos = s.pos
-    s.accept_run(" \t")
-    if s.accept(";"):
-        s.accept_run("\n\0", negate=True)
-    ended = s.peek() in ("\n", "}", EOF)
-    s.pos = saved_pos
-    return ended
+    return _STATEMENT_END.match(s.input, s.pos) is not None
 
 
 def _next_word_is_opcode(s: "Scanner") -> bool:
@@ -394,14 +393,15 @@ lex_keyword = lex_directive
 KEYWORDS = DIRECTIVE_NAMES
 
 
-def lex_number(s: Scanner) -> None:
-    acceptable_values = {"b": "01", "o": "01234567", "x": "0123456789ABCDEFabcdef"}
+_DIGITS_BY_PREFIX = {"b": "01", "o": "01234567", "x": "0123456789ABCDEFabcdef"}
 
+
+def lex_number(s: Scanner) -> None:
     s.backup()
 
     ch = s.next()
 
-    if s.peek() in ["\n", EOF]:
+    if s.peek() in ("\n", EOF):
         s.emit(TokenType.NUMBER)
         return
 
@@ -409,7 +409,7 @@ def lex_number(s: Scanner) -> None:
         base_prefix = s.next()
 
         if base_prefix in ("b", "o", "x"):
-            s.accept_run(acceptable_values[base_prefix])
+            s.accept_run(_DIGITS_BY_PREFIX[base_prefix])
         else:
             s.backup()
     else:
@@ -437,8 +437,7 @@ _SINGLE_CHAR_TOKENS: dict[str, TokenType] = {
 def _lex_line_comment(s: Scanner) -> bool:
     if not s.accept(";"):
         return False
-    while s.peek() not in ["\n", EOF]:
-        s.next()
+    s.accept_run("\n" + EOF, negate=True)
     s.emit(TokenType.COMMENT)
     return True
 
