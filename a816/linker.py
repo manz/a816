@@ -18,8 +18,8 @@ from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, RelocationType, Se
 from a816.parse.ast.expression import eval_constant_expression
 from a816.parse.errors import ParserSyntaxError, ScannerException
 from a816.parse.nodes.errors import NodeError
-from a816.pool import Pool, PoolOverflowError
-from a816.section import Placement
+from a816.pool import Allocation, Pool, PoolOverflowError
+from a816.section import PINNED_POOL_PREFIX, Placement
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
@@ -113,14 +113,58 @@ class Linker:
         self._section_pool_alloc: dict[tuple[int, int], object] = {}
         request_sites = self._request_pool_allocs(merged)
         self._index_alloc_labels()
+        # Pins first: every pool then keeps its floating blocks off the pins
+        # it does not own, wherever they were declared.
         for pool in merged.values():
-            try:
-                pool.allocate()
-            except PoolOverflowError as exc:
-                site = request_sites.get((exc.pool_name, exc.alloc_name))
-                raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
+            if pool.name.startswith(PINNED_POOL_PREFIX):
+                self._allocate(pool, request_sites)
+        self._occupy_foreign_pins(merged)
+        for pool in merged.values():
+            self._allocate(pool, request_sites)
         self._check_cross_pool_overlaps(merged, self._alloc_sources)
         self._merged_pools_after_alloc = merged
+
+    def _allocate(self, pool: Pool, request_sites: dict[tuple[str, str], tuple[int, int]]) -> None:
+        try:
+            pool.allocate()
+        except PoolOverflowError as exc:
+            site = request_sites.get((exc.pool_name, exc.alloc_name))
+            raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
+
+    def _occupy_foreign_pins(self, merged: dict[str, Pool]) -> None:
+        """Mark every pinned span inside a pool's ranges as taken in that pool.
+
+        A pin written without `in POOL` (`.alloc at ADDR`, `*=`) or pinned in
+        another pool used to be invisible to the pool, which then placed a
+        floating block over it. Pools that may share memory (contexts of one
+        pool) do not block each other.
+        """
+        pins = self._pinned_spans(merged)
+        for pool in merged.values():
+            if pool.name.startswith(PINNED_POOL_PREFIX):
+                continue
+            for start, end, owner in pins:
+                if owner == pool.name or (owner in merged and _may_share(pool, merged[owner])):
+                    continue
+                if any(r.start <= end and start <= r.end for r in pool.ranges):
+                    pool.occupy(start, end)
+
+    def _pinned_spans(self, merged: dict[str, Pool]) -> list[tuple[int, int, str | None]]:
+        """(start, end inclusive, owning pool) of every block whose address is fixed before allocation."""
+        return [*_pool_pins(merged), *self._unpooled_pins()]
+
+    def _unpooled_pins(self) -> list[tuple[int, int, str | None]]:
+        """Sections of fixed-address objects that no pool places (`*=` blocks)."""
+        spans: list[tuple[int, int, str | None]] = []
+        for obj_idx, obj_file in enumerate(self.object_files):
+            if obj_file.relocatable:
+                continue
+            spans.extend(
+                (section.placed_base, section.placed_base + len(section.code) - 1, None)
+                for section_idx, section in enumerate(obj_file.sections)
+                if section.code and (obj_idx, section_idx) not in self._section_pool_alloc
+            )
+        return spans
 
     @staticmethod
     def _check_cross_pool_overlaps(merged: "dict[str, Pool]", sources: dict[tuple[str, str], str]) -> None:
@@ -730,3 +774,24 @@ def _first_label_at(obj_file: ObjectFile) -> dict[int, str]:
         if sym_section is SymbolSection.CODE and not name.startswith("_") and isinstance(value, int):
             labels.setdefault(value, name)
     return labels
+
+
+def _pool_pins(merged: dict[str, Pool]) -> list[tuple[int, int, str | None]]:
+    """Pins held by pools: `at ADDR in POOL` requests and the blocks of one-slot pin pools."""
+    spans: list[tuple[int, int, str | None]] = []
+    for pool in merged.values():
+        for alloc in pool.allocations:
+            start = _pin_start(pool, alloc)
+            if start is not None:
+                spans.append((start, start + alloc.size - 1, pool.name))
+    return spans
+
+
+def _pin_start(pool: Pool, alloc: Allocation) -> int | None:
+    if alloc.size <= 0:
+        return None
+    if alloc.pinned:
+        return alloc.pinned_addr
+    if pool.name.startswith(PINNED_POOL_PREFIX) and alloc.placed:
+        return alloc.addr
+    return None

@@ -50,10 +50,10 @@ every module's sections, so two modules pinning bytes at the same spot
 fail the build too. On error no output file is written.
 
 ```
-linker error[E0408]: `floating` in pool `p` overlaps `pinned`
-  overlap: `floating` in pool `p` (2 bytes from $40:8000) at main.s:8 x `pinned` (4 bytes from $40:8000) at main.s:5
+linker error[E0408]: `second` in pool `q` overlaps `first` in pool `p`
+  overlap: `second` in pool `q` (2 bytes from $40:8000) at main.s:11 x `first` in pool `p` (4 bytes from $40:8000) at main.s:8
   shared: 2 bytes from $40:8000
-  hint: a pool does not place around a pin it does not own; pin it inside the pool: `.alloc ... at ADDR in POOL`
+  hint: two pools hand out the same bytes; keep their ranges apart
 ```
 
 ### `.map`: memory map

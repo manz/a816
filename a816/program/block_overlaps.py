@@ -23,7 +23,7 @@ def emitted_blocks(linked_obj: ObjectFile, to_physical: Callable[[int], int]) ->
                 start=start,
                 end=start + len(section.code),
                 source=_source(section, linked_obj.files),
-                pinned_outside_pool=_pinned(section),
+                pooled=not _pinned(section),
             )
         )
     return blocks

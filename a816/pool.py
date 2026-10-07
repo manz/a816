@@ -187,6 +187,10 @@ class Pool:
     """`contiguous(last, first)`: are the bytes at logical `last` and `first`
     consecutive in the ROM? Set by the linker from the bus; without it no
     block crosses a bank edge."""
+    occupied: list[tuple[int, int]] = field(default_factory=list)
+    """Spans (inclusive) held by blocks this pool does not own: pins placed
+    without `in POOL`, other pools' pins. Never handed out, still counted in
+    `capacity`."""
     _allocated: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
@@ -228,6 +232,12 @@ class Pool:
         self.allocations.append(alloc)
         return alloc
 
+    def occupy(self, start: int, end: int) -> None:
+        """Keep `start..end` (inclusive) free of this pool's blocks: something else is pinned there."""
+        if self._allocated:
+            raise PoolError(f"pool '{self.name}' already allocated; cannot occupy")
+        self.occupied.append((start, end))
+
     def reclaim(self, r: PoolRange) -> None:
         if self._allocated:
             raise PoolError(f"pool '{self.name}' already allocated; cannot reclaim")
@@ -267,6 +277,10 @@ class Pool:
                 free_total,
                 len(free),
             )
+        # Pins carve first; a pin over a span someone else holds is a real
+        # clash, left to the link-time overlap check that names both blocks.
+        # Occupied spans only keep floating blocks out.
+        free = _subtract(free, sorted(self.occupied))
         for alloc in order:
             free = _place(alloc, free, self.ranges, self.name, self.contiguous)
             free_total = sum(r.size for r in free)
@@ -298,7 +312,7 @@ class Pool:
 
     @property
     def free(self) -> int:
-        return self.capacity - self.used
+        return sum(r.size for r in self._free_ranges())
 
     @property
     def fragments(self) -> int:
@@ -310,13 +324,10 @@ class Pool:
         return max((r.size for r in chunks), default=0)
 
     def _free_ranges(self) -> list[PoolRange]:
-        if not self._allocated:
-            return list(self.ranges)
-        placed = sorted(
-            ((a.addr, a.addr + a.size - 1) for a in self.allocations if a.placed),
-            key=lambda p: p[0],
-        )
-        return _subtract(self.ranges, placed)
+        held = list(self.occupied)
+        if self._allocated:
+            held += [(a.addr, a.addr + a.size - 1) for a in self.allocations if a.placed]
+        return _subtract(self.ranges, sorted(held))
 
 
 def _normalize_ranges(ranges: list[PoolRange]) -> list[PoolRange]:

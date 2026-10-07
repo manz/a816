@@ -12,8 +12,12 @@ from a816.module_builder import BuildResult, build_with_imports
 from a816.program.block_overlaps import overlapping_blocks
 from tests import BANK_40_MAP
 
-_POOL = ".pool p {\n    range 0x408000 0x40800f\n}\n"
-_FLOATING = ".alloc floating in p {\n    .db 9, 9\n}\n"
+_TWO_POOLS = (
+    ".pool p {\n    range 0x408000 0x40800f\n}\n"
+    ".pool q {\n    range 0x408000 0x40800f\n}\n"
+    ".alloc first in p {\n    .db 1, 2, 3, 4\n}\n"
+    ".alloc second in q {\n    .db 9, 9\n}\n"
+)
 
 
 def _build(tmp_path: Path, src: str, overlap_mode: str | None = None) -> BuildResult:
@@ -29,28 +33,27 @@ def _error(tmp_path: Path, src: str) -> str:
     return result.diagnostics[0]
 
 
-def test_a_pooled_block_over_a_pin_names_both_allocs(tmp_path: Path) -> None:
-    error = _error(tmp_path, _POOL + ".alloc pinned at 0x408000 {\n    .db 1, 2, 3, 4\n}\n" + _FLOATING)
-    assert error.splitlines()[0] == "linker error[E0408]: `floating` in pool `p` overlaps `pinned`"
+def test_two_pools_handing_out_the_same_bytes_name_both_allocs(tmp_path: Path) -> None:
+    error = _error(tmp_path, _TWO_POOLS)
+    assert error.splitlines()[0] == "linker error[E0408]: `second` in pool `q` overlaps `first` in pool `p`"
 
 
 @pytest.mark.parametrize(
     "expected",
     [
-        "`floating` in pool `p` (2 bytes from $40:8000) at ",
-        "`pinned` (4 bytes from $40:8000) at ",
+        "`second` in pool `q` (2 bytes from $40:8000) at ",
+        "`first` in pool `p` (4 bytes from $40:8000) at ",
         "shared: 2 bytes from $40:8000",
-        "hint: a pool does not place around a pin it does not own; pin it inside the pool",
+        "hint: two pools hand out the same bytes; keep their ranges apart",
     ],
 )
-def test_a_pooled_block_over_a_pin_says_where_and_how_to_fix(tmp_path: Path, expected: str) -> None:
-    assert expected in _error(tmp_path, _POOL + ".alloc pinned at 0x408000 {\n    .db 1, 2, 3, 4\n}\n" + _FLOATING)
+def test_two_pools_handing_out_the_same_bytes_say_where_and_how_to_fix(tmp_path: Path, expected: str) -> None:
+    assert expected in _error(tmp_path, _TWO_POOLS)
 
 
-@pytest.mark.parametrize(("block", "line"), [("(2 bytes from $40:8000)", 8), ("(4 bytes from $40:8000)", 5)])
+@pytest.mark.parametrize(("block", "line"), [("(2 bytes from $40:8000)", 11), ("(4 bytes from $40:8000)", 8)])
 def test_each_block_points_at_its_source_line(tmp_path: Path, block: str, line: int) -> None:
-    error = _error(tmp_path, _POOL + ".alloc pinned at 0x408000 {\n    .db 1, 2, 3, 4\n}\n" + _FLOATING)
-    assert f"{block} at {tmp_path / 'main.s'}:{line}" in error
+    assert f"{block} at {tmp_path / 'main.s'}:{line}" in _error(tmp_path, _TWO_POOLS)
 
 
 def test_anonymous_blocks_are_named_by_address(tmp_path: Path) -> None:

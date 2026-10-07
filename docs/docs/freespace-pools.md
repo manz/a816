@@ -218,9 +218,11 @@ extends to the bank end.
 }
 ```
 
-Pinned allocs share the overlap auditor with the rest of the
-placement system — two pinned regions whose byte ranges intersect
-raise a hard error naming both source locations.
+A pool places its floating allocs around every pin inside its ranges,
+whether the pin is written `in POOL` or not, and from any module: a
+plain `.alloc at`, a `*=` block, or a pin in another pool. Two pins
+whose bytes intersect are an error (`E0408`) naming both blocks and
+their source locations.
 
 Legacy `*= ADDR` directives still work and have the same effect;
 the fluff rule `UP001` plus `a816 fix --select UP001 --unsafe-fixes`
@@ -230,8 +232,9 @@ rewraps them mechanically when you're ready to migrate.
 
 Pinned *inside* a pool: the pool carves the pinned span out before it
 places its floating allocs, so they pack around it. A plain
-`.alloc at` next to a pool is invisible to the allocator; only the
-write audit would catch a collision.
+`.alloc at` inside the pool's range is kept clear the same way; `in
+POOL` adds that the pin must lie in the pool's ranges and counts it in
+the pool's usage.
 
 ```ca65
 .pool upper_gap { range 0x500000 0x5cffff  strategy pack }

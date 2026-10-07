@@ -282,7 +282,7 @@ class EmittedBlock:
     start: int  # file offset of the first byte
     end: int  # file offset, exclusive
     source: str = ""  # `file:line` of the block's first line, when known
-    pinned_outside_pool: bool = False
+    pooled: bool = False  # placed by a pool's allocator, not pinned
 
 
 class BlockOverlapLinkError(LinkerError):
@@ -328,11 +328,8 @@ def _bytes(count: int) -> str:
 
 
 def _overlap_hint(clash: tuple[EmittedBlock, EmittedBlock]) -> str:
-    pins = [block for block in clash if block.pinned_outside_pool]
-    if len(pins) == 1 and " in pool " in clash[clash.index(pins[0]) - 1].name:
-        return (
-            "a pool does not place around a pin it does not own; pin it inside the pool: `.alloc ... at ADDR in POOL`"
-        )
+    if all(block.pooled for block in clash):
+        return "two pools hand out the same bytes; keep their ranges apart"
     return "move or shrink one of the blocks so their bytes stay apart"
 
 
