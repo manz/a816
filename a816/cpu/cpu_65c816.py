@@ -139,6 +139,9 @@ def guess_value_size(
     return operand_size
 
 
+_SIZE_ORDER: dict[str, int] = {"b": 0, "w": 1, "l": 2}
+
+
 class Opcode(OpcodeBase):
     def __init__(self, opcode_def: list[int | None], is_a: bool = False, is_x: bool = False, alias: bool = False):
         self.opcode_def = opcode_def
@@ -208,16 +211,24 @@ class Opcode(OpcodeBase):
     def value_size(
         self, value_node: "ValueNodeProtocol", size: ValueSize | None, resolver: "Resolver | None"
     ) -> ValueSize:
-        """`guess_value_size`, except that a link-time operand of an opcode
-        with a single form (`rep #ext`, `pea ext`) takes that form: only a
-        real choice needs the source to spell it."""
+        """`guess_value_size`, except where an opcode has a single form.
+
+        A link-time operand (`rep #ext`, `pea ext`) takes that form: only a
+        real choice needs the source to spell it. An unsized operand whose
+        value is narrower than the form widens to it (`pea 0x0000` was
+        sized as a byte and rejected); one wider than the form keeps its
+        size and fails, since narrowing would drop bytes (`lda (0x1234)`).
+        """
+        forms = self.encodable_sizes()
         try:
-            return guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
+            inferred = guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
         except UndecidableOperandSizeError:
-            forms = self.encodable_sizes()
             if len(forms) == 1:
                 return forms[0]
             raise
+        if size is None and len(forms) == 1 and _SIZE_ORDER[inferred] < _SIZE_ORDER[forms[0]]:
+            return forms[0]
+        return inferred
 
     def get_opcode_byte(self, value_size: str) -> int:
         try:

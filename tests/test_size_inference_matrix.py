@@ -162,11 +162,15 @@ def _width(entry: Entry, suffix: str | None, operand: Operand, state: RegState) 
         return suffix
     if (emitter.is_a and state.a16) or (emitter.is_x and state.i16):
         return "w"
+    forms = emitter.encodable_sizes()
     if operand is _EXTERN:
         if emitter.is_a or emitter.is_x:
             return "b"
-        forms = emitter.encodable_sizes()
         return forms[0] if len(forms) == 1 else None
+    # A single form widens a narrower unsized operand (`pea 0x0000`,
+    # `lda 0x12,y` -> abs,y) and never narrows a wider one.
+    if len(forms) == 1 and operand.width is not None and _SLOT[operand.width] < _SLOT[forms[0]]:
+        return forms[0]
     return operand.width
 
 
