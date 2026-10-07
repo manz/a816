@@ -283,7 +283,8 @@ def _parse_import(src_path: Path, resolver: Resolver) -> ParsedImport | None:
     except OSError:
         return None
     with recording_misses() as misses:
-        parsed = ParsedImport(A816Parser.parse_as_ast(content, key), misses)
+        result = A816Parser.parse_as_ast(content, key, include_paths=list(resolver.context.include_paths))
+        parsed = ParsedImport(result, misses)
     replay_misses(misses)
     if cache is not None:
         cache[key] = parsed
