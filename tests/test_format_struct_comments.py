@@ -59,7 +59,7 @@ def test_comments_do_not_change_the_layout() -> None:
     assert result.parse_error is None
     struct = result.nodes[0]
     assert isinstance(struct, StructAstNode)
-    assert struct.fields == [("a", "byte"), ("b", "word"), ("lo", "u4"), ("hi", "u4")]
+    assert struct.fields == (("a", "byte"), ("b", "word"), ("lo", "u4"), ("hi", "u4"))
 
 
 def test_a_comment_continued_under_a_trailing_comment_stays_aligned() -> None:

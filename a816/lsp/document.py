@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 from lsprotocol.types import Diagnostic, DiagnosticSeverity, Position, Range
@@ -313,7 +314,7 @@ class A816Document:
 
     def _visit_children(self, node: AstNode) -> None:
         body = getattr(node, "body", None)
-        if isinstance(body, list):
+        if isinstance(body, list | tuple):
             for child in body:
                 self._visit_node_for_symbols(child)
         elif isinstance(body, AstNode):
@@ -421,7 +422,7 @@ class A816Document:
             return pending_doc, pending_target
         if isinstance(block, BlockAstNode | CompoundAstNode):
             return self._docstrings_collect_nodes(block.body, pending_doc, pending_target)
-        if isinstance(block, list):
+        if isinstance(block, list | tuple):
             return self._docstrings_collect_nodes(block, pending_doc, pending_target)
         if isinstance(block, AstNode):
             return self._docstrings_collect_nodes([block], pending_doc, pending_target)
@@ -459,7 +460,7 @@ class A816Document:
         if isinstance(node, CommentAstNode):
             return doc_buffer, target
         body = getattr(node, "body", None)
-        if isinstance(body, list):
+        if isinstance(body, list | tuple):
             self._docstrings_collect_nodes(body)
         block = getattr(node, "block", None)
         if block is not None:
@@ -481,7 +482,7 @@ class A816Document:
         return text, target
 
     def _docstrings_collect_nodes(
-        self, nodes: list[AstNode], pending_doc: str | None = None, pending_target: tuple[str, str] | None = None
+        self, nodes: Sequence[AstNode], pending_doc: str | None = None, pending_target: tuple[str, str] | None = None
     ) -> tuple[str | None, tuple[str, str] | None]:
         doc_buffer = pending_doc
         target = pending_target

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Final
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
 from a816.parse.ast.nodes.containers import BlockAstNode
@@ -10,11 +11,9 @@ from a816.parse.tokens import Token
 
 
 class LabelAstNode(AstNode):
-    label: str
-
     def __init__(self, label: str, file_info: Token) -> None:
         super().__init__("label", file_info)
-        self.label = label
+        self.label: Final[str] = label
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.label
@@ -26,8 +25,8 @@ class LabelAstNode(AstNode):
 class SymbolAffectationAstNode(AstNode):
     def __init__(self, symbol: str, value: ExpressionAstNode, file_info: Token):
         super().__init__("symbol", file_info)
-        self.symbol = symbol
-        self.value = value
+        self.symbol: Final = symbol
+        self.value: Final = value
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol, self.value.to_representation()[0]
@@ -47,8 +46,8 @@ class LabelDeclAstNode(AstNode):
 
     def __init__(self, symbol: str, value: ExpressionAstNode, file_info: Token):
         super().__init__("label_decl", file_info)
-        self.symbol = symbol
-        self.value = value
+        self.symbol: Final = symbol
+        self.value: Final = value
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol, self.value.to_representation()[0]
@@ -60,7 +59,7 @@ class LabelDeclAstNode(AstNode):
 class ExternAstNode(AstNode):
     def __init__(self, symbol: str, file_info: Token):
         super().__init__("extern", file_info)
-        self.symbol = symbol
+        self.symbol: Final = symbol
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol
@@ -76,11 +75,9 @@ class ImportAstNode(AstNode):
     This is similar to Turbo Pascal's 'uses' clause.
     """
 
-    module_name: str
-
     def __init__(self, module_name: str, file_info: Token) -> None:
         super().__init__("import", file_info)
-        self.module_name = module_name
+        self.module_name: Final[str] = module_name
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.module_name
@@ -92,8 +89,8 @@ class ImportAstNode(AstNode):
 class AssignAstNode(AstNode):
     def __init__(self, symbol: str, value: ExpressionAstNode, file_info: Token):
         super().__init__("assign", file_info)
-        self.symbol = symbol
-        self.value = value
+        self.symbol: Final = symbol
+        self.value: Final = value
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol, self.value.to_representation()[0]
@@ -105,7 +102,7 @@ class AssignAstNode(AstNode):
 class CodeLookupAstNode(AstNode):
     def __init__(self, symbol: str, file_info: Token):
         super().__init__("code_lookup", file_info)
-        self.symbol = symbol
+        self.symbol: Final = symbol
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.symbol
@@ -115,18 +112,15 @@ class CodeLookupAstNode(AstNode):
 
 
 class MacroApplyAstNode(AstNode):
-    name: str
-    args: list[ExpressionAstNode | BlockAstNode]
-
     def __init__(
         self,
         name: str,
-        args: list[ExpressionAstNode | BlockAstNode],
+        args: Sequence[ExpressionAstNode | BlockAstNode],
         file_info: Token,
     ):
         super().__init__("macro_apply", file_info)
-        self.name = name
-        self.args = args
+        self.name: Final[str] = name
+        self.args: Final[tuple[ExpressionAstNode | BlockAstNode, ...]] = tuple(args)
 
     def to_representation(self) -> tuple[Any, ...]:
         apply_args = []

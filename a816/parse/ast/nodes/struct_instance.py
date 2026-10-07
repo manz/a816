@@ -8,7 +8,7 @@ inside the braces are kept as items so the formatter can round-trip them.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from typing import Any
+from typing import Any, Final
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
 from a816.parse.ast.nodes.directives import CommentAstNode
@@ -22,7 +22,7 @@ class InitCommentAstNode(CommentAstNode):
 
     def __init__(self, comment: str, trailing: bool, file_info: Token) -> None:
         super().__init__(comment, file_info)
-        self.trailing = trailing
+        self.trailing: Final = trailing
 
 
 class StringInitAstNode(AstNode):
@@ -30,7 +30,7 @@ class StringInitAstNode(AstNode):
 
     def __init__(self, file_info: Token) -> None:
         super().__init__("string_init", file_info)
-        self.text = file_info.value[1:-1]
+        self.text: Final = file_info.value[1:-1]
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
@@ -42,10 +42,10 @@ class StringInitAstNode(AstNode):
 class ListInitAstNode(AstNode):
     """`[v, v, ...]` initializer for an array field."""
 
-    def __init__(self, items: list[InitItem], file_info: Token, close_token: Token | None = None) -> None:
+    def __init__(self, items: Sequence[InitItem], file_info: Token, close_token: Token | None = None) -> None:
         super().__init__("list_init", file_info)
-        self.items = items
-        self.close_token = close_token
+        self.items: Final = tuple(items)
+        self.close_token: Final = close_token
 
     @property
     def values(self) -> list[InitValue]:
@@ -63,8 +63,8 @@ class StructFieldInitAstNode(AstNode):
 
     def __init__(self, name: str, value: InitValue, file_info: Token) -> None:
         super().__init__("field_init", file_info)
-        self.name = name
-        self.value = value
+        self.name: Final = name
+        self.value: Final = value
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.value.to_representation()
@@ -76,10 +76,10 @@ class StructFieldInitAstNode(AstNode):
 class StructInitAstNode(AstNode):
     """`{ name = value, ... }` initializer for a struct (or nested struct field)."""
 
-    def __init__(self, items: list[StructInitItem], file_info: Token, close_token: Token | None = None) -> None:
+    def __init__(self, items: Sequence[StructInitItem], file_info: Token, close_token: Token | None = None) -> None:
         super().__init__("struct_init", file_info)
-        self.items = items
-        self.close_token = close_token
+        self.items: Final = tuple(items)
+        self.close_token: Final = close_token
 
     @property
     def fields(self) -> list[StructFieldInitAstNode]:
@@ -103,13 +103,13 @@ class StructInstanceAstNode(AstNode):
 
     def __init__(self, type_name: str, init: StructInitAstNode, type_token: Token, file_info: Token) -> None:
         super().__init__("istruct", file_info)
-        self.type_name = type_name
-        self.type_token = type_token
-        self.init = init
+        self.type_name: Final = type_name
+        self.type_token: Final = type_token
+        self.init: Final = init
         # Exposed under the formatter's child-walk attributes so the node's
         # source extent covers every initializer line up to the closing `}`.
-        self.items = init.items
-        self.close_token = init.close_token
+        self.items: Final = init.items
+        self.close_token: Final = init.close_token
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.type_name, self.init.to_representation()

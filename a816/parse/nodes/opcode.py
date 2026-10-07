@@ -55,8 +55,16 @@ class OpcodeNode(NodeBase):
         # Emit may run more than once for the same node (debug capture,
         # LSP rebuilds); warn about a width mismatch only the first time.
         self._width_warned = False
+        # Opcode, mode and index never change: look the emitter up once
+        # instead of on both label passes and the emit.
+        self._emitter: OpcodeProtocol | None = None
 
     def _get_emitter(self) -> OpcodeProtocol:
+        if self._emitter is None:
+            self._emitter = self._lookup_emitter()
+        return self._emitter
+
+    def _lookup_emitter(self) -> OpcodeProtocol:
         try:
             opcode_emitter = snes_opcode_table[self.opcode][self.addressing_mode]
         except KeyError as e:

@@ -43,7 +43,7 @@ class ObjectEmitMixin:
         self.resolver.reset_register_sizes()
         # Without `require_placement` the implicit section is a legitimate
         # home: the `.o` stays relocatable and the linker places it.
-        state = ObjectEmitState(current_block=b"", placed=not self.resolver.context.require_placement)
+        state = ObjectEmitState(current_block=bytearray(), placed=not self.resolver.context.require_placement)
         try:
             for node in program:
                 self._object_emit_one(node, object_writer, state)
@@ -184,8 +184,8 @@ class ObjectEmitMixin:
     @staticmethod
     def _flush_object_block(object_writer: ObjectWriter, state: ObjectEmitState) -> None:
         if state.current_block:
-            object_writer.write_block(state.current_block, 0)
-            state.current_block = b""
+            object_writer.write_block(bytes(state.current_block), 0)
+            state.current_block = bytearray()
 
 
 def _statement_token(node: NodeProtocol) -> Token | None:

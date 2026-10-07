@@ -690,7 +690,7 @@ class A816Formatter:
             child = getattr(node, attr, None)
             if child is None:
                 continue
-            if isinstance(child, list):
+            if isinstance(child, list | tuple):
                 out.extend(c for c in child if isinstance(c, AstNode))
             elif isinstance(child, AstNode):
                 out.append(child)

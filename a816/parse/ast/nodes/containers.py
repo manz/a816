@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Final
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
 from a816.parse.tokens import Token
 
 
 class BlockAstNode(AstNode):
-    body: list[AstNode]
-
-    def __init__(self, body: list[AstNode], file_info: Token) -> None:
+    def __init__(self, body: Sequence[AstNode], file_info: Token) -> None:
         super().__init__("block", file_info)
-        self.body = body
+        self.body: Final[tuple[AstNode, ...]] = tuple(body)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, [node.to_representation() for node in self.body]
@@ -23,11 +22,9 @@ class BlockAstNode(AstNode):
 
 
 class CompoundAstNode(AstNode):
-    body: list[AstNode]
-
-    def __init__(self, body: list[AstNode], file_info: Token):
+    def __init__(self, body: Sequence[AstNode], file_info: Token):
         super().__init__("compound", file_info)
-        self.body = body
+        self.body: Final[tuple[AstNode, ...]] = tuple(body)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, [node.to_representation() for node in self.body]
@@ -37,13 +34,10 @@ class CompoundAstNode(AstNode):
 
 
 class ScopeAstNode(AstNode):
-    name: str
-    body: BlockAstNode
-
     def __init__(self, name: str, body: Any, file_info: Token, docstring: str | None = None) -> None:
         super().__init__("scope", file_info, docstring)
-        self.name = name
-        self.body = body
+        self.name: Final[str] = name
+        self.body: Final[BlockAstNode] = body
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.body.to_representation()
@@ -53,10 +47,6 @@ class ScopeAstNode(AstNode):
 
 
 class IfAstNode(AstNode):
-    expression: ExpressionAstNode
-    block: CompoundAstNode
-    else_block: CompoundAstNode | None
-
     def __init__(
         self,
         expression: ExpressionAstNode,
@@ -65,9 +55,9 @@ class IfAstNode(AstNode):
         file_info: Token,
     ):
         super().__init__("if", file_info)
-        self.expression = expression
-        self.block = block
-        self.else_block = else_bock
+        self.expression: Final[ExpressionAstNode] = expression
+        self.block: Final[CompoundAstNode] = block
+        self.else_block: Final[CompoundAstNode | None] = else_bock
 
     def to_representation(self) -> tuple[Any, ...]:
         return (
@@ -97,10 +87,10 @@ class ForAstNode(AstNode):
         file_info: Token,
     ) -> None:
         super().__init__("for", file_info)
-        self.symbol = symbol
-        self.min_value = min_value
-        self.max_value = max_value
-        self.body = body
+        self.symbol: Final = symbol
+        self.min_value: Final = min_value
+        self.max_value: Final = max_value
+        self.body: Final = body
 
     def to_representation(self) -> tuple[Any, ...]:
         return (
@@ -119,18 +109,16 @@ class ForAstNode(AstNode):
 
 
 class MacroAstNode(AstNode):
-    name: str
-    args: list[str]
-    block: BlockAstNode
-
-    def __init__(self, name: str, args: list[str], block: BlockAstNode, file_info: Token, docstring: str | None = None):
+    def __init__(
+        self, name: str, args: Sequence[str], block: BlockAstNode, file_info: Token, docstring: str | None = None
+    ):
         super().__init__("macro", file_info, docstring)
-        self.name = name
-        self.args = args
-        self.block = block
+        self.name: Final[str] = name
+        self.args: Final[tuple[str, ...]] = tuple(args)
+        self.block: Final[BlockAstNode] = block
 
     def to_representation(self) -> tuple[Any, ...]:
-        return self.kind, self.name, ("args", self.args), self.block.to_representation()
+        return self.kind, self.name, ("args", list(self.args)), self.block.to_representation()
 
     def to_canonical(self) -> str:
         args_str = ", ".join(self.args) if self.args else ""

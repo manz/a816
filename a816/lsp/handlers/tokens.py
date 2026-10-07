@@ -205,7 +205,7 @@ class TokensMixin:
             )
         for attr in ("body", "block", "else_block", "value", "expression", "min_value", "max_value", "items"):
             child = getattr(node, attr, None)
-            if isinstance(child, list):
+            if isinstance(child, list | tuple):
                 for entry in child:
                     if isinstance(entry, AstNode):
                         self._visit_node_for_tokens(entry, tokens, doc)

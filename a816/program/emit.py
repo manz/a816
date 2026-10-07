@@ -48,7 +48,7 @@ class EmitMixin:
             writer: Output writer (IPSWriter, SFCWriter, etc.).
         """
         state = EmitState(
-            current_block=b"",
+            current_block=bytearray(),
             current_block_addr=self.resolver.pc,
             current_block_logical=self.resolver.reloc_address.logical_value,
         )
@@ -155,10 +155,10 @@ class EmitMixin:
     def _flush_pending(self, writer: Writer, state: EmitState) -> None:
         """Write the accumulated current_block at its anchor and reset."""
         if state.current_block:
-            writer.write_block(state.current_block, state.current_block_addr)
+            writer.write_block(bytes(state.current_block), state.current_block_addr)
             self._trace_block(
                 state.current_block_logical,
                 state.current_block_addr,
                 len(state.current_block),
             )
-            state.current_block = b""
+            state.current_block = bytearray()

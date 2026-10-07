@@ -4,15 +4,19 @@ This module handles the automatic discovery, compilation, and linking of
 modules referenced via .import directives.
 """
 
+import gc
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from a816.object_file import BusMapping
+    from a816.parse.codegen.modules import ParsedImport
     from a816.program import Program
 
 from a816.build_cache import BuildCache, BuildSettings, ModuleInputs
@@ -134,6 +138,9 @@ class ModuleBuilder:
         # so compile reuses the AST instead of scanning + parsing twice.
         self._parsed: dict[str, ParserResult] = {}
         self._imports: dict[str, list[str]] = {}
+        # Every module re-reads the imports of its imports: parse each
+        # imported source once per build, not once per importer.
+        self._import_asts: dict[str, ParsedImport] = {}
         # Lookups that missed while parsing a module during discovery: the
         # compile reuses that AST, so they belong to the module's inputs.
         self._discovery_misses: dict[str, set[str]] = {}
@@ -194,6 +201,8 @@ class ModuleBuilder:
             )
         self._parsed[module_name] = parsed
         self._discovery_misses[module_name] = misses
+        if parsed.imports is not None:
+            return list(parsed.imports)
         return self._collect_imports(parsed.nodes)
 
     def _cached_imports(self, module_name: str) -> list[str] | None:
@@ -255,6 +264,7 @@ class ModuleBuilder:
         apply_experimental_flags(program, self.experimental)
         program.resolver.context.require_placement = True
         program.resolver.context.bus_map = list(self.bus_map)
+        program.resolver.context.import_asts = self._import_asts
         program.add_module_path(self.output_dir)
         for path in self.module_paths:
             program.add_module_path(path)
@@ -374,6 +384,10 @@ class ModuleBuilder:
 
     def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
         """Build all modules in topo order, then link."""
+        with _rare_collections():
+            return self._build(main_source, parsed_main_nodes)
+
+    def _build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None) -> ObjectFile:
         self.discover_imports(main_source, parsed_main_nodes)
         compilation_order = self.graph.topological_sort()
         logger.info(f"Compilation order: {compilation_order}")
@@ -392,6 +406,23 @@ class ModuleBuilder:
             return object_files[0]
         logger.info(f"Linking {len(object_files)} module(s)")
         return Linker(object_files).link(base_address=0x8000)
+
+
+# A build allocates millions of short-lived nodes that die by refcount; the
+# default gen0 threshold scans them about a thousand times for little garbage.
+_BUILD_GC_THRESHOLD = (50_000, 20, 20)
+
+
+@contextmanager
+def _rare_collections() -> Iterator[None]:
+    """Collect cycles rarely while a build runs, then restore the thresholds
+    so a long-lived host (the LSP) keeps its own."""
+    saved = gc.get_threshold()
+    gc.set_threshold(*_BUILD_GC_THRESHOLD)
+    try:
+        yield
+    finally:
+        gc.set_threshold(*saved)
 
 
 def _object_needs_linking(obj: ObjectFile) -> bool:

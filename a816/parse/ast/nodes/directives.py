@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from collections.abc import Sequence
+from typing import Any, Final, Literal, TypedDict
 
 from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
 from a816.parse.ast.nodes.containers import BlockAstNode
@@ -10,11 +11,9 @@ from a816.parse.tokens import Token
 
 
 class TextAstNode(AstNode):
-    text: str
-
     def __init__(self, text: str, file_info: Token) -> None:
         super().__init__("text", file_info)
-        self.text = text
+        self.text: Final[str] = text
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
@@ -24,11 +23,9 @@ class TextAstNode(AstNode):
 
 
 class AsciiAstNode(AstNode):
-    text: str
-
     def __init__(self, text: str, file_info: Token) -> None:
         super().__init__("ascii", file_info)
-        self.text = text
+        self.text: Final[str] = text
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
@@ -38,11 +35,9 @@ class AsciiAstNode(AstNode):
 
 
 class CommentAstNode(AstNode):
-    comment: str
-
     def __init__(self, comment: str, file_info: Token) -> None:
         super().__init__("comment", file_info)
-        self.comment = comment
+        self.comment: Final[str] = comment
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.comment
@@ -57,7 +52,7 @@ class DocstringAstNode(AstNode):
         # Raw inner content as it appeared between the triple quotes —
         # ruff-preview-style: the formatter reindents but never edits the
         # text. Consumers wanting normalized prose call `inspect.cleandoc`.
-        self.text = text
+        self.text: Final = text
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.text
@@ -74,7 +69,7 @@ class DocstringAstNode(AstNode):
 class CodePositionAstNode(AstNode):
     def __init__(self, expression: ExpressionAstNode, file_info: Token):
         super().__init__("star_eq", file_info)
-        self.expression = expression
+        self.expression: Final = expression
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.expression.to_representation()[0]
@@ -86,7 +81,7 @@ class CodePositionAstNode(AstNode):
 class CodeRelocationAstNode(AstNode):
     def __init__(self, expression: ExpressionAstNode, file_info: Token):
         super().__init__("at_eq", file_info)
-        self.expression = expression
+        self.expression: Final = expression
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.expression.to_representation()[0]
@@ -126,8 +121,6 @@ def _map_value_repr(key: str, value: int) -> str:
 
 
 class MapAstNode(AstNode):
-    args: MapArgs
-
     _FIELD_ORDER: tuple[str, ...] = (
         "identifier",
         "bank_range",
@@ -139,7 +132,7 @@ class MapAstNode(AstNode):
 
     def __init__(self, args: MapArgs, file_info: Token):
         super().__init__("map", file_info)
-        self.args = args
+        self.args: Final[MapArgs] = args
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.args
@@ -160,21 +153,18 @@ class MapAstNode(AstNode):
 
 
 class DataNode(AstNode):
-    data: list[ExpressionAstNode]
-
     def __init__(
         self,
         kind: str,
-        data: list[ExpressionAstNode | BlockAstNode],
+        data: Sequence[ExpressionAstNode | BlockAstNode],
         file_info: Token,
     ):
         super().__init__(kind, file_info)
-
-        self.data = []
-
+        expressions = []
         for d in data:
             assert isinstance(d, ExpressionAstNode)
-            self.data.append(d)
+            expressions.append(d)
+        self.data: Final[tuple[ExpressionAstNode, ...]] = tuple(expressions)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, [d.to_representation()[0] for d in self.data]
@@ -187,11 +177,9 @@ class DataNode(AstNode):
 class ReserveAstNode(AstNode):
     """`.res N`: reserve N bytes of address space without emitting any."""
 
-    size: ExpressionAstNode
-
     def __init__(self, size: ExpressionAstNode, file_info: Token):
         super().__init__("res", file_info)
-        self.size = size
+        self.size: Final[ExpressionAstNode] = size
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.size.to_representation()[0]
@@ -205,10 +193,6 @@ class ReserveTypedAstNode(AstNode):
     pool and publish NAME plus NAME.<field> at the allocator-assigned (or
     pinned) address."""
 
-    name: str
-    type_name: str
-    pool_name: str
-
     def __init__(
         self,
         name: str,
@@ -221,13 +205,13 @@ class ReserveTypedAstNode(AstNode):
         at_address: ExpressionAstNode | None = None,
     ):
         super().__init__("reserve_typed", file_info)
-        self.at_address = at_address
-        self.name = name
-        self.type_name = type_name
-        self.pool_name = pool_name
+        self.at_address: Final = at_address
+        self.name: Final[str] = name
+        self.type_name: Final[str] = type_name
+        self.pool_name: Final[str] = pool_name
         # Source tokens of TYPE / POOL; diagnostics underline the bad one.
-        self.type_token = type_token
-        self.pool_token = pool_token
+        self.type_token: Final = type_token
+        self.pool_token: Final = pool_token
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, self.type_name, self.pool_name
@@ -238,11 +222,9 @@ class ReserveTypedAstNode(AstNode):
 
 
 class TableAstNode(AstNode):
-    file_path: str
-
     def __init__(self, file_path: str, file_info: Token):
         super().__init__("table", file_info)
-        self.file_path = file_path
+        self.file_path: Final[str] = file_path
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path
@@ -252,14 +234,10 @@ class TableAstNode(AstNode):
 
 
 class IncludeAstNode(AstNode):
-    file_path: str
-    included_nodes: list[AstNode]
-    resolved_path: str | None
-
     def __init__(
         self,
         file_path: str,
-        included_nodes: list[AstNode],
+        included_nodes: Sequence[AstNode],
         file_info: Token,
         resolved_path: str | None = None,
     ):
@@ -271,9 +249,9 @@ class IncludeAstNode(AstNode):
         emits no attributable line.
         """
         super().__init__("include", file_info)
-        self.file_path = file_path
-        self.included_nodes = included_nodes
-        self.resolved_path = resolved_path
+        self.file_path: Final[str] = file_path
+        self.included_nodes: Final[tuple[AstNode, ...]] = tuple(included_nodes)
+        self.resolved_path: Final[str | None] = resolved_path
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path, [node.to_representation() for node in self.included_nodes]
@@ -283,12 +261,10 @@ class IncludeAstNode(AstNode):
 
 
 class IncludeIpsAstNode(AstNode):
-    file_path: str
-
     def __init__(self, file_path: str, expression: ExpressionAstNode, file_info: Token):
         super().__init__("include_ips", file_info)
-        self.file_path = file_path
-        self.expression = expression
+        self.file_path: Final[str] = file_path
+        self.expression: Final = expression
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path, self.expression.to_representation()[0]
@@ -299,11 +275,9 @@ class IncludeIpsAstNode(AstNode):
 
 
 class IncludeBinaryAstNode(AstNode):
-    file_path: str
-
     def __init__(self, file_path: str, file_info: Token):
         super().__init__("incbin", file_info)
-        self.file_path = file_path
+        self.file_path: Final[str] = file_path
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.file_path
@@ -315,7 +289,7 @@ class IncludeBinaryAstNode(AstNode):
 class DebugAstNode(AstNode):
     def __init__(self, message: str, file_info: Token) -> None:
         super().__init__("debug", file_info)
-        self.message = message
+        self.message: Final = message
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.message
@@ -329,8 +303,8 @@ class RegisterSizeAstNode(AstNode):
 
     def __init__(self, register: str, size: int, file_info: Token) -> None:
         super().__init__("register_size", file_info)
-        self.register = register  # "a" for accumulator, "i" for index
-        self.size = size  # 8 or 16
+        self.register: Final = register  # "a" for accumulator, "i" for index
+        self.size: Final = size  # 8 or 16
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.register, self.size

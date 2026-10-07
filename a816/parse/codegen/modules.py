@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
 from a816.module_loader import resolve_module
-from a816.object_file import ObjectFile, SymbolType
+from a816.object_file import BusMapping, ObjectFile, PoolDecl, SymbolType
 from a816.parse.ast.nodes import (
     AssignAstNode,
     AstNode,
@@ -39,6 +42,9 @@ from a816.parse.codegen.structs import declare_bus_mapping
 from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
 from a816.parse.tokens import Token
 from a816.symbols import Resolver, _is_exportable
+
+if TYPE_CHECKING:
+    from a816.parse.mzparser import ParserResult
 
 # Declarations whose effect must be visible to codegen of the importer
 # (struct/macro/const defs, `.map` bus layout, nested imports, pool
@@ -78,11 +84,44 @@ def _import_search_paths(resolver: Resolver) -> list[Path]:
     return list(resolver.context.module_paths)
 
 
+@dataclass(frozen=True)
+class _ImportView:
+    """What an object-mode importer reads from an imported `.o`."""
+
+    provided_names: tuple[str, ...]
+    pool_decls: tuple[PoolDecl, ...]
+    bus_mappings: tuple[BusMapping, ...]
+    has_pool_allocs: bool
+
+
+def _import_view(obj_path: Path) -> _ImportView:
+    """The imported `.o`'s import view, decoded once per file version.
+
+    Every module of a build imports the same core `.o` files; decoding each
+    one again per importer made a cold build quadratic in modules. The stat
+    in the cache key picks up a `.o` rebuilt earlier in the same build.
+    Raises like `ObjectFile.from_file`.
+    """
+    stat = obj_path.stat()
+    return _decode_import_view(str(obj_path), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=1024)
+def _decode_import_view(path: str, _mtime_ns: int, _size: int) -> _ImportView:
+    obj_file = ObjectFile.from_file(path)
+    return _ImportView(
+        provided_names=tuple(_object_provided_names(obj_file)),
+        pool_decls=tuple(obj_file.pool_decls),
+        bus_mappings=tuple(obj_file.bus_mappings),
+        has_pool_allocs=bool(obj_file.pool_allocs),
+    )
+
+
 def _object_has_pool_allocs(obj_path: Path) -> bool:
-    """Cheap check: parse the .o header to see if it carries any
-    `.alloc` requests. Used to gate the direct-mode `.o` shortcut."""
+    """Cheap check: does the .o carry any `.alloc` requests? Used to
+    gate the direct-mode `.o` shortcut."""
     try:
-        return bool(ObjectFile.from_file(str(obj_path)).pool_allocs)
+        return _import_view(obj_path).has_pool_allocs
     except (FileNotFoundError, ValueError):
         return False
 
@@ -94,31 +133,21 @@ def _import_from_object(
     direct_mode: bool,
     file_info: Token,
 ) -> GenNodes | None:
+    if direct_mode:
+        return _import_linked_module(module_name, obj_path, resolver, file_info)
     try:
-        obj_file = ObjectFile.from_file(str(obj_path))
+        view = _import_view(obj_path)
     except (FileNotFoundError, ValueError):
         return None
 
-    for mapping in obj_file.bus_mappings:
+    for mapping in view.bus_mappings:
         declare_bus_mapping(resolver, mapping, file_info)
-
-    if direct_mode:
-        symbols_data = [
-            (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
-        ]
-        node = LinkedModuleNode(module_name, obj_file.sections, symbols_data, resolver, obj_file.relocatable)
-        # Direct mode collapses object compilation + link into a single
-        # resolver pass: surface the .o's pool decls so top-level
-        # `.alloc` sites (and subsequent imports) can find the pools.
-        node.imported_pool_decls = list(obj_file.pool_decls)
-        return [node]
-
     # Object mode: importer is being compiled to its own `.o`. Surface
     # the imported `.o`'s pool decls in the importer's resolver so any
     # `.alloc NAME in <pool>` site at the importer's top level resolves
     # at codegen. Tagged as imported so the resolver knows the linker
     # will handle final placement.
-    _register_imported_object_pools(obj_file, resolver)
+    _register_imported_object_pools(view.pool_decls, resolver)
 
     # Each `.o` owns only what it defines (GLOBAL). EXTERNAL re-export
     # cascades quadratically across diamond imports — a module that
@@ -127,7 +156,25 @@ def _import_from_object(
     # past the `<H>` 65535 limit within 3-4 hops. Importers must
     # `.import` direct deps explicitly; the resolver's own dedup
     # (`imported_module_paths`) handles the diamond.
-    return [ExternNode(name, resolver) for name in _object_provided_names(obj_file)]
+    return [ExternNode(name, resolver) for name in view.provided_names]
+
+
+def _import_linked_module(module_name: str, obj_path: Path, resolver: Resolver, file_info: Token) -> GenNodes | None:
+    """Direct mode collapses object compilation + link into a single
+    resolver pass: the whole `.o` comes in, and its pool decls surface so
+    top-level `.alloc` sites (and subsequent imports) can find the pools."""
+    try:
+        obj_file = ObjectFile.from_file(str(obj_path))
+    except (FileNotFoundError, ValueError):
+        return None
+    for mapping in obj_file.bus_mappings:
+        declare_bus_mapping(resolver, mapping, file_info)
+    symbols_data = [
+        (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
+    ]
+    node = LinkedModuleNode(module_name, obj_file.sections, symbols_data, resolver, obj_file.relocatable)
+    node.imported_pool_decls = list(obj_file.pool_decls)
+    return [node]
 
 
 def _object_provided_names(obj_file: ObjectFile) -> list[str]:
@@ -143,13 +190,13 @@ def _object_provided_names(obj_file: ObjectFile) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def _register_imported_object_pools(obj_file: ObjectFile, resolver: Resolver) -> None:
+def _register_imported_object_pools(pool_decls: tuple[PoolDecl, ...], resolver: Resolver) -> None:
     """Mirror the imported `.o`'s pool decls into the importer's
     resolver.pools so `.alloc ... in POOL` sites resolve at codegen.
     Idempotent: identical re-registrations are skipped silently."""
     from a816.pool import Pool
 
-    for decl in obj_file.pool_decls:
+    for decl in pool_decls:
         if decl.name in resolver.pools:
             continue
         resolver.pools[decl.name] = Pool.from_decl(decl)
@@ -179,37 +226,90 @@ def _import_from_source(
 
     Per-node split lives in `_import_object_mode`.
     """
+    parsed = _parse_import(src_path, resolver)
+    if parsed is None:
+        return None
+    nodes = parsed.result.nodes
+    if not nodes:
+        return []
+    if direct_mode:
+        return _code_gen(nodes, resolver, macro_definitions)
+    _register_private_names(parsed.private_names(src_path), module_name, resolver)
+    return _import_object_mode(parsed.object_mode_plan(), resolver, macro_definitions)
+
+
+@dataclass
+class ParsedImport:
+    """One imported source as the build caches it: its AST, the lookups that
+    missed while parsing it, and what each importer derives from that AST
+    (object-mode plan, private declarations) once first needed. The AST is
+    immutable, so neither can go stale."""
+
+    result: ParserResult
+    misses: set[str]
+    plan: _ImportPlan | None = None
+    privates: _PrivateNames | None = None
+
+    def object_mode_plan(self) -> _ImportPlan:
+        if self.plan is None:
+            self.plan = _plan_object_mode(self.result.nodes)
+        return self.plan
+
+    def private_names(self, src_path: Path) -> _PrivateNames:
+        if self.privates is None:
+            self.privates = _private_names(self.result.nodes, src_path)
+        return self.privates
+
+
+def _parse_import(src_path: Path, resolver: Resolver) -> ParsedImport | None:
+    """The imported source's AST, from the build's shared cache when there is
+    one. A cache hit replays the lookups that missed while parsing, so the
+    importer's recorded inputs match a fresh parse. None when unreadable."""
+    from a816.build_inputs import recording_misses, replay_misses
     from a816.parse.mzparser import A816Parser
 
+    cache = resolver.context.import_asts
+    key = str(src_path)
+    if cache is not None and key in cache:
+        parsed = cache[key]
+        replay_misses(parsed.misses)
+        return parsed
     try:
         content = src_path.read_text(encoding="utf-8")
     except OSError:
         return None
-    result = A816Parser.parse_as_ast(content, str(src_path))
-    if not result.nodes:
-        return []
-    if direct_mode:
-        return _code_gen(result.nodes, resolver, macro_definitions)
-    _register_private_names(result.nodes, module_name, src_path, resolver)
-    return _import_object_mode(result.nodes, resolver, macro_definitions)
+    with recording_misses() as misses:
+        parsed = ParsedImport(A816Parser.parse_as_ast(content, key), misses)
+    replay_misses(misses)
+    if cache is not None:
+        cache[key] = parsed
+    return parsed
 
 
 _PRIVATE_DECLARATION_TYPES = (SymbolAffectationAstNode, AssignAstNode, LabelDeclAstNode, MacroAstNode, StructAstNode)
 
 
-def _register_private_names(nodes: list[AstNode], module_name: str, src_path: Path, resolver: Resolver) -> None:
-    """Record the module owning each private (`_`) declaration it hands to
-    the importer: the importer may not name them (`Resolver.foreign_private_owner`)."""
+# A module's private (`_`) top-level names, and the files that may use them.
+_PrivateNames = tuple[tuple[str, ...], frozenset[str]]
+
+
+def _private_names(nodes: Sequence[AstNode], src_path: Path) -> _PrivateNames:
     from a816.symbols import _canonical_file
 
     files = frozenset({_canonical_file(str(src_path)), *(_canonical_file(f) for f in _included_files(nodes))})
-    for node in _top_level_declarations(nodes):
-        name = declared_name(node)
-        if name is not None and name.startswith("_"):
-            resolver.private_owners.setdefault(name, (module_name, files))
+    names = (declared_name(node) for node in _top_level_declarations(nodes))
+    return tuple(name for name in names if name is not None and name.startswith("_")), files
 
 
-def _included_files(nodes: list[AstNode]) -> list[str]:
+def _register_private_names(privates: _PrivateNames, module_name: str, resolver: Resolver) -> None:
+    """Record the module owning each private (`_`) declaration it hands to
+    the importer: the importer may not name them (`Resolver.foreign_private_owner`)."""
+    names, files = privates
+    for name in names:
+        resolver.private_owners.setdefault(name, (module_name, files))
+
+
+def _included_files(nodes: Sequence[AstNode]) -> list[str]:
     out: list[str] = []
     for node in nodes:
         if isinstance(node, IncludeAstNode):
@@ -219,7 +319,7 @@ def _included_files(nodes: list[AstNode]) -> list[str]:
     return out
 
 
-def _top_level_declarations(nodes: list[AstNode]) -> list[AstNode]:
+def _top_level_declarations(nodes: Sequence[AstNode]) -> list[AstNode]:
     out: list[AstNode] = []
     for node in nodes:
         if isinstance(node, _PRIVATE_DECLARATION_TYPES):
@@ -229,19 +329,66 @@ def _top_level_declarations(nodes: list[AstNode]) -> list[AstNode]:
     return out
 
 
-def _import_object_mode(
-    nodes: list[AstNode],
-    resolver: Resolver,
-    macro_definitions: MacroDefinitions,
-) -> GenNodes:
+@dataclass(frozen=True)
+class _Externs:
+    """Runtime names the imported `.o` owns: extern stubs in the importer."""
+
+    names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _TypedBind:
+    """`view := (base as T)` over an imported runtime name: the view and its
+    fields become externs, named from the importer's struct layout."""
+
+    node: AssignAstNode
+
+
+@dataclass(frozen=True)
+class _Inline:
+    """Compile-time nodes the importer's resolver evaluates itself."""
+
+    nodes: list[AstNode]
+
+
+@dataclass(frozen=True)
+class _ImportPlan:
+    """What an object-mode `.import` does with one source, worked out once
+    from its AST and replayed against every importer's resolver.
+
+    `reservations` pairs each public reservation with its struct type (None
+    for a flat one); `steps` keeps the source order of externs and inlines.
+    """
+
+    reservations: tuple[tuple[str, str | None], ...]
+    steps: tuple[_Externs | _TypedBind | _Inline, ...]
+
+
+def _plan_object_mode(nodes: list[AstNode]) -> _ImportPlan:
     """Per-node classifier for object-mode `.import`s.
 
     Inlines compile-time-only nodes (struct, macro, constant, typed
-    bind, `.label`, nested `.import`) into the importer's resolver so
-    codegen of this module sees their effects; `.if` / `.scope` /
-    `.for` / `.include` are inlined with their bodies cut down to declarations
-    (`_declarations_only`). Emits `ExternNode` for runtime-bound names
-    so cross-module references resolve at link time.
+    bind, `.label`, nested `.import`); `.if` / `.scope` / `.for` /
+    `.include` are inlined with their bodies cut down to declarations
+    (`_declarations_only`). Runtime-bound names become externs so
+    cross-module references resolve at link time.
+    """
+    runtime = _runtime_names_in(nodes) | {node.symbol for node in nodes if isinstance(node, ExternAstNode)}
+    steps: list[_Externs | _TypedBind | _Inline] = []
+    for node in nodes:
+        if isinstance(node, AssignAstNode) and _is_runtime_typed_bind(node, runtime):
+            steps.append(_TypedBind(node))
+        elif isinstance(node, _INLINE_IMPORT_TYPES):
+            steps.append(_Inline([node]))
+        elif isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode):
+            steps.append(_Inline(_declarations_only([node], bare_names=True)))
+        elif names := _runtime_extern_names(node):
+            steps.append(_Externs(tuple(names)))
+    return _ImportPlan(_reservations_in(nodes), tuple(steps))
+
+
+def _import_object_mode(plan: _ImportPlan, resolver: Resolver, macro_definitions: MacroDefinitions) -> GenNodes:
+    """Replay an import plan against the importer's resolver.
 
     Names contributed by the inline pass land in
     `Resolver.imported_symbol_names`; `_export_object_symbols` skips
@@ -252,41 +399,44 @@ def _import_object_mode(
     root = resolver.scopes[0]
     before_labels = set(root.labels.keys())
     before_symbols = set(root.symbols.keys())
-    runtime = _runtime_names_in(nodes) | {node.symbol for node in nodes if isinstance(node, ExternAstNode)}
-    _record_imported_reservations(nodes, resolver)
+    _record_imported_reservations(plan.reservations, resolver)
 
-    for node in nodes:
-        if isinstance(node, AssignAstNode) and _is_runtime_typed_bind(node, runtime):
-            out.extend(ExternNode(name, resolver) for name in _typed_bind_names(node, resolver))
-            continue
-        if isinstance(node, _INLINE_IMPORT_TYPES):
-            out.extend(_code_gen([node], resolver, macro_definitions) or [])
-            continue
-        if isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode):
-            out.extend(_code_gen(_declarations_only([node], bare_names=True), resolver, macro_definitions) or [])
-            continue
-        for name in _runtime_extern_names(node):
-            out.append(ExternNode(name, resolver))
+    for step in plan.steps:
+        if isinstance(step, _Inline):
+            out.extend(_code_gen(step.nodes, resolver, macro_definitions) or [])
+        elif isinstance(step, _TypedBind):
+            out.extend(ExternNode(name, resolver) for name in _typed_bind_names(step.node, resolver))
+        else:
+            out.extend(ExternNode(name, resolver) for name in step.names)
 
     resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)
     resolver.imported_symbol_names.update(set(root.symbols.keys()) - before_symbols)
     return out
 
 
-def _record_imported_reservations(nodes: list[AstNode], resolver: Resolver) -> None:
+def _reservations_in(nodes: list[AstNode]) -> tuple[tuple[str, str | None], ...]:
+    """An imported module's public reservations, each with its struct type
+    (None for a flat one)."""
+    from a816.parse.ast.nodes import AllocAstNode, ReserveTypedAstNode
+    from a816.parse.ast.visitor import walk
+
+    found: list[tuple[str, str | None]] = []
+    for node in walk(nodes):
+        if isinstance(node, ReserveTypedAstNode) and not node.name.startswith("_"):
+            found.append((node.name, node.type_name))
+        elif isinstance(node, AllocAstNode) and node.reserve and node.name and not node.name.startswith("_"):
+            found.append((node.name, None))
+    return tuple(found)
+
+
+def _record_imported_reservations(reservations: tuple[tuple[str, str | None], ...], resolver: Resolver) -> None:
     """Make an imported module's reservations known to `sizeof`.
 
     A typed one's size is its (inlined) struct's; a flat one's is the
     owner's `NAME.__size`, which reaches the importer as an extern.
     """
-    from a816.parse.ast.nodes import AllocAstNode, ReserveTypedAstNode
-    from a816.parse.ast.visitor import walk
-
-    for node in walk(nodes):
-        if isinstance(node, ReserveTypedAstNode) and not node.name.startswith("_"):
-            resolver.reservation_sizes[node.name] = resolver.struct_sizes.get(node.type_name)
-        elif isinstance(node, AllocAstNode) and node.reserve and node.name and not node.name.startswith("_"):
-            resolver.reservation_sizes[node.name] = None
+    for name, type_name in reservations:
+        resolver.reservation_sizes[name] = None if type_name is None else resolver.struct_sizes.get(type_name)
 
 
 def _is_runtime_typed_bind(node: AssignAstNode, runtime: set[str]) -> bool:
@@ -307,7 +457,7 @@ def _typed_bind_names(node: AssignAstNode, resolver: Resolver) -> list[str]:
     return [node.symbol, *(f"{node.symbol}.{field_path}" for field_path, _offset, _width in fields)]
 
 
-def _declarations_only(nodes: list[AstNode], bare_names: bool) -> list[AstNode]:
+def _declarations_only(nodes: Sequence[AstNode], bare_names: bool) -> list[AstNode]:
     """Copy of `nodes` with every byte-emitting statement dropped.
 
     `.if` / `.scope` / `.for` / `.include` keep their shape so the
@@ -354,7 +504,7 @@ def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
 _IDENT_HEAD_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)", re.ASCII)
 
 
-def _drop_runtime_bound(declarations: list[AstNode], scope_body: list[AstNode]) -> list[AstNode]:
+def _drop_runtime_bound(declarations: list[AstNode], scope_body: Sequence[AstNode]) -> list[AstNode]:
     """Drop `=` / `:=` declarations that depend on the scope's own runtime names.
 
     The importer never sees the scope's labels (they're dropped with the
@@ -376,7 +526,7 @@ def _mentions(value: ExpressionAstNode, names: set[str]) -> bool:
     return any(match in names for match in _IDENT_HEAD_RE.findall(value.to_canonical()))
 
 
-def _runtime_names_in(nodes: list[AstNode]) -> set[str]:
+def _runtime_names_in(nodes: Sequence[AstNode]) -> set[str]:
     """Labels and other runtime names a scope body binds in its own scope,
     including those declared in `.if` / `.else` bodies (no scope of their own)."""
     names: set[str] = set()
@@ -390,7 +540,7 @@ def _runtime_names_in(nodes: list[AstNode]) -> set[str]:
 
 
 def _if_branches(node: IfAstNode) -> list[AstNode]:
-    return node.block.body + (node.else_block.body if node.else_block else [])
+    return [*node.block.body, *(node.else_block.body if node.else_block else ())]
 
 
 def _pruned_if(node: IfAstNode, bare_names: bool) -> list[AstNode]:
@@ -647,7 +797,7 @@ def _emit_symbols_for_node(node: AstNode, prefix: str, symbols: list[str]) -> No
         _record_public_symbol(symbols, prefix, f"{base}__size")
 
 
-def _visit_for_public_symbols(nodes: list[AstNode], prefix: str, symbols: list[str]) -> None:
+def _visit_for_public_symbols(nodes: Sequence[AstNode], prefix: str, symbols: list[str]) -> None:
     """Walk `nodes`, emitting symbols and recursing into child containers.
 
     `.scope name { ... }` opens a dotted prefix for its members; every
@@ -678,10 +828,10 @@ def _descend_into_children(node: AstNode, prefix: str, symbols: list[str]) -> No
         child = getattr(node, attr, None)
         if isinstance(child, BlockAstNode | CompoundAstNode):
             _visit_for_public_symbols(child.body, prefix, symbols)
-        elif isinstance(child, list):
+        elif isinstance(child, list | tuple):
             _visit_for_public_symbols(child, prefix, symbols)
     included = getattr(node, "included_nodes", None)
-    if isinstance(included, list):
+    if isinstance(included, list | tuple):
         _visit_for_public_symbols(included, prefix, symbols)
 
 

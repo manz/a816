@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, NamedTuple, cast
 
 from a816.build_inputs import record_miss, recording_misses, replay_misses
 from a816.error_codes import (
@@ -507,6 +507,7 @@ def parse_import(p: Parser, keyword: Token) -> ImportAstNode:
     directive itself.
     """
     module_name = parse_directive_with_quoted_string(p)
+    p.imports.append(module_name)
     return ImportAstNode(module_name, keyword)
 
 
@@ -541,8 +542,9 @@ def _resolve_include_path(p: Parser, keyword: Token, include_path: str) -> str:
     return include_path  # let the eventual open() raise the canonical error
 
 
-#: (resolved path, search paths) -> (content hash, parsed body, lookup misses of its nested includes).
-_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[str, list[AstNode], set[str]]] = {}
+#: (resolved path, search paths) -> (content hash, parsed body, its `.import`s, lookup misses of its
+#: nested includes).
+_INCLUDE_AST_CACHE: dict[tuple[str, tuple[str, ...]], tuple[str, IncludedAst, set[str]]] = {}
 
 
 def clear_include_ast_cache() -> None:
@@ -562,7 +564,14 @@ def _include_stamp(resolved_path: str) -> str | None:
         return None
 
 
-def _parse_include_file(resolved_path: str, include_paths: list[Path]) -> list[AstNode]:
+class IncludedAst(NamedTuple):
+    """An include's parsed body and the `.import`s it holds (nested includes too)."""
+
+    body: tuple[AstNode, ...]
+    imports: tuple[str, ...]
+
+
+def _parse_include_file(resolved_path: str, include_paths: list[Path]) -> IncludedAst:
     from a816.parse.parser_states.core import parse_initial
 
     with open(resolved_path, encoding="utf-8") as fd:
@@ -570,10 +579,11 @@ def _parse_include_file(resolved_path: str, include_paths: list[Path]) -> list[A
     scanner = Scanner(cast(ScannerStateFunc, lex_initial))
     tokens = scanner.scan(resolved_path, source)
     parser = Parser(tokens, cast(StateFunc, parse_initial), include_paths=include_paths)
-    return parser.parse()
+    body = tuple(parser.parse())
+    return IncludedAst(body, tuple(parser.imports))
 
 
-def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode]:
+def _included_ast(resolved_path: str, include_paths: list[Path]) -> IncludedAst:
     """The parsed body of an include, memoised per file revision.
 
     A header pulled in from thirty sites was scanned and parsed thirty
@@ -581,8 +591,9 @@ def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode
     The body only depends on the file's bytes and the search paths used to
     resolve its own nested includes, so it is shared between sites.
 
-    Codegen reads these nodes and emits fresh ones rather than mutating
-    them, which is what makes sharing safe."""
+    Nodes are immutable (tuple bodies, no writes after `__init__`), which
+    is what makes sharing safe; a tuple body also passes through
+    `IncludeAstNode` uncopied, so every site holds the same one."""
     key = (resolved_path, tuple(str(path) for path in include_paths))
     stamp = _include_stamp(resolved_path)
     if stamp is not None:
@@ -605,8 +616,9 @@ def _included_ast(resolved_path: str, include_paths: list[Path]) -> list[AstNode
 def parse_include(p: Parser, keyword: Token) -> IncludeAstNode:
     include_path = parse_directive_with_quoted_string(p)
     resolved_path = _resolve_include_path(p, keyword, include_path)
-    sub_ast = _included_ast(resolved_path, p.include_paths)
-    return IncludeAstNode(include_path, sub_ast, keyword, resolved_path=resolved_path)
+    included = _included_ast(resolved_path, p.include_paths)
+    p.imports.extend(included.imports)
+    return IncludeAstNode(include_path, included.body, keyword, resolved_path=resolved_path)
 
 
 def _data_node(kind: str) -> Callable[[Parser, Token], DataNode]:

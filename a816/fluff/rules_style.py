@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from a816.fluff.core import (
@@ -84,7 +84,7 @@ def _expressions_in_node(node: AstNode) -> Iterable[ExpressionAstNode]:
 
 
 def _walk_cast_nodes(
-    tokens: list[ExprNode],
+    tokens: Sequence[ExprNode],
 ) -> Iterable[CastAccessExprNode | CastValueExprNode]:
     """Yield Cast* terms in `tokens`, recursing into their inner expressions."""
     for tok in tokens:
@@ -218,7 +218,7 @@ def _collect_typed_instances(ctx: LintContext) -> dict[str, str]:
     return instances
 
 
-def _inner_canonical(tokens: list[ExprNode]) -> str:
+def _inner_canonical(tokens: Sequence[ExprNode]) -> str:
     return " ".join(tok.to_canonical() for tok in tokens)
 
 

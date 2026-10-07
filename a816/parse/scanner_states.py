@@ -1,3 +1,6 @@
+import re
+from collections.abc import Callable
+
 from a816.cpu.cpu_65c816 import (
     AddressingMode,
     get_opcodes_with_addressing,
@@ -170,7 +173,7 @@ def lex_expression_operator(s: "Scanner") -> bool:
 def lex_expression(s: "Scanner") -> None:
     while s.pos < len(s.input):
         s.ignore_run(" ")
-        for handler in _EXPRESSION_HANDLERS:
+        for handler in _EXPRESSION_HANDLERS.get(s.peek(), ()):
             if handler(s):
                 break
         else:
@@ -263,16 +266,14 @@ def lex_opcode_size(s: "Scanner") -> None:
         )
 
 
+# Blanks, then maybe a `;` comment, then a line end, `}` or end of input.
+_STATEMENT_END = re.compile(r"[ \t]*(?:;[^\n\0]*)?(?:[\n}\0]|\Z)")
+
+
 def _ends_statement(s: "Scanner") -> bool:
     """True when only blanks / a comment separate the cursor from a line end,
     end of input, or a closing `}` (`{ inc }` on one line)."""
-    saved_pos = s.pos
-    s.accept_run(" \t")
-    if s.accept(";"):
-        s.accept_run("\n\0", negate=True)
-    ended = s.peek() in ("\n", "}", EOF)
-    s.pos = saved_pos
-    return ended
+    return _STATEMENT_END.match(s.input, s.pos) is not None
 
 
 def _next_word_is_opcode(s: "Scanner") -> bool:
@@ -392,14 +393,15 @@ lex_keyword = lex_directive
 KEYWORDS = DIRECTIVE_NAMES
 
 
-def lex_number(s: Scanner) -> None:
-    acceptable_values = {"b": "01", "o": "01234567", "x": "0123456789ABCDEFabcdef"}
+_DIGITS_BY_PREFIX = {"b": "01", "o": "01234567", "x": "0123456789ABCDEFabcdef"}
 
+
+def lex_number(s: Scanner) -> None:
     s.backup()
 
     ch = s.next()
 
-    if s.peek() in ["\n", EOF]:
+    if s.peek() in ("\n", EOF):
         s.emit(TokenType.NUMBER)
         return
 
@@ -407,7 +409,7 @@ def lex_number(s: Scanner) -> None:
         base_prefix = s.next()
 
         if base_prefix in ("b", "o", "x"):
-            s.accept_run(acceptable_values[base_prefix])
+            s.accept_run(_DIGITS_BY_PREFIX[base_prefix])
         else:
             s.backup()
     else:
@@ -435,8 +437,7 @@ _SINGLE_CHAR_TOKENS: dict[str, TokenType] = {
 def _lex_line_comment(s: Scanner) -> bool:
     if not s.accept(";"):
         return False
-    while s.peek() not in ["\n", EOF]:
-        s.next()
+    s.accept_run("\n" + EOF, negate=True)
     s.emit(TokenType.COMMENT)
     return True
 
@@ -547,40 +548,65 @@ def _lex_paren(s: Scanner) -> bool:
     return False
 
 
+Handler = Callable[[Scanner], bool]
+_DIGITS = "0123456789"
+_QUOTES = "'\""
+_OPERATOR_STARTS = "".join(_OPERATORS_BY_FIRST_CHAR)
+
+
+def _by_first_char(handlers: tuple[tuple[Handler, str], ...]) -> dict[str, tuple[Handler, ...]]:
+    """Each character mapped to the handlers that can start on it, in table order.
+
+    A handler that cannot start on a character consumes nothing and returns
+    False there, so skipping it changes nothing but the time spent asking.
+    """
+    table: dict[str, tuple[Handler, ...]] = {}
+    for handler, starts in handlers:
+        for ch in starts:
+            table[ch] = (*table.get(ch, ()), handler)
+    return table
+
+
 # Expression tokens inside an opcode operand: no opcodes, directives or
-# assignment tokens. Each helper returns True when it consumed input.
-_EXPRESSION_HANDLERS = (
-    _lex_number,
-    _lex_identifier,
-    _lex_triple_quoted_docstring,
-    _lex_quoted_string,
-    lex_expression_operator,
-    _lex_paren,
+# assignment tokens. Each helper returns True when it consumed input, and
+# is listed with the characters it can start on.
+_EXPRESSION_HANDLERS = _by_first_char(
+    (
+        (_lex_number, _DIGITS),
+        (_lex_identifier, IDENTIFIER_START_CHARS),
+        (_lex_triple_quoted_docstring, _QUOTES),
+        (_lex_quoted_string, _QUOTES),
+        (lex_expression_operator, _OPERATOR_STARTS),
+        (_lex_paren, "()"),
+    )
 )
 
 # Order matters: triple-quote before single-quote, `:=` / `@=` / `*=`
 # before the expression operators that share their first char, line
 # comment (`;`) before any other punctuation handler. Each helper returns
-# True when it consumed input.
-_LEX_HANDLERS = (
-    _lex_line_comment,
-    _lex_number,
-    _lex_assignment_operator,
-    lex_expression_operator,
-    _lex_identifier_or_opcode,
-    _lex_dot_keyword,
-    _lex_triple_quoted_docstring,
-    _lex_quoted_string,
-    _lex_brace,
-    _lex_block_comment,
-    _lex_single_char_token,
+# True when it consumed input, and is listed with the characters it can
+# start on.
+_LEX_HANDLERS = _by_first_char(
+    (
+        (_lex_line_comment, ";"),
+        (_lex_number, _DIGITS),
+        (_lex_assignment_operator, ":@*"),
+        (lex_expression_operator, _OPERATOR_STARTS),
+        (_lex_identifier_or_opcode, IDENTIFIER_START_CHARS),
+        (_lex_dot_keyword, "."),
+        (_lex_triple_quoted_docstring, _QUOTES),
+        (_lex_quoted_string, _QUOTES),
+        (_lex_brace, "{}"),
+        (_lex_block_comment, "/"),
+        (_lex_single_char_token, "".join(_SINGLE_CHAR_TOKENS)),
+    )
 )
 
 
 def lex_initial(s: Scanner) -> None:
     """Scanner entry state. Dispatches to a small handler for each token shape."""
     s.ignore_run(" \t\n")
-    for handler in _LEX_HANDLERS:
+    for handler in _LEX_HANDLERS.get(s.peek(), ()):
         if handler(s):
             return
     if s.next() is not None:
