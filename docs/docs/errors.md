@@ -164,6 +164,9 @@ separate blocks separated by a blank line.
 - `E0336` a `cross_bank` alloc body holds something other than data
   (code or a label); see
   [Freespace pools](freespace-pools.md#cross_bank-data-blobs-across-bank-edges).
+- `E0337` an alloc body emitted a different number of bytes than the slot
+  it reserved. Measuring and emitting disagree: an a816 bug, please report
+  it with the source.
 
 ### Linker
 

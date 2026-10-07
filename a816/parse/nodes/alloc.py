@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a816.cpu.mapping import Address, LinearAddress
-from a816.error_codes import E_SYMBOL_UNKNOWN_POOL
+from a816.error_codes import E_CODEGEN_ALLOC_SIZE_DRIFT, E_SYMBOL_UNKNOWN_POOL
 from a816.exceptions import SymbolNotDefined
 from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.symbols import SymbolNode
@@ -251,6 +251,17 @@ class AllocNode(NodeBase):
         out = b"".join(chunk for _, _, chunk in attributed)
         return [(alloc.addr, out)]
 
+    def check_emitted_size(self, emitted: int) -> None:
+        """The body must fill exactly the slot it reserved: a longer one would
+        write into whatever the allocator placed next, silently."""
+        if emitted != self._size:
+            raise NodeError(
+                f"alloc {self.name!r} emitted {emitted} bytes into a {self._size}-byte slot",
+                self.file_info,
+                code=str(E_CODEGEN_ALLOC_SIZE_DRIFT),
+                hint="the body's size changed between measuring and emitting; this is an a816 bug, please report it",
+            )
+
     def emit_attributed_blocks(self, current_addr: Address) -> list[tuple[NodeProtocol, int, bytes]]:
         """Per-body-node emit. Yields `(node, snes_addr, bytes)` tuples
         so callers can record per-line debug info / emit traces at
@@ -289,6 +300,9 @@ class AllocNode(NodeBase):
                     cur = cur + len(emitted)
                     self.resolver.pc += len(emitted)
                     self.resolver.reloc_address = cur
+            emitted_total = sum(len(chunk) for _, _, chunk in attributed)
+            if emitted_total:
+                self.check_emitted_size(emitted_total)
             return attributed
         finally:
             self.resolver.pc = saved_pc
