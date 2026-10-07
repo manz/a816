@@ -249,6 +249,8 @@ def generate_alloc(
             pinned_addr = _eval_int(node.at_address, resolver, file_info)
 
     _reject_nested_placement(node)
+    if node.name:
+        resolver.alloc_names.add(node.name)
     if node.reserve and node.name:
         resolver.reservation_sizes[node.name] = _reserved_size(node, resolver)
     if node.cross_bank:

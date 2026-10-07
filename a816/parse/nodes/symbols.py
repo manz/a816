@@ -135,7 +135,9 @@ class SymbolNode(NodeBase):
                 # module-base-relative.
                 from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
 
-                self._register_alias(_inline_aliases(reconstruct_expression(self.expression), self.resolver))
+                self._register_alias(
+                    _inline_aliases(reconstruct_expression(self.expression, self.resolver), self.resolver)
+                )
             else:
                 self.resolver.current_scope.add_symbol(self.symbol_name, value)
         return current_pc

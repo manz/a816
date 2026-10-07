@@ -370,6 +370,9 @@ class Resolver:
         # codegen (a constant flat size, a typed reserve), None when only the
         # alloc's `NAME.__size` symbol carries it (measured later, or imported).
         self.reservation_sizes: dict[str, int | None] = {}
+        # Named allocs seen at codegen: `sizeof(NAME)` resolves through their
+        # `NAME.__size` even before the body is measured (macro args, `.assert`).
+        self.alloc_names: set[str] = set()
         # Declared `(name, type)` fields per struct, in source order. `.istruct`
         # walks these to lay an instance out as bytes.
         self.struct_fields: dict[str, list[tuple[str, str]]] = {}

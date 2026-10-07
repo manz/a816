@@ -170,7 +170,7 @@ def generate_macro_application(
                     reconstruct_expression,
                 )
 
-                expr_str = _inline_aliases(reconstruct_expression(value), resolver)
+                expr_str = _inline_aliases(reconstruct_expression(value, resolver), resolver)
                 expr_str = canonicalize_local_label_refs(expr_str, resolver)
                 resolver.current_scope.add_external_alias(arg, expr_str)
             else:

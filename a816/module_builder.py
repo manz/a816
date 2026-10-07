@@ -279,7 +279,7 @@ class ModuleBuilder:
         used = program.resolver.used_unimported
         for name, owner in sorted(used.items()):
             logger.warning(
-                f"module `{module_name}` uses `{name}` from `{owner}` without importing it; "
+                f"module `{module_name}` uses `{_spelled(name)}` from `{owner}` without importing it; "
                 f'add `.import "{owner}"` (this becomes an error in a816 1.1.0)'
             )
         return (
@@ -427,6 +427,11 @@ def apply_experimental_flags(program: "Program", flags: list[str] | None) -> Non
 
 # Public API: peer build scripts pass these by keyword; a grouping object
 # would break every caller for no gain.
+def _spelled(name: str) -> str:
+    """A symbol as source writes it: the internal `NAME.__size` is `sizeof(NAME)`."""
+    return f"sizeof({name.removesuffix('.__size')})" if name.endswith(".__size") else name
+
+
 def build_with_imports(
     main_source: str | Path,  # NOSONAR python:S107 (Sonar anchors it here)
     output_file: str | Path,
