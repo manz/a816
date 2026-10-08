@@ -41,6 +41,8 @@ def generate_for(
         resolver.append_internal_scope()
         resolver.use_next_scope()
         code.append(ScopeNode(resolver))
+        # Known while expanding too, so `:=` in the body can read it.
+        resolver.current_scope.add_symbol(node.symbol, k)
         code.append(
             SymbolNode(
                 node.symbol,
