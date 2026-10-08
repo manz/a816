@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from a816.config import discover_a816_config
+from a816.error_codes import E_PARSER_UNEXPECTED_TOKEN
 from a816.fluff.core import (
     Applicability,
     Diagnostic,
@@ -33,7 +34,7 @@ from a816.fluff.rules_style import (
     UnknownStructTypeCast,
 )
 from a816.fluff.rules_upgrade import StarEqualToAllocAt
-from a816.parse.mzparser import A816Parser
+from a816.parse.mzparser import A816Parser, ParserResult
 
 RULES: list[Rule] = [
     MissingModuleDocstring(),
@@ -67,8 +68,12 @@ def lint_text(
     *,
     include_paths: list[Path] | None = None,
     module_paths: list[Path] | None = None,
+    report_parse_errors: bool = False,
 ) -> list[Diagnostic]:
     """Run every registered rule against in-memory source text.
+
+    `report_parse_errors` adds each parse error as a diagnostic (`check`);
+    off by default since the LSP publishes them on its own.
 
     `include_paths` is forwarded to the parser so `.include` directives
     resolve the same way they do under the assembler. `module_paths`
@@ -89,7 +94,9 @@ def lint_text(
         include_paths_for_lookup=include_paths,
     )
 
-    diagnostics: list[Diagnostic] = []
+    # AST rules skip a failed parse; without these the file passed `check`.
+    # The LSP reports parse errors itself, so it leaves them out.
+    diagnostics: list[Diagnostic] = _parse_diagnostics(result, path) if report_parse_errors else []
     for rule in RULES:
         if not rule.applies_to(ctx):
             continue
@@ -97,6 +104,14 @@ def lint_text(
 
     noqa_map = build_noqa_map(text)
     return [d for d in diagnostics if not is_suppressed(d.line, d.code, noqa_map)]
+
+
+def _parse_diagnostics(result: ParserResult, path: Path) -> list[Diagnostic]:
+    errors = result.parse_errors or ([result.parse_error] if result.parse_error else [])
+    return [
+        Diagnostic(path, error.line + 1, error.column + 1, error.code or str(E_PARSER_UNEXPECTED_TOKEN), error.message)
+        for error in errors
+    ]
 
 
 def apply_fixes(
@@ -179,4 +194,5 @@ def lint_file(path: Path) -> list[Diagnostic]:
         path,
         include_paths=include_paths,
         module_paths=module_paths,
+        report_parse_errors=True,
     )
