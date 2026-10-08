@@ -616,16 +616,25 @@ def _included_ast(resolved_path: str, include_paths: list[Path]) -> IncludedAst:
 
 def _include_not_found(p: Parser, keyword: Token, path_token: Token, include_path: str) -> ParserSyntaxError:
     """A located E0500 naming where `.include` looked; it was a bare `[Errno 2]`."""
-    searched: list[str] = []
+    searched: list[Path] = []
     if keyword.position and keyword.position.file:
-        searched.append(str(Path(keyword.position.file.filename).parent))
-    searched.extend(str(path) for path in p.include_paths)
+        searched.append(Path(keyword.position.file.filename).parent)
+    searched.extend(p.include_paths)
     return ParserSyntaxError(
         f"`.include` can't find {include_path!r}",
         path_token,
         code=str(E_IO_FILE_NOT_FOUND),
-        hint=f"searched {', '.join(searched)}",
+        hint=f"searched {', '.join(_shown_path(path) for path in searched)}",
     )
+
+
+def _shown_path(path: Path) -> str:
+    """`path` relative to the working directory when it lies under it (dq6:
+    include paths came out as long absolute paths next to a relative `src`)."""
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve())) or "."
+    except ValueError:
+        return str(path)
 
 
 def parse_include(p: Parser, keyword: Token) -> IncludeAstNode:

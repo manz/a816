@@ -52,4 +52,4 @@ def test_format_names_the_include_paths_it_searched(project: Path, capsys: pytes
 
     fluff_main(["format", "--check", "src/menu.s"])
 
-    assert str(project.resolve() / "gen") in capsys.readouterr().err
+    assert "searched src, gen" in capsys.readouterr().err
