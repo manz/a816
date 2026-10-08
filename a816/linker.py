@@ -567,7 +567,8 @@ class Linker:
 
     def _merge_file_table(self, obj_file: ObjectFile) -> dict[int, int]:
         local_to_linked: dict[int, int] = {}
-        for local_idx, path in enumerate(obj_file.files):
+        for local_idx, raw_path in enumerate(obj_file.files):
+            path = _linked_file_name(raw_path)
             if path in self._file_index:
                 local_to_linked[local_idx] = self._file_index[path]
             else:
@@ -831,3 +832,23 @@ def _reject_a_second_alloc(request: PoolAlloc, first_source: str) -> None:
             [(first_source, None), (request.source, None)],
             hint="alloc names are global: rename one of the allocs",
         )
+
+
+def _linked_file_name(name: str) -> str:
+    """One name per source file in the linked table: relative to the working
+    directory when the file lies under it, else resolved absolute.
+
+    Objects keep a file's name as their parse reached it, so ff4's `libmz.i`
+    came out both as `src/libmz.i` and as an absolute path; absolute names
+    also made the `.adbg` differ between checkouts. Placeholders such as
+    `<linked>` are kept as they are.
+    """
+    if name.startswith("<"):
+        return name
+    import os
+
+    resolved = os.path.realpath(name)
+    cwd = os.path.realpath(os.getcwd())
+    if resolved == cwd or resolved.startswith(cwd + os.sep):
+        return os.path.relpath(resolved, cwd)
+    return resolved
