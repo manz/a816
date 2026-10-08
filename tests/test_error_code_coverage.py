@@ -38,7 +38,7 @@ def test_every_node_error_has_a_code() -> None:
 
 
 def test_every_code_is_in_the_catalog() -> None:
-    documented = set(re.findall(r"`(E\d{4})`", CATALOG.read_text(encoding="utf-8")))
+    documented = set(re.findall(r"`([EW]\d{4})`", CATALOG.read_text(encoding="utf-8")))
     registered = {value.code for value in vars(error_codes).values() if isinstance(value, ErrorCode)}
 
     assert sorted(registered - documented) == []

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from a816.fluff.core import (
     Applicability,
@@ -33,6 +34,10 @@ from a816.parse.ast.nodes import (
 )
 from a816.parse.ast.placement import is_placement_boundary
 from a816.parse.ast.visitor import walk
+from a816.parse.tokens import Token
+
+if TYPE_CHECKING:
+    from a816.incbin_names import PathName
 
 # Run content UP001 leaves for a manual migration (see `_run_has_skip_trigger`).
 _SKIP_TRIGGERS: tuple[type[AstNode], ...] = (ImportAstNode, IncludeAstNode, IncludeBinaryAstNode)
@@ -272,3 +277,72 @@ def _indent_block(text: str, spaces: int) -> str:
     lines blank so the rewrap doesn't introduce trailing whitespace."""
     pad = " " * spaces
     return "\n".join(f"{pad}{line}" if line.strip() else "" for line in text.split("\n"))
+
+
+class IncbinPathName(Rule):
+    """W0001, the build's warning, as a lint with the rewrite as its fix."""
+
+    code = "W0001"
+    description = "reference to a name `.incbin` derived from its file path"
+    rationale = (
+        '`.incbin "assets/vwf.bin"` binds `assets_vwf_bin` and `assets_vwf_bin__size`, '
+        "named after the asset's path, so moving the file renames symbols in code that "
+        "never mentions it. Name the blob instead: alone in `.alloc vwf_font { ... }` it "
+        "is `vwf_font` and its size `sizeof(vwf_font)`, which the fix writes. A blob "
+        "sharing its block needs a label. The path names go in 1.2."
+    )
+    bad = '"""Module."""\n.alloc font at 0x008000 {\n    .incbin "f.bin"\n}\n.dl f_bin\n'
+    good = '"""Module."""\n.alloc font at 0x008000 {\n    .incbin "f.bin"\n}\n.dl font\n'
+
+    def check(self, ctx: LintContext) -> Iterable[Diagnostic]:
+        from a816.incbin_names import path_names, references
+
+        assert ctx.nodes is not None
+        names = {**_imported_path_names(ctx), **path_names(ctx.nodes)}
+        for token, name in references(ctx.nodes, names):
+            position = token.position
+            assert position is not None
+            yield Diagnostic(
+                path=ctx.path,
+                line=position.line + 1,
+                column=position.column + 1,
+                code=self.code,
+                message=f"`{name.name}` is named after the asset path {name.file_path!r}; {name.hint()}",
+                fix=_rename_fix(ctx, token, name.replacement),
+            )
+
+
+def _imported_path_names(ctx: LintContext) -> dict[str, PathName]:
+    """Path names the file's direct imports bind, parsed with its include paths."""
+    from a816.fluff.rules_style import _resolve_import_for_lint
+    from a816.incbin_names import path_names
+    from a816.parse.mzparser import A816Parser
+
+    names: dict[str, PathName] = {}
+    for node in ctx.flat_nodes:
+        if not isinstance(node, ImportAstNode):
+            continue
+        source = _resolve_import_for_lint(node.module_name, ctx)
+        if source is None:
+            continue
+        try:
+            text = source.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        parsed = A816Parser.parse_as_ast(text, str(source), include_paths=ctx.include_paths_for_lookup)
+        names.update(path_names(parsed.nodes))
+    return names
+
+
+def _rename_fix(ctx: LintContext, token: Token, replacement: str | None) -> Fix | None:
+    if replacement is None or token.position is None:
+        return None
+    start = line_col_to_offset(ctx.text, token.position.line + 1, token.position.column + 1)
+    end = start + len(token.value)
+    if ctx.text[start:end] != token.value:
+        return None  # source diverges from the token; leave it
+    return Fix(
+        edits=(TextEdit(start=start, end=end, replacement=replacement),),
+        applicability=Applicability.SAFE,
+        description=f"rewrite `{token.value}` as `{replacement}`",
+    )

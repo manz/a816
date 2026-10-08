@@ -30,7 +30,7 @@ def test_error_codes_are_unique_and_well_formed() -> None:
     codes = all_codes()
     assert len(codes) == len({c.code for c in codes}), "duplicate error codes"
     for code in codes:
-        assert code.code.startswith("E") and code.code[1:].isdigit()
+        assert code.code[0] in "EW" and code.code[1:].isdigit()
         assert code.category
         assert code.short_description
 

@@ -126,4 +126,26 @@ def code_gen(ast_nodes: list[AstNode], resolver: Resolver) -> GenNodes:
     # assembled on the same resolver must not reject this unit's imports.
     resolver.star_eq_cursor_active = False
     macro_definitions: MacroDefinitions = {}
-    return _code_gen(ast_nodes, resolver, macro_definitions)
+    code = _code_gen(ast_nodes, resolver, macro_definitions)
+    _warn_path_names(ast_nodes, resolver)
+    return code
+
+
+def _warn_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
+    """W0001 on each reference to a path-derived `.incbin` name, this unit's
+    or an import's; run after codegen, once every import has been read."""
+    from a816.error_codes import E_CODEGEN_AMBIGUOUS_PATH_NAME, W_INCBIN_PATH_NAME
+    from a816.incbin_names import path_names, references
+    from a816.parse.nodes.errors import format_node_warning
+
+    names = {**resolver.imported_path_names, **path_names(ast_nodes)}
+    for token, name in references(ast_nodes, names):
+        if name.ambiguous:
+            raise NodeError(
+                f"`{name.name}` is bound by more than one `.incbin`, so it names whichever came first",
+                token,
+                code=str(E_CODEGEN_AMBIGUOUS_PATH_NAME),
+                hint="label each blob and use the labels",
+            )
+        message = f"`{name.name}` is named after the asset path {name.file_path!r}"
+        logger.warning(format_node_warning(message, token, code=str(W_INCBIN_PATH_NAME), hint=name.hint()))

@@ -612,16 +612,22 @@ Emits the literal bytes of a string with no character-map translation.
 
 ### `.incbin "data.bin"`
 
-Includes a binary file verbatim. Defines a label at its first byte and
-a `__size` constant with the byte count, both named after the path as
-written, with `/` and `.` replaced by `_`. A label placed before the
-directive gets no `__size` of its own.
+Includes a binary file verbatim. Name the blob by the alloc that holds
+it, or by a label placed before it:
 
 ```ca65
-intro_map:
-.incbin "assets/intro.map"
-; symbols emitted: intro_map, assets_intro_map, assets_intro_map__size
+.alloc intro_map at 0x0e8000 {
+    .incbin "assets/intro.map"
+}
+    lda.l intro_map
+    ldx #sizeof(intro_map)
 ```
+
+The directive also binds names derived from the path, `/` and `.`
+replaced by `_`: `assets_intro_map` and `assets_intro_map__size`. They
+are deprecated: a reference warns (`W0001`) and `a816 fix` rewrites it
+to the alloc's name when the blob is alone in a named alloc. They go in
+1.2.
 
 ### `.include "file.s"`
 
@@ -748,11 +754,11 @@ so it may use pooled labels and the module's private ones:
 
 ```ca65
 .alloc dialogue_stream in upper_gap cross_bank {
-    .incbin "assets/stream.dat"    ; publishes assets_stream_dat__size
+    .incbin "assets/stream.dat"
 }
 
 .assert (items_vwf & 0xFFFF) == 0, "items_vwf must open a bank"
-.assert dialogue_stream + assets_stream_dat__size <= 0x5d0000, "the stream overruns the gap"
+.assert dialogue_stream + sizeof(dialogue_stream) <= 0x5d0000, "the stream overruns the gap"
 ```
 
 A false assert fails the link with `E0407`; every failed assert is

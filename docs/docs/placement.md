@@ -61,7 +61,7 @@ hold, checked at link time with final addresses:
 
 ```ca65
 .assert (items_vwf & 0xFFFF) == 0, "items_vwf must open a bank"
-.assert dialogue_stream + assets_stream_dat__size <= 0x5d0000, "the stream overruns the gap"
+.assert dialogue_stream + sizeof(dialogue_stream) <= 0x5d0000, "the stream overruns the gap"
 ```
 
 ## A whole ROM gap, declared
@@ -83,11 +83,11 @@ running over several banks, every other blob placed behind it:
     .dw items_vwf_0 >> 16
 }
 
-.assert dialogue_stream + assets_stream_dat__size <= 0x5d0000, "the stream overruns the gap"
+.assert dialogue_stream + sizeof(dialogue_stream) <= 0x5d0000, "the stream overruns the gap"
 ```
 
-`.incbin` names the size after the sanitized path:
-`assets/stream.dat` gives `assets_stream_dat__size`.
+`sizeof(dialogue_stream)` is the alloc's byte count: the blob's size,
+since it fills the alloc alone.
 
 A longer script pushes the other blobs along; a gap that no longer
 fits fails the link instead of overwriting text.
