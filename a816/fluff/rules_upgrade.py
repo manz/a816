@@ -315,7 +315,7 @@ class IncbinPathName(Rule):
 def _imported_path_names(ctx: LintContext) -> dict[str, PathName]:
     """Path names the file's direct imports bind, parsed with its include paths."""
     from a816.fluff.rules_style import _resolve_import_for_lint
-    from a816.incbin_names import path_names
+    from a816.incbin_names import imported_path_names
     from a816.parse.mzparser import A816Parser
 
     names: dict[str, PathName] = {}
@@ -330,7 +330,7 @@ def _imported_path_names(ctx: LintContext) -> dict[str, PathName]:
         except OSError:
             continue
         parsed = A816Parser.parse_as_ast(text, str(source), include_paths=ctx.include_paths_for_lookup)
-        names.update(path_names(parsed.nodes))
+        names.update(imported_path_names(parsed.nodes))
     return names
 
 

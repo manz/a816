@@ -102,3 +102,20 @@ def test_two_blobs_binding_one_name_unreferenced_still_build(tmp_path: Path, cap
     (tmp_path / "f_bin").write_bytes(b"CDEF")
 
     assert "E0347" not in _build(tmp_path, caplog, TWICE)
+
+
+def test_an_importer_of_a_private_alloc_is_told_to_make_it_public(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ff4's `_items_unleashed`: `write _items_unleashed` would be E0200 in the importer."""
+    module = '.alloc _font at 0x008000 {\n    .incbin "f.bin"\n}\n'
+    text = _build(tmp_path, caplog, '.import "m"\n.alloc code at 0x009000 {\n    lda.l f_bin\n}\n', module)
+
+    assert "rename it `font` and use `font`" in text
+
+
+def test_a_name_an_alloc_also_binds_is_quiet(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    (tmp_path / "f_bin").write_bytes(b"AB")
+    main = '.alloc f_bin at 0x008000 {\n    .incbin "f_bin"\n}\n.alloc code at 0x009000 {\n    lda.l f_bin\n}\n'
+
+    assert "W0001" not in _build(tmp_path, caplog, main)

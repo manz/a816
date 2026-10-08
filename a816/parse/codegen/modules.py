@@ -260,9 +260,9 @@ class ParsedImport:
     def path_names(self) -> dict[str, PathName]:
         """The path-derived `.incbin` names the module binds (W0001)."""
         if self.incbin_names is None:
-            from a816.incbin_names import path_names
+            from a816.incbin_names import imported_path_names
 
-            self.incbin_names = path_names(self.result.nodes)
+            self.incbin_names = imported_path_names(self.result.nodes)
         return self.incbin_names
 
     def object_mode_plan(self) -> _ImportPlan:
