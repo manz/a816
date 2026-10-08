@@ -58,10 +58,13 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `ST001` | Placement directive (`*=`, `.alloc ... at`, `.relocate`) nested inside an `.alloc` body: it re-anchors the code the alloc was placing. |
 | `ST002` | `.import` outside the file prelude (after a placement or inside a block); the build rejects it with `E0311`. |
 | `UP001` | Legacy `*= ADDR` placement should be `.alloc at ADDR { ... }`. |
+| `W0001` | Reference to a name `.incbin` derived from its path (`assets_vwf_bin`, `assets_vwf_bin__size`); the build warns on it too. A warning: `a816 check` prints it but still exits 0. |
 
 Rules marked fixable in `a816 check` output carry `[*]` (safe) or
 `[!]` (unsafe). Today: `S003`, `OP001`, `DOC003`, `DOC004`, `DOC006`,
-`DOC007` ship a safe fix; `DOC005` and `UP001` ship an unsafe fix.
+`DOC007` ship a safe fix, and `W0001` does when the blob is alone in a
+named alloc (`vwf_font`, `sizeof(vwf_font)`); `DOC005` and `UP001` ship
+an unsafe fix.
 
 ## Autofix: `a816 fix`
 

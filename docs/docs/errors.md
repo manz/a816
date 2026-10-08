@@ -36,6 +36,7 @@ separate blocks separated by a blank line.
 - `E0300..E0399` — codegen.
 - `E0400..E0499` — linker / object files.
 - `E0500..E0599` — I/O / config.
+- `W0001..`: warnings. The build still succeeds.
 
 ## Code catalog
 
@@ -196,6 +197,10 @@ separate blocks separated by a blank line.
   is always an address there); into another bank, write `jsl` / `jml` (a
   `jsl` callee returns with `rtl`), or `jsr.w` / `jmp.w` when that bank
   mirrors this one.
+- `E0347` a reference to a path-derived `.incbin` name that two blobs in
+  the module bind: the same file included twice, or two paths that
+  collapse to one name (`f.bin` and `f_bin`). It would read whichever
+  came first. Label each blob and use the labels (see `W0001`).
 
 ### Linker
 
@@ -243,6 +248,16 @@ separate blocks separated by a blank line.
   missing (with a read-only region), not an integer, or not positive.
 - `E0509` `board` names no board in `boards.bml`; the message
   suggests close names.
+
+### Warnings
+
+- `W0001` a reference to a name `.incbin` derived from its file path:
+  `.incbin "assets/vwf.bin"` binds `assets_vwf_bin` and
+  `assets_vwf_bin__size`, which change when the file moves. Name the
+  blob instead: alone in `.alloc vwf_font { ... }` it is `vwf_font`,
+  and its size `sizeof(vwf_font)`; `a816 fix` rewrites those
+  references. Where the blob shares its block, put a label before it.
+  The path names go in 1.2. Reported by the build and by `a816 check`.
 
 ## LSP integration
 

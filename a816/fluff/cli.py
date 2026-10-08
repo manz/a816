@@ -262,13 +262,16 @@ def _run_check(args: argparse.Namespace) -> int:
     sources, missing_err = _collect_sources(list(args.paths))
     if not sources:
         return missing_err
-    total = 0
+    total = warnings = 0
     for source in sources:
         for diag in lint_file(source):
             print(diag.format())
             total += 1
+            # A `W` code is a warning, as in the build: shown, not failing.
+            warnings += diag.code.startswith("W")
     if total:
         print(f"{total} lint hit(s).", file=sys.stderr)
+    if total > warnings:
         return missing_err or 1
     return missing_err
 

@@ -44,6 +44,7 @@ from a816.parse.tokens import Token
 from a816.symbols import Resolver, _is_exportable
 
 if TYPE_CHECKING:
+    from a816.incbin_names import PathName
     from a816.parse.mzparser import ParserResult
 
 # Declarations whose effect must be visible to codegen of the importer
@@ -236,6 +237,7 @@ def _import_from_source(
     nodes = parsed.result.nodes
     if not nodes:
         return []
+    resolver.imported_path_names.update(parsed.path_names())
     if direct_mode:
         return _code_gen(nodes, resolver, macro_definitions)
     _register_private_names(parsed.private_names(src_path), module_name, resolver)
@@ -253,6 +255,15 @@ class ParsedImport:
     misses: set[str]
     plan: _ImportPlan | None = None
     privates: _PrivateNames | None = None
+    incbin_names: dict[str, PathName] | None = None
+
+    def path_names(self) -> dict[str, PathName]:
+        """The path-derived `.incbin` names the module binds (W0001)."""
+        if self.incbin_names is None:
+            from a816.incbin_names import imported_path_names
+
+            self.incbin_names = imported_path_names(self.result.nodes)
+        return self.incbin_names
 
     def object_mode_plan(self) -> _ImportPlan:
         if self.plan is None:

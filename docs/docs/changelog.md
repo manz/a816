@@ -206,6 +206,14 @@ player:
 - A module's `.map` regions travel with `.import` and its object; the
   linker merges identical ones, and a conflicting one is `E0308`.
 - `.incbin` symbols and `scope.label` names reach importers.
+- The names `.incbin` derives from its path (`assets_vwf_bin`,
+  `assets_vwf_bin__size`) are deprecated and go in 1.2. A reference warns
+  (`W0001`, a816's first warning code), in the build and in
+  `a816 check`, which still exits 0 on warnings alone. `a816 fix`
+  rewrites the reference to `vwf_font` / `sizeof(vwf_font)` when the
+  blob is alone in `.alloc vwf_font`; otherwise label the blob. A
+  reference to such a name that two blobs bind is `E0347`: it read the
+  first one.
 - A module sees the constants of what it imports, directly or through
   another import, and nothing else. Using a constant of a module it
   doesn't import is `E0200`, with the `.import` to add as the hint

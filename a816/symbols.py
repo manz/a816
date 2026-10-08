@@ -12,6 +12,7 @@ from a816.parse.tokens import Token
 from a816.pool import Pool
 
 if TYPE_CHECKING:
+    from a816.incbin_names import PathName
     from a816.object_file import LinkAssert
 from script import Table
 
@@ -445,6 +446,8 @@ class Resolver:
         # rebuild re-stats them: editing an asset must invalidate the
         # cached object the same way editing the `.s` does.
         self.dependency_files: set[str] = set()
+        # Path-derived `.incbin` names the imported modules bind (W0001).
+        self.imported_path_names: dict[str, PathName] = {}
         self.set_position(pc)
 
     def allocate_pools(self) -> None:
