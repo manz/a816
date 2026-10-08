@@ -215,6 +215,9 @@ player:
   `_name` shadows an imported one. A `_label` is also private to its
   alloc.
 - The linker writes `.sym` and `.adbg` debug info with source mapping.
+  Each source file has one name in the `.adbg`, relative to the working
+  directory when it lies under it, so the file doesn't change with the
+  checkout's location.
 - `.include` searches the `include-paths` everywhere: in imported
   modules, in `a816 check` and `a816 format`, and in the LSP.
 
