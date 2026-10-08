@@ -14,6 +14,7 @@ from typing import Literal, NamedTuple, cast
 
 from a816.build_inputs import record_miss, recording_misses, replay_misses
 from a816.error_codes import (
+    E_IO_FILE_NOT_FOUND,
     E_PARSER_EXPECTED_TOKEN,
     E_PARSER_ISTRUCT_DUPLICATE_FIELD,
     E_PARSER_ISTRUCT_STRING_IN_LIST,
@@ -613,10 +614,28 @@ def _included_ast(resolved_path: str, include_paths: list[Path]) -> IncludedAst:
     return sub_ast
 
 
+def _include_not_found(p: Parser, keyword: Token, path_token: Token, include_path: str) -> ParserSyntaxError:
+    """A located E0500 naming where `.include` looked; it was a bare `[Errno 2]`."""
+    searched: list[str] = []
+    if keyword.position and keyword.position.file:
+        searched.append(str(Path(keyword.position.file.filename).parent))
+    searched.extend(str(path) for path in p.include_paths)
+    return ParserSyntaxError(
+        f"`.include` can't find {include_path!r}",
+        path_token,
+        code=str(E_IO_FILE_NOT_FOUND),
+        hint=f"searched {', '.join(searched)}",
+    )
+
+
 def parse_include(p: Parser, keyword: Token) -> IncludeAstNode:
+    path_token = p.current()
     include_path = parse_directive_with_quoted_string(p)
     resolved_path = _resolve_include_path(p, keyword, include_path)
-    included = _included_ast(resolved_path, p.include_paths)
+    try:
+        included = _included_ast(resolved_path, p.include_paths)
+    except FileNotFoundError as missing:
+        raise _include_not_found(p, keyword, path_token, include_path) from missing
     p.imports.extend(included.imports)
     return IncludeAstNode(include_path, included.body, keyword, resolved_path=resolved_path)
 
