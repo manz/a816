@@ -51,13 +51,17 @@ logger = logging.getLogger(__name__)
 FILE_URI_PREFIX = "file://"
 
 
-def _struct_node_in_file(path: Path, name: str) -> StructAstNode | None:
-    """Parse `path` once and return the first matching `.struct <name>`."""
+def _struct_node_in_file(path: Path, name: str, include_paths: list[Path]) -> StructAstNode | None:
+    """Parse `path` once and return the first matching `.struct <name>`.
+
+    `include_paths` are the document's, so the module's own `.include`s
+    resolve as in the build.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return None
-    result = A816Parser.parse_as_ast(text, str(path))
+    result = A816Parser.parse_as_ast(text, str(path), include_paths=include_paths)
     for node in result.nodes:
         if isinstance(node, StructAstNode) and node.name == name:
             return node
@@ -240,7 +244,7 @@ class A816Document:
             path = self._resolve_import_for_struct_lookup(node.module_name)
             if path is None:
                 continue
-            found = _struct_node_in_file(path, name)
+            found = _struct_node_in_file(path, name, self.include_paths)
             if found is not None:
                 matches.append(found)
                 break
