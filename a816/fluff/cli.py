@@ -126,7 +126,7 @@ def _format_sources(sources: list[Path], formatter: A816Formatter) -> tuple[list
     for path in sources:
         original = path.read_text(encoding="utf-8")
         try:
-            formatted = formatter.format_text(original, str(path))
+            formatted = formatter.format_text(original, str(path), include_paths=_config_paths_for(path)[0])
         except FormattingError as exc:
             print(str(exc), file=sys.stderr)
             return computed, 2

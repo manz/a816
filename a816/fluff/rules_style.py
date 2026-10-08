@@ -123,7 +123,7 @@ def _collect_imported_struct_types(ctx: LintContext) -> set[str]:
         if isinstance(node, ImportAstNode):
             module_path = _resolve_import_for_lint(node.module_name, ctx)
             if module_path is not None:
-                discovered |= _struct_names_in_file(module_path, seen_paths)
+                discovered |= _struct_names_in_file(module_path, seen_paths, ctx.include_paths_for_lookup)
     ctx._imported_struct_types = discovered
     return discovered
 
@@ -137,7 +137,7 @@ def _collect_included_struct_types(ctx: LintContext) -> set[str]:
         if isinstance(node, IncludeAstNode):
             include_path = _resolve_include_for_lint(node, ctx)
             if include_path is not None:
-                discovered |= _struct_names_in_file(include_path, seen_paths)
+                discovered |= _struct_names_in_file(include_path, seen_paths, ctx.include_paths_for_lookup)
     ctx._included_struct_types = discovered
     return discovered
 
@@ -179,8 +179,12 @@ def _resolve_import_for_lint(module_name: str, ctx: LintContext) -> Path | None:
     return resolve_module(module_name, ".s", search_paths)
 
 
-def _struct_names_in_file(path: Path, seen_paths: set[str]) -> set[str]:
-    """Parse `path` (recursive cycle-safe) and return every declared struct name."""
+def _struct_names_in_file(path: Path, seen_paths: set[str], include_paths: list[Path] | None = None) -> set[str]:
+    """Parse `path` (recursive cycle-safe) and return every declared struct name.
+
+    `include_paths` are the project's, so an `.include` found only through
+    them resolves here as it does in the build.
+    """
     canonical = str(path.resolve())
     if canonical in seen_paths:
         return set()
@@ -189,7 +193,7 @@ def _struct_names_in_file(path: Path, seen_paths: set[str]) -> set[str]:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return set()
-    result = A816Parser.parse_as_ast(text, str(path))
+    result = A816Parser.parse_as_ast(text, str(path), include_paths=include_paths)
     names: set[str] = set()
     for node in flatten_nodes(list(result.nodes)):
         if isinstance(node, StructAstNode):
@@ -197,12 +201,12 @@ def _struct_names_in_file(path: Path, seen_paths: set[str]) -> set[str]:
         elif isinstance(node, ImportAstNode):
             transitive = resolve_module(node.module_name, ".s", [])
             if transitive is not None:
-                names |= _struct_names_in_file(transitive, seen_paths)
+                names |= _struct_names_in_file(transitive, seen_paths, include_paths)
         elif isinstance(node, IncludeAstNode):
             nested = getattr(node, "resolved_path", None) or (path.parent / node.file_path)
             nested_path = Path(nested)
             if nested_path.is_file():
-                names |= _struct_names_in_file(nested_path, seen_paths)
+                names |= _struct_names_in_file(nested_path, seen_paths, include_paths)
     return names
 
 

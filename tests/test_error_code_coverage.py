@@ -107,3 +107,16 @@ def test_a_missing_incbin_file_is_located_and_coded(tmp_path: Path, caplog: pyte
     text = _failed_build(tmp_path, '.alloc m at 0x008000 {\n    .incbin "gone.bin"\n}\n', caplog)
 
     assert "error[E0500]" in text
+
+
+def test_a_missing_include_file_is_located_and_coded(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """It printed a bare `[Errno 2] No such file or directory` (dq6)."""
+    text = _failed_build(tmp_path, '.include "gone.i"\n', caplog)
+
+    assert "error[E0500]" in text
+
+
+def test_a_missing_include_lists_the_searched_paths(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    text = _failed_build(tmp_path, '.include "gone.i"\n', caplog)
+
+    assert f"searched {tmp_path.resolve()}" in text
