@@ -156,29 +156,32 @@ class Instruction:
     ) -> str:
         if self.mode == AddrMode.IMPLIED:
             return ""
-        # Absolute jumps / calls — use label substitution when known.
-        if self.mnemonic in ("jmp", "jsr", "jsl") and self.mode in (
-            AddrMode.ABSOLUTE,
-            AddrMode.ABSOLUTE_LONG,
-        ):
+        if self._is_absolute_transfer():
             width = 6 if self.mode == AddrMode.ABSOLUTE_LONG else 4
             return self._format_jump_target(val, width, hex_val, label_map)
         if self.mode in templates:
             width, fmt = templates[self.mode]
             return fmt.format(hex_val(val, width))
-        if self.mode == AddrMode.IMMEDIATE_M:
-            return f"#{hex_val(val, 2 if m_flag else 4)}"
-        if self.mode == AddrMode.IMMEDIATE_X:
-            return f"#{hex_val(val, 2 if x_flag else 4)}"
+        if self.mode in (AddrMode.IMMEDIATE_M, AddrMode.IMMEDIATE_X):
+            narrow = m_flag if self.mode == AddrMode.IMMEDIATE_M else x_flag
+            return f"#{hex_val(val, 2 if narrow else 4)}"
         if self.mode in (AddrMode.RELATIVE, AddrMode.RELATIVE_LONG):
             return self._format_relative_target(hex_val, label_map)
         if self.mode == AddrMode.BLOCK_MOVE:
-            # Encoded destination bank first. The `$` listing keeps byte order
-            # (bsnes traces); a816 source is written source first (`mvp src, dst`).
-            dest, src = val & 0xFF, (val >> 8) & 0xFF
-            first, second = (src, dest) if use_a816_syntax else (dest, src)
-            return f"{hex_val(first, 2)},{hex_val(second, 2)}"
+            return self._format_block_move(val, hex_val, use_a816_syntax)
         return (f"0x{val:X}") if use_a816_syntax else (f"${val:X}")
+
+    def _is_absolute_transfer(self) -> bool:
+        """An absolute jump / call, whose target takes a label when one is known."""
+        return self.mnemonic in ("jmp", "jsr", "jsl") and self.mode in (AddrMode.ABSOLUTE, AddrMode.ABSOLUTE_LONG)
+
+    @staticmethod
+    def _format_block_move(val: int, hex_val: Callable[[int, int], str], use_a816_syntax: bool) -> str:
+        """Encoded destination bank first. The `$` listing keeps byte order
+        (bsnes traces); a816 source is written source first (`mvp src, dst`)."""
+        dest, src = val & 0xFF, (val >> 8) & 0xFF
+        first, second = (src, dest) if use_a816_syntax else (dest, src)
+        return f"{hex_val(first, 2)},{hex_val(second, 2)}"
 
     def get_size_hint(self) -> str:
         """The size suffix a816 needs to reassemble these exact bytes.
@@ -308,22 +311,24 @@ def _emitter_records(
     return []
 
 
-def _mode_records(mnemonic: str, asm_mode: "_AsmMode", emitter: object) -> Iterator[tuple[int, AddrMode, int]]:
-    """Flatten one mnemonic+mode entry (single emitter or index dict) to records."""
-    entries = emitter.items() if isinstance(emitter, dict) else [(None, emitter)]
-    for index, em in entries:
-        yield from _emitter_records(mnemonic, asm_mode, index, em)
+def _table_emitters() -> Iterator[tuple[str, "_AsmMode", str | None, object]]:
+    """Every (mnemonic, mode, index, emitter) in `snes_opcode_table`, index
+    dicts flattened (index None for a single emitter)."""
+    for mnemonic, modes in snes_opcode_table.items():
+        for asm_mode, emitter in modes.items():
+            entries = emitter.items() if isinstance(emitter, dict) else [(None, emitter)]
+            for index, em in entries:
+                yield mnemonic, asm_mode, index, em
 
 
 def _derive_opcode_table() -> dict[int, tuple[str, AddrMode, int]]:
     """Invert `snes_opcode_table` into the decoder's byte->instruction map."""
     table: dict[int, tuple[str, AddrMode, int]] = {}
-    for mnemonic, modes in snes_opcode_table.items():
-        for asm_mode, emitter in modes.items():
-            for byte, mode, size in _mode_records(mnemonic, asm_mode, emitter):
-                if byte in table:
-                    raise ValueError(f"opcode 0x{byte:02x} claimed by {table[byte][0]!r} and {mnemonic!r}")
-                table[byte] = (mnemonic, mode, size)
+    for mnemonic, asm_mode, index, em in _table_emitters():
+        for byte, mode, size in _emitter_records(mnemonic, asm_mode, index, em):
+            if byte in table:
+                raise ValueError(f"opcode 0x{byte:02x} claimed by {table[byte][0]!r} and {mnemonic!r}")
+            table[byte] = (mnemonic, mode, size)
     return table
 
 
@@ -334,13 +339,10 @@ def _derive_emitters() -> dict[int, Opcode]:
     """Opcode byte -> the size-indexed assembler entry that encodes it (memory
     and immediate modes), so the disassembler can ask how a816 sizes a value."""
     emitters: dict[int, Opcode] = {}
-    for mnemonic, modes in snes_opcode_table.items():
-        for asm_mode, emitter in modes.items():
-            entries = emitter.items() if isinstance(emitter, dict) else [(None, emitter)]
-            for index, em in entries:
-                if isinstance(em, Opcode) and type(em) in (Opcode, TransferOpcode):
-                    for byte, _mode, _size in _opcode_records(mnemonic, asm_mode, index, em):
-                        emitters[byte] = em
+    for mnemonic, asm_mode, index, em in _table_emitters():
+        if isinstance(em, Opcode) and type(em) in (Opcode, TransferOpcode):
+            for byte, _mode, _size in _opcode_records(mnemonic, asm_mode, index, em):
+                emitters[byte] = em
     return emitters
 
 
