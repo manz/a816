@@ -71,6 +71,14 @@ player:
   warn | off` brings back a warning or silence.
 - A `.b` immediate that doesn't fit a byte is `E0309`; 1.0 masked it
   (`lda.b #0x1234` emitted `a9 34`). `.w` and `.l` still mask.
+- A bare `jsr` / `jmp` takes its form from the target's bank: a label in
+  the caller's own bank assembles to the absolute `JSR` / `JMP`, and one
+  in another bank is `E0346`, which names `jsl` / `jml`. Alphas 44 to 51
+  sized it by value, so every 24-bit label (all of them in HiROM) became
+  a long call, whose callee must return with `rtl`.
+- `a816 check` fails a file that doesn't parse, printing each error with
+  its code and line. It used to exit 0 while `format --check` failed the
+  same file.
 - `a816 file.s` builds through modules: it writes objects and their
   dependency sidecars under `build/obj` (`--obj-dir`, `--no-cache`) and
   `.sym` / `.adbg` next to the output.
@@ -173,6 +181,14 @@ player:
 - `.scope NAME { ... }` publishes its labels, constants, aliases and
   the labels of macros called inside it as `NAME.x`; `_` names stay
   private.
+- A bare operand naming a label further down its block (`jsr fwd`,
+  `lda fwd`) is sized as a backward reference would be. If the label
+  lands where that size is wrong, `E0313` names the suffix to write.
+- An addressing mode with a single size widens a narrower operand to
+  it, as ca65 and asar do: `pea 0x0000` is `F4 00 00`, `lda 0x12, y` is
+  `B9 12 00`. It never narrows.
+- A `.for` variable is known while its body expands, so `:=` and `.if`
+  in the body can use it (`_c := i << 8`).
 
 ### Modules and linking
 
@@ -199,6 +215,8 @@ player:
   `_name` shadows an imported one. A `_label` is also private to its
   alloc.
 - The linker writes `.sym` and `.adbg` debug info with source mapping.
+- `.include` searches the `include-paths` everywhere: in imported
+  modules, in `a816 check` and `a816 format`, and in the LSP.
 
 ### Builds
 
@@ -208,7 +226,8 @@ player:
   an import's output, or the toolchain's codegen revision. `--no-cache`
   compiles everything.
 - Identical sources give an identical ROM, independent of
-  `PYTHONHASHSEED`.
+  `PYTHONHASHSEED`. With `SOURCE_DATE_EPOCH` set, `BUILD_DATE` is that
+  time (UTC) rather than the clock, so two builds match byte for byte.
 - `a816.toml` holds the project: `entrypoint`, `include-paths`,
   `module-paths`, a cartridge `board` from ares' `boards.bml` (LoROM,
   HiROM, ExHiROM, SA-1 and the rest), `[map.N]` regions in bsnes form,
@@ -239,6 +258,11 @@ player:
 - Pool overflows say whether the block is too big, the pool fragmented
   or full, and what to try.
 - A duplicate global names both definitions and their values (`E0400`).
+- A missing `.include` or `.incbin` file is `E0500` at the path, with
+  the directories searched, instead of a bare `[Errno 2]`.
+- An alloc's size asked for before layout (`.for i := 0, 8 - sizeof(dte)`)
+  is `E0321`, and any name missed while expanding is located and coded,
+  never a bare `Build failed: NAME`.
 - Logs stay quiet by default; `--verbose` shows tracebacks.
 
 ### Fluff: lint, format, fix
@@ -269,7 +293,9 @@ player:
 - `xdds` (new) disassembles with the assembler's instruction table:
   `--func` walks a routine's control flow tracking M/X, `--follow-calls`
   follows its calls, `--debug FILE.adbg` / `--sym` name addresses, and
-  the output reassembles through `a816 format -`.
+  every `--asm` line reassembles to its bytes: a size suffix is printed
+  only where a bare operand would assemble differently, and long calls
+  and jumps print as `jsl` / `jml`.
 - `A816_EMIT_TRACE=1` logs where every region landed.
 
 ### Fixes from 1.0
@@ -288,6 +314,8 @@ player:
   defined `B` alone, and every `.if A` silently dropped out.
 - `-f sfc` ignored `-m`, so SFC output was always LoROM.
 - An unknown `-m` value crashed; it now lists `low`, `low2`, `high`.
+- An `.if` on a `.for` variable inside the loop was false on every
+  iteration, without a word.
 
 ### Documentation
 
