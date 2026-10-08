@@ -44,3 +44,12 @@ def test_an_importer_of_such_a_module_passes_check(project: Path) -> None:
     (project / "src" / "main.s").write_text('"""Main."""\n.import "menu"\n', encoding="utf-8")
 
     assert fluff_main(["check", "src/main.s"]) == 0
+
+
+def test_format_names_the_include_paths_it_searched(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """dq6: format's E0500 hint listed only the file's own directory."""
+    (project / "gen" / "data.s").unlink()
+
+    fluff_main(["format", "--check", "src/menu.s"])
+
+    assert str(project.resolve() / "gen") in capsys.readouterr().err
