@@ -270,7 +270,7 @@ class ModuleBuilder:
         program.resolver.context.require_placement = True
         program.resolver.context.bus_map = list(self.bus_map)
         program.resolver.context.import_asts = self._import_asts
-        program.resolver.context.import_include_paths = list(dict.fromkeys(self.include_paths))
+        program.resolver.context.parse_include_paths = list(dict.fromkeys(self.include_paths))
         program.add_module_path(self.output_dir)
         for path in self.module_paths:
             program.add_module_path(path)
