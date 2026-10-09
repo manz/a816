@@ -1,7 +1,8 @@
 """Seeded torture tests for pools: random multi-module projects, placement invariants checked.
 
-Each seed generates a LoROM project and builds it twice (cold, then warm from
-the cache). Pool exhaustion (E0404 / E0405) is a legal outcome; anything else
+Each seed generates a LoROM project and builds it three times from its own
+directory with relative paths: cold, warm with nothing changed, and warm after
+editing one module. Pool exhaustion (E0404 / E0405) is a legal outcome; anything else
 that fails, or any broken invariant, is a bug and names its seed.
 
 - ROM pools: 1-3 pools over 1-3 bank windows (pack / order), 1-5 modules,
@@ -47,35 +48,47 @@ class Built:
     log: str
 
 
-def _build(root: Path, caplog: pytest.LogCaptureFixture) -> Built:
+def _build(caplog: pytest.LogCaptureFixture) -> Built:
+    """Build the project in the working directory, with relative paths as a
+    project's own build does (ff4's warm-build E0400 needed them)."""
     caplog.clear()
     with caplog.at_level(logging.WARNING):
         result = build_with_imports(
-            root / "main.s",
-            root / "out.sfc",
-            module_paths=[root],
-            include_paths=[root],
-            output_dir=root / "obj",
+            Path("src/main.s"),
+            Path("out.sfc"),
+            module_paths=[Path("src")],
+            include_paths=[Path("src"), Path(".")],
+            output_dir=Path("obj"),
             output_format="sfc",
         )
     ok = result.exit_code == 0
-    rom = (root / "out.sfc").read_bytes() if ok else b""
+    rom = Path("out.sfc").read_bytes() if ok else b""
     return Built(ok, dict(result.symbol_map), rom, caplog.text + "\n".join(result.diagnostics))
 
 
 def _write(root: Path, toml: str, files: dict[str, str | bytes]) -> None:
-    (root / "a816.toml").write_text(toml, encoding="utf-8")
+    """ff4's layout: sources under `src/`, headers included as `src/x.i`
+    through the `.` include path."""
+    (root / "a816.toml").write_text(toml.replace('"main.s"', '"src/main.s"'), encoding="utf-8")
+    (root / "src").mkdir()
     for name, content in files.items():
-        (root / name).write_bytes(content if isinstance(content, bytes) else content.encode())
+        (root / "src" / name).write_bytes(content if isinstance(content, bytes) else content.encode())
 
 
-def _build_and_check(root: Path, caplog: pytest.LogCaptureFixture, seed: int) -> Built | None:
-    """Cold build, then warm: None when the pool was legitimately full."""
-    cold = _build(root, caplog)
+def _build_and_check(caplog: pytest.LogCaptureFixture, seed: int, modules: list[str]) -> Built | None:
+    """Cold build, warm with nothing changed, then warm after a comment lands in
+    one module (it and its importers recompile): every build gives the cold ROM.
+    None when the pool was legitimately full."""
+    cold = _build(caplog)
     if not cold.ok:
         assert any(code in cold.log for code in EXHAUSTION), f"seed {seed}: build failed\n{cold.log}"
         return None
-    assert _build(root, caplog).rom == cold.rom, f"seed {seed}: warm build differs from cold"
+    assert _build(caplog).rom == cold.rom, f"seed {seed}: warm build differs from cold"
+    edited = Path("src", f"{random.Random(seed).choice(modules)}.s")
+    edited.write_text(edited.read_text(encoding="utf-8") + "; edited\n", encoding="utf-8")
+    after_edit = _build(caplog)
+    assert after_edit.ok, f"seed {seed}: warm build after editing {edited} failed\n{after_edit.log}"
+    assert after_edit.rom == cold.rom, f"seed {seed}: warm build after editing {edited} differs from cold"
     return cold
 
 
@@ -185,7 +198,7 @@ def _rom_files(project: RomProject) -> dict[str, str | bytes]:
         externs = sorted({b.calls for b in mine if b.calls and b.calls not in visible})
         imports = "".join(f'.import "{other}"\n' for other in project.modules if other < module)
         files[f"{module}.s"] = (
-            '.include "pools.i"\n'
+            '.include "src/pools.i"\n'
             + "".join(f".extern {e}\n" for e in externs)
             + imports
             + "".join(b.directive() for b in mine)
@@ -244,10 +257,13 @@ def _content_problems(blob: Blob, start: int, built: Built) -> list[str]:
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_rom_pools_hold_their_invariants(tmp_path: Path, caplog: pytest.LogCaptureFixture, seed: int) -> None:
+def test_rom_pools_hold_their_invariants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, seed: int
+) -> None:
     project = _rom_project(seed)
     _write(tmp_path, f'entrypoint = "main.s"\nrom_size = 0x400000\n{MAP}', _rom_files(project))
-    built = _build_and_check(tmp_path, caplog, seed)
+    monkeypatch.chdir(tmp_path)
+    built = _build_and_check(caplog, seed, project.modules)
 
     assert built is None or _rom_problems(project, built) == [], f"seed {seed}"
 
@@ -292,6 +308,8 @@ def _reservations(seed: int) -> tuple[list[str], list[str], list[Reservation]]:
 
 def _bss_files(contexts: list[str], modules: list[str], reservations: list[Reservation]) -> dict[str, str | bytes]:
     header = ACTOR + f".pool ram {{ bss  range {WRAM[0]:#08x} {WRAM[1]:#08x}  contexts {', '.join(contexts)} }}\n"
+    # A reserve in the header every module includes: identical copies merge (ff4's rolling_state.i).
+    header += ".reserve shared_scratch 2 in ram\n"
     loads = "".join(f"    lda.l {r.name}\n" for r in reservations)
     loads += "".join(f"    lda.l {r.name}.{f}\n" for r in reservations if r.typed for f in ACTOR_FIELDS)
     files: dict[str, str | bytes] = {
@@ -299,7 +317,12 @@ def _bss_files(contexts: list[str], modules: list[str], reservations: list[Reser
         "main.s": "".join(f'.import "{m}"\n' for m in modules) + f".alloc code at 0x008000 {{\n{loads}}}\n",
     }
     for module in modules:
-        files[f"{module}.s"] = '.include "ram.i"\n' + "".join(r.directive() for r in reservations if r.module == module)
+        # Each module imports the ones before it: editing one recompiles its
+        # importers without their own discovery parse (ff4's warm-build E0400).
+        imports = "".join(f'.import "{other}"\n' for other in modules if other < module)
+        files[f"{module}.s"] = (
+            imports + '.include "src/ram.i"\n' + "".join(r.directive() for r in reservations if r.module == module)
+        )
     return files
 
 
@@ -332,10 +355,13 @@ def _bss_problems(reservations: list[Reservation], built: Built) -> list[str]:
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_bss_pools_hold_their_invariants(tmp_path: Path, caplog: pytest.LogCaptureFixture, seed: int) -> None:
+def test_bss_pools_hold_their_invariants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, seed: int
+) -> None:
     contexts, modules, reservations = _reservations(seed)
     toml = f'entrypoint = "main.s"\nrom_size = 0x100000\n{MAP}[map.2]\naddress = "7e-7f:0000-ffff"\nwritable = true\n'
     _write(tmp_path, toml, _bss_files(contexts, modules, reservations))
-    built = _build_and_check(tmp_path, caplog, seed)
+    monkeypatch.chdir(tmp_path)
+    built = _build_and_check(caplog, seed, modules)
 
     assert built is None or _bss_problems(reservations, built) == [], f"seed {seed}"
