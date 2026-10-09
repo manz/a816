@@ -13,4 +13,7 @@ DEV_VERSION = "0.0.0.dev0"
 
 
 def get_version() -> str:
-    return os.environ.get("VERSION") or DEV_VERSION
+    """`VERSION` without a tag's `v`: CI passes the tag (`v1.1.0rc2`), and the
+    wheels since the 1.1 alphas carried `Version: v1.1.0rc2` in METADATA,
+    which a strict PEP 440 reader rejects."""
+    return (os.environ.get("VERSION") or DEV_VERSION).removeprefix("v")
