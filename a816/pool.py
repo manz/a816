@@ -192,6 +192,9 @@ class Pool:
     without `in POOL`, other pools' pins. Never handed out, still counted in
     `capacity`."""
     _allocated: bool = field(default=False, init=False)
+    # Ranges already given back by `reclaim`: the same one again (a header
+    # with the `.reclaim` reached twice) is a no-op, not an overlap.
+    _reclaimed: set[tuple[int, int]] = field(default_factory=set, init=False, compare=False)
 
     def __post_init__(self) -> None:
         if not 0 <= self.fill <= 0xFF:
@@ -241,6 +244,8 @@ class Pool:
     def reclaim(self, r: PoolRange) -> None:
         if self._allocated:
             raise PoolError(f"pool '{self.name}' already allocated; cannot reclaim")
+        if (r.start, r.end) in self._reclaimed:
+            return
         for existing in self.ranges:
             if existing.overlaps(r):
                 raise PoolOverlapError(
@@ -248,6 +253,7 @@ class Pool:
                     f"0x{existing.start:06x}..0x{existing.end:06x}"
                 )
         self.ranges = _normalize_ranges([*self.ranges, r])
+        self._reclaimed.add((r.start, r.end))
 
     def allocate(self) -> None:
         if self._allocated:
