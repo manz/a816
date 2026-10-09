@@ -38,7 +38,7 @@ def test_an_imported_module_includes_from_the_include_paths(tmp_path: Path) -> N
     assert result.exit_code == 0
 
 
-def _included_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, import_include_paths: list[Path] | None) -> str:
+def _included_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parse_include_paths: list[Path] | None) -> str:
     """Where an import's parse locates `.include "src/sub/data.i"`, found only through `.`."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src" / "sub").mkdir(parents=True)
@@ -46,7 +46,7 @@ def _included_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, import_inclu
     (tmp_path / "src" / "sub" / "m.s").write_text('.include "src/sub/data.i"\n', encoding="utf-8")
     program = Program()
     program.add_include_path(".")
-    program.resolver.context.import_include_paths = import_include_paths
+    program.resolver.context.parse_include_paths = parse_include_paths
     parsed = _parse_import(Path("src/sub/m.s"), program.resolver)
     assert parsed is not None
     include = parsed.result.nodes[0]

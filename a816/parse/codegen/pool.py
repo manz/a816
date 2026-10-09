@@ -225,13 +225,19 @@ def _declared_contexts(pool_name: str, resolver: Resolver) -> list[str]:
 def _register_pool(pool: Pool, resolver: Resolver) -> None:
     resolver.pools[pool.name] = pool
     _publish_pool_stats(pool.name, pool, resolver)
+    _record_pool_decl(pool, [(r.start, r.end) for r in pool.ranges], resolver)
+
+
+def _record_pool_decl(pool: Pool, ranges: list[tuple[int, int]], resolver: Resolver) -> None:
+    """Hand `ranges` of `pool` to the linker, which rebuilds pools from the
+    objects and merges records of one pool by adding their new ranges."""
     if resolver.context.is_object_mode and resolver.context.object_writer is not None:
         from a816.object_file import PoolDecl
 
         resolver.context.object_writer.pool_decls.append(
             PoolDecl(
                 name=pool.name,
-                ranges=[(r.start, r.end) for r in pool.ranges],
+                ranges=ranges,
                 fill=pool.fill,
                 strategy=pool.strategy.value,
                 bss=pool.bss,
@@ -275,6 +281,9 @@ def generate_reclaim(
         raise NodeError(
             f"reclaim into pool {node.pool_name!r}: {exc}", file_info, code=str(E_CODEGEN_BAD_RECLAIM)
         ) from exc
+    # The `.pool` record holds the ranges as declared; without its own
+    # record the linker never sees the reclaimed range (ff4, rc1).
+    _record_pool_decl(pool, [(start, end)], resolver)
     return []
 
 

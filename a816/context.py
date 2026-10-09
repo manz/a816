@@ -45,10 +45,11 @@ class AssemblyContext:
     # Object-mode `.import` parses shared by every module of one build, keyed
     # by source path. `ModuleBuilder` owns it; None parses every import afresh.
     import_asts: "dict[str, ParsedImport] | None" = None
-    # The include paths as `ModuleBuilder` parses each module with (unresolved),
-    # so an import's parse names an included file the way the module's own
-    # parse does. None falls back to `include_paths`.
-    import_include_paths: list[Path] | None = None
+    # The include paths as `ModuleBuilder` gives them (unresolved), for every
+    # parse of a build: discovery, a module's own compile and its imports' all
+    # name an included file the same way, cold or warm. None falls back to
+    # `include_paths`.
+    parse_include_paths: list[Path] | None = None
 
     @property
     def is_object_mode(self) -> bool:

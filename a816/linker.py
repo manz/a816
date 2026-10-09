@@ -121,6 +121,7 @@ class Linker:
             if pool.name.startswith(PINNED_POOL_PREFIX):
                 self._allocate(pool, request_sites)
         self._occupy_foreign_pins(merged)
+        self._allocate_context_owners(merged, request_sites)
         for pool in merged.values():
             self._allocate(pool, request_sites)
         self._check_cross_pool_overlaps(merged, self._alloc_sources)
@@ -132,6 +133,27 @@ class Linker:
         except PoolOverflowError as exc:
             site = request_sites.get((exc.pool_name, exc.alloc_name))
             raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
+
+    def _allocate_context_owners(
+        self, merged: dict[str, Pool], request_sites: dict[tuple[str, str], tuple[int, int]]
+    ) -> None:
+        """Place a pool's own reservations before its contexts, and keep each
+        context off them.
+
+        A reservation made directly in a pool is live in every context. Each
+        context is its own allocator over the same ranges, so all of them
+        used to start at the range start: the direct one and a context's
+        landed on the same bytes, and the overlap check rejected the layout
+        (E0406) that the allocator had just made.
+        """
+        owners = sorted({_context_owner(pool) for pool in merged.values() if pool.context is not None})
+        for name in owners:
+            owner = merged.get(name)
+            if owner is None:
+                continue
+            self._allocate(owner, request_sites)
+            contexts = [pool for pool in merged.values() if pool.context is not None and _context_owner(pool) == name]
+            _occupy_reservations(owner, contexts)
 
     def _occupy_foreign_pins(self, merged: dict[str, Pool]) -> None:
         """Mark every pinned span inside a pool's ranges as taken in that pool.
@@ -785,6 +807,14 @@ def _may_share(first: "Pool", second: "Pool") -> bool:
 
 def _context_owner(pool: "Pool") -> str:
     return pool.name.removesuffix(f".{pool.context}")
+
+
+def _occupy_reservations(owner: "Pool", contexts: "list[Pool]") -> None:
+    """Mark every placed reservation of `owner` as taken in each of its contexts."""
+    spans = [(alloc.addr, alloc.addr + alloc.size - 1) for alloc in owner.allocations if alloc.size]
+    for context in contexts:
+        for start, end in spans:
+            context.occupy(start, end)
 
 
 def _first_label_at(obj_file: ObjectFile) -> dict[int, str]:

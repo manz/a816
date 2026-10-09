@@ -294,7 +294,7 @@ def _parse_import(src_path: Path, resolver: Resolver) -> ParsedImport | None:
     except OSError:
         return None
     context = resolver.context
-    include_paths = context.include_paths if context.import_include_paths is None else context.import_include_paths
+    include_paths = context.include_paths if context.parse_include_paths is None else context.parse_include_paths
     with recording_misses() as misses:
         parsed = ParsedImport(A816Parser.parse_as_ast(content, key, include_paths=list(include_paths)), misses)
     replay_misses(misses)

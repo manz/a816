@@ -81,12 +81,15 @@ def test_contexts_of_different_pools_do_not_share() -> None:
         _link_src(src)
 
 
-def test_reserving_in_the_pool_itself_overlaps_its_contexts() -> None:
+def test_a_reservation_in_the_pool_itself_may_not_share_a_context_s_bytes() -> None:
+    """A direct reservation is live in every context: pinned onto a context's
+    bytes it is still an overlap (floating ones are placed apart, see
+    `test_bss_direct_and_contexts.py`)."""
     src = (
         _MENU_RAM
         + """
-.reserve always 0x10 in menu_ram
-.reserve field_hdma 0x10 in menu_ram.field_menu
+.reserve always 0x10 at 0x7e9800 in menu_ram
+.reserve field_hdma 0x10 at 0x7e9800 in menu_ram.field_menu
 """
     )
     with pytest.raises(PoolOverlapLinkError):

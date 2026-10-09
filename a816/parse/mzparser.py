@@ -68,7 +68,11 @@ class A816Parser:
     def parse(
         self, program: str, filename: str = "", parsed: "ParserResult | None" = None
     ) -> tuple[str | None, list[NodeProtocol]]:
-        include_paths = self.resolver.context.include_paths
+        context = self.resolver.context
+        # A module the build cache didn't discovery-parse (warm build, an import
+        # changed) parses here: with the resolved paths, its shared header got an
+        # absolute name and the linker saw two reserves (ff4, rc1: E0400).
+        include_paths = context.include_paths if context.parse_include_paths is None else context.parse_include_paths
         ast = parsed or self.parse_as_ast(program, filename, include_paths=include_paths, verbose_errors=True)
         self.resolver.current_scope.add_symbol("BUILD_DATE", build_date())
         seed_bus_map(self.resolver)

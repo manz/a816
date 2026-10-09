@@ -348,6 +348,10 @@ class RelocateNode(AllocNode):
                     self.file_info,
                     code=str(E_CODEGEN_BAD_RECLAIM),
                 ) from exc
+            # Hand the old range to the linker too, as `.reclaim` does.
+            from a816.parse.codegen.pool import _record_pool_decl
+
+            _record_pool_decl(pool, [(self.old_start, self.old_end)], self.resolver)
             self._reclaimed = True
         super()._request_slot()
 
