@@ -250,8 +250,8 @@ player:
   to 2.3 s, ff4 from 3.7 s to 1.5 s, cacheguard from 1.8 s to 0.8 s.
   Scanning is about 1.8x faster, and parsed nodes are immutable, so the
   build shares them between modules safely.
-- `script.Table.to_bytes`, the table encoder text tools build on, is about
-  3x faster with the same output (Bahamut Lagoon's dialog reflow spent 75%
+- `script.Table.to_bytes`, the table encoder text tools build on, is 4 to
+  9x faster with the same output (Bahamut Lagoon's dialog reflow spent 75%
   of its time there).
 
 ### Diagnostics

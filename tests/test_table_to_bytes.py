@@ -12,11 +12,22 @@ import pytest
 
 from script import Table
 
+BASE = "01=a\n02=b\n03=ab\n04=abc\n10=\\n\n2021=Cain\n"
+# 300 more single kanji: past the first-character fan-out where to_bytes
+# leaves the regex scanner for the index walk, so every rule runs on both.
+KANJI = "".join(f"{0x4000 + i:04x}={chr(0x4E00 + i)}\n" for i in range(300))
 
-@pytest.fixture
-def table(tmp_path: Path) -> Table:
-    (tmp_path / "t.tbl").write_text("01=a\n02=b\n03=ab\n04=abc\n10=\\n\n2021=Cain\n", encoding="utf-8")
+
+@pytest.fixture(params=["scanner", "index walk"])
+def table(request: pytest.FixtureRequest, tmp_path: Path) -> Table:
+    (tmp_path / "t.tbl").write_text(BASE + (KANJI if request.param == "index walk" else ""), encoding="utf-8")
     return Table(str(tmp_path / "t.tbl"))
+
+
+def test_both_strategies_are_exercised(table: Table, request: pytest.FixtureRequest) -> None:
+    table.to_bytes("a")
+
+    assert table._use_scanner is (request.node.callspec.params["table"] == "scanner")
 
 
 def test_the_longest_key_wins(table: Table) -> None:
