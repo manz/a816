@@ -75,6 +75,10 @@ extend-select = ["I", "B", "UP"]
 
 [tool.coverage.run]
 relative_files = true
+# One root, so `coverage.xml` names every file from the repository root:
+# with `--cov=a816 --cov=script` both `__init__.py` came out as `__init__.py`
+# and SonarCloud couldn't place either (0% on any script/__init__.py change).
+include = ["a816/*", "script/*"]
 
 # Environments
 
@@ -83,7 +87,7 @@ detached = true
 dependencies = ["pygls>=2.1.1,<3", "lsprotocol>=2025.0.0,<2026", "pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff==0.17.0", "kintsuki>=0.0.0a14", "diff-cover"]
 
 [tool.hatch.envs.tests.scripts]
-coverage = "pytest --cov-report term --cov-report xml --cov=a816 --cov=script --cov-branch tests"
+coverage = "pytest --cov-report term --cov-report xml --cov --cov-branch tests"
 diffcov = [
     "coverage",
     "diff-cover coverage.xml --compare-branch=origin/master --fail-under=80",
