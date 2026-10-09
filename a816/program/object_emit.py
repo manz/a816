@@ -14,6 +14,7 @@ from a816.protocols import NodeProtocol
 from a816.writers import ObjectWriter
 
 if TYPE_CHECKING:
+    from a816.pool import Pool
     from a816.symbols import Resolver
 
 
@@ -76,6 +77,28 @@ class ObjectEmitMixin:
         if isinstance(node, IncludeIpsNode):
             self._object_emit_ips_blocks(node, object_writer, state)
 
+    def _enter_sandbox(self, sandbox: int, pool: Pool | None) -> None:
+        """Position at an alloc's sandbox base.
+
+        Past the pool's first range start the sandbox lays the pool's allocs
+        end to end, an offset the linker replaces, and that offset may fall
+        off the bus: ff4's fourth blob started at $30:0260, outside LoROM's
+        $8000-$FFFF window, and failed E0317 although every blob fits a bank.
+        Walk such a base linearly, as its labels were bound. A range start is
+        a real address (a pinned `.alloc at`, a pool's first alloc), so one
+        outside the `.map` stays E0317.
+        """
+        try:
+            self.resolver.set_position(sandbox)
+        except UnmappedBankError:
+            if pool is None or not pool.ranges or sandbox == pool.ranges[0].start:
+                raise
+            from a816.cpu.mapping import LinearAddress
+
+            self.resolver.pc = sandbox
+            self.resolver.reloc_address = LinearAddress(sandbox)
+            self.resolver.reloc = False
+
     def _object_emit_alloc(self, node: AllocNode, object_writer: ObjectWriter, state: ObjectEmitState) -> None:
         """Emit `.alloc` body into a deferred section for link-time placement.
 
@@ -109,7 +132,7 @@ class ObjectEmitMixin:
         # the known flags do not.
         self.resolver.forget_register_sizes()
         try:
-            self.resolver.set_position(sandbox_logical)
+            self._enter_sandbox(sandbox_logical, pool)
             # Always force-create the body section (`bss=True` here means
             # "byte-less-capable": survives the writer's drop-empty pass and
             # gets a stable index for the PoolAlloc). A label-only `.alloc at`

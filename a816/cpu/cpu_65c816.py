@@ -2,6 +2,7 @@ import struct
 import typing
 import warnings
 
+from a816.cpu.mapping import LinearAddress
 from a816.cpu.types import AddressingMode, RomType, ValueSize
 from a816.exceptions import (
     BranchOutOfRangeError,
@@ -72,6 +73,10 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         value = value_node.get_value()
         # Use duck typing: ExpressionNode has 'expression' attribute, ValueNode does not
         if hasattr(value_node, "expression"):
+            if isinstance(resolver.reloc_address, LinearAddress):
+                # An alloc body emitted off the bus (its provisional base isn't
+                # mapped): labels and `pc` are both linear sandbox offsets.
+                return value - resolver.pc - (1 + self.OFFSET_BYTES)
             physical_destination = resolver.get_bus().get_address(value).physical
             if physical_destination is None:
                 raise BranchTargetUnmappedError(value)
