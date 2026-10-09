@@ -129,8 +129,10 @@ Each context is its own allocator over the pool's ranges
 inside one context still never overlap, while different contexts of
 the same pool may. The pool's footprint is its largest context.
 Contexts are mutually exclusive only within the pool that lists
-them; anything else that overlaps is an error, including a
-reservation made directly in the pool next to its contexts.
+them; anything else that overlaps is an error. A reservation made
+directly in the pool is live in every context: the pool places it
+first and keeps each context off it, and one pinned onto a
+context's bytes is an overlap.
 `contexts` is only allowed on a `bss` pool: emitted bytes have one
 owner.
 
