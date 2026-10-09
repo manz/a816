@@ -160,7 +160,7 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 4  # 4: named allocs publish NAME.__size
+CODEGEN_REVISION = 5  # 5: `.reclaim` / `.relocate` record their range for the linker
 """Bumped whenever a816 emits different object bytes for unchanged source (a
 codegen fix such as #159's end-marker labels). With the format's schema digest
 it forms the object identity the build cache keys on, so a release that changes
