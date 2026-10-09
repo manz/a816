@@ -1,5 +1,9 @@
 import re
 
+# `joker_regex` without its `^`: matched at an index (`pattern.match(text, pos)`
+# doesn't anchor `^` there).
+_JOKER_AT = re.compile(r"\[0x(?P<byte>[0-9a-fA-F]+)]")
+
 
 class Table:
     table_line_regex = re.compile(r"(?P<byte>[0-9a-fA-F]+)(?::(?P<ignore>[0-9a-fA-F]+))?\s*=(?P<text>[^\n]+)")
@@ -10,6 +14,8 @@ class Table:
         self.inverted_lookup: dict[bytes, str | tuple[str, int]] = {}
         self.max_bytes_length = 0
         self.max_text_length = 0
+        self._lengths: tuple[int, ...] = ()
+        self._lengths_for: tuple[int, int] | None = None
 
         if path is not None:
             self.include(path)
@@ -51,31 +57,44 @@ class Table:
     def add_lookup(self, text: str, byte: list[int]) -> None:
         self.lookup[text] = bytes(byte)
 
+    def _key_lengths(self) -> tuple[int, ...]:
+        """The lengths the lookup's keys have, longest first, capped at
+        `max_text_length` (set by `include`) as the old scan was. Recomputed
+        when keys are added."""
+        cache_key = (len(self.lookup), self.max_text_length)
+        if self._lengths_for != cache_key:
+            lengths = {len(key) for key in self.lookup if len(key) <= self.max_text_length}
+            self._lengths = tuple(sorted(lengths, reverse=True))
+            self._lengths_for = cache_key
+        return self._lengths
+
     def to_bytes(self, text: str) -> bytes:
-        binary_text: list[int] = []
-        current_position = 0
-        while text[current_position:]:
-            remainder = text[current_position:]
+        """Encode `text`: `[0xNN]` is that byte, else the longest table key at
+        that position, else the character is skipped.
 
-            matches = self.joker_regex.match(remainder)
-
-            if matches:
-                binary_text += bytes([int(matches.group("byte"), 16)])
-                current_position += len(matches.group())
+        Walks an index: slicing the rest of the text at every step made a line
+        quadratic in its length, and it tried every length up to the longest
+        key through a KeyError each (75% of BL's dialog reflow).
+        """
+        binary_text = bytearray()
+        lookup = self.lookup
+        lengths = self._key_lengths()
+        position, end = 0, len(text)
+        while position < end:
+            joker = _JOKER_AT.match(text, position)
+            if joker:
+                binary_text.append(int(joker.group("byte"), 16))
+                position = joker.end()
                 continue
-
-            for i in range(min(len(text), self.max_text_length), 0, -1):
-                lookup_text = remainder[:i]
-                try:
-                    decoded = self.lookup[lookup_text]
-                    binary_text += decoded
-                    current_position += i
-                    break
-                except KeyError:
-                    pass
+            for length in lengths:
+                if position + length <= end:
+                    decoded = lookup.get(text[position : position + length])
+                    if decoded is not None:
+                        binary_text += decoded
+                        position += length
+                        break
             else:
-                current_position += 1
-
+                position += 1
         return bytes(binary_text)
 
     def to_text(self, binary: bytes) -> str:
