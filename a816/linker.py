@@ -152,12 +152,8 @@ class Linker:
             if owner is None:
                 continue
             self._allocate(owner, request_sites)
-            for context in merged.values():
-                if context.context is None or _context_owner(context) != name:
-                    continue
-                for alloc in owner.allocations:
-                    if alloc.size:
-                        context.occupy(alloc.addr, alloc.addr + alloc.size - 1)
+            contexts = [pool for pool in merged.values() if pool.context is not None and _context_owner(pool) == name]
+            _occupy_reservations(owner, contexts)
 
     def _occupy_foreign_pins(self, merged: dict[str, Pool]) -> None:
         """Mark every pinned span inside a pool's ranges as taken in that pool.
@@ -811,6 +807,14 @@ def _may_share(first: "Pool", second: "Pool") -> bool:
 
 def _context_owner(pool: "Pool") -> str:
     return pool.name.removesuffix(f".{pool.context}")
+
+
+def _occupy_reservations(owner: "Pool", contexts: "list[Pool]") -> None:
+    """Mark every placed reservation of `owner` as taken in each of its contexts."""
+    spans = [(alloc.addr, alloc.addr + alloc.size - 1) for alloc in owner.allocations if alloc.size]
+    for context in contexts:
+        for start, end in spans:
+            context.occupy(start, end)
 
 
 def _first_label_at(obj_file: ObjectFile) -> dict[int, str]:
