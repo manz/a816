@@ -132,6 +132,10 @@ separate blocks separated by a blank line.
   outside every `.alloc`. Wrap them in `.alloc` or set `*=` first.
 - `E0311` `.import` inside a placement context. `.import` must sit in
   the file prelude, before the first `*=` and outside any `.alloc` body.
+  An `.import` inside an `.if` is rejected too: the build reads imports
+  before any condition is evaluated, so the module was linked whatever
+  the condition. Import it unconditionally and put the `.if` inside the
+  module.
 - `E0312` division or modulo by zero. The right-hand side of a `/` or
   `%` evaluated to 0; the caret points at the operator. In a relocation
   resolved at link time the linker reports `cannot evaluate expression`
