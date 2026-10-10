@@ -58,7 +58,7 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `ST001` | Placement directive (`*=`, `.alloc ... at`, `.relocate`) nested inside an `.alloc` body: it re-anchors the code the alloc was placing. |
 | `ST002` | `.import` outside the file prelude (after a placement or inside a block); the build rejects it with `E0311`. |
 | `UP001` | Legacy `*= ADDR` placement should be `.alloc at ADDR { ... }`. |
-| `W0002` | `.if` on a name the project defines nowhere: it reads as false, so a deleted or misspelt flag drops code silently. Mark a `-D`-only name `; noqa: W0002`. |
+| `W0002` | `.if` on a name the project defines nowhere: it reads as false, so a deleted or misspelt flag drops code silently. Declare a `-D`-only name under `[defines]` in `a816.toml`. |
 | `W0001` | Reference to a name `.incbin` derived from its path (`assets_vwf_bin`, `assets_vwf_bin__size`); the build warns on it too. A warning: `a816 check` prints it but still exits 0. |
 
 Rules marked fixable in `a816 check` output carry `[*]` (safe) or
