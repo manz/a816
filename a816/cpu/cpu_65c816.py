@@ -10,7 +10,9 @@ from a816.exceptions import (
     CrossBankTransferError,
     MissingOperandError,
     UndecidableOperandSizeError,
+    UnmappedBankError,
 )
+from a816.object_file import PC_RELATIVE_PREFIX
 from a816.protocols import OpcodeBase, OpcodeProtocol, ValueNodeProtocol
 
 if typing.TYPE_CHECKING:  # pragma: nocover
@@ -91,11 +93,40 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
     ) -> bytes:
         if value_node is None:
             raise MissingOperandError("branch")
-        delta = self._relative_delta(value_node, resolver)
+        value_node.get_value()  # in object mode, records a label target's link expression
+        self._relocate_at_link(value_node, resolver)
+        # An extern is unknown until link (it reads as 0 here): its offset and
+        # range are the linker's. A local label's provisional offset is close
+        # enough to report a range error here, at its source line.
+        extern = bool(getattr(value_node, "external_symbols", None))
+        try:
+            delta = self._relative_delta(value_node, resolver)
+        except (BranchTargetUnmappedError, UnmappedBankError):
+            if not extern:
+                raise
+            delta = 0
+        if extern:
+            delta = 0
         try:
             return super().emit(value_node, resolver, size) + struct.pack(self._PACK, delta)
         except struct.error as e:
             raise BranchOutOfRangeError(delta, self._RANGE) from e
+
+    def _relocate_at_link(self, value_node: "ValueNodeProtocol", resolver: "Resolver") -> None:
+        """Have the linker write the offset when the target is placed at link.
+
+        The offset used to be final at compile, from provisional addresses:
+        a branch to an `.extern` pointed at itself, and one between floating
+        allocs the pool reordered landed off by the reorder. In object mode a
+        label target carries its link expression; the linker subtracts the
+        operand's final end address from it.
+        """
+        deferred = getattr(value_node, "_deferred_expression", None)
+        writer = resolver.context.object_writer if resolver.context.is_object_mode else None
+        if deferred is None or writer is None:
+            return
+        offset = writer.relocation_offset(pending_block_bytes=1)
+        writer.add_expression_relocation(offset, PC_RELATIVE_PREFIX + deferred, self.OFFSET_BYTES)
 
     def supposed_length(
         self,
@@ -323,6 +354,19 @@ class LongOpcode(Opcode):
         return super().supposed_length(value_node, "l", resolver)
 
 
+def _relocate_byte(value_node: "ValueNodeProtocol", pending_block_bytes: int) -> None:
+    """In object mode, have the linker fill this one-byte operand when its
+    expression waits on a symbol placed at link (as `Opcode.emit_value` does).
+    `pending_block_bytes` is the operand's offset from the opcode byte."""
+    deferred = getattr(value_node, "_deferred_expression", None)
+    resolver = getattr(value_node, "resolver", None)
+    if deferred is None or resolver is None or not resolver.context.is_object_mode:
+        return
+    writer = resolver.context.object_writer
+    if writer is not None:
+        writer.add_expression_relocation(writer.relocation_offset(pending_block_bytes), deferred, 1)
+
+
 class BlockMoveOpcode(OpcodeBase):
     """`mvn` / `mvp` block move: two bank operands.
 
@@ -344,6 +388,11 @@ class BlockMoveOpcode(OpcodeBase):
         del resolver
         src = src_node.get_value() & 0xFF
         dest = dest_node.get_value() & 0xFF
+        # Bytes: opcode, destbank, srcbank. An operand that waits on the
+        # linker (`blob_start >> 16`, an extern) was emitted as its
+        # compile-time 0 with no relocation (BL: every copy read bank $00).
+        _relocate_byte(dest_node, pending_block_bytes=1)
+        _relocate_byte(src_node, pending_block_bytes=2)
         return struct.pack("BBB", self.opcode, dest, src)
 
     def emit(

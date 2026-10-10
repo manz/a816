@@ -160,7 +160,11 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 5  # 5: `.reclaim` / `.relocate` record their range for the linker
+CODEGEN_REVISION = 6  # 6: relative branches record a PC-relative relocation
+
+PC_RELATIVE_PREFIX = "pc-relative:"
+"""Marks an expression relocation whose value is the expression minus the
+operand's final end address (a branch offset), range-checked to its width."""
 """Bumped whenever a816 emits different object bytes for unchanged source (a
 codegen fix such as #159's end-marker labels). With the format's schema digest
 it forms the object identity the build cache keys on, so a release that changes
