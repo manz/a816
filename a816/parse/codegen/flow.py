@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+from collections.abc import Iterator, Sequence
 from typing import cast
 
 from a816.error_codes import E_SYMBOL_MACRO_ARITY, E_SYMBOL_NOT_A_BLOCK, E_SYMBOL_UNKNOWN_MACRO
@@ -13,11 +14,13 @@ from a816.exceptions import (
 )
 from a816.parse.ast.expression import eval_expression, identifier_tokens
 from a816.parse.ast.nodes import (
+    AstNode,
     BlockAstNode,
     CodeLookupAstNode,
     ExpressionAstNode,
     ForAstNode,
     IfAstNode,
+    ImportAstNode,
     MacroApplyAstNode,
     MacroAstNode,
     Term,
@@ -65,6 +68,7 @@ def generate_if(
     code = []
     if_branch_true = node.block
     if_branch_false = node.else_block
+    _reject_conditional_import(node)
 
     try:
         condition = eval_expression(node.expression, resolver)
@@ -78,6 +82,46 @@ def generate_if(
     elif if_branch_false:
         code += _code_gen(if_branch_false.body, resolver, macro_definitions)
     return code
+
+
+def _reject_conditional_import(node: IfAstNode) -> None:
+    """E0311 for an `.import` in either branch, whatever the condition.
+
+    The build reads a file's imports from its source, before any condition is
+    evaluated, so the module was linked even when its `.if` was false (ff4,
+    rc3: a debug patch behind a flag set to 0 would still have shipped).
+    """
+    from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
+
+    branches = [*node.block.body, *(node.else_block.body if node.else_block else ())]
+    found = _first_import(branches)
+    if found is None:
+        return
+    raise NodeError(
+        f"`.import {found.module_name!r}` inside an `.if`: it is imported whatever the condition",
+        found.file_info,
+        code=str(E_CODEGEN_IMPORT_IN_PLACEMENT),
+        hint="import the module unconditionally and put the `.if` inside the module, around its code",
+    )
+
+
+def _first_import(nodes: Sequence[AstNode]) -> ImportAstNode | None:
+    """The first `.import` in `nodes` or anything nested in them (blocks, branches, includes)."""
+    for node in nodes:
+        if isinstance(node, ImportAstNode):
+            return node
+        found = _first_import(list(_children(node)))
+        if found is not None:
+            return found
+    return None
+
+
+def _children(node: AstNode) -> Iterator[AstNode]:
+    for value in vars(node).values():
+        items = value if isinstance(value, list | tuple) else (value,)
+        for item in items:
+            if isinstance(item, AstNode) and not isinstance(item, ExpressionAstNode):
+                yield item
 
 
 def generate_code_lookup(

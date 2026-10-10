@@ -14,7 +14,16 @@ from a816.exceptions import (
     UndeclaredPoolError,
     UnresolvedSymbolError,
 )
-from a816.object_file import ObjectFile, PoolAlloc, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
+from a816.object_file import (
+    PC_RELATIVE_PREFIX,
+    ObjectFile,
+    PoolAlloc,
+    PoolDecl,
+    RelocationType,
+    Section,
+    SymbolSection,
+    SymbolType,
+)
 from a816.parse.ast.expression import eval_constant_expression
 from a816.parse.errors import ParserSyntaxError, ScannerException
 from a816.parse.nodes.errors import NodeError
@@ -746,7 +755,10 @@ class Linker:
         self._section_buffers = {}
         for final_address, section_idx, expression, size_bytes in self._linked_expression_relocations:
             local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1))
-            evaluated_value = self._evaluate_expression(expression, local_overlay)
+            if expression.startswith(PC_RELATIVE_PREFIX):
+                evaluated_value = self._branch_offset(expression, final_address, size_bytes, local_overlay)
+            else:
+                evaluated_value = self._evaluate_expression(expression, local_overlay)
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
             if size_bytes == 1:
@@ -763,6 +775,22 @@ class Linker:
                 raise ExpressionEvaluationError(expression, f"unsupported operand size: {size_bytes} bytes")
 
         self._flush_section_buffers()
+
+    def _branch_offset(
+        self, expression: str, operand_address: int, size_bytes: int, local_overlay: dict[str, int] | None
+    ) -> int:
+        """A relative branch's offset from final addresses: the target minus
+        the operand's end (the next instruction), within the operand's signed width."""
+        target = expression.removeprefix(PC_RELATIVE_PREFIX)
+        offset = self._evaluate_expression(target, local_overlay) - (operand_address + size_bytes)
+        limit = 1 << (8 * size_bytes - 1)
+        if not -limit <= offset < limit:
+            hint = "use `brl` or `jmp`" if size_bytes == 1 else "use `jmp` / `jml`"
+            raise ExpressionEvaluationError(
+                target,
+                f"branch offset {offset} from ${operand_address - 1:06X} exceeds signed {8 * size_bytes}-bit range; {hint}",
+            )
+        return offset
 
     def _evaluate_expression(self, expression: str, local_overlay: dict[str, int] | None = None) -> int:
         expr_to_eval = self._substitute_symbols(expression, local_overlay)

@@ -24,6 +24,7 @@ from a816.fluff.rules_doc import (
     OrphanDocstring,
     RedundantCommentAndDocstring,
 )
+from a816.fluff.rules_flow import UndefinedIfName
 from a816.fluff.rules_naming import ConstantNaming, LabelNaming
 from a816.fluff.rules_opcode import RedundantOpcodeSizeSuffix
 from a816.fluff.rules_structural import ImportOutsidePrelude, NestedPlacementInAlloc
@@ -55,6 +56,7 @@ RULES: list[Rule] = [
     NestedPlacementInAlloc(),
     ImportOutsidePrelude(),
     IncbinPathName(),
+    UndefinedIfName(),
 ]
 Rule.registry = {rule.code: rule for rule in RULES}
 
