@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.0 "Swift-Tuttle" (2026-10-11)
+## 1.1.0 "Swift-Tuttle" (2026-10-10)
 
 Separate compilation and linking, declared memory layout (freespace and
 `bss` pools), structs, a build cache, and fluff (lint, format, fix) plus
