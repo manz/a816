@@ -122,6 +122,8 @@ treated as private and skipped by `DOC002` / `DOC003` / naming rules.
 ## `a816 explain <CODE>`
 
 Print a rule's rationale plus a minimal `bad` / `good` example pair.
+Given a build diagnostic's code (`E0317`, `W0001`), it prints that
+code's entry from the [error catalog](errors.md#code-catalog).
 
 ```
 $ a816 explain DOC003
