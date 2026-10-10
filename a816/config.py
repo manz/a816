@@ -33,7 +33,7 @@ CONFIG_FILENAME = "a816.toml"
 _MAP_REQUIRED_KEYS = ("address",)
 _MAP_KEYS = frozenset(_MAP_REQUIRED_KEYS + ("mask", "base", "writable"))
 # A symbol a source can spell: what `-D NAME=VALUE` and `[defines]` accept.
-DEFINE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
+DEFINE_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\Z", re.ASCII)
 
 
 @dataclass(frozen=True)

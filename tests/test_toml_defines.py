@@ -43,7 +43,8 @@ def test_a_project_without_defines_declares_none(tmp_path: Path) -> None:
     (tmp_path / "a816.toml").write_text('entrypoint = "main.s"\n', encoding="utf-8")
     config = load_a816_toml(tmp_path / "a816.toml")
 
-    assert config is not None and config.defines == {}
+    assert config is not None
+    assert config.defines == {}
 
 
 @pytest.mark.parametrize("value", ["true", "1.5", "[1]", "{ a = 1 }"])
