@@ -322,8 +322,10 @@ class ModuleBuilder:
         import_keys = {name: keys[name] for name in imports if name in keys}
         if self.cache.fresh(obj_path, source_path, import_keys):
             logger.info(f"Module {module_name} is up to date")
+            # The messages are this build's own compile warnings, read back
+            # from the sidecar it wrote next to the object.
             for message in self.cache.warnings(obj_path):
-                logger.warning(message)
+                logger.warning(message)  # NOSONAR pythonsecurity:S5145
             keys[module_name] = self.cache.key(obj_path) or ""
             return ObjectFile.from_file(str(obj_path))
         asset_files, misses, warnings = self._compile_module(module_name, source_path, obj_path, constants, owners)

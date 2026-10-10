@@ -39,10 +39,10 @@ def path_name_warnings(
 ) -> list[str]:
     """One formatted W0001 per site whose operand names a path-derived name
     its object's compile did not check (the object's own LOCALs aside)."""
-    records = {record.name: record for obj in objects for record in obj.path_names}
+    records = {record.name: record for obj in objects for record in obj.path_names.bound}
     if not records:
         return []
-    checked = [set(obj.checked_path_names) for obj in objects]
+    checked = [set(obj.path_names.checked) for obj in objects]
     warnings: dict[tuple[int, str, str, int], str] = {}
     for site in sites:
         local = locals_by_obj.get(site.obj_idx, {})

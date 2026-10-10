@@ -6,7 +6,7 @@ from a816.object_file import (
     BusMapping,
     LinkAssert,
     ObjectFile,
-    PathNameRecord,
+    PathNames,
     PoolAlloc,
     PoolDecl,
     RelocationType,
@@ -167,8 +167,7 @@ class ObjectWriter(Writer):
         self.pool_allocs: list[PoolAlloc] = []  # populated by AllocNode object-mode emit
         self.bus_mappings: list[BusMapping] = []  # populated by generate_map
         self.asserts: list[LinkAssert] = []  # populated by generate_assert
-        self.path_names: list[PathNameRecord] = []  # populated by code_gen (W0001)
-        self.checked_path_names: list[str] = []
+        self.path_names = PathNames()  # populated by code_gen (W0001)
         self._current_section: Section | None = None
         self._pending_base_address: int = 0
         self._section_bytes_emitted: int = 0
@@ -196,8 +195,7 @@ class ObjectWriter(Writer):
         self.pool_allocs = []
         self.bus_mappings = []
         self.asserts = []
-        self.path_names = []
-        self.checked_path_names = []
+        self.path_names = PathNames()
 
     def mark_emitted(self, count: int) -> None:
         """Advance the per-section emit cursor by ``count`` bytes.
@@ -292,8 +290,7 @@ class ObjectWriter(Writer):
             pool_allocs=list(self.pool_allocs),
             bus_mappings=list(self.bus_mappings),
             asserts=list(self.asserts),
-            path_names=list(self.path_names),
-            checked_path_names=list(self.checked_path_names),
+            path_names=self.path_names,
         )
         obj_file.write(self.output_file)
 

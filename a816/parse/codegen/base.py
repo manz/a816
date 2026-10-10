@@ -137,17 +137,17 @@ def code_gen(ast_nodes: list[AstNode], resolver: Resolver) -> GenNodes:
 def _record_path_names(resolver: Resolver, own: dict[str, PathName], checked: dict[str, PathName]) -> None:
     """Carry the unit's path names to the linker, which warns on a reference
     that binds to one from a module whose compile never saw it."""
-    from a816.object_file import PathNameRecord
+    from a816.object_file import PathNameRecord, PathNames
 
     writer = resolver.context.object_writer
     if writer is None:
         return
-    writer.path_names = [
+    bound = [
         PathNameRecord(name, found.file_path, found.seen_from_importer().hint())
         for name, found in own.items()
         if not found.ambiguous
     ]
-    writer.checked_path_names = sorted(checked)
+    writer.path_names = PathNames(bound, sorted(checked))
 
 
 def _warn_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:

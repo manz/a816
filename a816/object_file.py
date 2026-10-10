@@ -196,6 +196,15 @@ class PathNameRecord:
 
 
 @dataclass
+class PathNames:
+    """An object's path-derived `.incbin` names: the ones it binds, and the
+    ones its compile already warned on (its own and its imports')."""
+
+    bound: list[PathNameRecord] = field(default_factory=list)
+    checked: list[str] = field(default_factory=list)
+
+
+@dataclass
 class WireSection:
     """What a section carries in an object file: the reader rebuilds an
     anonymous pinned `Section` from it (placement comes from the pool allocs)."""
@@ -222,8 +231,7 @@ class WireObject:
     pool_allocs: list[PoolAlloc]
     bus_mappings: list[BusMapping]
     asserts: list[LinkAssert] = field(default_factory=list)
-    path_names: list[PathNameRecord] = field(default_factory=list)
-    checked_path_names: list[str] = field(default_factory=list)
+    path_names: PathNames = field(default_factory=PathNames)
 
 
 SCHEMA_DIGEST = hashlib.sha256(schema(WireObject).encode()).digest()[:16]
@@ -264,8 +272,7 @@ class ObjectFile:
         pool_allocs: list[PoolAlloc] | None = None,
         bus_mappings: list[BusMapping] | None = None,
         asserts: list[LinkAssert] | None = None,
-        path_names: list[PathNameRecord] | None = None,
-        checked_path_names: list[str] | None = None,
+        path_names: PathNames | None = None,
     ) -> None:
         # `relocatable` is True iff the source contained no `*=` directive,
         # so the importer is free to place section 0 at the import site PC
@@ -292,10 +299,7 @@ class ObjectFile:
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
         self.bus_mappings: list[BusMapping] = bus_mappings or []
         self.asserts: list[LinkAssert] = asserts or []
-        self.path_names: list[PathNameRecord] = path_names or []
-        """The path-derived names this unit binds."""
-        self.checked_path_names: list[str] = checked_path_names or []
-        """The path-derived names its compile already warned on (its own and its imports')."""
+        self.path_names: PathNames = path_names or PathNames()
         self.origin: str = ""
         """Path the object was read from (not serialized): names it in diagnostics."""
 
@@ -358,7 +362,6 @@ class ObjectFile:
             self.bus_mappings,
             self.asserts,
             self.path_names,
-            self.checked_path_names,
         )
 
     @staticmethod
@@ -421,7 +424,6 @@ class ObjectFile:
             bus_mappings=wire.bus_mappings,
             asserts=wire.asserts,
             path_names=wire.path_names,
-            checked_path_names=wire.checked_path_names,
         )
         obj.origin = filename
         return obj
