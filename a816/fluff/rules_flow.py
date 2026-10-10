@@ -12,13 +12,13 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from a816.fluff.core import Diagnostic, LintContext, Rule
+from a816.fluff.project import walk_sources
 from a816.parse.ast.expression import identifier_tokens
 from a816.parse.ast.nodes import AstNode, ExpressionAstNode, IfAstNode, IncludeAstNode
 
 # Names the assembler binds itself.
 _BUILTINS = frozenset({"BUILD_DATE", "sizeof", "countof"})
 _DEFINING_FIELDS = ("name", "symbol", "label", "pool_name")
-_SKIPPED_DIRS = frozenset({"obj", ".venv", "venv", "node_modules", ".git"})
 # Project root -> (the files' (path, mtime) signature, the names they define).
 _PROJECT_NAMES: dict[Path, tuple[tuple[tuple[str, int], ...], frozenset[str]]] = {}
 
@@ -106,7 +106,7 @@ def _project_names(path: Path) -> frozenset[str]:
     # Without an `a816.toml` there's no project to scan: the file's own
     # directory, not below it (a stray path must not walk a whole tree).
     root = (toml.parent if toml is not None else path.parent).resolve()
-    sources = sorted(_sources(root, recursive=toml is not None)) + ([toml] if toml is not None else [])
+    sources = sorted(walk_sources(root, recursive=toml is not None)) + ([toml] if toml is not None else [])
     signature = tuple((str(source), source.stat().st_mtime_ns) for source in sources)
     cached = _PROJECT_NAMES.get(root)
     if cached is not None and cached[0] == signature:
@@ -134,13 +134,3 @@ def _declared_defines(toml: Path | None) -> list[str]:
     except A816ConfigError:
         return []
     return list(config.defines) if config is not None else []
-
-
-def _sources(root: Path, recursive: bool) -> Iterator[Path]:
-    for source in root.rglob("*") if recursive else root.glob("*"):
-        if source.suffix not in {".s", ".i"} or not source.is_file():
-            continue
-        parts = source.relative_to(root).parts[:-1]
-        if any(part in _SKIPPED_DIRS or part.startswith(".") for part in parts):
-            continue
-        yield source
