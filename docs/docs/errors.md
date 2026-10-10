@@ -263,7 +263,9 @@ separate blocks separated by a blank line.
   blob instead: alone in `.alloc vwf_font { ... }` it is `vwf_font`,
   and its size `sizeof(vwf_font)`; `a816 fix` rewrites those
   references. Where the blob shares its block, put a label before it.
-  The path names go in 1.2. Reported by the build and by `a816 check`.
+  The path names go in 1.2. Reported by the build (by the linker for a
+  module that names the blob without importing its module, and again
+  when a module comes from the build cache) and by `a816 check`.
 - `W0002` an `.if` names something the project defines nowhere (in no
   `.s` / `.i` file under its `a816.toml`). An undefined name reads as
   false, which is how `.if DEBUG` works without `-D DEBUG`, so a deleted

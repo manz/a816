@@ -1,3 +1,4 @@
+import logging
 import re
 import struct
 from collections.abc import Callable
@@ -31,6 +32,8 @@ from a816.pool import Allocation, Pool, PoolOverflowError
 from a816.section import PINNED_POOL_PREFIX, Placement
 
 _SIZE_SYMBOL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\.__size\b")
+
+logger = logging.getLogger(__name__)
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
@@ -91,6 +94,7 @@ class Linker:
         self._resolve_aliases()
         self._check_unresolved()
         self._check_asserts()
+        self._warn_path_names()
         self._apply_relocations()
         self._apply_expression_relocations()
         return ObjectFile(
@@ -685,6 +689,26 @@ class Linker:
             remaining = still_pending
         if remaining:
             raise UnresolvedSymbolError({name for name, _ in remaining})
+
+    def _warn_path_names(self) -> None:
+        """W0001 on references that meet a path-derived `.incbin` name only here."""
+        from a816.link_path_names import RelocationSite, path_name_warnings
+
+        sites = [
+            RelocationSite(
+                self._section_obj.get(section_idx, -1),
+                self.linked_sections[section_idx],
+                address - self.linked_sections[section_idx].placed_base,
+                operand,
+            )
+            for address, section_idx, operand, _kind in [
+                *self._linked_relocations,
+                *self._linked_expression_relocations,
+            ]
+            if section_idx in self._section_obj
+        ]
+        for message in path_name_warnings(self.object_files, sites, self.linked_files, self._local_by_obj):
+            logger.warning(message)
 
     def _section_view(self, section_idx: int) -> tuple[Section, bytearray]:
         section = self.linked_sections[section_idx]

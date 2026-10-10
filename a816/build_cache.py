@@ -11,14 +11,20 @@ the hash is trusted, otherwise the file is hashed again, so a warm build stats
 files instead of reading them, and a file swapped for different bytes is
 caught whatever its mtime (`rsync -a`, `cp -p`, `tar x`, an edit inside one
 mtime granule).
+
+The sidecar also keeps the warnings the compile printed, replayed when the
+object is reused: a warm build shows what a cold one does.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,12 +34,12 @@ from a816.object_file import ObjectFile
 if TYPE_CHECKING:
     from a816.object_file import BusMapping
 
-SIDECAR_VERSION = 2
+SIDECAR_VERSION = 3  # 3: the compile's warnings
 # A file whose mtime falls this close to when its hash was recorded may have
 # been written again within the same mtime granule: always rehash it.
 _RACY_NS = 2_000_000_000
 # A sidecar missing any of these (hand-edited, truncated) counts as stale.
-_SIDECAR_KEYS = {"identity", "settings", "files", "misses", "imports", "import_keys", "key", "recorded_ns"}
+_SIDECAR_KEYS = {"identity", "settings", "files", "misses", "imports", "import_keys", "key", "recorded_ns", "warnings"}
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,7 @@ class ModuleInputs:
     misses: set[str]
     imports: list[str]
     import_keys: dict[str, str]
+    warnings: list[str] = field(default_factory=list)
 
 
 class BuildCache:
@@ -115,6 +122,11 @@ class BuildCache:
         data = self._load(obj_path)
         return None if data is None else str(data["key"])
 
+    def warnings(self, obj_path: Path) -> list[str]:
+        """The warnings the object's compile printed."""
+        data = self._load(obj_path)
+        return [] if data is None else [str(message) for message in data["warnings"]]
+
     def record(self, obj_path: Path, inputs: ModuleInputs) -> str:
         """Write the sidecar for a freshly compiled object; return its key."""
         files = {path: _file_entry(path) for path in sorted(inputs.files)}
@@ -138,6 +150,7 @@ class BuildCache:
             "import_keys": inputs.import_keys,
             "key": key,
             "recorded_ns": time.time_ns(),
+            "warnings": inputs.warnings,
         }
         self.sidecar_path(obj_path).write_text(json.dumps(data, indent=1), encoding="utf-8")
         return key
@@ -158,6 +171,25 @@ class BuildCache:
         ):
             return None
         return data
+
+
+@contextmanager
+def recording_warnings() -> Iterator[list[str]]:
+    """Collect the warnings logged while the block runs (still printed)."""
+    captured: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.levelno == logging.WARNING:
+                captured.append(record.getMessage())
+
+    handler = _Capture(logging.WARNING)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        yield captured
+    finally:
+        root.removeHandler(handler)
 
 
 def _sha(payload: object) -> str:

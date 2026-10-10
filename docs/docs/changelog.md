@@ -12,6 +12,11 @@
   `obj/` and dot directories.
 - `a816 explain` takes an error code too (`a816 explain E0317`) and
   prints its entry from the error catalog.
+- `W0001` reaches every reference to a path-derived `.incbin` name: the
+  linker warns on one a module makes without importing the blob's module
+  (ff4 had three), and a module reused from the build cache prints its
+  warnings again, so a warm build shows what a cold one does. Objects
+  change: caches rebuild once.
 
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 
