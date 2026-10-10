@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.0 "Swift-Tuttle"
+## 1.1.0 "Swift-Tuttle" (2026-10-11)
 
 Separate compilation and linking, declared memory layout (freespace and
 `bss` pools), structs, a build cache, and fluff (lint, format, fix) plus
@@ -226,6 +226,9 @@ player:
   Each source file has one name in the `.adbg`, relative to the working
   directory when it lies under it, so the file doesn't change with the
   checkout's location.
+- An `.import` inside an `.if` is `E0311`: imports are read before any
+  condition runs, so the module was linked whatever the condition. Import
+  it unconditionally and put the `.if` inside the module.
 - `.include` searches the `include-paths` everywhere: in imported
   modules, in `a816 check` and `a816 format`, and in the LSP.
 
@@ -290,6 +293,8 @@ player:
   redundant size suffixes (`OP001`), program structure (`ST001` for a
   placement nested in an `.alloc`, `ST002` for an `.import` outside the
   prelude) and legacy placement (`UP001`); `; noqa: RULE` to suppress.
+  `W0002` flags an `.if` on a name the project defines nowhere: it reads
+  as false, so a deleted or misspelt flag drops its block silently.
 - `a816 fix` applies the autofixes, also offered as LSP code actions.
 
 ### Language server
