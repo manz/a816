@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from a816.parse.codegen.modules import ParsedImport
     from a816.program import Program
 
-from a816.build_cache import BuildCache, BuildSettings, ModuleInputs
+from a816.build_cache import BuildCache, BuildSettings, ModuleInputs, recording_warnings
 from a816.build_inputs import recording_misses
 from a816.config import discover_a816_config, merge_build_settings
 from a816.exceptions import A816Error
@@ -257,9 +257,10 @@ class ModuleBuilder:
         obj_path: Path,
         constants: dict[str, int],
         owners: dict[str, str],
-    ) -> tuple[set[str], set[str]]:
+    ) -> tuple[set[str], set[str], list[str]]:
         """Compile one module to its `.o`; return the asset paths it read
-        (absolute `.incbin` / `.table` paths) and the lookups that missed.
+        (absolute `.incbin` / `.table` paths), the lookups that missed and
+        the warnings it printed.
         `owners` names the module of each constant it does not import, for
         the hint of an E0200 on one."""
         from a816.program import Program
@@ -288,7 +289,7 @@ class ModuleBuilder:
             # a duplicate GLOBAL and the linker rejects the build.
             program.resolver.imported_symbol_names.add(name)
         program.resolver.constant_owners = dict(owners)
-        with recording_misses() as misses:
+        with recording_misses() as misses, recording_warnings() as warnings:
             result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
         if result != 0:
             # The cache key must not outlive the object it described.
@@ -297,6 +298,7 @@ class ModuleBuilder:
         return (
             set(program.resolver.dependency_files),
             misses | self._discovery_misses.pop(module_name, set()),
+            warnings,
         )
 
     def _build_module(
@@ -320,16 +322,18 @@ class ModuleBuilder:
         import_keys = {name: keys[name] for name in imports if name in keys}
         if self.cache.fresh(obj_path, source_path, import_keys):
             logger.info(f"Module {module_name} is up to date")
+            for message in self.cache.warnings(obj_path):
+                logger.warning(message)
             keys[module_name] = self.cache.key(obj_path) or ""
             return ObjectFile.from_file(str(obj_path))
-        asset_files, misses = self._compile_module(module_name, source_path, obj_path, constants, owners)
+        asset_files, misses, warnings = self._compile_module(module_name, source_path, obj_path, constants, owners)
         obj = ObjectFile.from_file(str(obj_path))
         files = {
             os.path.abspath(str(source_path)),
             *(os.path.abspath(f) for f in obj.files),
             *asset_files,
         }
-        keys[module_name] = self.cache.record(obj_path, ModuleInputs(files, misses, imports, import_keys))
+        keys[module_name] = self.cache.record(obj_path, ModuleInputs(files, misses, imports, import_keys, warnings))
         return obj
 
     @staticmethod

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.nodes import (
@@ -26,6 +26,9 @@ from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
+
+if TYPE_CHECKING:
+    from a816.incbin_names import PathName
 
 logger = logging.getLogger("a816.codegen")
 
@@ -131,6 +134,22 @@ def code_gen(ast_nodes: list[AstNode], resolver: Resolver) -> GenNodes:
     return code
 
 
+def _record_path_names(resolver: Resolver, own: dict[str, PathName], checked: dict[str, PathName]) -> None:
+    """Carry the unit's path names to the linker, which warns on a reference
+    that binds to one from a module whose compile never saw it."""
+    from a816.object_file import PathNameRecord
+
+    writer = resolver.context.object_writer
+    if writer is None:
+        return
+    writer.path_names = [
+        PathNameRecord(name, found.file_path, found.seen_from_importer().hint())
+        for name, found in own.items()
+        if not found.ambiguous
+    ]
+    writer.checked_path_names = sorted(checked)
+
+
 def _warn_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
     """W0001 on each reference to a path-derived `.incbin` name, this unit's
     or an import's; run after codegen, once every import has been read."""
@@ -138,7 +157,9 @@ def _warn_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
     from a816.incbin_names import path_names, references
     from a816.parse.nodes.errors import format_node_warning
 
-    names = {**resolver.imported_path_names, **path_names(ast_nodes)}
+    own = path_names(ast_nodes)
+    names = {**resolver.imported_path_names, **own}
+    _record_path_names(resolver, own, names)
     for token, name in references(ast_nodes, names):
         if name.ambiguous:
             raise NodeError(
