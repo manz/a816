@@ -23,7 +23,7 @@ If only `.s` is available it is compiled to `.o` first, then linked.
   constants may still use them: they expand from the owner's files.
 - All other names are **GLOBAL** and exported in the object file.
 - Names declared inside `named_scope { ... }` export as `named_scope.name`.
-- Anonymous `{ ... }` blocks are scoped — labels declared inside never leak.
+- Anonymous `{ ... }` blocks are scoped: labels declared inside never leak.
 - A module sees the constants of the modules it imports, directly or
   through another import. A constant of a module it does not import is
   `E0200`, and the hint names the `.import` to add: seeing it anyway
@@ -44,14 +44,14 @@ If only `.s` is available it is compiled to `.o` first, then linked.
   stubs in the importer's `.o`; the linker resolves each to the
   owner's single GLOBAL definition during merge.
 
-Neither half is complete on its own — `.o` can't carry a struct def
+Neither half is complete on its own: `.o` can't carry a struct def
 (structs never get emitted as bytes); inlining the source would
 duplicate the runtime symbols the `.o` already owns. The paired flow
 lets a sub-module reach a parent's typed binds without needing
 explicit `.extern` declarations for every label.
 
 You can still write `.extern name` for symbols you want to reference
-without `.import`ing the owning module — useful for build-script
+without `.import`ing the owning module, useful for build-script
 injected constants or third-party `.o` drops.
 
 ## Placement

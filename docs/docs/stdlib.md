@@ -2,7 +2,7 @@
 
 a816 ships a small standard library of `.struct` declarations for SNES
 hardware registers. The modules live inside the wheel and are reached
-via the `@std/` virtual prefix — they never collide with user modules,
+via the `@std/` virtual prefix: they never collide with user modules,
 and there is no path to configure.
 
 ```ca65
@@ -101,7 +101,7 @@ post-link step fills them in.
 When the parser sees `.import "@std/snes/ppu"` it strips the `@std/`
 prefix and looks for `<wheel>/a816/stdlib/snes/ppu.s` (or `.o`). If
 the file is missing the import fails with the usual
-`Module not found:` error — there is no implicit fallback to user
+`Module not found:` error: there is no implicit fallback to user
 search paths once `@std/` is on the front.
 
 To browse the bundled source from a Python REPL:
@@ -120,4 +120,4 @@ resolver has no per-file allowlist.
 
 For project-private "stdlib" modules (game-specific RAM layouts,
 shared macro bundles), keep using regular `module_paths` configured
-in `a816.toml` — `@std/` is reserved for assembler-bundled content.
+in `a816.toml`: `@std/` is reserved for assembler-bundled content.

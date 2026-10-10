@@ -30,7 +30,7 @@ $ a816 explain <CODE>                 # a rule's rationale, or an error code's e
 ```
 
 Bare invocation (`a816 file.s -o out.ips`) still routes to `build`
-for backwards compatibility — existing scripts keep working.
+for backwards compatibility: existing scripts keep working.
 
 #### `a816 build` flags
 
@@ -87,10 +87,10 @@ $ a816 explain DOC003                   # rationale + good/bad example pair
 ```
 
 Private symbols (`_`-prefixed labels / macros / scopes) can carry
-docstrings without firing DOC002 — naming alone marks them internal.
+docstrings without firing DOC002: naming alone marks them internal.
 
 The legacy `a816-fluff` binary still works but prints a deprecation
-notice on stderr — prefer `a816 check` / `a816 format` going forward.
+notice on stderr; prefer `a816 check` / `a816 format` going forward.
 
 ### From Python
 
@@ -112,7 +112,7 @@ assert result.exit_code == 0, result.diagnostics
 ## Syntax
 
 See the [Directives reference](directives.md) for the full set of
-assembler directives — `*=`, `@=`, `.scope`, `.macro`, `.struct`,
+assembler directives: `*=`, `@=`, `.scope`, `.macro`, `.struct`,
 `.if`, `.for`, `.text` / `.table`, `.incbin`, and friends.
 
 ### Mnemonics
@@ -195,7 +195,7 @@ struct, plus `Name.__size` for the total length.
 emits `OAM.x = 0`, `OAM.y = 2`, `OAM.tile = 3`, `OAM.attr = 4`,
 `OAM.__size = 5`.
 
-Use the offsets against any base address — a hardware register, a WRAM
+Use the offsets against any base address: a hardware register, a WRAM
 pointer, an array stride:
 
 ```ca65
