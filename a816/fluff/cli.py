@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from a816.config import find_a816_toml
+from a816.error_catalog import category, explanation, is_error_code
+from a816.error_codes import lookup
 from a816.exceptions import A816ConfigError, FormattingError
 from a816.fluff.core import Diagnostic, Rule
 from a816.fluff.project import project_sources
@@ -119,9 +121,9 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
     )
     explain_parser = subparsers.add_parser(
         "explain",
-        help="Print rule documentation + good/bad examples for a single rule code.",
+        help="Explain a rule (documentation + good/bad examples) or an error code.",
     )
-    explain_parser.add_argument("code", help="Rule code (e.g. DOC003).")
+    explain_parser.add_argument("code", help="Rule code (e.g. DOC003) or error code (e.g. E0317).")
     return parser
 
 
@@ -394,6 +396,8 @@ def _run_fix(args: argparse.Namespace) -> int:
 def _run_explain(args: argparse.Namespace) -> int:
     code = args.code.upper()
     rule = Rule.registry.get(code)
+    if rule is None and is_error_code(code):
+        return _explain_error_code(code)
     if rule is None:
         print(f"unknown rule: {args.code}", file=sys.stderr)
         return 2
@@ -407,6 +411,20 @@ def _run_explain(args: argparse.Namespace) -> int:
     if rule.good:
         print("\nGood:\n")
         print(textwrap.indent(rule.good.rstrip(), "    "))
+    return 0
+
+
+def _explain_error_code(code: str) -> int:
+    """A build diagnostic's code: its errors.md catalog entry."""
+    text = explanation(code)
+    if text is None:
+        print(f"unknown error code {code} ({category(code)} range)", file=sys.stderr)
+        return 2
+    registered = lookup(code)
+    title, kind = (registered.short_description, registered.category) if registered else ("", category(code))
+    print(f"{code}  {title}  [{kind}]")
+    print()
+    print(textwrap.fill(text, width=88))
     return 0
 
 

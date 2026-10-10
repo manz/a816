@@ -10,6 +10,8 @@
   project the nearest `a816.toml` describes: the `.s` / `.i` files under
   the entrypoint's directory and `module-paths`, without `build/`,
   `obj/` and dot directories.
+- `a816 explain` takes an error code too (`a816 explain E0317`) and
+  prints its entry from the error catalog.
 
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 
