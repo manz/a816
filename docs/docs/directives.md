@@ -6,7 +6,7 @@ example.
 
 ## Layout
 
-### `*=` — code position
+### `*=`: code position
 
 Sets the *logical* address the next emitted byte targets. Drives where
 the bytes land in the ROM image.
@@ -18,7 +18,7 @@ the bytes land in the ROM image.
     xce
 ```
 
-### `@=` — reloc address
+### `@=`: reloc address
 
 Sets the *runtime* address symbols resolve against, independent of
 where the bytes are physically placed. Useful when code is copied to
@@ -180,7 +180,7 @@ FLIP  = attributes ^ 0xC0
 
 ## Symbols
 
-### `name = expr` — constant
+### `name = expr`: constant
 
 Defines a constant. Evaluated lazily; can reference externs (resolved
 at link time).
@@ -216,14 +216,14 @@ Prefer `=` unless you need the value fixed at that point.
 
 Names a constant address as a **label** without moving the position
 counter and without emitting any bytes. Use it for original-ROM stubs,
-WRAM scratch slots, hardware register aliases — anything you want
+WRAM scratch slots, hardware register aliases: anything you want
 crash traces, the disassembler, and the LSP to symbolicate by name.
 
 ```ca65
 """Bank-2 hardware Mult8 entry. Input $26 * $28 → $2A. RTL."""
 .label mult8_far = 0x02855C
 
-"""WRAM byte at $7E:1BAE — field-menu HDMA channel-5 enable shadow."""
+"""WRAM byte at $7E:1BAE, field-menu HDMA channel-5 enable shadow."""
 .label field_menu_hdma_enable = 0x1BAE
 ```
 
@@ -238,7 +238,7 @@ Differences vs `name = expr`:
 | Cross-module via `.extern` | yes | yes |
 | Documentable (fluff) | yes (docstring above) | no |
 
-The RHS must evaluate to an int at the current resolution pass —
+The RHS must evaluate to an int at the current resolution pass:
 external references are not allowed (use `.extern` for that).
 
 ### `.extern name`
@@ -280,7 +280,7 @@ case the nested layout flattens into dotted offsets
     byte flags
 }
 
-; Bit fields — `uN` (any positive N) declares an N-bit field that
+; Bit fields: `uN` (any positive N) declares an N-bit field that
 ; packs into the surrounding byte run. Mixing with byte/word/long
 ; flushes the current byte before the primitive lands.
 .struct INIDISP {
@@ -398,7 +398,7 @@ entries = (tbl as Entry)            ; tbl is placed at link
 
 When a typed instance is referenced directly as an operand
 (`lda p.field`), the assembler picks the addressing mode (`lda` /
-`lda.w` / `lda.l`) from the binding's base bank — no operand-string
+`lda.w` / `lda.l`) from the binding's base bank: no operand-string
 guessing involved. The mapping is:
 
 | Base value | Addressing mode |
@@ -414,10 +414,10 @@ existing operand-string heuristic.
 Lint hooks:
 
 - `S001`: a cast or `.istruct` targets a struct type the file never declared.
-- `S003` — `(p as T).field` when `p` is already bound as `T`.
-- `S004` — same `(expr as T)` repeated more than once; promote to `:=`.
+- `S003`: `(p as T).field` when `p` is already bound as `T`.
+- `S004`: same `(expr as T)` repeated more than once; promote to `:=`.
 
-### `.a8` / `.a16` / `.i8` / `.i16` — register width
+### `.a8` / `.a16` / `.i8` / `.i16`: register width
 
 Tell the assembler whether the accumulator (`A`) and index (`X`/`Y`)
 registers are currently 8-bit or 16-bit. Width drives immediate-mode
@@ -766,7 +766,7 @@ reported, each with its message, expression and source line.
 
 ### `.relocate SYMBOL OLD_START OLD_END into POOL { body }`
 
-Moves `SYMBOL` from `[OLD_START, OLD_END]` into the pool — old range
+Moves `SYMBOL` from `[OLD_START, OLD_END]` into the pool: old range
 is reclaimed before the new body is placed.
 
 ### `.reclaim POOL START END`

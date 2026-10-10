@@ -19,8 +19,8 @@ error[E0200]: `my_routime` is not defined in the current scope
   = hint: did you mean `my_routine`?
 ```
 
-- `error[CODE]` — severity + stable identifier.
-- `--> file:line:column` — the failure location.
+- `error[CODE]`: severity + stable identifier.
+- `--> file:line:column`: the failure location.
 - Source block with `±1` context lines and a caret pointing at the
   offending span.
 - Optional `= hint:` / `= note:` lines with fix suggestions.
@@ -30,12 +30,12 @@ separate blocks separated by a blank line.
 
 ## Categories
 
-- `E0001..E0099` — scanner / lexing.
-- `E0100..E0199` — parser.
-- `E0200..E0299` — symbol resolution.
-- `E0300..E0399` — codegen.
-- `E0400..E0499` — linker / object files.
-- `E0500..E0599` — I/O / config.
+- `E0001..E0099`: scanner / lexing.
+- `E0100..E0199`: parser.
+- `E0200..E0299`: symbol resolution.
+- `E0300..E0399`: codegen.
+- `E0400..E0499`: linker / object files.
+- `E0500..E0599`: I/O / config.
 - `W0001..`: warnings. The build still succeeds.
 
 ## Code catalog
@@ -280,7 +280,7 @@ familiar inline chip.
 
 ## Suppressing noise
 
-There is no global suppression knob for `E*` errors — they signal real
+There is no global suppression knob for `E*` errors: they signal real
 failures, not style issues. Style-style suppression lives on the
 `fluff` side (`; noqa: <RULE>` for `DOC*` / `S*` / `N*`); see
 [fluff.md](fluff.md).

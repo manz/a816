@@ -1,4 +1,4 @@
-# Fluff — lint, format, fix
+# Fluff: lint, format, fix
 
 `a816 check`, `a816 format`, and `a816 fix` are the lint, format, and
 autofix passes over `.s` / `.i` sources. All three share the parser
@@ -32,10 +32,10 @@ What it touches:
 What it deliberately does not touch:
 
 - Docstring content (text between `"""..."""`). Author's prose stays
-  verbatim — alignment with the target is enforced by `DOC007`, not
+  verbatim: alignment with the target is enforced by `DOC007`, not
   rewritten.
 - Comment text.
-- Data-directive layout — `.dw` / `.db` lines stay how the author wrote
+- Data-directive layout: `.dw` / `.db` lines stay how the author wrote
   them. Use `; noqa: E501` to silence line-length on long data rows.
 
 ## Lint rules
@@ -59,7 +59,7 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `N802` | Constant name is not snake_case or SCREAMING_SNAKE_CASE. |
 | `S001` | `(expr as T).field` / `p := (expr as T)` / `.istruct T { ... }` references a struct type that isn't declared in the current translation unit. |
 | `S003` | Redundant cast: `(p as T).field` when `p` is already typed-bound to `T`. |
-| `S004` | The same `(expr as T)` cast appears more than once in the file — promote it to a `:=` typed bind. |
+| `S004` | The same `(expr as T)` cast appears more than once in the file; promote it to a `:=` typed bind. |
 | `OP001` | Explicit `.w` / `.l` size suffix the operand would get anyway. |
 | `ST001` | Placement directive (`*=`, `.alloc ... at`, `.relocate`) nested inside an `.alloc` body: it re-anchors the code the alloc was placing. |
 | `ST002` | `.import` outside the file prelude (after a placement or inside a block); the build rejects it with `E0311`. |
@@ -83,7 +83,7 @@ $ a816 fix --select DOC003,DOC004 src/  # only those rules
 $ a816 fix --unsafe-fixes src/        # also apply UNSAFE fixes
 ```
 
-Safe fixes are guaranteed behaviour-preserving — they don't change
+Safe fixes are guaranteed behaviour-preserving: they don't change
 emitted bytes, drop comments, or restructure semantics. Unsafe fixes
 might change runtime behaviour, repackage author whitespace, or
 surface latent bugs as new build errors. `--unsafe-fixes` opts in;
@@ -91,10 +91,10 @@ without it, unsafe hits stay flagged but untouched.
 
 Edits inside one file apply in reverse-offset order so an earlier
 edit's replacement length can't invalidate a later edit's offsets.
-Overlapping edits are dropped silently — re-run `a816 fix` and the
+Overlapping edits are dropped silently; re-run `a816 fix` and the
 next pass produces non-overlapping edits.
 
-### Migration recipe — `*=` → `.alloc at`
+### Migration recipe: `*=` → `.alloc at`
 
 ```
 $ a816 fix --select UP001 --unsafe-fixes src/
@@ -108,7 +108,7 @@ cross a bank boundary, the new form raises with the offending byte
 named. Surfaces real bugs; you may want to walk through the build
 errors after the fix.
 
-### Editor integration — code actions
+### Editor integration: code actions
 
 `a816-lsp-server` exposes every fluff fix as a `textDocument/codeAction`
 quickfix. The editor's lightbulb (Ctrl-., Code Action menu) lists
@@ -156,12 +156,12 @@ through `lint_text`, so a rule that drifts from its docs fails CI.
 
 Names with a single leading underscore (`_loop`, `_helper`, `_internal`)
 are LOCAL to their module. Fluff doesn't require them to carry a
-docstring (DOC002), and DOC005 / DOC006 don't apply to them — those
+docstring (DOC002), and DOC005 / DOC006 don't apply to them: those
 are public-API hygiene rules. They *can* still carry a docstring; if
 they do, DOC003 / DOC004 / DOC007 enforce the same placement and
 formatting rules as on public targets.
 
-## Suppressing rules — `; noqa`
+## Suppressing rules: `; noqa`
 
 A trailing `; noqa` comment silences every rule on that line. Pass codes
 to suppress selectively, ruff-style:
@@ -195,5 +195,5 @@ every key.
 
 The `a816-lsp-server` runs `lint_text` on every analyze and surfaces
 results as `DiagnosticSeverity.Warning` with `source = "a816 fluff"` and
-the rule code attached. No additional setup beyond the LSP — see
+the rule code attached. No additional setup beyond the LSP: see
 [LSP](lsp.md).
