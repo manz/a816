@@ -262,6 +262,11 @@ separate blocks separated by a blank line.
   and its size `sizeof(vwf_font)`; `a816 fix` rewrites those
   references. Where the blob shares its block, put a label before it.
   The path names go in 1.2. Reported by the build and by `a816 check`.
+- `W0002` an `.if` names something the project defines nowhere (in no
+  `.s` / `.i` file under its `a816.toml`). An undefined name reads as
+  false, which is how `.if DEBUG` works without `-D DEBUG`, so a deleted
+  or misspelt flag silently drops what it gated. A name that only comes
+  from `-D` takes `; noqa: W0002`. Reported by `a816 check`.
 
 ## LSP integration
 

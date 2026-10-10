@@ -135,6 +135,7 @@ E_CONFIG_UNKNOWN_BOARD = ErrorCode("E0509", "config", "`board` names no known ca
 
 # --- Warnings (W0001..): reported, the build still succeeds ---
 W_INCBIN_PATH_NAME = ErrorCode("W0001", "deprecated", "a name `.incbin` derived from its file path")
+W_IF_UNDEFINED_NAME = ErrorCode("W0002", "lint", "`.if` on a name the project defines nowhere")
 
 
 _BY_CODE: dict[str, ErrorCode] = {obj.code: obj for obj in globals().values() if isinstance(obj, ErrorCode)}
