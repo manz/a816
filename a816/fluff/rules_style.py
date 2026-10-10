@@ -32,6 +32,7 @@ from a816.parse.ast.nodes import (
     OpcodeAstNode,
     StructAstNode,
     StructInstanceAstNode,
+    StructPatchAstNode,
     SymbolAffectationAstNode,
 )
 from a816.parse.ast.nodes.struct_instance import value_expressions
@@ -80,6 +81,9 @@ def _expressions_in_node(node: AstNode) -> Iterable[ExpressionAstNode]:
             if isinstance(node.expression, ExpressionAstNode):
                 yield node.expression
         case StructInstanceAstNode():
+            yield from value_expressions(node.init)
+        case StructPatchAstNode():
+            yield node.address
             yield from value_expressions(node.init)
 
 
@@ -279,8 +283,9 @@ class UnknownStructTypeCast(Rule):
                     f"cast targets unknown struct type '{cast.type_name}'",
                 )
         for node in ctx.flat_nodes:
-            if isinstance(node, StructInstanceAstNode) and node.type_name not in known:
-                yield self.diagnose(ctx, node, f"`.istruct` of unknown struct type '{node.type_name}'")
+            if isinstance(node, StructInstanceAstNode | StructPatchAstNode) and node.type_name not in known:
+                directive = "patch" if isinstance(node, StructPatchAstNode) else "istruct"
+                yield self.diagnose(ctx, node, f"`.{directive}` of unknown struct type '{node.type_name}'")
 
 
 class RedundantTypedCast(Rule):

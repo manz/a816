@@ -205,6 +205,9 @@ separate blocks separated by a blank line.
   the module bind: the same file included twice, or two paths that
   collapse to one name (`f.bin` and `f_bin`). It would read whichever
   came first. Label each blob and use the labels (see `W0001`).
+- `E0348` a `.patch` gives some fields of a bit-field byte but not
+  all: a816 never sees the ROM's byte, so give every field that
+  shares it.
 
 ### Linker
 

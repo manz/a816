@@ -46,7 +46,9 @@ cpu := (CPU_REGS_BASE as CPU_REGS)
 the extended (`$FFB0`) and standard (`$FFC0`) cartridge header,
 `SnesVectors` the native (`$FFE0`) and emulation (`$FFF0`) interrupt
 vectors. Emit both with [`.istruct`](directives.md) at
-`SNES_HEADER_BASE` / `SNES_VECTORS_BASE`; unset fields are 0.
+`SNES_HEADER_BASE` / `SNES_VECTORS_BASE`; unset fields are 0. A ROM
+hack that changes only some fields uses [`.patch`](directives.md)
+instead, which leaves the rest as the ROM has them.
 
 ```ca65
 .import "@std/snes/header"

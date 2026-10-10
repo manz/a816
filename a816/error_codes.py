@@ -111,6 +111,7 @@ E_CODEGEN_BSS_EMITS = ErrorCode("E0344", "codegen", "`.alloc` in a `bss` pool em
 E_CODEGEN_BAD_LABEL_ADDRESS = ErrorCode("E0345", "codegen", "`.label` address is not an integer")
 E_CODEGEN_CROSS_BANK_TRANSFER = ErrorCode("E0346", "codegen", "bare `jsr` / `jmp` into another bank")
 E_CODEGEN_AMBIGUOUS_PATH_NAME = ErrorCode("E0347", "codegen", "a path-derived `.incbin` name bound by two blobs")
+E_CODEGEN_PATCH_PARTIAL_BITS = ErrorCode("E0348", "codegen", "`.patch` gives only some fields of a bit-field byte")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")

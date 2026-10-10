@@ -71,6 +71,7 @@ ENTRIES: dict[str, str] = {
     "E0345": "a `.label` address does not evaluate to an integer.",
     "E0346": "a bare `jsr` / `jmp` names a target in another bank. A bare operand takes the absolute form in the caller's own bank (a 16-bit value is always an address there); into another bank, write `jsl` / `jml` (a `jsl` callee returns with `rtl`), or `jsr.w` / `jmp.w` when that bank mirrors this one.",
     "E0347": "a reference to a path-derived `.incbin` name that two blobs in the module bind: the same file included twice, or two paths that collapse to one name (`f.bin` and `f_bin`). It would read whichever came first. Label each blob and use the labels (see `W0001`).",
+    "E0348": "a `.patch` gives some fields of a bit-field byte but not all: a816 never sees the ROM's byte, so give every field that shares it.",
     "E0400": "duplicate global symbol. Names each definition: the defining module (its source, or its object for a constant-only module) and value.",
     "E0401": "unresolved external symbol.",
     "E0402": "relocation out of range.",
