@@ -66,6 +66,7 @@ from a816.parse.ast.nodes.struct_instance import (
     StructFieldInitAstNode,
     StructInitAstNode,
     StructInstanceAstNode,
+    StructPatchAstNode,
 )
 from a816.parse.ast.nodes.symbols import (
     AssignAstNode,
@@ -135,6 +136,7 @@ __all__ = [
     "StructFieldInitAstNode",
     "StructInitAstNode",
     "StructInstanceAstNode",
+    "StructPatchAstNode",
     "SymbolAffectationAstNode",
     "TableAstNode",
     "Term",

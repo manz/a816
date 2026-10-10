@@ -1,4 +1,6 @@
 """`.istruct T { field = value, ... }` AST: a struct instance emitted as data.
+`.patch T at ADDR { ... }` takes the same initializer and writes only the
+fields it names, over bytes a816 does not own.
 
 Initializer values are an expression, a quoted string (byte arrays), a
 `[ ... ]` list (arrays) or a nested `{ ... }` (struct fields). Comments
@@ -119,6 +121,32 @@ class StructInstanceAstNode(AstNode):
             return f".istruct {self.type_name} {{}}"
         body = _render_items(self.items, separator="")
         return "\n".join([f".istruct {self.type_name} {{", *body, "}"])
+
+
+class StructPatchAstNode(AstNode):
+    """`.patch TYPE at ADDR { ... }`: the given fields of a TYPE at ADDR,
+    each pinned in place; the bytes of the fields left out are untouched."""
+
+    def __init__(
+        self, type_name: str, address: ExpressionAstNode, init: StructInitAstNode, type_token: Token, file_info: Token
+    ) -> None:
+        super().__init__("patch", file_info)
+        self.type_name: Final = type_name
+        self.type_token: Final = type_token
+        self.address: Final = address
+        self.init: Final = init
+        # The formatter's child walk: the node spans every initializer line.
+        self.items: Final = init.items
+        self.close_token: Final = init.close_token
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.type_name, self.address.to_representation(), self.init.to_representation()
+
+    def to_canonical(self) -> str:
+        head = f".patch {self.type_name} at {self.address.to_canonical()}"
+        if not self.items:
+            return f"{head} {{}}"
+        return "\n".join([f"{head} {{", *_render_items(self.items, separator=""), "}"])
 
 
 def _has_comment(value: InitValue) -> bool:

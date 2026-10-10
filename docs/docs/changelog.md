@@ -17,6 +17,10 @@
   (ff4 had three), and a module reused from the build cache prints its
   warnings again, so a warm build shows what a cold one does. Objects
   change: caches rebuild once.
+- `.patch Type at ADDR { field = value }` writes only the fields it
+  names, each pinned at its offset, so a ROM hack can change a
+  header's title or one field of a table record and keep the rest of
+  the original bytes. A partly given bit-field byte is `E0348`.
 
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 

@@ -61,6 +61,7 @@ from a816.parse.ast.nodes import (
     StructFieldInitAstNode,
     StructInitAstNode,
     StructInstanceAstNode,
+    StructPatchAstNode,
     Term,
 )
 from a816.parse.ast.nodes.struct import StructBodyItem
@@ -366,6 +367,19 @@ def parse_istruct(p: Parser, keyword: Token) -> StructInstanceAstNode:
     expect_token(open_token, TokenType.LBRACE)
     init = _parse_struct_init(p, open_token)
     return StructInstanceAstNode(type_token.value, init, type_token, keyword)
+
+
+def parse_patch(p: Parser, keyword: Token) -> StructPatchAstNode:
+    """Parse `.patch TYPE at ADDR { field = value, ... }` (the `.istruct`
+    initializer grammar after a fixed address)."""
+    type_token = p.next()
+    expect_token(type_token, TokenType.IDENTIFIER)
+    _expect_contextual_keyword(p, "at")
+    address = parse_expression(p)
+    open_token = p.next()
+    expect_token(open_token, TokenType.LBRACE)
+    init = _parse_struct_init(p, open_token)
+    return StructPatchAstNode(type_token.value, address, init, type_token, keyword)
 
 
 def _parse_struct_init(p: Parser, open_token: Token) -> StructInitAstNode:

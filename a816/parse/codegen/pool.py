@@ -36,6 +36,7 @@ from a816.parse.ast.nodes import (
     RelocateAstNode,
     ReserveAstNode,
     ReserveTypedAstNode,
+    StructPatchAstNode,
 )
 from a816.parse.ast.visitor import walk
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen_placement_body, generators
@@ -464,6 +465,7 @@ _NESTED_PLACEMENT_KINDS = {
     AllocAstNode: ".alloc",
     RelocateAstNode: ".relocate",
     CodePositionAstNode: "`*=` (CodePosition)",
+    StructPatchAstNode: ".patch",
 }
 
 

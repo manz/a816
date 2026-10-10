@@ -41,6 +41,7 @@ from a816.parse.ast.nodes import (
     ScopeAstNode,
     StructAstNode,
     StructInstanceAstNode,
+    StructPatchAstNode,
     SymbolAffectationAstNode,
     TableAstNode,
     TextAstNode,
@@ -70,6 +71,7 @@ class A816Formatter:
             CodeRelocationAstNode,
             CodeLookupAstNode,
             StructInstanceAstNode,
+            StructPatchAstNode,
         )
 
     def format_text(
@@ -505,7 +507,7 @@ class A816Formatter:
 
     @staticmethod
     def _opens_istruct_block(stripped: str) -> bool:
-        return stripped.startswith(".istruct ") and stripped.endswith("{")
+        return stripped.startswith((".istruct ", ".patch ")) and stripped.endswith("{")
 
     def _append_istruct_line(self, line: str, base_ws: int, levels: int, out: list[str]) -> int | None:
         """Re-indent one line of a multi-line `.istruct`, keeping its nesting.
@@ -638,7 +640,7 @@ class A816Formatter:
         A multi-line `.istruct` shifts as a whole so its fields stay nested
         under the header; other nodes indent only their flush-left lines.
         """
-        if isinstance(node, StructInstanceAstNode):
+        if isinstance(node, StructInstanceAstNode | StructPatchAstNode):
             prefix = " " * self.options.indent_size
             return [f"{prefix}{line}" if line.strip() else line for line in node_lines]
         return [self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines]

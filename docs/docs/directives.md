@@ -594,6 +594,31 @@ does not match the field, `E0333` initializer longer than the array,
 `E0334` non-ASCII string, `E0335` initialized bit-field run wider than
 32 bits.
 
+### `.patch Type at ADDR { field = value, ... }`
+
+Writes only the fields it names, over bytes a816 does not own: a ROM
+hack's header, vector or table record whose other fields must keep the
+original ROM's bytes. The initializer is `.istruct`'s, with two
+differences: nothing is zero-filled (a short string or list writes just
+its own bytes), and the instance sits at a fixed `ADDR`, any constant
+expression, typed binds included.
+
+```ca65
+.import "@std/snes/header"
+
+; New title; maker, version and checksum stay as the ROM has them.
+.patch SnesHeader at SNES_HEADER_BASE {
+    title = "MY HACK"
+}
+```
+
+Each run of touching fields becomes a pinned block at `ADDR` plus its
+offset, so a patch over another pinned block is the usual overlap
+error (`E0408`). A bit-field byte is written whole: give every field
+sharing it, since a816 never sees the ROM's byte to merge into
+(`E0348` otherwise). `.patch` places itself, so it goes outside any
+`.alloc` (`E0341`). The other errors are `.istruct`'s.
+
 ### `.text "..."` and `.table "path"`
 
 Encodes a string using the active character map. Set the map per

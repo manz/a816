@@ -15,6 +15,7 @@ from a816.parse.codegen import (
     opcodes,  # noqa: F401
     pool,  # noqa: F401
     struct_instance,  # noqa: F401
+    struct_patch,  # noqa: F401
     structs,  # noqa: F401
     symbols,  # noqa: F401
 )

@@ -56,7 +56,7 @@ _SIZED_NODES: dict[int, type[ByteNode | WordNode | LongNode | DwordNode]] = {
 _Field = tuple[str, str]
 
 
-def _value_kind_error(value: InitValue, expected: str) -> NodeError:
+def value_kind_error(value: InitValue, expected: str) -> NodeError:
     return NodeError(
         f"expected {expected} here",
         value.file_info,
@@ -66,7 +66,7 @@ def _value_kind_error(value: InitValue, expected: str) -> NodeError:
     )
 
 
-def _too_long_error(value: InitValue, length: int, count: int) -> NodeError:
+def too_long_error(value: InitValue, length: int, count: int) -> NodeError:
     return NodeError(
         f"initializer has {length} elements but the array holds {count}",
         value.file_info,
@@ -78,7 +78,7 @@ def _zeros(size: int) -> list[NodeProtocol]:
     return [BytesNode(bytes(size))] if size else []
 
 
-def _encode_string(value: StringInitAstNode) -> bytes:
+def encode_string(value: StringInitAstNode) -> bytes:
     try:
         return value.text.encode("ascii")
     except UnicodeEncodeError as e:
@@ -94,7 +94,7 @@ def _expression_token(kind: TokenType, text: str, anchor: Token) -> Token:
     return Token(kind, text, anchor.position)
 
 
-class _InstanceEmitter:
+class InstanceEmitter:
     """Walk a struct's declared fields, turning an initializer into data nodes."""
 
     def __init__(self, resolver: Resolver) -> None:
@@ -116,7 +116,7 @@ class _InstanceEmitter:
         for is_bit_run, group in groupby(fields, key=lambda f: bit_width_from_type(f[1]) is not None):
             run = list(group)
             if is_bit_run:
-                code.extend(self._bit_run(run, entries))
+                code.extend(self.bit_run(run, entries))
                 continue
             for name, field_type in run:
                 code.extend(self._field(field_type, entries.get(name)))
@@ -126,50 +126,50 @@ class _InstanceEmitter:
         element_type, count = split_array_type(field_type)
         value = entry.value if entry is not None else None
         if count is None:
-            return self._element(element_type, value)
+            return self.element(element_type, value)
         return self._array(element_type, count, value)
 
-    def _element_size(self, element_type: str) -> int:
+    def element_size(self, element_type: str) -> int:
         primitive = STRUCT_FIELD_SIZES.get(element_type)
         return primitive if primitive is not None else self.resolver.struct_sizes[element_type]
 
-    def _element(self, element_type: str, value: InitValue | None) -> list[NodeProtocol]:
+    def element(self, element_type: str, value: InitValue | None) -> list[NodeProtocol]:
         """One scalar or nested-struct element; `None` zero-fills it."""
         if value is None:
-            return _zeros(self._element_size(element_type))
+            return _zeros(self.element_size(element_type))
         size = STRUCT_FIELD_SIZES.get(element_type)
         if size is None:
             if not isinstance(value, StructInitAstNode):
-                raise _value_kind_error(value, f"a `{{ ... }}` initializer for struct {element_type!r}")
+                raise value_kind_error(value, f"a `{{ ... }}` initializer for struct {element_type!r}")
             return self.struct(element_type, value)
         if not isinstance(value, ExpressionAstNode):
-            raise _value_kind_error(value, f"an expression for a `{element_type}` field")
+            raise value_kind_error(value, f"an expression for a `{element_type}` field")
         return [self._sized(size, value)]
 
     def _array(self, element_type: str, count: int, value: InitValue | None) -> list[NodeProtocol]:
-        element_size = self._element_size(element_type)
+        element_size = self.element_size(element_type)
         if value is None:
             return _zeros(element_size * count)
         if isinstance(value, StringInitAstNode) and element_type == "byte":
-            data = _encode_string(value)
+            data = encode_string(value)
             if len(data) > count:
-                raise _too_long_error(value, len(data), count)
+                raise too_long_error(value, len(data), count)
             return [BytesNode(data + bytes(count - len(data)))]
         if not isinstance(value, ListInitAstNode):
-            raise _value_kind_error(value, f"a `[...]` list for a `{element_type}[{count}]` field")
+            raise value_kind_error(value, f"a `[...]` list for a `{element_type}[{count}]` field")
         items = value.values
         if len(items) > count:
-            raise _too_long_error(value, len(items), count)
+            raise too_long_error(value, len(items), count)
         code: list[NodeProtocol] = []
         for item in items:
-            code.extend(self._element(element_type, item))
+            code.extend(self.element(element_type, item))
         code.extend(_zeros(element_size * (count - len(items))))
         return code
 
     def _sized(self, size: int, expression: ExpressionAstNode) -> NodeProtocol:
         return _SIZED_NODES[size](ExpressionNode(expression, self.resolver, expression.file_info))
 
-    def _bit_run(self, run: list[_Field], entries: dict[str, StructFieldInitAstNode]) -> list[NodeProtocol]:
+    def bit_run(self, run: list[_Field], entries: dict[str, StructFieldInitAstNode]) -> list[NodeProtocol]:
         """Pack a run of `uN` fields into one little-endian value."""
         widths = [(name, bit_width_from_type(field_type) or 0) for name, field_type in run]
         size = (sum(width for _name, width in widths) + 7) // 8
@@ -200,7 +200,7 @@ class _InstanceEmitter:
         """`((value & mask) << lsb)` as expression tokens anchored on the field."""
         value = entry.value
         if not isinstance(value, ExpressionAstNode):
-            raise _value_kind_error(value, f"an expression for the `u{width}` field {entry.name!r}")
+            raise value_kind_error(value, f"an expression for the `u{width}` field {entry.name!r}")
         anchor = entry.file_info
 
         def tok(kind: TokenType, text: str) -> Token:
@@ -234,7 +234,7 @@ def generate_istruct(
             code=str(E_CODEGEN_ISTRUCT_UNKNOWN_TYPE),
             hint=f"declare `.struct {node.type_name} {{ ... }}` (or import it) first",
         )
-    return _InstanceEmitter(resolver).struct(node.type_name, node.init)
+    return InstanceEmitter(resolver).struct(node.type_name, node.init)
 
 
 generators["istruct"] = generate_istruct
