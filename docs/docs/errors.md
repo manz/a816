@@ -252,6 +252,8 @@ separate blocks separated by a blank line.
   missing (with a read-only region), not an integer, or not positive.
 - `E0509` `board` names no board in `boards.bml`; the message
   suggests close names.
+- `E0510` `[defines]` is not a table, a key is not a symbol name, or a
+  default is not an integer or a string.
 
 ### Warnings
 
@@ -265,8 +267,9 @@ separate blocks separated by a blank line.
 - `W0002` an `.if` names something the project defines nowhere (in no
   `.s` / `.i` file under its `a816.toml`). An undefined name reads as
   false, which is how `.if DEBUG` works without `-D DEBUG`, so a deleted
-  or misspelt flag silently drops what it gated. A name that only comes
-  from `-D` takes `; noqa: W0002`. Reported by `a816 check`.
+  or misspelt flag silently drops what it gated. Declare a name that
+  only comes from `-D` under `[defines]` in `a816.toml`. Reported by
+  `a816 check`.
 
 ## LSP integration
 

@@ -25,11 +25,10 @@ Usage:
 
 import argparse
 import logging
-import re
 import sys
 from pathlib import Path
 
-from a816.config import A816Config, discover_a816_config, merge_build_settings
+from a816.config import DEFINE_NAME, A816Config, discover_a816_config, merge_build_settings
 from a816.exceptions import A816Error, LinkerError
 from a816.linker import Linker
 from a816.mappers import CLI_MAPPERS
@@ -56,12 +55,14 @@ def _apply_a816_toml(args: argparse.Namespace) -> None:
         include_paths=[Path(p) for p in args.include_paths],
         module_paths=[Path(p) for p in args.module_paths],
         experimental=list(args.experimental or []),
+        symbols=_parse_defines(args.defines),
     )
     args.mapping = settings.mapping or _DEFAULT_MAPPING
     args.bus_map = settings.bus_map
     args.include_paths = [str(p) for p in settings.include_paths]
     args.module_paths = [str(p) for p in settings.module_paths]
     args.experimental = settings.experimental
+    args.symbols = settings.symbols
 
 
 def _discover_config(args: argparse.Namespace) -> A816Config | None:
@@ -164,10 +165,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# A symbol name a source can spell: identifiers, optionally dotted (`scope.name`).
-_DEFINE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
-
-
 def _define(text: str) -> str:
     """One `-D NAME=VALUE`, checked as argparse reads it.
 
@@ -178,7 +175,7 @@ def _define(text: str) -> str:
     name, sep, _value = text.partition("=")
     if not sep:
         raise argparse.ArgumentTypeError(f"{text!r}: expected NAME=VALUE")
-    if not _DEFINE_NAME.match(name):
+    if not DEFINE_NAME.match(name):
         raise argparse.ArgumentTypeError(
             f"{name!r} is not a symbol name; pass each definition as its own argument, -D NAME=VALUE"
         )
@@ -206,7 +203,7 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         output_format=args.format,
         module_paths=[Path(p) for p in args.module_paths],
         output_dir=args.obj_dir,
-        symbols=_parse_defines(args.defines),
+        symbols=args.symbols,
         copier_header=args.copier_header,
         include_paths=[Path(p) for p in args.include_paths],
         overlap_mode=args.overlap_mode,
@@ -240,7 +237,7 @@ def _run_compile_only(args: argparse.Namespace) -> int:
         program = _new_compile_program(args)
         for inc_path in args.include_paths:
             program.add_include_path(inc_path)
-        for key, value in _parse_defines(args.defines).items():
+        for key, value in args.symbols.items():
             program.resolver.current_scope.add_symbol(key, value)
         exit_code = program.assemble_as_object(str(input_file), obj_file)
         if exit_code != 0:
@@ -256,7 +253,7 @@ def _load_or_compile_object(input_file: Path, args: argparse.Namespace) -> Objec
         sys.exit(-1)
 
     program = _new_compile_program(args)
-    for key, value in _parse_defines(args.defines).items():
+    for key, value in args.symbols.items():
         program.resolver.current_scope.add_symbol(key, value)
     temp_obj_file = input_file.with_suffix(".tmp.o")
     exit_code = program.assemble_as_object(str(input_file), temp_obj_file)

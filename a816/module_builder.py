@@ -503,10 +503,11 @@ def build_with_imports(
             include_paths=include_paths,
             module_paths=module_paths,
             experimental=experimental,
+            symbols=symbols,
         )
         mapping, bus_map = settings.mapping, settings.bus_map
         include_paths, module_paths = settings.include_paths, settings.module_paths
-        experimental = settings.experimental
+        experimental, symbols = settings.experimental, settings.symbols
 
     paths = module_paths or []
     if main_source.parent not in paths:

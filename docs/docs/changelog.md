@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 (unreleased)
+
+- `[defines]` in `a816.toml` declares the names a build passes with
+  `-D`, each with its default: `a816 check` counts them as defined (no
+  `W0002`), and a build binds the default unless `-D` overrides it.
+  A bad entry is `E0510`.
+
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 
 Separate compilation and linking, declared memory layout (freespace and
