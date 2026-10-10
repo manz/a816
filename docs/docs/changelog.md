@@ -6,6 +6,10 @@
   `-D`, each with its default: `a816 check` counts them as defined (no
   `W0002`), and a build binds the default unless `-D` overrides it.
   A bad entry is `E0510`.
+- `a816 check`, `a816 format` and `a816 fix` with no paths take the
+  project the nearest `a816.toml` describes: the `.s` / `.i` files under
+  the entrypoint's directory and `module-paths`, without `build/`,
+  `obj/` and dot directories.
 
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 

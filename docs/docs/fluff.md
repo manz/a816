@@ -4,6 +4,12 @@
 autofix passes over `.s` / `.i` sources. All three share the parser
 the assembler uses, so the rules see real AST, not regex hits.
 
+Given no paths, they take the project the nearest `a816.toml` (from
+the working directory up) describes: the sources under the
+entrypoint's directory and every `module-paths` directory, leaving
+out `build/`, `obj/` and dot directories. Outside a project, name the
+files.
+
 ## Format
 
 ```

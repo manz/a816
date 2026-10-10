@@ -10,8 +10,10 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from a816.config import find_a816_toml
 from a816.exceptions import A816ConfigError, FormattingError
 from a816.fluff.core import Diagnostic, Rule
+from a816.fluff.project import project_sources
 from a816.fluff.runner import apply_fixes, lint_file, lint_text
 from a816.formatter import A816Formatter
 
@@ -50,26 +52,29 @@ def _colorize_diff(diff_lines: Iterable[str]) -> str:
     return "".join(colored)
 
 
+_PATHS_HELP = (
+    "Files or directories to {verb}. Directories are walked for .s / .i sources."
+    " None: the project the nearest a816.toml describes."
+)
+
+
 def _build_fluff_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="a816 fluff", description="Format and lint a816 assembly sources.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     check_parser = subparsers.add_parser("check", help="Run a816 fluff lint rules.")
     check_parser.add_argument(
         "paths",
-        nargs="+",
+        nargs="*",
         type=Path,
-        help="Files or directories to lint. Directories are walked for .s / .i sources.",
+        help=_PATHS_HELP.format(verb="lint"),
     )
     format_parser = subparsers.add_parser("format", help="Format .s/.i sources under the given path.")
     format_parser.add_argument(
         "paths",
-        nargs="+",
+        nargs="*",
         type=Path,
-        help=(
-            "One or more files or directories to format. Directories are walked"
-            " recursively for .s / .i sources. Use `-` (alone) to read from stdin"
-            " and write the formatted text to stdout."
-        ),
+        help=_PATHS_HELP.format(verb="format")
+        + " Use `-` (alone) to read from stdin and write the formatted text to stdout.",
     )
     format_parser.add_argument(
         "--check",
@@ -84,9 +89,9 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
     fix_parser = subparsers.add_parser("fix", help="Apply fluff autofixes in place.")
     fix_parser.add_argument(
         "paths",
-        nargs="+",
+        nargs="*",
         type=Path,
-        help="Files or directories to fix. Directories are walked for .s / .i sources.",
+        help=_PATHS_HELP.format(verb="fix"),
     )
     fix_parser.add_argument(
         "--select",
@@ -416,6 +421,8 @@ def fluff_main(argv: Sequence[str] | None = None) -> int:
 
 
 def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.command in {"check", "format", "fix"} and not args.paths:
+        args.paths = _project_paths(parser)
     if args.command == "format":
         return _run_format(args, parser)
     if args.command == "check":
@@ -426,6 +433,16 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         return _run_explain(args)
     parser.error("Unknown command")
     return 2  # parser.error never returns, but mypy needs this
+
+
+def _project_paths(parser: argparse.ArgumentParser) -> list[Path]:
+    """No paths: the sources of the project around the working directory."""
+    toml = find_a816_toml(Path.cwd())
+    if toml is None:
+        parser.error("no paths given and no a816.toml above the working directory: name the files, or run in a project")
+    cwd = Path.cwd().resolve()
+    # Shown as the user would type them: relative to where `check` runs.
+    return [source.relative_to(cwd) if source.is_relative_to(cwd) else source for source in project_sources(toml)]
 
 
 def fluff_legacy_main() -> int:
