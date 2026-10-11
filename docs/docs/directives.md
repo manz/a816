@@ -786,6 +786,9 @@ so it may use pooled labels and the module's private ones:
 .assert dialogue_stream + sizeof(dialogue_stream) <= 0x5d0000, "the stream overruns the gap"
 ```
 
+An assert inside an `.alloc` body sees that body's `_` labels; outside
+the body they are private, and the failure says so.
+
 A false assert fails the link with `E0407`; every failed assert is
 reported, each with its message, expression and source line.
 

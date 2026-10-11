@@ -400,6 +400,7 @@ class ModuleBuilder:
         for module_name in compilation_order:
             constants, owners = self._constants_for(module_name, compilation_order, exported)
             obj = self._build_module(module_name, keys, constants, owners)
+            obj.module = module_name
             exported[module_name] = self._exported_constants(obj)
             object_files.append(obj)
 

@@ -91,14 +91,18 @@ class AssembleMixin:
         from a816.parse.ast.expression import eval_expression_str
 
         failures: list[tuple[str, str, str]] = []
-        for check in self.resolver.direct_asserts:
+        resolver = self.resolver
+        restore = resolver.current_scope
+        for check, scope in resolver.direct_asserts:
+            resolver.current_scope = scope
             try:
-                holds = bool(eval_expression_str(check.expression, self.resolver))
+                holds = bool(eval_expression_str(check.expression, resolver))
             except SymbolNotDefined as e:
                 failures.append((f"{check.message} (`{e}` is not defined)", check.expression, check.source))
                 continue
             if not holds:
                 failures.append((check.message, check.expression, check.source))
+        resolver.current_scope = restore
         if failures:
             raise LinkAssertError(failures)
 

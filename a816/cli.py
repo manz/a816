@@ -260,7 +260,9 @@ def _load_or_compile_object(input_file: Path, args: argparse.Namespace) -> Objec
     if exit_code != 0:
         sys.exit(exit_code)
     try:
-        return ObjectFile.from_file(str(temp_obj_file))
+        obj = ObjectFile.from_file(str(temp_obj_file))
+        obj.module = input_file.stem
+        return obj
     finally:
         temp_obj_file.unlink()
 

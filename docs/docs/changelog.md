@@ -21,6 +21,11 @@
   names, each pinned at its offset, so a ROM hack can change a
   header's title or one field of a table record and keep the rest of
   the original bytes. A partly given bit-field byte is `E0348`.
+- A `.assert` inside an `.alloc` body sees the body's `_` labels (it
+  failed at link with "cannot resolve"); one outside the body says the
+  label is private to it. `.adbg` names a private label after its
+  module, `battle._loop`, where two modules both showed `__sc1___loop`.
+  Objects change: caches rebuild once.
 
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 

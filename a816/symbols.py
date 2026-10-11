@@ -432,7 +432,7 @@ class Resolver:
         self.opcode_pc: int | None = None
         # `.assert`s of a direct build, checked once labels are final
         # (object mode hands them to the linker instead).
-        self.direct_asserts: list[LinkAssert] = []
+        self.direct_asserts: list[tuple[LinkAssert, Scope]] = []
         # Placement context seen by `.import` at codegen. A `*=` cursor
         # stays active until the end of the source unit that opened it
         # (`.import` restores the importer's flag); the depth counts the

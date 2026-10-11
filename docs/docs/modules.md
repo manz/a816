@@ -24,6 +24,10 @@ If only `.s` is available it is compiled to `.o` first, then linked.
 - All other names are **GLOBAL** and exported in the object file.
 - Names declared inside `named_scope { ... }` export as `named_scope.name`.
 - Anonymous `{ ... }` blocks are scoped: labels declared inside never leak.
+- An `.alloc` body is its own scope: a `_` label inside it is private to
+  that alloc. Its public labels reach the rest of the module; make a name
+  public to share it between allocs. `.adbg` names a private label after
+  its module (`battle._loop`).
 - A module sees the constants of the modules it imports, directly or
   through another import. A constant of a module it does not import is
   `E0200`, and the hint names the `.import` to add: seeing it anyway

@@ -160,7 +160,7 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 7  # 7: objects list their path-derived `.incbin` names (W0001 at link)
+CODEGEN_REVISION = 8  # 8: an alloc body's `.assert` names its `_` labels as they export
 
 PC_RELATIVE_PREFIX = "pc-relative:"
 """Marks an expression relocation whose value is the expression minus the
@@ -302,6 +302,9 @@ class ObjectFile:
         self.path_names: PathNames = path_names or PathNames()
         self.origin: str = ""
         """Path the object was read from (not serialized): names it in diagnostics."""
+        self.module: str = ""
+        """Module the object was built from (not serialized): qualifies its
+        private labels in linked output, else the stem of `origin`."""
 
     # ----- legacy single-section accessors (tests / older callers) -----
     def _ensure_first_section(self) -> Section:
