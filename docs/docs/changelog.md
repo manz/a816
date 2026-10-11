@@ -28,6 +28,8 @@
   An `.alloc` body's `_` constant in an expression over an imported
   symbol (`text + _CELLS * 2`) folds at compile time instead of failing
   the link. Objects change: caches rebuild once.
+- The Windows binary ships the package's data files (`boards.bml`, the
+  standard library): the 1.1.0 one failed any build naming a `board`.
 
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 
