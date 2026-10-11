@@ -34,7 +34,7 @@ from a816.section import PINNED_POOL_PREFIX, Placement
 
 _SIZE_SYMBOL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\.__size\b")
 _IDENT_RE = re.compile(r"[A-Za-z_][\w.]*")
-_SCOPE_MANGLE_RE = re.compile(r"__sc\d+__(.+)")
+_SCOPE_MANGLE_RE = re.compile(r"__sc\d+__(_.+)")
 
 logger = logging.getLogger(__name__)
 
@@ -854,8 +854,10 @@ class Linker:
 
 
 def _shown_local_name(name: str, obj_file: ObjectFile) -> str:
-    """A scope-mangled LOCAL as `.adbg` shows it: `__sc1___loop` of module
-    `battle` is `battle._loop`, so two modules' `_loop` no longer print alike."""
+    """A scope-mangled private LOCAL as `.adbg` shows it: `__sc1___loop` of
+    module `battle` is `battle._loop`, so two modules' `_loop` no longer print
+    alike. Other mangled names (a macro's parameters) keep their per-scope
+    name: one per expansion, each with its own value."""
     match = _SCOPE_MANGLE_RE.match(name)
     if match is None:
         return name

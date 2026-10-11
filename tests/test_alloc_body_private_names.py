@@ -93,6 +93,18 @@ def test_adbg_names_a_private_label_by_its_module(tmp_path: Path) -> None:
     assert _adbg_locals(tmp_path) == {"battle._loop": 0x009000, "menu._loop": 0x00A000}
 
 
+_MACRO = ".macro push(size) {\n    .dw size\n}\n.alloc hook at 0x009000 {\n    push(4)\n    push(8)\n}\n"
+
+
+def test_macro_parameters_keep_a_name_per_expansion(tmp_path: Path) -> None:
+    (tmp_path / "vwf.s").write_text(_MACRO)
+    assert Program().assemble_as_object(str(tmp_path / "vwf.s"), tmp_path / "vwf.o") == 0
+
+    linked = Linker([ObjectFile.from_file(str(tmp_path / "vwf.o"))]).link(base_address=0x8000)
+
+    assert "vwf.size" not in {name for name, *_ in linked.symbols}
+
+
 def test_a_linked_object_falls_back_to_its_file_name(tmp_path: Path) -> None:
     (tmp_path / "battle.s").write_text(_LOOP.format(name="battle_hook", addr="0x009000"))
     assert Program().assemble_as_object(str(tmp_path / "battle.s"), tmp_path / "battle.o") == 0
