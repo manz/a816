@@ -45,8 +45,10 @@ def test_an_assert_sees_a_private_label_defined_after_it(tmp_path: Path) -> None
 
 
 def test_a_false_assert_in_the_body_still_fails(tmp_path: Path) -> None:
+    false_assert = _INSIDE.replace("== 6", "== 7")
+
     with pytest.raises(LinkAssertError):
-        _link(tmp_path, _INSIDE.replace("== 6", "== 7"))
+        _link(tmp_path, false_assert)
 
 
 def test_two_allocs_assert_on_their_own_private_label(tmp_path: Path) -> None:
