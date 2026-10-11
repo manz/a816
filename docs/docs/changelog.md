@@ -25,7 +25,9 @@
   failed at link with "cannot resolve"); one outside the body says the
   label is private to it. `.adbg` names a private label after its
   module, `battle._loop`, where two modules both showed `__sc1___loop`.
-  Objects change: caches rebuild once.
+  An `.alloc` body's `_` constant in an expression over an imported
+  symbol (`text + _CELLS * 2`) folds at compile time instead of failing
+  the link. Objects change: caches rebuild once.
 
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 

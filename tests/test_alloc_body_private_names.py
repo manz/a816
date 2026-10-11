@@ -71,6 +71,24 @@ def test_a_direct_build_keeps_it_private_outside(tmp_path: Path) -> None:
     assert _direct(tmp_path, _OUTSIDE) == 128
 
 
+_STATE = ".pool st { range 0x7e2000 0x7e2fff bss }\n.reserve text 0x40 in st\n"
+_CONSTANT = '.import "state"\n.alloc code at 0x008000 {\n    _CELLS := 15\n    lda.w text + _CELLS * 2, x\n}\n'
+
+
+def test_a_body_constant_folds_into_a_link_time_expression(tmp_path: Path) -> None:
+    (tmp_path / "state.s").write_text(_STATE)
+    (tmp_path / "main.s").write_text(_CONSTANT)
+    result = build_with_imports(
+        main_source=tmp_path / "main.s",
+        output_file=tmp_path / "out.sfc",
+        output_format="sfc",
+        output_dir=tmp_path / "obj",
+    )
+
+    assert result.exit_code == 0, result.diagnostics
+    assert (tmp_path / "out.sfc").read_bytes()[:3] == bytes([0xBD, 0x1E, 0x20])
+
+
 _LOOP = ".alloc {name} at {addr} {{\n_loop:\n    bra _loop\n}}\n"
 
 
