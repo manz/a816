@@ -36,6 +36,7 @@ from a816.parse.ast.nodes import (
     RelocateAstNode,
     ReserveAstNode,
     ReserveTypedAstNode,
+    StructPatchAstNode,
 )
 from a816.parse.ast.visitor import walk
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen_placement_body, generators
@@ -464,6 +465,7 @@ _NESTED_PLACEMENT_KINDS = {
     AllocAstNode: ".alloc",
     RelocateAstNode: ".relocate",
     CodePositionAstNode: "`*=` (CodePosition)",
+    StructPatchAstNode: ".patch",
 }
 
 
@@ -608,8 +610,10 @@ def generate_assert(
     """Queue a `.assert` until every address is final: for the linker in
     object mode, for the end of label resolution in a direct build. It may
     name pooled labels, which only have their address after placement.
-    Parse-only runs (LSP) skip it."""
+    Parse-only runs (LSP) skip it. Its names resolve in the scope it is
+    written in, so an `.alloc` body's `.assert` sees the body's `_` labels."""
     from a816.object_file import LinkAssert
+    from a816.parse.nodes import AssertNode
 
     # Rendered with the resolver: `sizeof` / `countof` fold to numbers and
     # casts to arithmetic here, since the linker has no struct layouts.
@@ -617,8 +621,9 @@ def generate_assert(
     check = LinkAssert(expression, node.message, _source_of_token(file_info))
     if resolver.context.is_object_mode and resolver.context.object_writer is not None:
         resolver.context.object_writer.asserts.append(check)
-    elif resolver.context.is_direct_mode:
-        resolver.direct_asserts.append(check)
+        return [AssertNode(check, resolver)]
+    if resolver.context.is_direct_mode:
+        resolver.direct_asserts.append((check, resolver.current_scope))
     return []
 
 

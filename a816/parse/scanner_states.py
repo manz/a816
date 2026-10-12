@@ -349,6 +349,7 @@ DIRECTIVE_NAMES = {
     "for",
     "struct",
     "istruct",
+    "patch",
     "extern",
     "import",
     "debug",

@@ -4,7 +4,7 @@ Assembler diagnostics carry a stable error code so you can search docs
 by code, suppress individual rules in tooling, and correlate output
 across CLI runs. Every assembler diagnostic carries one; the test suite
 fails if a new error is raised without a code or a code is missing from
-the catalog below.
+the catalog below. `a816 explain E0317` prints a code's entry.
 
 ## Anatomy
 
@@ -19,8 +19,8 @@ error[E0200]: `my_routime` is not defined in the current scope
   = hint: did you mean `my_routine`?
 ```
 
-- `error[CODE]` — severity + stable identifier.
-- `--> file:line:column` — the failure location.
+- `error[CODE]`: severity + stable identifier.
+- `--> file:line:column`: the failure location.
 - Source block with `±1` context lines and a caret pointing at the
   offending span.
 - Optional `= hint:` / `= note:` lines with fix suggestions.
@@ -30,46 +30,46 @@ separate blocks separated by a blank line.
 
 ## Categories
 
-- `E0001..E0099` — scanner / lexing.
-- `E0100..E0199` — parser.
-- `E0200..E0299` — symbol resolution.
-- `E0300..E0399` — codegen.
-- `E0400..E0499` — linker / object files.
-- `E0500..E0599` — I/O / config.
+- `E0001..E0099`: scanner / lexing.
+- `E0100..E0199`: parser.
+- `E0200..E0299`: symbol resolution.
+- `E0300..E0399`: codegen.
+- `E0400..E0499`: linker / object files.
+- `E0500..E0599`: I/O / config.
 - `W0001..`: warnings. The build still succeeds.
 
 ## Code catalog
 
 ### Scanner
 
-- `E0001` invalid input character — the scanner met a character it
+- `E0001` invalid input character: the scanner met a character it
   doesn't know how to start a token with.
-- `E0002` unterminated string literal — close the string with the
+- `E0002` unterminated string literal: close the string with the
   matching quote character.
-- `E0003` unknown directive keyword — `.directive` not in the
+- `E0003` unknown directive keyword: `.directive` not in the
   supported set; see [directives.md](directives.md).
 - `E0004` unterminated block comment: a `/*` with no closing `*/`. The
   caret sits on the opening `/*`.
 
 ### Parser
 
-- `E0100` unexpected token — generic structural failure.
-- `E0101` missing expected token — the parser knew what it wanted
+- `E0100` unexpected token: generic structural failure.
+- `E0101` missing expected token: the parser knew what it wanted
   next but found something else.
-- `E0102` invalid expression — the expression couldn't be parsed at
+- `E0102` invalid expression: the expression couldn't be parsed at
   the given position.
-- `E0103` duplicate struct field — each `.struct` field name must
+- `E0103` duplicate struct field: each `.struct` field name must
   be unique within the block.
-- `E0104` typed-cast bind requires `:=` — use `name := expr as T`
+- `E0104` typed-cast bind requires `:=`: use `name := expr as T`
   instead of `=`.
-- `E0105` field access requires typed cast — `(expr).field` only
+- `E0105` field access requires typed cast: `(expr).field` only
   works on a typed cast: `(expr as Type).field`.
-- `E0106` unknown directive attribute — the directive doesn't
+- `E0106` unknown directive attribute: the directive doesn't
   accept the attribute name.
-- `E0107` pool declares no ranges — every `.pool` needs at least
+- `E0107` pool declares no ranges: every `.pool` needs at least
   one `range LO HI`.
-- `E0108` unknown pool strategy — accepted values: `pack`, `order`.
-- `E0109` include file unreadable — the path resolution failed.
+- `E0108` unknown pool strategy: accepted values: `pack`, `order`.
+- `E0109` include file unreadable: the path resolution failed.
 - `E0115` opcode needs an operand. The opcode is followed by `}` or
   the end of input where its operand should be (`{ lda }`).
 - `E0120` struct array count must be a positive integer
@@ -82,11 +82,11 @@ separate blocks separated by a blank line.
 
 ### Symbols
 
-- `E0200` symbol not defined — the resolver couldn't find this
+- `E0200` symbol not defined: the resolver couldn't find this
   symbol; the error includes a did-you-mean suggestion when a close
   match exists in scope.
 - `E0201` external reference outside object mode.
-- `E0202` expression failed to evaluate — likely a forward
+- `E0202` expression failed to evaluate: likely a forward
   reference the resolver couldn't bind.
 - `E0205` placement into an undeclared pool. `.alloc`, `.reserve`,
   `.relocate` and `.reclaim` name a pool that no `.pool` declared
@@ -110,10 +110,10 @@ separate blocks separated by a blank line.
 
 ### Codegen
 
-- `E0300` node failed during emission — generic codegen failure.
-- `E0301` unknown struct field type — `.struct` references an
+- `E0300` node failed during emission: generic codegen failure.
+- `E0301` unknown struct field type: `.struct` references an
   identifier that isn't a primitive or a previously-declared struct.
-- `E0302` struct field self-reference — a struct cannot embed
+- `E0302` struct field self-reference: a struct cannot embed
   itself.
 - `E0303` struct redefined.
 - `E0304` typed bind references unknown struct type.
@@ -205,6 +205,9 @@ separate blocks separated by a blank line.
   the module bind: the same file included twice, or two paths that
   collapse to one name (`f.bin` and `f_bin`). It would read whichever
   came first. Label each blob and use the labels (see `W0001`).
+- `E0348` a `.patch` gives some fields of a bit-field byte but not
+  all: a816 never sees the ROM's byte, so give every field that
+  shares it.
 
 ### Linker
 
@@ -252,6 +255,8 @@ separate blocks separated by a blank line.
   missing (with a read-only region), not an integer, or not positive.
 - `E0509` `board` names no board in `boards.bml`; the message
   suggests close names.
+- `E0510` `[defines]` is not a table, a key is not a symbol name, or a
+  default is not an integer or a string.
 
 ### Warnings
 
@@ -261,12 +266,15 @@ separate blocks separated by a blank line.
   blob instead: alone in `.alloc vwf_font { ... }` it is `vwf_font`,
   and its size `sizeof(vwf_font)`; `a816 fix` rewrites those
   references. Where the blob shares its block, put a label before it.
-  The path names go in 1.2. Reported by the build and by `a816 check`.
+  The path names go in 1.2. Reported by the build (by the linker for a
+  module that names the blob without importing its module, and again
+  when a module comes from the build cache) and by `a816 check`.
 - `W0002` an `.if` names something the project defines nowhere (in no
   `.s` / `.i` file under its `a816.toml`). An undefined name reads as
   false, which is how `.if DEBUG` works without `-D DEBUG`, so a deleted
-  or misspelt flag silently drops what it gated. A name that only comes
-  from `-D` takes `; noqa: W0002`. Reported by `a816 check`.
+  or misspelt flag silently drops what it gated. Declare a name that
+  only comes from `-D` under `[defines]` in `a816.toml`. Reported by
+  `a816 check`.
 
 ## LSP integration
 
@@ -277,7 +285,7 @@ familiar inline chip.
 
 ## Suppressing noise
 
-There is no global suppression knob for `E*` errors — they signal real
+There is no global suppression knob for `E*` errors: they signal real
 failures, not style issues. Style-style suppression lives on the
 `fluff` side (`; noqa: <RULE>` for `DOC*` / `S*` / `N*`); see
 [fluff.md](fluff.md).

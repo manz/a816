@@ -26,11 +26,11 @@ $ a816 build   <files> -o <output>    # assemble + link
 $ a816 check   <paths>                # lint with fluff (DOC*, E501, N80*, OP001, S00*, ST00*, UP001)
 $ a816 format  <paths>                # format .s / .i sources with fluff
 $ a816 fix     <paths>                # apply fluff autofixes (--diff / --check / --select / --unsafe-fixes)
-$ a816 explain <CODE>                 # rule rationale + good/bad example pair
+$ a816 explain <CODE>                 # a rule's rationale, or an error code's entry
 ```
 
 Bare invocation (`a816 file.s -o out.ips`) still routes to `build`
-for backwards compatibility — existing scripts keep working.
+for backwards compatibility: existing scripts keep working.
 
 #### `a816 build` flags
 
@@ -87,10 +87,10 @@ $ a816 explain DOC003                   # rationale + good/bad example pair
 ```
 
 Private symbols (`_`-prefixed labels / macros / scopes) can carry
-docstrings without firing DOC002 — naming alone marks them internal.
+docstrings without firing DOC002: naming alone marks them internal.
 
 The legacy `a816-fluff` binary still works but prints a deprecation
-notice on stderr — prefer `a816 check` / `a816 format` going forward.
+notice on stderr; prefer `a816 check` / `a816 format` going forward.
 
 ### From Python
 
@@ -112,7 +112,7 @@ assert result.exit_code == 0, result.diagnostics
 ## Syntax
 
 See the [Directives reference](directives.md) for the full set of
-assembler directives — `*=`, `@=`, `.scope`, `.macro`, `.struct`,
+assembler directives: `*=`, `@=`, `.scope`, `.macro`, `.struct`,
 `.if`, `.for`, `.text` / `.table`, `.incbin`, and friends.
 
 ### Mnemonics
@@ -195,7 +195,7 @@ struct, plus `Name.__size` for the total length.
 emits `OAM.x = 0`, `OAM.y = 2`, `OAM.tile = 3`, `OAM.attr = 4`,
 `OAM.__size = 5`.
 
-Use the offsets against any base address — a hardware register, a WRAM
+Use the offsets against any base address: a hardware register, a WRAM
 pointer, an array stride:
 
 ```ca65
@@ -267,6 +267,10 @@ module-paths  = ["src/modules"]
 board         = "SHVC-1A3M-30"  # a real cartridge board (and/or [map.N])
 rom_size      = 0x400000
 
+[defines]
+DEBUG   = 0
+LANG_FR = 0
+
 [experimental]
 track_register_size = true
 ```
@@ -279,10 +283,14 @@ track_register_size = true
 | `board` | build | cartridge board from ares' `boards.bml` (`"SHVC-1A3M-30"`) |
 | `[map.N]` | build | bus region `N`, in bsnes/`boards.bml` form |
 | `rom_size` | build | ROM image size in bytes; required with read-only `[map.N]` regions |
+| `[defines]` | build, fluff | names a build passes with `-D`, each with its default |
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
 
 `--include-path` / `-I` replace the file's `include-paths` /
-`module-paths`; `--experimental` flags add to `[experimental]`.
+`module-paths`; `--experimental` flags add to `[experimental]`;
+`-D NAME=VALUE` overrides that name's `[defines]` default. A default is
+an integer or a string. `a816 check` counts a declared name as defined
+(no `W0002`); a `-D` name left out of `[defines]` still works.
 
 ### Bus map: `board` and `[map.N]`
 

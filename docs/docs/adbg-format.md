@@ -9,7 +9,7 @@ locations, modules, and symbols. It is written next to the linked output
 
 - Map every emitted byte (or instruction) to `(file, line, column)`.
 - List every linked module with its load base address.
-- Carry every symbol — labels, constants, aliases — with type, scope,
+- Carry every symbol (labels, constants, aliases) with type, scope,
   and owning module.
 - Stay easy to produce and parse from Python and C; no DWARF, no ELF.
 

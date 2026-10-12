@@ -111,7 +111,7 @@ dependencies = ["nuitka"]
 
 [tool.hatch.envs.binary.scripts]
 build = [
-    "nuitka --assume-yes-for-downloads --onefile a816/cli.py  --product-name=a816  --product-version=1.0.0 --company-name=ManZ --output-filename=x816 --no-deployment-flag=self-execution",
+    "nuitka --assume-yes-for-downloads --onefile --include-package-data=a816 a816/cli.py --product-name=a816  --product-version=1.0.0 --company-name=ManZ --output-filename=x816 --no-deployment-flag=self-execution",
 ]
 
 [tool.pytest.ini_options]

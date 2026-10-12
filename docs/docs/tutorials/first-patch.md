@@ -12,10 +12,10 @@ $ pip install a816
 
 The package ships several binaries:
 
-- `a816` / `x816` — the assembler CLI.
-- `a816-lsp-server` — Language Server, see [LSP](../lsp.md).
-- `xdds` — SNES-aware hex dump and disassembler.
-- `xobj` — object-file inspector.
+- `a816` / `x816`: the assembler CLI.
+- `a816-lsp-server`: Language Server, see [LSP](../lsp.md).
+- `xdds`: SNES-aware hex dump and disassembler.
+- `xobj`: object-file inspector.
 
 ## Project layout
 
@@ -43,7 +43,7 @@ module-paths  = ["src/modules"]
 `src/main.s`:
 
 ```ca65
-"""Tutorial patch — overwrite a single instruction."""
+"""Tutorial patch: overwrite a single instruction."""
 
 *= 0x008000          ; SNES bus address; LowROM maps to ROM offset 0x000000
     lda.b #0x00      ; replaces the original `lda.b #0x42`
@@ -58,7 +58,7 @@ The legacy `*= ADDR` shape is shown here for continuity with older
 patches in the wild. The equivalent modern form is:
 
 ```ca65
-"""Tutorial patch — overwrite a single instruction."""
+"""Tutorial patch: overwrite a single instruction."""
 
 .alloc at 0x008000 {
     lda.b #0x00
@@ -111,8 +111,8 @@ formatting on save. Concrete editor configs live in
 
 ## What's next
 
-- [Splitting a project into modules](modules-walkthrough.md) — separate
+- [Splitting a project into modules](modules-walkthrough.md): separate
   compilation, `.import`, `.extern`.
-- [Directives](../directives.md) — full reference for every assembler
+- [Directives](../directives.md): full reference for every assembler
   directive.
-- [Modules](../modules.md) — visibility rules, search paths, prelude.
+- [Modules](../modules.md): visibility rules, search paths, prelude.

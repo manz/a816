@@ -5,12 +5,37 @@ from __future__ import annotations
 from a816.cpu.mapping import Address
 from a816.error_codes import E_CODEGEN_BAD_LABEL_ADDRESS, E_SYMBOL_EXTERNAL_NOT_ALLOWED
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
-from a816.parse.ast.expression import eval_expression
+from a816.object_file import LinkAssert
+from a816.parse.ast.expression import canonicalize_local_label_refs, eval_expression
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.nodes.errors import NodeError
 from a816.parse.tokens import Token
 from a816.protocols import NodeBase
 from a816.symbols import Resolver
+
+
+class AssertNode(NodeBase):
+    """An object build's `.assert`, at its place in the program. Once its
+    scope is current again, it renames the labels it reads to their exported
+    form, so an `.alloc` body's `_end` reaches the linker as the
+    `__sc<idx>___end` the object exports. Labels defined after the assert
+    get their name on a later walk; emit settles the final text."""
+
+    def __init__(self, check: LinkAssert, resolver: Resolver) -> None:
+        self.check = check
+        self.resolver = resolver
+        self.source_expression = check.expression
+
+    def _rename(self) -> None:
+        self.check.expression = canonicalize_local_label_refs(self.source_expression, self.resolver)
+
+    def emit(self, current_addr: Address) -> bytes:
+        self._rename()
+        return b""
+
+    def pc_after(self, current_pc: Address) -> Address:
+        self._rename()
+        return current_pc
 
 
 class LabelNode(NodeBase):

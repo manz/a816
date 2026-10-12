@@ -160,7 +160,7 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 6  # 6: relative branches record a PC-relative relocation
+CODEGEN_REVISION = 8  # 8: an alloc body's `.assert` names its `_` labels as they export
 
 PC_RELATIVE_PREFIX = "pc-relative:"
 """Marks an expression relocation whose value is the expression minus the
@@ -182,6 +182,26 @@ class LinkAssert:
     message: str
     source: str = ""
     """`file:line` of the directive."""
+
+
+@dataclass
+class PathNameRecord:
+    """A name `.incbin` derived from its file path (W0001), as an importer sees
+    it: the linker warns on a reference that binds to it from an object whose
+    compile never saw it."""
+
+    name: str
+    file_path: str
+    hint: str
+
+
+@dataclass
+class PathNames:
+    """An object's path-derived `.incbin` names: the ones it binds, and the
+    ones its compile already warned on (its own and its imports')."""
+
+    bound: list[PathNameRecord] = field(default_factory=list)
+    checked: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -211,6 +231,7 @@ class WireObject:
     pool_allocs: list[PoolAlloc]
     bus_mappings: list[BusMapping]
     asserts: list[LinkAssert] = field(default_factory=list)
+    path_names: PathNames = field(default_factory=PathNames)
 
 
 SCHEMA_DIGEST = hashlib.sha256(schema(WireObject).encode()).digest()[:16]
@@ -251,6 +272,7 @@ class ObjectFile:
         pool_allocs: list[PoolAlloc] | None = None,
         bus_mappings: list[BusMapping] | None = None,
         asserts: list[LinkAssert] | None = None,
+        path_names: PathNames | None = None,
     ) -> None:
         # `relocatable` is True iff the source contained no `*=` directive,
         # so the importer is free to place section 0 at the import site PC
@@ -277,8 +299,12 @@ class ObjectFile:
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
         self.bus_mappings: list[BusMapping] = bus_mappings or []
         self.asserts: list[LinkAssert] = asserts or []
+        self.path_names: PathNames = path_names or PathNames()
         self.origin: str = ""
         """Path the object was read from (not serialized): names it in diagnostics."""
+        self.module: str = ""
+        """Module the object was built from (not serialized): qualifies its
+        private labels in linked output, else the stem of `origin`."""
 
     # ----- legacy single-section accessors (tests / older callers) -----
     def _ensure_first_section(self) -> Section:
@@ -338,6 +364,7 @@ class ObjectFile:
             self.pool_allocs,
             self.bus_mappings,
             self.asserts,
+            self.path_names,
         )
 
     @staticmethod
@@ -399,6 +426,7 @@ class ObjectFile:
             pool_allocs=wire.pool_allocs,
             bus_mappings=wire.bus_mappings,
             asserts=wire.asserts,
+            path_names=wire.path_names,
         )
         obj.origin = filename
         return obj

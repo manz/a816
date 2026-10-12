@@ -2,7 +2,7 @@
 
 a816 ships a small standard library of `.struct` declarations for SNES
 hardware registers. The modules live inside the wheel and are reached
-via the `@std/` virtual prefix — they never collide with user modules,
+via the `@std/` virtual prefix: they never collide with user modules,
 and there is no path to configure.
 
 ```ca65
@@ -46,7 +46,9 @@ cpu := (CPU_REGS_BASE as CPU_REGS)
 the extended (`$FFB0`) and standard (`$FFC0`) cartridge header,
 `SnesVectors` the native (`$FFE0`) and emulation (`$FFF0`) interrupt
 vectors. Emit both with [`.istruct`](directives.md) at
-`SNES_HEADER_BASE` / `SNES_VECTORS_BASE`; unset fields are 0.
+`SNES_HEADER_BASE` / `SNES_VECTORS_BASE`; unset fields are 0. A ROM
+hack that changes only some fields uses [`.patch`](directives.md)
+instead, which leaves the rest as the ROM has them.
 
 ```ca65
 .import "@std/snes/header"
@@ -101,7 +103,7 @@ post-link step fills them in.
 When the parser sees `.import "@std/snes/ppu"` it strips the `@std/`
 prefix and looks for `<wheel>/a816/stdlib/snes/ppu.s` (or `.o`). If
 the file is missing the import fails with the usual
-`Module not found:` error — there is no implicit fallback to user
+`Module not found:` error: there is no implicit fallback to user
 search paths once `@std/` is on the front.
 
 To browse the bundled source from a Python REPL:
@@ -120,4 +122,4 @@ resolver has no per-file allowlist.
 
 For project-private "stdlib" modules (game-specific RAM layouts,
 shared macro bundles), keep using regular `module_paths` configured
-in `a816.toml` — `@std/` is reserved for assembler-bundled content.
+in `a816.toml`: `@std/` is reserved for assembler-bundled content.

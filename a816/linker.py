@@ -1,6 +1,8 @@
+import logging
 import re
 import struct
 from collections.abc import Callable
+from pathlib import Path
 from re import Match
 
 from a816.exceptions import (
@@ -31,6 +33,10 @@ from a816.pool import Allocation, Pool, PoolOverflowError
 from a816.section import PINNED_POOL_PREFIX, Placement
 
 _SIZE_SYMBOL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\.__size\b")
+_IDENT_RE = re.compile(r"[A-Za-z_][\w.]*")
+_SCOPE_MANGLE_RE = re.compile(r"__sc\d+__(_.+)")
+
+logger = logging.getLogger(__name__)
 
 SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
@@ -91,6 +97,7 @@ class Linker:
         self._resolve_aliases()
         self._check_unresolved()
         self._check_asserts()
+        self._warn_path_names()
         self._apply_relocations()
         self._apply_expression_relocations()
         return ObjectFile(
@@ -534,7 +541,7 @@ class Linker:
             self._register_global_symbol(name, final_address, section, obj_file)
             return
         if symbol_type == SymbolType.LOCAL:
-            self._register_local_symbol(name, final_address, section)
+            self._register_local_symbol(name, final_address, section, obj_file)
             self._local_by_obj.setdefault(obj_idx, {})[name] = final_address
             return
         raise ValueError(f"Unknown symbol type: {symbol_type}")
@@ -584,8 +591,10 @@ class Linker:
     def _existing_global_address(self, name: str) -> int | None:
         return self._global_addresses.get(name)
 
-    def _register_local_symbol(self, name: str, final_address: int, section: SymbolSection) -> None:
-        self.linked_symbols.append((name, final_address, SymbolType.LOCAL, section))
+    def _register_local_symbol(
+        self, name: str, final_address: int, section: SymbolSection, obj_file: ObjectFile
+    ) -> None:
+        self.linked_symbols.append((_shown_local_name(name, obj_file), final_address, SymbolType.LOCAL, section))
         # LOCAL names feed `_resolve_aliases` so an alias RHS like
         # `count = _endwinmap - _winmap` (macro arg bound to a
         # module-local label inside an alloc body) folds at link time.
@@ -643,9 +652,8 @@ class Linker:
                 try:
                     holds = self._evaluate_expression(check.expression, local_overlay)
                 except ExpressionEvaluationError as exc:
-                    failures.append(
-                        (f"{check.message} (cannot evaluate: {exc.reason})", check.expression, check.source)
-                    )
+                    reason = exc.reason + _alloc_private_hint(check.expression, local_overlay or {})
+                    failures.append((f"{check.message} (cannot evaluate: {reason})", check.expression, check.source))
                     continue
                 if not holds:
                     shown = self._show_sizes(check.expression, local_overlay)
@@ -685,6 +693,26 @@ class Linker:
             remaining = still_pending
         if remaining:
             raise UnresolvedSymbolError({name for name, _ in remaining})
+
+    def _warn_path_names(self) -> None:
+        """W0001 on references that meet a path-derived `.incbin` name only here."""
+        from a816.link_path_names import RelocationSite, path_name_warnings
+
+        sites = [
+            RelocationSite(
+                self._section_obj.get(section_idx, -1),
+                self.linked_sections[section_idx],
+                address - self.linked_sections[section_idx].placed_base,
+                operand,
+            )
+            for address, section_idx, operand, _kind in [
+                *self._linked_relocations,
+                *self._linked_expression_relocations,
+            ]
+            if section_idx in self._section_obj
+        ]
+        for message in path_name_warnings(self.object_files, sites, self.linked_files, self._local_by_obj):
+            logger.warning(message)
 
     def _section_view(self, section_idx: int) -> tuple[Section, bytearray]:
         section = self.linked_sections[section_idx]
@@ -823,6 +851,38 @@ class Linker:
                 (value >> 16) & 0xFF,
             )
         )
+
+
+def _shown_local_name(name: str, obj_file: ObjectFile) -> str:
+    """A scope-mangled private LOCAL as `.adbg` shows it: `__sc1___loop` of
+    module `battle` is `battle._loop`, so two modules' `_loop` no longer print
+    alike. Other mangled names (a macro's parameters) keep their per-scope
+    name: one per expansion, each with its own value."""
+    match = _SCOPE_MANGLE_RE.match(name)
+    if match is None:
+        return name
+    module = obj_file.module or Path(obj_file.origin).stem
+    return f"{module}.{match.group(1)}" if module else match.group(1)
+
+
+def _alloc_private_hint(expression: str, local_overlay: dict[str, int]) -> str:
+    """Why an assert misses a `_` label of an `.alloc` body: the name is
+    private to that body, which exports it as `__sc<idx>__name`."""
+    hidden = sorted(
+        name
+        for name in set(_IDENT_RE.findall(expression))
+        if name.startswith("_")
+        and name not in local_overlay
+        and any(_is_alloc_private(key, name) for key in local_overlay)
+    )
+    return "".join(
+        f"; `{name}` is private to its `.alloc` body: assert inside the body, or make the name public"
+        for name in hidden
+    )
+
+
+def _is_alloc_private(key: str, name: str) -> bool:
+    return key.startswith("__sc") and key.endswith(f"__{name}")
 
 
 def _may_share(first: "Pool", second: "Pool") -> bool:

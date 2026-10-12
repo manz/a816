@@ -341,12 +341,29 @@ def canonicalize_local_label_refs(expression_str: str, resolver: Resolver) -> st
     Use this anywhere an alias RHS is constructed from source text -
     `_register_alias`, macro-arg extern bindings, etc. - so the bare
     label name (`jt_label`) never reaches the object file with no
-    matching export."""
+    matching export. A constant of a nested scope (an `.alloc` body's
+    `_CELLS := 15`) folds to its value: it never reaches the linker."""
 
     def replace(match: re.Match[str]) -> str:
-        return resolver.exported_label_name(match.group(0))
+        name = match.group(0)
+        constant = _nested_constant(name, resolver)
+        return str(constant) if constant is not None else resolver.exported_label_name(name)
 
     return _IDENT_RE.sub(replace, expression_str)
+
+
+def _nested_constant(name: str, resolver: Resolver) -> int | None:
+    """The value of `name` when a scope below the module root defines it as
+    a number constant, and no label of that name is in reach."""
+    if resolver.current_scope.find_label_scope(name) is not None:
+        return None
+    scope = resolver.current_scope
+    while scope.parent is not None:
+        value = scope.symbols.get(name)
+        if value is not None:
+            return value if isinstance(value, int) else None
+        scope = scope.parent
+    return None
 
 
 def _inline_aliases(expression_str: str, resolver: Resolver, depth: int = 0) -> str:

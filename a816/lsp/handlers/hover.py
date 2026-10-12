@@ -20,6 +20,7 @@ from a816.parse.ast.nodes import (
     StructAstNode,
     StructInitAstNode,
     StructInstanceAstNode,
+    StructPatchAstNode,
 )
 from a816.parse.ast.nodes.struct_instance import InitValue
 from a816.parse.ast.visitor import walk
@@ -193,7 +194,7 @@ class HoverMixin:
     def _hover_for_istruct_field(self, doc: A816Document, line: int, column: int) -> Hover | None:
         """Hover on a field name inside an `.istruct` initializer shows that field."""
         for node in walk(doc.ast_nodes):
-            if not isinstance(node, StructInstanceAstNode):
+            if not isinstance(node, StructInstanceAstNode | StructPatchAstNode):
                 continue
             path = self._istruct_field_at(node.type_name, node.init, line, column)
             if path is not None:

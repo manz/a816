@@ -8,6 +8,7 @@ schema lives in one place.
 from __future__ import annotations
 
 import difflib
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,7 @@ from pathlib import Path
 from a816.boards import boards
 from a816.cpu.mapping import parse_bml_address
 from a816.error_codes import (
+    E_CONFIG_BAD_DEFINE,
     E_CONFIG_BAD_EXPERIMENTAL,
     E_CONFIG_BAD_MAP_ENTRY,
     E_CONFIG_BAD_MAP_VALUE,
@@ -30,6 +32,8 @@ from a816.object_file import BusMapping
 CONFIG_FILENAME = "a816.toml"
 _MAP_REQUIRED_KEYS = ("address",)
 _MAP_KEYS = frozenset(_MAP_REQUIRED_KEYS + ("mask", "base", "writable"))
+# A symbol a source can spell: what `-D NAME=VALUE` and `[defines]` accept.
+DEFINE_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\Z", re.ASCII)
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,9 @@ class A816Config:
     # Every bus region the project declares: the `board` regions first,
     # or the `[map.N]` tables (never both). Seeded onto every translation unit's bus.
     bus_map: list[BusMapping] = field(default_factory=list)
+    # The `[defines]` table: each name a build may pass with `-D`, bound to
+    # its default unless `-D` overrides it.
+    defines: dict[str, int | str] = field(default_factory=dict)
 
     @property
     def root(self) -> Path:
@@ -216,12 +223,28 @@ def _experimental(raw: object, config_path: Path) -> dict[str, bool]:
     return {str(name): value for name, value in raw.items()}
 
 
+def _defines(raw: object, config_path: Path) -> dict[str, int | str]:
+    """The `[defines]` table: symbol name -> integer or string default."""
+    if not isinstance(raw, dict):
+        raise A816ConfigError(E_CONFIG_BAD_DEFINE, "`defines` must be a table of `NAME = default`", config_path)
+    for name, value in raw.items():
+        if not DEFINE_NAME.match(name):
+            raise A816ConfigError(E_CONFIG_BAD_DEFINE, f"[defines] {name!r} is not a symbol name", config_path)
+        if isinstance(value, bool) or not isinstance(value, int | str):
+            raise A816ConfigError(
+                E_CONFIG_BAD_DEFINE,
+                f"[defines] {name} must be an integer or a string, got {value!r}",
+                config_path,
+            )
+    return dict(raw)
+
+
 def load_a816_toml(config_path: Path) -> A816Config | None:
     """Parse the project config. Return None when the file can't be read.
 
     Raises:
         A816ConfigError: the file is not valid TOML, or `[experimental]` /
-            `board` / `rom_size` / `[map.N]` is invalid.
+            `[defines]` / `board` / `rom_size` / `[map.N]` is invalid.
     """
     try:
         with config_path.open("rb") as handle:
@@ -242,6 +265,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
         module_paths=_resolve_paths(root, data.get("module-paths", []) or []),
         experimental=experimental,
         bus_map=bus_map,
+        defines=_defines(data.get("defines", {}), config_path),
     )
 
 
@@ -262,6 +286,7 @@ class BuildSettings:
     include_paths: list[Path]
     module_paths: list[Path]
     experimental: list[str]
+    symbols: dict[str, int | str] = field(default_factory=dict)
 
 
 def merge_build_settings(
@@ -272,18 +297,20 @@ def merge_build_settings(
     include_paths: list[Path] | None = None,
     module_paths: list[Path] | None = None,
     experimental: list[str] | None = None,
+    symbols: dict[str, int | str] | None = None,
 ) -> BuildSettings:
     """Merge caller-supplied build inputs over a project's `a816.toml`.
 
     Shared by the CLI and `build_with_imports` so both entry points build
     the same thing. A value the caller gives (non-empty) wins over the
     file; the file fills the rest. Experimental flags are the union of
-    both. `mapping` (the `-m` flag) only picks the default bus a project
+    both; a caller symbol (`-D`) overrides its `[defines]` default. `mapping` (the `-m` flag) only picks the default bus a project
     without regions uses, so it passes through.
     """
     flags = list(experimental or [])
     if config is None:
-        return BuildSettings(mapping, list(bus_map or []), list(include_paths or []), list(module_paths or []), flags)
+        paths = list(include_paths or []), list(module_paths or [])
+        return BuildSettings(mapping, list(bus_map or []), *paths, flags, dict(symbols or {}))
     for flag, enabled in config.experimental.items():
         if enabled and flag not in flags:
             flags.append(flag)
@@ -293,4 +320,5 @@ def merge_build_settings(
         include_paths=list(include_paths) if include_paths else list(config.include_paths),
         module_paths=list(module_paths) if module_paths else list(config.module_paths),
         experimental=flags,
+        symbols={**config.defines, **(symbols or {})},
     )

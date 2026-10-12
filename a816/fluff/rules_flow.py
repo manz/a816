@@ -12,13 +12,13 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from a816.fluff.core import Diagnostic, LintContext, Rule
+from a816.fluff.project import walk_sources
 from a816.parse.ast.expression import identifier_tokens
 from a816.parse.ast.nodes import AstNode, ExpressionAstNode, IfAstNode, IncludeAstNode
 
 # Names the assembler binds itself.
 _BUILTINS = frozenset({"BUILD_DATE", "sizeof", "countof"})
 _DEFINING_FIELDS = ("name", "symbol", "label", "pool_name")
-_SKIPPED_DIRS = frozenset({"obj", ".venv", "venv", "node_modules", ".git"})
 # Project root -> (the files' (path, mtime) signature, the names they define).
 _PROJECT_NAMES: dict[Path, tuple[tuple[tuple[str, int], ...], frozenset[str]]] = {}
 
@@ -29,7 +29,7 @@ class UndefinedIfName(Rule):
     rationale = (
         "An undefined name reads as false in an `.if`, which is how `.if DEBUG` works without "
         "`-D DEBUG`. It also means a deleted or misspelt flag silently drops the code it gated. "
-        "A name that only comes from `-D` can take `; noqa: W0002`."
+        "Declare a name that only comes from `-D` under `[defines]` in `a816.toml`."
     )
     bad = '"""Module."""\n.if DEBUG_TYPO {\n    .db 1\n}\n'
     good = '"""Module."""\nDEBUG = 0\n.if DEBUG {\n    .db 1\n}\n'
@@ -51,7 +51,7 @@ class UndefinedIfName(Rule):
                     code=self.code,
                     message=(
                         f"`.if` on `{name}`, which the project defines nowhere: it reads as false; "
-                        "if it only comes from `-D`, mark the line `; noqa: W0002`"
+                        "if it only comes from `-D`, declare it under `[defines]` in a816.toml"
                     ),
                 )
 
@@ -97,7 +97,8 @@ def _names_in(nodes: Iterable[AstNode]) -> set[str]:
 
 def _project_names(path: Path) -> frozenset[str]:
     """Names defined in any source of the project `path` belongs to (its
-    `a816.toml` root, else its directory), cached until a file changes."""
+    `a816.toml` root, else its directory) or declared in its `[defines]`,
+    cached until a file changes."""
     from a816.config import find_a816_toml
     from a816.parse.mzparser import A816Parser
 
@@ -105,24 +106,31 @@ def _project_names(path: Path) -> frozenset[str]:
     # Without an `a816.toml` there's no project to scan: the file's own
     # directory, not below it (a stray path must not walk a whole tree).
     root = (toml.parent if toml is not None else path.parent).resolve()
-    sources = sorted(_sources(root, recursive=toml is not None))
+    sources = sorted(walk_sources(root, recursive=toml is not None)) + ([toml] if toml is not None else [])
     signature = tuple((str(source), source.stat().st_mtime_ns) for source in sources)
     cached = _PROJECT_NAMES.get(root)
     if cached is not None and cached[0] == signature:
         return cached[1]
-    names: set[str] = set()
+    names = set(_declared_defines(toml))
     for source in sources:
+        if source == toml:
+            continue
         text = source.read_text(encoding="utf-8", errors="replace")
         names |= _names_in(A816Parser.parse_as_ast(text, str(source)).nodes)
     _PROJECT_NAMES[root] = (signature, frozenset(names))
     return _PROJECT_NAMES[root][1]
 
 
-def _sources(root: Path, recursive: bool) -> Iterator[Path]:
-    for source in root.rglob("*") if recursive else root.glob("*"):
-        if source.suffix not in {".s", ".i"} or not source.is_file():
-            continue
-        parts = source.relative_to(root).parts[:-1]
-        if any(part in _SKIPPED_DIRS or part.startswith(".") for part in parts):
-            continue
-        yield source
+def _declared_defines(toml: Path | None) -> list[str]:
+    """`[defines]` names; a config the build would reject declares none here
+    (the build reports it)."""
+    from a816.config import load_a816_toml
+    from a816.exceptions import A816ConfigError
+
+    if toml is None:
+        return []
+    try:
+        config = load_a816_toml(toml)
+    except A816ConfigError:
+        return []
+    return list(config.defines) if config is not None else []

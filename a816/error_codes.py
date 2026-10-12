@@ -111,6 +111,7 @@ E_CODEGEN_BSS_EMITS = ErrorCode("E0344", "codegen", "`.alloc` in a `bss` pool em
 E_CODEGEN_BAD_LABEL_ADDRESS = ErrorCode("E0345", "codegen", "`.label` address is not an integer")
 E_CODEGEN_CROSS_BANK_TRANSFER = ErrorCode("E0346", "codegen", "bare `jsr` / `jmp` into another bank")
 E_CODEGEN_AMBIGUOUS_PATH_NAME = ErrorCode("E0347", "codegen", "a path-derived `.incbin` name bound by two blobs")
+E_CODEGEN_PATCH_PARTIAL_BITS = ErrorCode("E0348", "codegen", "`.patch` gives only some fields of a bit-field byte")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")
@@ -132,6 +133,7 @@ E_CONFIG_UNKNOWN_MAPPER = ErrorCode("E0504", "config", "`mapper` is no longer su
 E_CONFIG_BAD_MAP_ENTRY = ErrorCode("E0505", "config", "malformed `[map.N]` entry")
 E_CONFIG_BAD_MAP_VALUE = ErrorCode("E0506", "config", "`[map.N]` value of the wrong type")
 E_CONFIG_UNKNOWN_BOARD = ErrorCode("E0509", "config", "`board` names no known cartridge board")
+E_CONFIG_BAD_DEFINE = ErrorCode("E0510", "config", "`[defines]` entry is not a name with an integer or string default")
 
 # --- Warnings (W0001..): reported, the build still succeeds ---
 W_INCBIN_PATH_NAME = ErrorCode("W0001", "deprecated", "a name `.incbin` derived from its file path")

@@ -39,7 +39,7 @@ linker pick the address instead). Code left outside any `.alloc` /
 `*=` is rejected with `E0310`; see [Placement](../modules.md#placement).
 
 Symbols inside `.scope vwf { ... }` export as `vwf.init`. The leading
-`_` on `_zero_pad` keeps it LOCAL to the module — other modules cannot
+`_` on `_zero_pad` keeps it LOCAL to the module: other modules cannot
 reference it through the linker.
 
 ## The entrypoint pulls it in
@@ -83,7 +83,7 @@ $ xobj --sections --symbols src/modules/vwf.o
 
 When module A `.import`s module B, every runtime symbol B exports
 (GLOBAL labels, alloc names, `.incbin` auto-symbols) is automatically
-available as an extern in A. No explicit `.extern` needed — the
+available as an extern in A. No explicit `.extern` needed: the
 per-node import classifier emits the extern stubs from B's `.o` and
 inlines B's compile-time content (structs, macros, typed binds,
 pool decls) for codegen.
@@ -92,7 +92,7 @@ pool decls) for codegen.
 extern stub the import created.
 
 `.extern name` is still useful for symbols you don't want to import
-the owning module for — build-script-injected constants, third-party
+the owning module for: build-script-injected constants, third-party
 `.o` drops, or sub-symbols of a `.label`-declared name that the
 auto-classifier doesn't reach.
 
@@ -138,9 +138,9 @@ $ a816 check src/
 
 The relevant rules for module work:
 
-- **DOC001** — every module needs a leading docstring.
-- **DOC002** — public macros / scopes / labels need attached docs.
-- **DOC003** — docstrings sitting outside their target's body get
+- **DOC001**: every module needs a leading docstring.
+- **DOC002**: public macros / scopes / labels need attached docs.
+- **DOC003**: docstrings sitting outside their target's body get
   flagged. Move them inside `{ ... }` or above the label.
 
 See [Fluff (lint + format)](../fluff.md) for the full rule set and

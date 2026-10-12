@@ -33,7 +33,7 @@ from a816.parse.nodes.position import (
     RelocationAddressNode,
     ScopeNode,
 )
-from a816.parse.nodes.symbols import ExternNode, LabelDeclNode, LabelNode, SymbolNode
+from a816.parse.nodes.symbols import AssertNode, ExternNode, LabelDeclNode, LabelNode, SymbolNode
 from a816.parse.nodes.text import (
     AbstractTextNode,
     AsciiNode,
@@ -47,6 +47,7 @@ __all__ = [
     "AbstractTextNode",
     "AllocNode",
     "AsciiNode",
+    "AssertNode",
     "BinaryNode",
     "ByteNode",
     "BytesNode",

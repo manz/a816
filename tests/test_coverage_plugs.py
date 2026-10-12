@@ -53,6 +53,7 @@ class TestA816TomlExperimentalMirror:
             module_paths=[],
             experimental=[],
             mapping=None,
+            defines=None,
         )
 
     def test_toml_experimental_flag_appears_in_args(self, tmp_path: Path) -> None:

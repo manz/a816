@@ -13,7 +13,7 @@ deterministically.
 .pool bank01_slack {
     range 0x01ff35 0x01ffff
     fill 0xea          ; optional; default 0x00
-    strategy order     ; or `pack` (default — largest-first)
+    strategy order     ; or `pack` (default, largest-first)
 }
 
 ; Drop a new routine into the pool. Allocator picks the address.
@@ -29,20 +29,20 @@ deterministically.
     rts
 }
 
-; Add a raw byte range to a pool (rarely needed — most reclaims
+; Add a raw byte range to a pool (rarely needed: most reclaims
 ; happen via .relocate). Useful for slack with no original label.
 .reclaim bank01_slack 0x01ebd2 0x01ed44
 ```
 
 After build, every `.alloc` / `.relocate` symbol resolves to the
 address the allocator picked. Callers reference the symbol normally
-(`jsr.l draw_vwf_message`) — the address is determined at link time
+(`jsr.l draw_vwf_message`): the address is determined at link time
 (object mode) or at the end of the resolver's first pass (direct
 mode).
 
 ## Concepts
 
-- **Pool** — a named bag of free `(start, end)` ranges in a single
+- **Pool**: a named bag of free `(start, end)` ranges in a single
   ROM, plus a `fill` byte and an allocation strategy. Ranges of one
   pool may sit in different banks, but each range must stay inside
   one bank, and ranges of the same pool must not overlap.
@@ -53,13 +53,13 @@ mode).
   The one exception is a data blob marked
   [`cross_bank`](#cross_bank-data-blobs-across-bank-edges), which may
   run over bank edges where the ROM is contiguous.
-- **Allocation** — a named request for `N` bytes inside a specific
+- **Allocation**: a named request for `N` bytes inside a specific
   pool. After `Pool.allocate()` runs, every allocation has a final
   ROM address.
-- **Reclaim** — adding a fresh range to a pool (typically the old
+- **Reclaim**: adding a fresh range to a pool (typically the old
   location of a function that just moved). Reclaimed ranges merge
   with adjacent existing ranges automatically.
-- **Strategy** — `pack` (largest allocation first, default) minimises
+- **Strategy**: `pack` (largest allocation first, default) minimises
   fragmentation; `order` (declaration order) keeps placements stable
   when you reorder the source.
 
@@ -205,7 +205,7 @@ which on LoROM isn't ROM.
 Pinned placement: `body` lands at the literal `ADDR`. `NAME` is
 optional (3-byte hijacks shouldn't tax with names); the assembler
 auto-generates a stable identifier for anonymous allocs. Optional
-`size N` upper-bounds the body — overflow past `ADDR + N - 1` is a
+`size N` upper-bounds the body: overflow past `ADDR + N - 1` is a
 hard error pointing at the offending byte. Without `size`, the body
 extends to the bank end.
 
@@ -266,7 +266,7 @@ boundary, are errors.
 ```
 
 Same as `.alloc` plus the old `[OLD_START, OLD_END]` range is
-reclaimed back into the pool *before* the new body is placed — so
+reclaimed back into the pool *before* the new body is placed, so
 the freed bytes can fund the move when the rest of the pool is
 otherwise full.
 
@@ -294,7 +294,7 @@ Every `.pool` decl publishes three snapshot symbols at code-gen time:
 ```
 
 Available stats: `<pool>.capacity`, `<pool>.fragments`,
-`<pool>.largest_chunk`. Snapshot at declaration — live `.free` /
+`<pool>.largest_chunk`. Snapshot at declaration: live `.free` /
 `.used` (post-allocator) are not exposed yet.
 
 ## Pool exhaustion
@@ -358,7 +358,7 @@ them); see [Object file format](object-file-format.md).
 
 ## Python API
 
-The allocator core is usable directly from Python — useful for
+The allocator core is usable directly from Python, useful for
 build-time tooling that wants to manage placement without a `.s`
 source.
 
@@ -400,7 +400,7 @@ print(f"free={pool.free} used={pool.used} fragments={pool.fragments}")
 - After `allocate()`, the pool is frozen: further `request()` or
   `reclaim()` calls raise `PoolError`. Build a new `Pool` for the next
   pass.
-- `pack` sorts by `(-size, name)` — name is the tiebreaker, so
+- `pack` sorts by `(-size, name)`: name is the tiebreaker, so
   same-size allocations never flip on rebuild.
 
 ## Migrating from the manual pattern
@@ -442,17 +442,17 @@ final address.
 See the ff4-modules dogfood for three real conversions:
 `src/ingame/free_space.s`,
 `src/ingame/inventory_rolling_trampolines.s`, and
-`src/battle/inventory_rolling_patches.s` — byte-identical IPS output
+`src/battle/inventory_rolling_patches.s`: byte-identical IPS output
 to the legacy layout modulo build-date timestamp drift.
 
 ## What's not in yet
 
-- **Fill-byte emission** — `fill` parses + stores but IPS records
+- **Fill-byte emission**: `fill` parses + stores but IPS records
   over unused chunk tails and reclaimed ranges aren't written. Pool
   ranges that aren't `.alloc`'d stay as whatever the unpatched ROM
   contained.
-- **Live `.free` / `.used` stats** — only `.capacity` / `.fragments` /
+- **Live `.free` / `.used` stats**: only `.capacity` / `.fragments` /
   `.largest_chunk` are snapshotted at decl time.
-- **LSP "find references" for pool / alloc names** — outline shows
+- **LSP "find references" for pool / alloc names**: outline shows
   them, definition jumps work, but cross-document refs aren't
   resolved yet.

@@ -19,8 +19,8 @@ It speaks to any LSP-capable editor (VS Code, Neovim, Helix, Emacs).
 - **Signature help** while typing macro invocations.
 - **Document symbols** + **workspace symbol** search.
 - **Semantic tokens** (full document).
-- **Document / range formatting** — runs the same fluff formatter.
-- **Code actions** — every fluff rule that ships a fix surfaces in the
+- **Document / range formatting**: runs the same fluff formatter.
+- **Code actions**: every fluff rule that ships a fix surfaces in the
   editor's lightbulb / quick-fix menu. Safe fixes are marked preferred
   so editors default to them; unsafe fixes carry an `(unsafe)` suffix
   in the title. See [Fluff autofix](fluff.md#autofix-a816-fix) for
@@ -52,7 +52,7 @@ Without `a816.toml` the server falls back to same-directory lookup.
 ### Auto-discovering the entrypoint
 
 Drop a one-line pragma at the top of the entrypoint source instead of
-declaring it in `a816.toml` — the server picks the first matching file
+declaring it in `a816.toml`: the server picks the first matching file
 in the workspace:
 
 ```ca65

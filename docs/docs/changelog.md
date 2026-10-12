@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.1.1 (unreleased)
+
+- `[defines]` in `a816.toml` declares the names a build passes with
+  `-D`, each with its default: `a816 check` counts them as defined (no
+  `W0002`), and a build binds the default unless `-D` overrides it.
+  A bad entry is `E0510`.
+- `a816 check`, `a816 format` and `a816 fix` with no paths take the
+  project the nearest `a816.toml` describes: the `.s` / `.i` files under
+  the entrypoint's directory and `module-paths`, without `build/`,
+  `obj/` and dot directories.
+- `a816 explain` takes an error code too (`a816 explain E0317`) and
+  prints its entry from the error catalog.
+- `W0001` reaches every reference to a path-derived `.incbin` name: the
+  linker warns on one a module makes without importing the blob's module
+  (ff4 had three), and a module reused from the build cache prints its
+  warnings again, so a warm build shows what a cold one does. Objects
+  change: caches rebuild once.
+- `.patch Type at ADDR { field = value }` writes only the fields it
+  names, each pinned at its offset, so a ROM hack can change a
+  header's title or one field of a table record and keep the rest of
+  the original bytes. A partly given bit-field byte is `E0348`.
+- A `.assert` inside an `.alloc` body sees the body's `_` labels (it
+  failed at link with "cannot resolve"); one outside the body says the
+  label is private to it. `.adbg` names a private label after its
+  module, `battle._loop`, where two modules both showed `__sc1___loop`.
+  An `.alloc` body's `_` constant in an expression over an imported
+  symbol (`text + _CELLS * 2`) folds at compile time instead of failing
+  the link. Objects change: caches rebuild once.
+- The Windows binary ships the package's data files (`boards.bml`, the
+  standard library): the 1.1.0 one failed any build naming a `board`.
+
 ## 1.1.0 "Swift-Tuttle" (2026-10-10)
 
 Separate compilation and linking, declared memory layout (freespace and
