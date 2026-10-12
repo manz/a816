@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.1 (unreleased)
+## 1.1.1 (2026-10-12)
 
 - `[defines]` in `a816.toml` declares the names a build passes with
   `-D`, each with its default: `a816 check` counts them as defined (no
