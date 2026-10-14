@@ -35,11 +35,12 @@ from a816.parse.ast.nodes import (
     PoolAstNode,
     ReclaimAstNode,
     RelocateAstNode,
+    ReserveTypedAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
 )
-from a816.parse.codegen.structs import split_array_count
+from a816.parse.codegen.structs import STRUCT_FIELD_SIZES, split_array_count
 from a816.parse.errors import ParseError, ParserSyntaxError, ScannerException
 from a816.parse.mzparser import A816Parser
 from a816.parse.tokens import Token
@@ -81,6 +82,10 @@ class A816Document:
         self.macros: dict[str, tuple[Position, str]] = {}  # macro -> (position, file_uri)
         self.pools: dict[str, tuple[Position, str]] = {}  # pool name -> (position, file_uri)
         self.allocs: dict[str, tuple[Position, str]] = {}  # alloc / relocate name -> (position, file_uri)
+        # Name -> the struct type it holds: a struct (itself), a struct-typed
+        # field (`Outer.head`), a `.reserve NAME as T`, a typed bind
+        # `NAME := (expr as T)`. Goto-def walks `a.b.c` through it.
+        self.member_types: dict[str, str] = {}
         # pool name -> hover-ready summary line (range count, fill, strategy)
         self.pool_details: dict[str, str] = {}
         # alloc / relocate name -> target pool name
@@ -118,6 +123,7 @@ class A816Document:
         self.macros.clear()
         self.pools.clear()
         self.allocs.clear()
+        self.member_types.clear()
         self.pool_details.clear()
         self.alloc_target_pool.clear()
         self.pool_consumers.clear()
@@ -215,6 +221,7 @@ class A816Document:
             return
         if not node.file_info.position:
             return
+        self.member_types[symbol] = cast.type_name
         bind_pos = Position(line=node.file_info.position.line, character=node.file_info.position.column)
         file_uri = self._get_file_uri_for_token(node.file_info)
         # Walk the type's flat fields, mirroring the codegen-time eager
@@ -300,9 +307,14 @@ class A816Document:
         self.symbols[node.name] = (pos, file_uri)
         if node.docstring:
             self.scope_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
+        self.member_types[node.name] = node.name
         bit_field_re = _re.compile(r"u\d+")
-        for field_name, field_type in node.fields:
-            self.symbols[f"{node.name}.{field_name}"] = (pos, file_uri)
+        field_tokens = node.field_tokens or (None,) * len(node.fields)
+        for (field_name, field_type), field_token in zip(node.fields, field_tokens, strict=True):
+            self.symbols[f"{node.name}.{field_name}"] = self._field_location(field_token, pos, file_uri)
+            element_type, _count = split_array_count(field_type)
+            if element_type not in STRUCT_FIELD_SIZES and not bit_field_re.fullmatch(element_type):
+                self.member_types[f"{node.name}.{field_name}"] = element_type
             if bit_field_re.fullmatch(field_type):
                 # `uN` fields publish two extra symbols at codegen time —
                 # mirror them here so `Type.field.mask` is also goto-def'able.
@@ -312,6 +324,17 @@ class A816Document:
                 # `T[N]` fields publish their total byte size the same way.
                 self.symbols[f"{node.name}.{field_name}.__size"] = (pos, file_uri)
         self.symbols[f"{node.name}.__size"] = (pos, file_uri)
+
+    def _field_location(self, token: Token | None, fallback: Position, file_uri: str) -> tuple[Position, str]:
+        """A struct field's own line, else the `.struct` line."""
+        if token is None or token.position is None:
+            return fallback, file_uri
+        return Position(line=token.position.line, character=token.position.column), file_uri
+
+    def _record_reserve(self, node: ReserveTypedAstNode) -> None:
+        """`.reserve NAME as T`: `NAME` goto-defs here, its fields to `T`'s."""
+        self._record_token_position(node.file_info, self.symbols, node.name)
+        self.member_types[node.name] = node.type_name
 
     def _visit_include(self, node: IncludeAstNode) -> None:
         for child in node.included_nodes:
@@ -383,6 +406,9 @@ class A816Document:
             self._record_import(node)
         elif isinstance(node, StructAstNode):
             self._record_struct(node)
+            return
+        elif isinstance(node, ReserveTypedAstNode):
+            self._record_reserve(node)
             return
         elif isinstance(node, IncludeAstNode):
             self._visit_include(node)

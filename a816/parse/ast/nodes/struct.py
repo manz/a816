@@ -45,6 +45,7 @@ class StructAstNode(AstNode):
         file_info: Token,
         body: Sequence[StructBodyItem] = (),
         docstring: str | None = None,
+        field_tokens: Sequence[Token] = (),
     ) -> None:
         super().__init__("struct", file_info, docstring)
         self.name: Final = name
@@ -59,6 +60,9 @@ class StructAstNode(AstNode):
         # declared order without poking at dict semantics, and so duplicate
         # names get caught at parse time.
         self.fields: Final[tuple[tuple[str, str], ...]] = tuple(fields)
+        # Each field's name token, in `fields` order (empty when built
+        # programmatically): goto-def lands on the field's own line.
+        self.field_tokens: Final[tuple[Token, ...]] = tuple(field_tokens)
 
     def to_representation(self) -> tuple[Any, ...]:
         return self.kind, self.name, list(self.fields)

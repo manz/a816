@@ -221,6 +221,7 @@ def parse_struct(p: Parser) -> StructAstNode:
     open_brace = p.next()
     expect_token(open_brace, TokenType.LBRACE)
     fields: list[tuple[str, str]] = []
+    field_tokens: list[Token] = []
     body = _StructBody(_line_of(open_brace))
     seen: set[str] = set()
     docstring: str | None = None
@@ -239,13 +240,16 @@ def parse_struct(p: Parser) -> StructAstNode:
             continue
         if token.type == TokenType.RBRACE:
             break
-        name, field_type = _parse_struct_field(p, seen)
+        name, field_type, name_token = _parse_struct_field(p, seen)
         fields.append((name, field_type))
+        field_tokens.append(name_token)
         body.field(f"{field_type} {name}", _line_of(token))
 
     expect_token(p.next(), TokenType.RBRACE)
 
-    return StructAstNode(variable.value, fields, current, body.items, docstring=docstring)
+    return StructAstNode(
+        variable.value, fields, current, body.items, docstring=docstring, field_tokens=field_tokens
+    )
 
 
 class _StructBody:
@@ -314,8 +318,9 @@ def _column_of(token: Token) -> int:
     return position.column if position is not None else 0
 
 
-def _parse_struct_field(p: Parser, seen: set[str]) -> tuple[str, str]:
-    """Parse one `type name` / `type[N] name` field; return `(name, type)`."""
+def _parse_struct_field(p: Parser, seen: set[str]) -> tuple[str, str, Token]:
+    """Parse one `type name` / `type[N] name` field; return `(name, type,
+    name token)`."""
     type_token = p.current()
     expect_token(type_token, TokenType.IDENTIFIER)
     p.next()
@@ -335,7 +340,7 @@ def _parse_struct_field(p: Parser, seen: set[str]) -> tuple[str, str]:
         )
     seen.add(name_token.value)
     p.next()
-    return name_token.value, field_type
+    return name_token.value, field_type, name_token
 
 
 def _parse_struct_array_suffix(p: Parser, type_token: Token) -> str:
