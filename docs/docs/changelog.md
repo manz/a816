@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.2 (unreleased)
+## 1.1.2 (2026-10-14)
 
 - `a816 check` / `format` / `fix` with no paths leave out what git
   ignores, and an `exclude` list in `a816.toml` leaves out files and
