@@ -275,9 +275,9 @@ class A816Document:
         self._record_token_position(node.file_info, self.macros, node.name)
         if not node.file_info.position:
             return
-        if hasattr(node, "parameters") and node.parameters:
-            self.macro_params[node.name] = [param.name for param in node.parameters if hasattr(param, "name")]
-        if hasattr(node, "docstring") and node.docstring:
+        if node.args:
+            self.macro_params[node.name] = list(node.args)
+        if node.docstring:
             self.macro_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
 
     def _record_import(self, node: ImportAstNode) -> None:
@@ -448,7 +448,12 @@ class A816Document:
         self, node: AstNode, doc_buffer: str | None, target: tuple[str, str] | None
     ) -> tuple[str | None, tuple[str, str] | None]:
         if isinstance(node, LabelAstNode):
-            return self._docstrings_handle_targeted("label", node.label.lower(), None, doc_buffer)
+            # A docstring above the label documents it until one below
+            # (the canonical spot) replaces it, so the target stays open.
+            key = ("label", node.label.lower())
+            if doc_buffer:
+                self._set_docstring(key, doc_buffer)
+            return None, key
         if isinstance(node, MacroAstNode):
             buffer, pending = self._docstrings_handle_targeted("macro", node.name.lower(), node.docstring, doc_buffer)
             self._docstrings_collect_block(node.block)
@@ -465,9 +470,11 @@ class A816Document:
             return doc_buffer, None
         if isinstance(node, CommentAstNode):
             return doc_buffer, target
+        # Any other container (`.alloc`, `.for`, `.if`...) holds its body as a
+        # block node or a list; walk it either way.
         body = getattr(node, "body", None)
-        if isinstance(body, list | tuple):
-            self._docstrings_collect_nodes(body)
+        if body is not None:
+            self._docstrings_collect_block(body)
         block = getattr(node, "block", None)
         if block is not None:
             self._docstrings_collect_block(block)
@@ -503,18 +510,20 @@ class A816Document:
         """Associate docstrings with labels, macros, scopes, and the module."""
         self.label_docstrings.clear()
         # Capture the first leading docstring as the module-level description.
-        # Anything before the first labelable target counts; the doc visitor
-        # emits remaining unattached buffers as the returned `pending_doc`.
-        for node in self.ast_nodes:
+        # It documents the module only: the walk skips it, or it would
+        # document the first label below it.
+        rest = list(self.ast_nodes)
+        for index, node in enumerate(self.ast_nodes):
             if isinstance(node, DocstringAstNode):
                 text = inspect.cleandoc(node.text)
                 if text:
                     self.module_docstring = text
+                rest = [*self.ast_nodes[:index], *self.ast_nodes[index + 1 :]]
                 break
             if isinstance(node, CommentAstNode):
                 continue
             break
-        self._docstrings_collect_nodes(self.ast_nodes)
+        self._docstrings_collect_nodes(rest)
 
     def _resolve_relative_token_file(self, token_filename: str) -> str:
         current_doc_path = (

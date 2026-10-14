@@ -21,6 +21,10 @@
   hover. It was a parse error (`E0101`).
 - `a816 --version` (or `-V`) prints the installed version, the Windows
   binary's included.
+- LSP hover (nvim `K`) shows the docstring of a label inside an `.alloc`
+  body, where it answered "No information available"; a top-level label
+  shows its own docstring instead of the module's, and a macro shows its
+  parameters.
 
 ## 1.1.1 (2026-10-12)
 
