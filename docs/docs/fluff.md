@@ -7,7 +7,10 @@ the assembler uses, so the rules see real AST, not regex hits.
 Given no paths, they take the project the nearest `a816.toml` (from
 the working directory up) describes: the sources under the
 entrypoint's directory and every `module-paths` directory, leaving
-out `build/`, `obj/` and dot directories. Outside a project, name the
+out `build/`, `obj/` and dot directories. In a git work tree, files
+git ignores are left out too, and the toml's `exclude` patterns
+(`exclude = ["scratch", "old_*.s"]`, relative to the toml) leave out
+the files and directories they match. Outside a project, name the
 files.
 
 ## Format

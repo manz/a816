@@ -285,6 +285,7 @@ track_register_size = true
 | `rom_size` | build | ROM image size in bytes; required with read-only `[map.N]` regions |
 | `[defines]` | build, fluff | names a build passes with `-D`, each with its default |
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
+| `exclude` | fluff | glob patterns of files and directories a run with no paths leaves out |
 
 `--include-path` / `-I` replace the file's `include-paths` /
 `module-paths`; `--experimental` flags add to `[experimental]`;
