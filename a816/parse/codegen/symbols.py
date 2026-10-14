@@ -37,7 +37,11 @@ def _pending_externs(value: ExpressionAstNode, resolver: Resolver) -> set[str]:
     """Imported runtime names `value` reads that nothing resolves yet: their
     extern stubs register only at resolution, after an alloc body that
     reads the alias may have been measured (`lda #BANK` with
-    `BANK = (song >> 16) & 0xFF` sized from a guess, E0313)."""
+    `BANK = (song >> 16) & 0xFF` sized from a guess, E0313). Never while
+    an import's declarations are inlined: the alias is the owner's, and an
+    early one would be exported again by every importer."""
+    if resolver.inlining_import:
+        return set()
     scope = resolver.current_scope
     return {
         term.token.value

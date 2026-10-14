@@ -421,7 +421,11 @@ def _import_object_mode(plan: _ImportPlan, resolver: Resolver, macro_definitions
 
     for step in plan.steps:
         if isinstance(step, _Inline):
-            out.extend(_code_gen(step.nodes, resolver, macro_definitions) or [])
+            resolver.inlining_import += 1
+            try:
+                out.extend(_code_gen(step.nodes, resolver, macro_definitions) or [])
+            finally:
+                resolver.inlining_import -= 1
         elif isinstance(step, _TypedBind):
             out.extend(ExternNode(name, resolver) for name in _typed_bind_names(step.node, resolver))
         else:

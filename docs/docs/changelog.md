@@ -6,11 +6,13 @@
   ignores, and an `exclude` list in `a816.toml` leaves out files and
   directories by glob. Bahamut Lagoon's bare `check` reported 531 hits,
   530 from gitignored or scratch sources.
-- `lda #NAME`, NAME an alias over an imported symbol
-  (`BANK = (song >> 16) & 0xFF`), sizes like the expression written
+- `lda #NAME`, NAME an alias whose value is known only at link
+  (`BANK = (song >> 16) & 0xFF`, `song` imported or placed later in the
+  same module), takes the register's width like the expression written
   inline; it failed with `E0313`. That error now names operand widths
   ("a 16-bit operand ... the value needs 8-bit") instead of instruction
-  lengths.
+  lengths. An object records each alias once, so the `.adbg` loses
+  repeated copies of the same symbol.
 
 ## 1.1.1 (2026-10-12)
 
