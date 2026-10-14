@@ -298,6 +298,8 @@ class A816Document:
         # The bare type name (`PPU`) — used in `(addr as PPU)` casts and
         # nested struct field types — also goto-def's to the declaration.
         self.symbols[node.name] = (pos, file_uri)
+        if node.docstring:
+            self.scope_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
         bit_field_re = _re.compile(r"u\d+")
         for field_name, field_type in node.fields:
             self.symbols[f"{node.name}.{field_name}"] = (pos, file_uri)

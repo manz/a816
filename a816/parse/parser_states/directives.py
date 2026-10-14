@@ -210,6 +210,8 @@ def parse_struct(p: Parser) -> StructAstNode:
     other identifier references a previously declared `.struct`. The
     `[N]` suffix declares an array of `N` consecutive elements and
     travels in the type string (`byte[21]`), like the bit width of `uN`.
+    A docstring as the first statement documents the struct, as in a
+    `.scope` or `.macro` body.
     """
     current = p.current()
 
@@ -221,6 +223,11 @@ def parse_struct(p: Parser) -> StructAstNode:
     fields: list[tuple[str, str]] = []
     body = _StructBody(_line_of(open_brace))
     seen: set[str] = set()
+    docstring: str | None = None
+    if p.current().type == TokenType.DOCSTRING:
+        docstring = ast.literal_eval(p.current().value)
+        body.docstring(p.current())
+        p.next()
     while p.current().type != TokenType.EOF:
         token = p.current()
         if token.type == TokenType.COMMA:
@@ -238,7 +245,7 @@ def parse_struct(p: Parser) -> StructAstNode:
 
     expect_token(p.next(), TokenType.RBRACE)
 
-    return StructAstNode(variable.value, fields, current, body.items)
+    return StructAstNode(variable.value, fields, current, body.items, docstring=docstring)
 
 
 class _StructBody:
@@ -251,6 +258,7 @@ class _StructBody:
         self._last_line = open_line
         self._last_field_line: int | None = None
         self._trailing_column: int | None = None
+        self._has_docstring = False
 
     def _continues_trailing(self, token: Token, line: int) -> bool:
         """A comment on the next line, at the column of the trailing comment
@@ -262,9 +270,15 @@ class _StructBody:
         )
 
     def _gap(self, line: int) -> None:
-        if self.items and line > self._last_line + 1:
+        if (self.items or self._has_docstring) and line > self._last_line + 1:
             self.items.append(("blank", "", None))
         self._last_line = line
+
+    def docstring(self, token: Token) -> None:
+        """The struct's docstring: the body's first item, so a gap after it
+        is kept like any other."""
+        self._has_docstring = True
+        self._last_line = _line_of(token) + token.value.count("\n")
 
     def field(self, text: str, line: int) -> None:
         self._trailing_column = None

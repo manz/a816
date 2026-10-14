@@ -260,10 +260,13 @@ Layout-only declaration; emits no bytes. Field names export as
 `byte`, `word`, `long` (24-bit), `dword` (32-bit). A field type can
 also be the name of another previously declared struct, in which
 case the nested layout flattens into dotted offsets
-(`Outer.pos.x`, `Outer.pos.y`).
+(`Outer.pos.x`, `Outer.pos.y`). A docstring as the first statement
+documents the struct, as in a `.scope` or `.macro` body; the LSP shows
+it on hover.
 
 ```ca65
 .struct OAM {
+    """One sprite's low-table entry."""
     word x
     byte y
     byte tile

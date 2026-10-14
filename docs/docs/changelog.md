@@ -16,6 +16,9 @@
 - A failed `.assert` in an `.alloc` body shows its names as written
   (`_run_bits - _pool_runs`), not as the body exports them
   (`__sc16___run_bits`).
+- A `.struct` takes a docstring as its first statement, as a `.scope`
+  or `.macro` does; the formatter keeps it and the LSP shows it on
+  hover. It was a parse error (`E0101`).
 
 ## 1.1.1 (2026-10-12)
 

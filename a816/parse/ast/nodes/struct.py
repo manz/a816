@@ -22,6 +22,21 @@ def _comment_text(raw: str) -> str:
     return f"; {comment}"
 
 
+def _docstring_lines(text: str | None) -> list[str]:
+    """The struct's docstring: triple-quote markers indented with the fields,
+    content verbatim, as the formatter writes a scope's."""
+    if text is None:
+        return []
+    if "\n" not in text:
+        return [f'    """{text}"""']
+    lines = [line.rstrip() for line in text.split("\n")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return ['    """', *lines, '    """']
+
+
 class StructAstNode(AstNode):
     def __init__(
         self,
@@ -29,8 +44,9 @@ class StructAstNode(AstNode):
         fields: Sequence[tuple[str, str]],
         file_info: Token,
         body: Sequence[StructBodyItem] = (),
+        docstring: str | None = None,
     ) -> None:
-        super().__init__("struct", file_info)
+        super().__init__("struct", file_info, docstring)
         self.name: Final = name
         # Formatting view of the body: fields with their comments and the
         # blank lines between groups. Without one (built programmatically),
@@ -49,7 +65,7 @@ class StructAstNode(AstNode):
 
     def to_canonical(self) -> str:
         items = self.body or [("field", f"{field_type} {field_name}", None) for field_name, field_type in self.fields]
-        lines = [f".struct {self.name} {{"]
+        lines = [f".struct {self.name} {{", *_docstring_lines(self.docstring)]
         trailing_column = 0
         for kind, text, trailing in items:
             if kind == "blank":
