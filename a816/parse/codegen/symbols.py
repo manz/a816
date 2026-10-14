@@ -20,14 +20,42 @@ from a816.parse.ast.nodes import (
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, generators
 from a816.parse.nodes import ExternNode, NodeError, SymbolNode
 from a816.parse.tokens import Token, TokenType
-from a816.symbols import Resolver
+from a816.symbols import Resolver, Scope
 
 
 def _expression_references_extern(value: ExpressionAstNode, resolver: Resolver) -> bool:
-    return any(
+    pending = _pending_externs(value, resolver)
+    for name in pending:
+        resolver.current_scope.add_external_symbol(name)
+    return bool(pending) or any(
         term.token.type == TokenType.IDENTIFIER and resolver.current_scope.is_external_symbol(term.token.value)
         for term in value.tokens
     )
+
+
+def _pending_externs(value: ExpressionAstNode, resolver: Resolver) -> set[str]:
+    """Imported runtime names `value` reads that nothing resolves yet: their
+    extern stubs register only at resolution, after an alloc body that
+    reads the alias may have been measured (`lda #BANK` with
+    `BANK = (song >> 16) & 0xFF` sized from a guess, E0313)."""
+    scope = resolver.current_scope
+    return {
+        term.token.value
+        for term in value.tokens
+        if term.token.type == TokenType.IDENTIFIER
+        and term.token.value in resolver.imported_runtime_names
+        and not scope.is_external_symbol(term.token.value)
+        and _unresolved(term.token.value, scope)
+    }
+
+
+def _unresolved(name: str, scope: Scope) -> bool:
+    """Nothing in reach defines `name` (callers rule out externs first)."""
+    try:
+        scope.value_for(name)
+    except SymbolNotDefined:
+        return True
+    return False
 
 
 def _try_eager_register_alias(node: SymbolAffectationAstNode, resolver: Resolver) -> None:
