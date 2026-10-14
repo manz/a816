@@ -13,6 +13,9 @@
 - A `.for` variable beside a label in an expression the linker evaluates
   (`.dw (grid_font + k * 320) & 0xFFFF`) folds to its value; the link
   failed with "cannot resolve `k`".
+- `build_with_imports()` returns a failed module's own errors in
+  `diagnostics` (e.g. the located `E0310`), not just "Failed to compile
+  module '__main__'".
 
 ## 1.1.2 (2026-10-14)
 

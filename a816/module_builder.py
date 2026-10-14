@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from a816.parse.codegen.modules import ParsedImport
     from a816.program import Program
 
-from a816.build_cache import BuildCache, BuildSettings, ModuleInputs, recording_warnings
+from a816.build_cache import BuildCache, BuildSettings, ModuleInputs, recording_errors, recording_warnings
 from a816.build_inputs import recording_misses
 from a816.config import discover_a816_config, merge_build_settings
 from a816.exceptions import A816Error
@@ -36,7 +36,12 @@ logger = logging.getLogger("a816.module_builder")
 
 
 class ModuleCompileError(RuntimeError):
-    """A module failed to compile; its located diagnostics are already reported."""
+    """A module failed to compile; its located diagnostics are already
+    reported, and kept in `diagnostics` for the build result."""
+
+    def __init__(self, message: str, diagnostics: list[str]) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
 
 
 @dataclass
@@ -289,12 +294,12 @@ class ModuleBuilder:
             # a duplicate GLOBAL and the linker rejects the build.
             program.resolver.imported_symbol_names.add(name)
         program.resolver.constant_owners = dict(owners)
-        with recording_misses() as misses, recording_warnings() as warnings:
+        with recording_misses() as misses, recording_warnings() as warnings, recording_errors() as errors:
             result = program.assemble_as_object(str(source_path), obj_path, parsed=self._parsed.pop(module_name, None))
         if result != 0:
             # The cache key must not outlive the object it described.
             obj_path.with_suffix(".deps").unlink(missing_ok=True)
-            raise ModuleCompileError(f"Failed to compile module '{module_name}'")
+            raise ModuleCompileError(f"Failed to compile module '{module_name}'", errors)
         return (
             set(program.resolver.dependency_files),
             misses | self._discovery_misses.pop(module_name, set()),
@@ -574,4 +579,6 @@ def build_with_imports(
         if not isinstance(e, ModuleCompileError):
             logger.error(f"Build failed: {formatted}")  # NOSONAR python:S8572
         logger.debug("Build traceback", exc_info=True)
-        return BuildResult(exit_code=1, diagnostics=[formatted])
+        # A module's own errors say why; the generic line only if none was logged.
+        diagnostics = e.diagnostics if isinstance(e, ModuleCompileError) and e.diagnostics else [formatted]
+        return BuildResult(exit_code=1, diagnostics=diagnostics)
