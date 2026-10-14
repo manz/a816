@@ -35,6 +35,14 @@ from a816.parse.mzparser import A816Parser, ParserResult
 logger = logging.getLogger("a816.module_builder")
 
 
+def _failure_diagnostics(error: Exception, formatted: str) -> list[str]:
+    """A failed module's own errors say why; the generic line only when it
+    logged none."""
+    if isinstance(error, ModuleCompileError) and error.diagnostics:
+        return error.diagnostics
+    return [formatted]
+
+
 class ModuleCompileError(RuntimeError):
     """A module failed to compile; its located diagnostics are already
     reported, and kept in `diagnostics` for the build result."""
@@ -579,6 +587,4 @@ def build_with_imports(
         if not isinstance(e, ModuleCompileError):
             logger.error(f"Build failed: {formatted}")  # NOSONAR python:S8572
         logger.debug("Build traceback", exc_info=True)
-        # A module's own errors say why; the generic line only if none was logged.
-        diagnostics = e.diagnostics if isinstance(e, ModuleCompileError) and e.diagnostics else [formatted]
-        return BuildResult(exit_code=1, diagnostics=diagnostics)
+        return BuildResult(exit_code=1, diagnostics=_failure_diagnostics(e, formatted))
