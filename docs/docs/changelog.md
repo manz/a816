@@ -13,6 +13,9 @@
   ("a 16-bit operand ... the value needs 8-bit") instead of instruction
   lengths. An object records each alias once, so the `.adbg` loses
   repeated copies of the same symbol.
+- A failed `.assert` in an `.alloc` body shows its names as written
+  (`_run_bits - _pool_runs`), not as the body exports them
+  (`__sc16___run_bits`).
 
 ## 1.1.1 (2026-10-12)
 
