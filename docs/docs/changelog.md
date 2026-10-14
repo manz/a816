@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.3 (unreleased)
+
+- Labels after `@= ADDR` count from ADDR, forward ones included: with a
+  ROM-mapped ADDR (`@= 0x0000`), a label after any byte took the ROM
+  window's address (`0x8004`, not `0x0004`), silently. A branch under
+  `@=` keeps its offset instead of being re-aimed at link from the
+  placement, which also makes it work over a WRAM `@=`.
+
 ## 1.1.2 (2026-10-14)
 
 - `a816 check` / `format` / `fix` with no paths leave out what git

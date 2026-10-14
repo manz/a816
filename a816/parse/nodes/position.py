@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 
-from a816.cpu.mapping import Address
+from a816.cpu.mapping import Address, LinearAddress
 from a816.error_codes import E_IO_FILE_NOT_FOUND, E_IO_NOT_IPS
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import ExpressionAstNode
@@ -41,11 +41,20 @@ class RelocationAddressNode(NodeBase):
         self.file_info = file_info
 
     def pc_after(self, current_pc: Address) -> Address:
+        """Labels after `@= ADDR` take run-time addresses counted from ADDR:
+        `+ n` moves by exactly n bytes. Walking the bus instead folded a
+        ROM-mapped ADDR through the ROM window (`@= 0x0001` then 4 bytes gave
+        `0x8005`, not `0x0005`), so every forward label came out wrong."""
         self.resolver.reloc = True
-        return self.resolver.get_bus().get_address(self.pc_value_node.get_value())
+        return LinearAddress(self.pc_value_node.get_value())
 
     def emit(self, current_addr: Address) -> bytes:
-        self.resolver.set_position(self.pc_value_node.get_value())
+        """Emit in the same run-time address space the labels were bound in,
+        so an operand's own address (`opcode_pc`) counts from ADDR too."""
+        value = self.pc_value_node.get_value()
+        self.resolver.set_position(value)
+        self.resolver.reloc_address = LinearAddress(value)
+        self.resolver.reloc = True
         return b""
 
     def __str__(self) -> str:

@@ -75,6 +75,10 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         value = value_node.get_value()
         # Use duck typing: ExpressionNode has 'expression' attribute, ValueNode does not
         if hasattr(value_node, "expression"):
+            if resolver.reloc and resolver.opcode_pc is not None:
+                # After `@=`: the branch and its target both have run-time
+                # addresses counted from the relocation; the offset is theirs.
+                return value - resolver.opcode_pc - (1 + self.OFFSET_BYTES)
             if isinstance(resolver.reloc_address, LinearAddress):
                 # An alloc body emitted off the bus (its provisional base isn't
                 # mapped): labels and `pc` are both linear sandbox offsets.
@@ -123,7 +127,9 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         """
         deferred = getattr(value_node, "_deferred_expression", None)
         writer = resolver.context.object_writer if resolver.context.is_object_mode else None
-        if deferred is None or writer is None:
+        # After `@=` the offset is final here: the linker places the bytes,
+        # but the code runs at the relocated address it never sees.
+        if deferred is None or writer is None or resolver.reloc:
             return
         offset = writer.relocation_offset(pending_block_bytes=1)
         writer.add_expression_relocation(offset, PC_RELATIVE_PREFIX + deferred, self.OFFSET_BYTES)
