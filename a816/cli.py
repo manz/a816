@@ -36,6 +36,7 @@ from a816.module_builder import apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
 from a816.program import Program
+from a816.version import a816_version
 
 logger = logging.getLogger("x816")
 
@@ -78,6 +79,7 @@ _ASM_SUFFIXES = (".s", ".asm")
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="a816", description="a816 usage", epilog="")
     parser.add_argument("--verbose", action="store_true", help="Displays all log levels.")
+    parser.add_argument("-V", "--version", action="version", version=f"a816 {a816_version()}")
     parser.add_argument("-o", "--output", type=Path, dest="output_file", default="a.out", help="Output file")
     parser.add_argument("input_files", nargs="+", type=Path, help="Input files (asm files or object files for linking)")
     parser.add_argument("-f", dest="format", default="ips", help="Output format (ips, sfc, obj)")
@@ -294,6 +296,9 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
     falls through to the legacy parser. `build` is just an explicit
     alias for that path.
     """
+    if argv[:1] in (["--version"], ["-V"]):
+        print(f"a816 {a816_version()}")
+        return 0
     if not argv or argv[0] not in _SUBCOMMANDS:
         return None
     cmd, rest = argv[0], argv[1:]

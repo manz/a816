@@ -19,6 +19,8 @@
 - A `.struct` takes a docstring as its first statement, as a `.scope`
   or `.macro` does; the formatter keeps it and the LSP shows it on
   hover. It was a parse error (`E0101`).
+- `a816 --version` (or `-V`) prints the installed version, the Windows
+  binary's included.
 
 ## 1.1.1 (2026-10-12)
 
