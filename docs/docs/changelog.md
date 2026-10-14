@@ -10,6 +10,9 @@
 - `@=` works inside an `.alloc` body (pinned or pooled): the body was
   sized from the `@=` address (`E0337`, an 8 MB slot), so a linted source
   had no way to place bytes here and count labels from there.
+- A `.for` variable beside a label in an expression the linker evaluates
+  (`.dw (grid_font + k * 320) & 0xFFFF`) folds to its value; the link
+  failed with "cannot resolve `k`".
 
 ## 1.1.2 (2026-10-14)
 
