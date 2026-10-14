@@ -35,6 +35,7 @@ from a816.section import PINNED_POOL_PREFIX, Placement
 _SIZE_SYMBOL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\.__size\b")
 _IDENT_RE = re.compile(r"[A-Za-z_][\w.]*")
 _SCOPE_MANGLE_RE = re.compile(r"__sc\d+__(_.+)")
+_SCOPE_PREFIX_RE = re.compile(r"(?<![\w.])__sc\d+__(?=\w)")
 
 logger = logging.getLogger(__name__)
 
@@ -652,12 +653,14 @@ class Linker:
                 try:
                     holds = self._evaluate_expression(check.expression, local_overlay)
                 except ExpressionEvaluationError as exc:
-                    reason = exc.reason + _alloc_private_hint(check.expression, local_overlay or {})
-                    failures.append((f"{check.message} (cannot evaluate: {reason})", check.expression, check.source))
+                    reason = _as_written(exc.reason) + _alloc_private_hint(check.expression, local_overlay or {})
+                    failures.append(
+                        (f"{check.message} (cannot evaluate: {reason})", _as_written(check.expression), check.source)
+                    )
                     continue
                 if not holds:
                     shown = self._show_sizes(check.expression, local_overlay)
-                    failures.append((check.message, shown, check.source))
+                    failures.append((check.message, _as_written(shown), check.source))
         if failures:
             raise LinkAssertError(failures)
 
@@ -851,6 +854,12 @@ class Linker:
                 (value >> 16) & 0xFF,
             )
         )
+
+
+def _as_written(text: str) -> str:
+    """An assert's expression as its source wrote it: `__sc16___run_bits`
+    (how an alloc body exports `_run_bits`) shows as `_run_bits`."""
+    return _SCOPE_PREFIX_RE.sub("", text)
 
 
 def _shown_local_name(name: str, obj_file: ObjectFile) -> str:

@@ -84,6 +84,10 @@ class WorkspaceIndex:
         self.pools: dict[str, tuple[Position, str]] = {}
         self.allocs: dict[str, tuple[Position, str]] = {}
         self.macro_params: dict[str, list[str]] = {}
+        # Name -> struct type it holds, across the workspace (see
+        # `A816Document.member_types`), and which names each uri owns.
+        self.member_types: dict[str, str] = {}
+        self.doc_member_types: dict[str, set[str]] = {}
         self.macro_docstrings: dict[str, str] = {}
         self.label_docstrings: dict[str, str] = {}
         self.scope_docstrings: dict[str, str] = {}
@@ -114,6 +118,8 @@ class WorkspaceIndex:
         self.pools.clear()
         self.allocs.clear()
         self.macro_params.clear()
+        self.member_types.clear()
+        self.doc_member_types.clear()
         self.macro_docstrings.clear()
         self.label_docstrings.clear()
         self.scope_docstrings.clear()
@@ -479,6 +485,8 @@ class WorkspaceIndex:
         self._index_pools(doc)
         self._index_allocs(doc)
         self._merge_docstrings(doc)
+        self.member_types.update(doc.member_types)
+        self.doc_member_types[doc.uri] = set(doc.member_types)
         if doc.module_docstring:
             self.module_docstrings[doc.uri] = doc.module_docstring
         else:
@@ -512,6 +520,8 @@ class WorkspaceIndex:
         self._drop_owned(self.macros, self.doc_macros.get(uri, set()), uri, self.macro_name_lookup)
         for macro in self.doc_macros.get(uri, set()):
             self.macro_params.pop(macro, None)
+        for name in self.doc_member_types.pop(uri, set()):
+            self.member_types.pop(name, None)
         for key in self.doc_label_docstrings.get(uri, set()):
             self.label_docstrings.pop(key, None)
         for key in self.doc_macro_docstrings.get(uri, set()):

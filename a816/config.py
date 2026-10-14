@@ -55,6 +55,9 @@ class A816Config:
     # The `[defines]` table: each name a build may pass with `-D`, bound to
     # its default unless `-D` overrides it.
     defines: dict[str, int | str] = field(default_factory=dict)
+    # `exclude`: glob patterns, relative to the toml, of files and
+    # directories a fluff run over the whole project leaves out.
+    exclude: list[str] = field(default_factory=list)
 
     @property
     def root(self) -> Path:
@@ -239,6 +242,15 @@ def _defines(raw: object, config_path: Path) -> dict[str, int | str]:
     return dict(raw)
 
 
+def _exclude(raw: object, config_path: Path) -> list[str]:
+    """The `exclude` list: glob patterns relative to the toml."""
+    if not isinstance(raw, list) or not all(isinstance(pattern, str) for pattern in raw):
+        raise A816ConfigError(
+            E_CONFIG_INVALID, '`exclude` must be a list of glob patterns, e.g. ["scratch", "old_*.s"]', config_path
+        )
+    return list(raw)
+
+
 def load_a816_toml(config_path: Path) -> A816Config | None:
     """Parse the project config. Return None when the file can't be read.
 
@@ -266,6 +278,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
         experimental=experimental,
         bus_map=bus_map,
         defines=_defines(data.get("defines", {}), config_path),
+        exclude=_exclude(data.get("exclude", []), config_path),
     )
 
 

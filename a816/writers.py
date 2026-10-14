@@ -272,7 +272,10 @@ class ObjectWriter(Writer):
         self._ensure_section().expression_relocations.append((offset, expression, size_bytes))
 
     def add_alias(self, name: str, expression: str) -> None:
-        self.aliases.append((name, expression))
+        """Record a link-time alias once: codegen may register one early and
+        its symbol node registers it again while resolving."""
+        if (name, expression) not in self.aliases:
+            self.aliases.append((name, expression))
 
     def end(self) -> None:
         # Strip a trailing empty section (e.g. trailing `*=` with no code),

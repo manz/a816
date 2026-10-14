@@ -157,6 +157,7 @@ def _import_from_object(
     # past the `<H>` 65535 limit within 3-4 hops. Importers must
     # `.import` direct deps explicitly; the resolver's own dedup
     # (`imported_module_paths`) handles the diamond.
+    resolver.imported_runtime_names.update(view.provided_names)
     return [ExternNode(name, resolver) for name in view.provided_names]
 
 
@@ -420,10 +421,15 @@ def _import_object_mode(plan: _ImportPlan, resolver: Resolver, macro_definitions
 
     for step in plan.steps:
         if isinstance(step, _Inline):
-            out.extend(_code_gen(step.nodes, resolver, macro_definitions) or [])
+            resolver.inlining_import += 1
+            try:
+                out.extend(_code_gen(step.nodes, resolver, macro_definitions) or [])
+            finally:
+                resolver.inlining_import -= 1
         elif isinstance(step, _TypedBind):
             out.extend(ExternNode(name, resolver) for name in _typed_bind_names(step.node, resolver))
         else:
+            resolver.imported_runtime_names.update(step.names)
             out.extend(ExternNode(name, resolver) for name in step.names)
 
     resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)

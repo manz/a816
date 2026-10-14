@@ -27,6 +27,7 @@ $ a816 check   <paths>                # lint with fluff (DOC*, E501, N80*, OP001
 $ a816 format  <paths>                # format .s / .i sources with fluff
 $ a816 fix     <paths>                # apply fluff autofixes (--diff / --check / --select / --unsafe-fixes)
 $ a816 explain <CODE>                 # a rule's rationale, or an error code's entry
+$ a816 --version                      # the installed version (`a816 1.1.1`)
 ```
 
 Bare invocation (`a816 file.s -o out.ips`) still routes to `build`
@@ -285,6 +286,7 @@ track_register_size = true
 | `rom_size` | build | ROM image size in bytes; required with read-only `[map.N]` regions |
 | `[defines]` | build, fluff | names a build passes with `-D`, each with its default |
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
+| `exclude` | fluff | glob patterns of files and directories a run with no paths leaves out |
 
 `--include-path` / `-I` replace the file's `include-paths` /
 `module-paths`; `--experimental` flags add to `[experimental]`;

@@ -217,7 +217,7 @@ def test_document_symbols_lists_struct_and_label() -> None:
     syms = server._handle_document_symbols(DocumentSymbolParams(text_document=TextDocumentIdentifier(uri=doc.uri)))
     names = {s.name for s in syms}
     assert "init" in names or "demo" in names
-    assert "repeat" in names
+    assert "repeat(value)" in names
 
 
 def test_references_returns_locations_for_jumped_label() -> None:

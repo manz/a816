@@ -51,6 +51,25 @@ def test_a_false_assert_in_the_body_still_fails(tmp_path: Path) -> None:
         _link(tmp_path, false_assert)
 
 
+def test_a_false_assert_shows_the_names_as_written(tmp_path: Path) -> None:
+    """Bahamut Lagoon: E0407 printed `__sc16___run_bits - __sc16___pool_runs`."""
+    false_assert = _INSIDE.replace("== 6", "== 7")
+
+    with pytest.raises(LinkAssertError) as excinfo:
+        _link(tmp_path, false_assert)
+
+    assert [shown for _, shown, _ in excinfo.value.failures] == ["_end - tbl == 7"]
+
+
+def test_an_unevaluable_assert_shows_the_names_as_written(tmp_path: Path) -> None:
+    broken = _INSIDE.replace("_end - tbl == 6", "_end - missing == 6")
+
+    with pytest.raises(LinkAssertError) as excinfo:
+        _link(tmp_path, broken)
+
+    assert "__sc" not in excinfo.value.format()
+
+
 def test_two_allocs_assert_on_their_own_private_label(tmp_path: Path) -> None:
     second = _INSIDE.replace("tbl", "tbl2").replace(".dw 1, 2, 3", ".dw 1")
     _link(tmp_path, _INSIDE + second.replace("== 6", "== 2"))

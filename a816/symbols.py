@@ -413,6 +413,14 @@ class Resolver:
         # owned by its dependencies - the owner's `.o` is the single
         # source of truth, downstream `.o`s carry externs.
         self.imported_symbol_names: set[str] = set()
+        # Runtime names an `.import` provides (labels, allocs), known at
+        # codegen though their extern stubs register only at resolution:
+        # an alias over one registers it early (`symbols._pending_externs`).
+        self.imported_runtime_names: set[str] = set()
+        # Depth of `.import` declaration inlining (object mode). Inlined
+        # aliases belong to their owner's object: registering one early
+        # here would export a copy from every importer.
+        self.inlining_import = 0
         # Private (`_`) declarations inlined from imported modules: name ->
         # (module, the files of that module). The owner's own declarations
         # (a public macro or constant built on a private one) still use them;

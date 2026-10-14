@@ -9,7 +9,10 @@ It speaks to any LSP-capable editor (VS Code, Neovim, Helix, Emacs).
   `a816 fluff` lint hits (DOC*, E501, N80*, OP001, S00*, ST00*, UP001) reported with rule
   codes and `source = "a816 fluff"`.
 - **Goto-definition** for labels, symbols, macros, struct fields, and
-  `.import` / `.include` targets.
+  `.import` / `.include` targets. A struct member lands on its field's
+  line however it is reached: `Type.field`, a `.reserve NAME as T`'s
+  `NAME.field`, a typed bind's `view.field`, `(expr as T).field`,
+  nested `Outer.head.field`, or a field named in `.istruct` / `.patch`.
 - **Find references** across the workspace.
 - **Rename** with prepare-rename validation.
 - **Hover** on labels, symbols, macros, struct fields, `.import` /

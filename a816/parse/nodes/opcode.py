@@ -38,6 +38,11 @@ logger = logging.getLogger("a816")
 _FORGETS_REGISTER_SIZES = frozenset({"plp", "bra", "brl", "jmp", "jml", "rts", "rtl", "rti"})
 
 
+def _operand_bits(instruction_length: int) -> str:
+    """An instruction's operand width, from its length (one opcode byte)."""
+    return f"{(instruction_length - 1) * 8}-bit"
+
+
 class OpcodeNode(NodeBase):
     def __init__(
         self,
@@ -295,11 +300,11 @@ class OpcodeNode(NodeBase):
         suffix = {2: "b", 3: "w", 4: "l"}.get(len(emitted))
         hint = f"write `{self.opcode}.{suffix}`" if suffix else "write the operand size"
         raise NodeError(
-            f"`{self.opcode}` was sized as {self._provisional_length} bytes before its target was placed, "
-            f"and the target needs {len(emitted)}",
+            f"`{self.opcode}` was given a {_operand_bits(self._provisional_length)} operand before its value "
+            f"was known, and the value needs {_operand_bits(len(emitted))}",
             self._operand_token(),
             code=str(E_CODEGEN_UNDECIDABLE_SIZE),
-            hint=f"{hint}: the target is outside this block, so its size can't be inferred ahead of it",
+            hint=f"{hint}: the value comes from outside this block (a later label or symbol), so its size can't be inferred ahead of it",
         )
 
     def _undecidable_size_error(self, error: UndecidableOperandSizeError, emitter: object) -> NodeError:

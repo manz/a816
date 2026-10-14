@@ -61,6 +61,7 @@ from a816.formatter import A816Formatter, FormattingOptions
 from a816.lsp.document import A816Document
 from a816.lsp.handlers.completions import CompletionsMixin
 from a816.lsp.handlers.hover import HoverMixin
+from a816.lsp.handlers.members import MemberDefinitionMixin
 from a816.lsp.handlers.tokens import TokensMixin
 from a816.lsp.mask import build_code_mask
 from a816.lsp.workspace import IndexProgress, ProgressCallback, WorkspaceIndex
@@ -73,7 +74,7 @@ FILE_URI_PREFIX = "file://"
 __all__ = ["A816Document", "A816LanguageServer", "WorkspaceIndex", "lsp_main"]
 
 
-class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
+class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin, MemberDefinitionMixin):
     """Enhanced LSP server for a816 assembly language"""
 
     def __init__(self) -> None:
@@ -562,6 +563,11 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin):
             return None
         word = line[word_start:word_end]
 
+        member = self._member_definition(doc, line_num, params.position.character)
+        if member is None:
+            member = self._dotted_definition(doc, line_num, params.position.character)
+        if member is not None:
+            return [member]
         if word not in doc.externs:
             local = self._local_definition(doc, word)
             if local:

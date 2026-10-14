@@ -81,21 +81,21 @@ class HoverMixin:
     def _hover_for_macro(
         self, doc: A816Document, workspace: WorkspaceIndex | None, raw_word: str, word: str
     ) -> Hover | None:
+        """A macro's signature, and its docstring when it has one (ff4's
+        `_make_color(r, g, b)` has none and showed nothing)."""
         macro_name = next((name for name in doc.macros if name.lower() == word), None)
         if macro_name:
-            doc_text = doc.macro_docstrings.get(word)
-            if doc_text:
-                params_str = self._format_macro_params(doc.macro_params.get(macro_name, []))
-                return self._markdown_hover(f"**{macro_name}{params_str}**\n\n{doc_text}")
+            return self._macro_hover(macro_name, doc.macro_params.get(macro_name, []), doc.macro_docstrings.get(word))
         if workspace:
             macro_location = workspace.get_macro_location(raw_word)
             if macro_location:
                 _, actual = macro_location
-                doc_text = workspace.get_macro_doc(actual)
-                if doc_text:
-                    params_str = self._format_macro_params(workspace.get_macro_params(actual))
-                    return self._markdown_hover(f"**{actual}{params_str}**\n\n{doc_text}")
+                return self._macro_hover(actual, workspace.get_macro_params(actual), workspace.get_macro_doc(actual))
         return None
+
+    def _macro_hover(self, name: str, params: list[str], doc_text: str | None) -> Hover:
+        signature = f"**{name}{self._format_macro_params(params)}**"
+        return self._markdown_hover(f"{signature}\n\n{doc_text}" if doc_text else signature)
 
     @staticmethod
     def _format_macro_params(param_list: list[str]) -> str:

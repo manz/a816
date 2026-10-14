@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.1.2 (unreleased)
+
+- `a816 check` / `format` / `fix` with no paths leave out what git
+  ignores, and an `exclude` list in `a816.toml` leaves out files and
+  directories by glob. Bahamut Lagoon's bare `check` reported 531 hits,
+  530 from gitignored or scratch sources.
+- `lda #NAME`, NAME an alias whose value is known only at link
+  (`BANK = (song >> 16) & 0xFF`, `song` imported or placed later in the
+  same module), takes the register's width like the expression written
+  inline; it failed with `E0313`. That error now names operand widths
+  ("a 16-bit operand ... the value needs 8-bit") instead of instruction
+  lengths. An object records each alias once, so the `.adbg` loses
+  repeated copies of the same symbol.
+- A failed `.assert` in an `.alloc` body shows its names as written
+  (`_run_bits - _pool_runs`), not as the body exports them
+  (`__sc16___run_bits`).
+- A `.struct` takes a docstring as its first statement, as a `.scope`
+  or `.macro` does; the formatter keeps it and the LSP shows it on
+  hover. It was a parse error (`E0101`).
+- `a816 --version` (or `-V`) prints the installed version, the Windows
+  binary's included.
+- LSP hover (nvim `K`) shows the docstring of a label inside an `.alloc`
+  body, where it answered "No information available"; a top-level label
+  shows its own docstring instead of the module's, and a macro shows its
+  parameters, with or without a docstring.
+- LSP goto-definition on a struct member (`Entry.ptr`, `thing.ptr` of a
+  `.reserve thing as Entry`, a typed bind's `view.ptr`, also through its
+  scope as `render.view.ptr`, `(addr as Entry).ptr`, `Outer.head.ptr`, an
+  `.istruct` field) lands on the field's line, across files; it found
+  nothing.
+
 ## 1.1.1 (2026-10-12)
 
 - `[defines]` in `a816.toml` declares the names a build passes with

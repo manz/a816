@@ -106,12 +106,14 @@ type = "mypy -p a816 -p script -p tests --strict --show-error-codes"
 all = ["check", "type", "coverage"]
 
 [tool.hatch.envs.binary]
-detached = true
+# a816 installed (not editable) so its metadata carries the release
+# version, which the binary bundles for `a816 --version`.
+dev-mode = false
 dependencies = ["nuitka"]
 
 [tool.hatch.envs.binary.scripts]
 build = [
-    "nuitka --assume-yes-for-downloads --onefile --include-package-data=a816 a816/cli.py --product-name=a816  --product-version=1.0.0 --company-name=ManZ --output-filename=x816 --no-deployment-flag=self-execution",
+    "nuitka --assume-yes-for-downloads --onefile --include-package-data=a816 --include-distribution-metadata=a816 a816/cli.py --product-name=a816  --product-version=1.0.0 --company-name=ManZ --output-filename=x816 --no-deployment-flag=self-execution",
 ]
 
 [tool.pytest.ini_options]

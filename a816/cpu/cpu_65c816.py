@@ -173,6 +173,10 @@ def guess_value_size(
     external = getattr(value_node, "external_symbols", None)
     if external and not (is_a or is_x):
         raise UndecidableOperandSizeError(external)
+    # Same for a value only the PC stands in for so far (a label of a block
+    # placed later, `BANK = (song >> 16) & 0xFF`): its size says nothing.
+    if (is_a or is_x) and resolver is not None and resolver.provisional_label_used:
+        return "b"
     return operand_size
 
 

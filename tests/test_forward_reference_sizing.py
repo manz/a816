@@ -54,7 +54,7 @@ def test_a_target_outside_the_block_with_another_size_asks_for_the_size() -> Non
     """Same bank, different class: guessed absolute (PC >= $0100), landed in direct page."""
     source = "*= 0x008000\n    lda fwd\n    rts\n*= 0x000010\nfwd:\n    .db 0\n"
 
-    with pytest.raises(NodeError, match="sized as 3 bytes before its target was placed"):
+    with pytest.raises(NodeError, match="given a 16-bit operand before its value was known, and the value needs 8-bit"):
         _bytes(source)
 
 
