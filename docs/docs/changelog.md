@@ -7,6 +7,9 @@
   window's address (`0x8004`, not `0x0004`), silently. A branch under
   `@=` keeps its offset instead of being re-aimed at link from the
   placement, which also makes it work over a WRAM `@=`.
+- `@=` works inside an `.alloc` body (pinned or pooled): the body was
+  sized from the `@=` address (`E0337`, an 8 MB slot), so a linted source
+  had no way to place bytes here and count labels from there.
 
 ## 1.1.2 (2026-10-14)
 

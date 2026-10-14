@@ -14,6 +14,16 @@ from a816.section import ANONYMOUS_ALLOC_PREFIX
 from a816.symbols import Resolver, Scope
 
 
+def _distance(start: Address, end: Address) -> int:
+    """Bytes from `start` to `end`. Physical (file-offset) difference so
+    bank-edge allocs measure right: the logical one jumps `0x8020` for a
+    32-byte alloc ending at `$00:FFFF`, since `$01:0000` is bus-mapped past
+    bank 1's WRAM-mirror low half. Logical where either end has no offset."""
+    if start.physical is not None and end.physical is not None:
+        return end.physical - start.physical
+    return end.logical_value - start.logical_value
+
+
 class AllocNode(NodeBase):
     """Emits `body` at an address picked by the named pool's allocator.
 
@@ -100,21 +110,23 @@ class AllocNode(NodeBase):
         live sizes and its `.a16` / tracked `rep` carry into whatever
         follows, top-level code or the next alloc.
         """
-        start = self._sandbox_pc()
-        pc = start
+        from a816.parse.nodes.position import RelocationAddressNode
+
+        # An `@=` moves the PC to the run-time address its labels count
+        # from, not by any byte: measure each stretch between them and add
+        # the stretches (the end PC minus the start sized a body with
+        # `@= 0x7F0000` at 8 MB, E0337).
+        size = 0
+        segment = pc = self._sandbox_pc()
         for node in self.body:
             if self._skip_in_pass1(node):
                 continue
-            pc = node.pc_after(pc)
-        # Use physical-address diff so bank-edge allocs measure
-        # correctly. `pc.logical_value - start.logical_value` jumps
-        # `0x8020` for a 32-byte alloc that ends at `$00:FFFF` because
-        # the next logical address `$01:0000` is bus-mapped past the
-        # WRAM-mirror low half of bank 1. Physical (file-offset) diff
-        # is the true byte count for any in-ROM pool range.
-        if start.physical is not None and pc.physical is not None:
-            return pc.physical - start.physical
-        return pc.logical_value - start.logical_value
+            after = node.pc_after(pc)
+            if isinstance(node, RelocationAddressNode):
+                size += _distance(segment, pc)
+                segment = after
+            pc = after
+        return size + _distance(segment, pc)
 
     def _request_slot(self) -> None:
         pool = self.resolver.pools[self.pool_name]

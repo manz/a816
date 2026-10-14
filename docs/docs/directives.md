@@ -33,6 +33,19 @@ ram_routine:
     rts
 ```
 
+`@=` also works inside an `.alloc` body: the alloc places the bytes, and
+labels after the `@=` count from its address. Bytes before it still count
+in the body's size.
+
+```ca65
+.alloc room_script in rom_free {
+    @= 0x7F0000   ; the script runs from WRAM 7F:0000
+script_start:
+    .dw script_end - script_start
+script_end:
+}
+```
+
 ### Write-overlap detection
 
 When two `*=` regions (or one `*=` block plus a `.alloc` placement,

@@ -53,3 +53,26 @@ def test_a_branch_after_the_relocation_keeps_its_offset(tmp_path: Path, base: in
     source = f"*= 0x008000\n@= {base:#08x}\n    bra skip\n    .dw 0\nskip:\n    .dw skip\n"
 
     assert _words(tmp_path, source, 3) == (0x0280, 0x0000, (base + 4) & 0xFFFF)
+
+
+_IN_ALLOC = "    @= 0x7F0000\nstart:\n    .dw start\n    .dw here\nhere:\n"
+
+
+@pytest.mark.parametrize(
+    "opening",
+    [".alloc at 0x008000 {\n", ".pool code { range 0x008000 0x00ffff }\n.alloc room in code {\n"],
+)
+def test_code_relocation_inside_an_alloc_body(tmp_path: Path, opening: str) -> None:
+    """Bahamut Lagoon: `@=` in an alloc body was E0337, the body sized from
+    the `@=` address (`0x7F0002 - 0x8000`, an 8 MB slot)."""
+    assert _words(tmp_path, f"{opening}{_IN_ALLOC}}}\n", 2) == (0x0000, 0x0004)
+
+
+def test_bytes_before_the_relocation_count_in_the_body_size(tmp_path: Path) -> None:
+    source = (
+        ".pool code { range 0x008000 0x00ffff }\n"
+        ".alloc room in code {\n    .dw 0xAAAA\n    @= 0x7F0000\nloop:\n    bra loop\n}\n"
+        ".alloc after in code {\n    .dw 0xBBBB\n}\n"
+    )
+
+    assert _words(tmp_path, source, 3) == (0xAAAA, 0xFE80, 0xBBBB)
