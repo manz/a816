@@ -100,3 +100,32 @@ def test_a_member_of_a_struct_in_another_file(tmp_path: Path) -> None:
 
     assert result is not None
     assert (Path(result[0].uri.removeprefix("file://")).name, result[0].range.start.line) == ("types.s", 3)
+
+
+_SCOPED = '''"""M."""
+.struct Glyph {
+    byte temp
+    byte bits_left
+}
+.alloc code at 0x008000 {
+    .scope render {
+        """R."""
+        glyph := (0xA9 as Glyph)
+        lda.b glyph.temp
+    }
+    lda.b render.glyph.bits_left
+}
+'''
+
+
+@pytest.mark.parametrize(("line", "word", "field_line"), [(9, "temp", 2), (11, "bits_left", 3)])
+def test_a_typed_bind_inside_a_named_scope(line: int, word: str, field_line: int) -> None:
+    """ff4: `battle_render.glyph.bits_left_on_tile` found nothing."""
+    server = A816LanguageServer()
+    server.documents[_URI] = A816Document(_URI, _SCOPED)
+    column = server.documents[_URI].lines[line].rindex(word) + 1
+
+    result = server._handle_definition(TextDocumentPositionParams(TextDocumentIdentifier(_URI), Position(line, column)))
+
+    assert result is not None
+    assert result[0].range.start.line == field_line

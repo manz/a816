@@ -91,14 +91,22 @@ class MemberDefinitionMixin:
         parents = list(path.parents)
         struct = path.cast_type
         if struct is None:
-            if not parents:
-                return None
-            struct = self._member_type(doc, parents.pop(0))
+            struct, parents = self._path_head(doc, parents)
         for parent in parents:
             if struct is None:
                 return None
             struct = self._member_type(doc, f"{struct}.{parent}")
         return f"{struct}.{path.name}" if struct else None
+
+    def _path_head(self, doc: A816Document, parents: list[str]) -> tuple[str | None, list[str]]:
+        """The struct the longest recorded prefix of `parents` holds
+        (`battle_render.glyph` before `battle_render`), and the segments
+        after it."""
+        for length in range(len(parents), 0, -1):
+            found = self._member_type(doc, ".".join(parents[:length]))
+            if found is not None:
+                return found, parents[length:]
+        return None, []
 
     def _member_type(self, doc: A816Document, name: str) -> str | None:
         found = doc.member_types.get(name)

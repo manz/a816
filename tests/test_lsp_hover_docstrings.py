@@ -65,3 +65,10 @@ def test_a_docstring_above_still_documents_a_label_without_one_below() -> None:
 
 def test_a_macro_shows_its_parameters() -> None:
     assert _hover(11, "push").startswith("**push(size, count)**")
+
+
+def test_a_macro_without_a_docstring_still_shows_its_signature() -> None:
+    """ff4's `_make_color(r, g, b)`, declared in an `.alloc` body, showed nothing."""
+    source = ".alloc code at 0x008000 {\n    .macro tint(r, g) {\n        .db r, g\n    }\n    tint(1, 2)\n}\n"
+
+    assert _hover(4, "tint", source) == "**tint(r, g)**"

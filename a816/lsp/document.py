@@ -86,6 +86,8 @@ class A816Document:
         # field (`Outer.head`), a `.reserve NAME as T`, a typed bind
         # `NAME := (expr as T)`. Goto-def walks `a.b.c` through it.
         self.member_types: dict[str, str] = {}
+        # Named scopes enclosing the node being visited, outermost first.
+        self._scope_path: list[str] = []
         # pool name -> hover-ready summary line (range count, fill, strategy)
         self.pool_details: dict[str, str] = {}
         # alloc / relocate name -> target pool name
@@ -221,7 +223,7 @@ class A816Document:
             return
         if not node.file_info.position:
             return
-        self.member_types[symbol] = cast.type_name
+        self._record_member_type(symbol, cast.type_name)
         bind_pos = Position(line=node.file_info.position.line, character=node.file_info.position.column)
         file_uri = self._get_file_uri_for_token(node.file_info)
         # Walk the type's flat fields, mirroring the codegen-time eager
@@ -334,7 +336,7 @@ class A816Document:
     def _record_reserve(self, node: ReserveTypedAstNode) -> None:
         """`.reserve NAME as T`: `NAME` goto-defs here, its fields to `T`'s."""
         self._record_token_position(node.file_info, self.symbols, node.name)
-        self.member_types[node.name] = node.type_name
+        self._record_member_type(node.name, node.type_name)
 
     def _visit_include(self, node: IncludeAstNode) -> None:
         for child in node.included_nodes:
@@ -395,9 +397,6 @@ class A816Document:
         elif isinstance(node, ExternAstNode):
             if getattr(node, "symbol", None):
                 self.externs.add(node.symbol)
-        elif isinstance(node, ScopeAstNode):
-            if node.docstring:
-                self.scope_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
         elif isinstance(node, MacroAstNode):
             self._record_macro(node)
         elif isinstance(node, PoolAstNode | AllocAstNode | RelocateAstNode | ReclaimAstNode):
@@ -409,10 +408,29 @@ class A816Document:
 
         self._visit_children(node)
 
+    def _visit_scope(self, node: ScopeAstNode) -> None:
+        """A named scope: its docstring, then its body with the scope on the path."""
+        if node.docstring:
+            self.scope_docstrings[node.name.lower()] = inspect.cleandoc(node.docstring)
+        self._scope_path.append(node.name)
+        try:
+            self._visit_children(node)
+        finally:
+            self._scope_path.pop()
+
+    def _record_member_type(self, name: str, type_name: str) -> None:
+        """`name` holds a `type_name` struct: bare (as the scope's own code
+        writes it) and scope-qualified (`battle_render.glyph`)."""
+        self.member_types[name] = type_name
+        if self._scope_path:
+            self.member_types[".".join([*self._scope_path, name])] = type_name
+
     def _record_without_children(self, node: AstNode) -> bool:
         """Record a node whose children hold no symbols to walk (a struct, a
         typed reservation, an include visited on its own); False otherwise."""
-        if isinstance(node, StructAstNode):
+        if isinstance(node, ScopeAstNode):
+            self._visit_scope(node)
+        elif isinstance(node, StructAstNode):
             self._record_struct(node)
         elif isinstance(node, ReserveTypedAstNode):
             self._record_reserve(node)

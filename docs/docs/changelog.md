@@ -24,11 +24,12 @@
 - LSP hover (nvim `K`) shows the docstring of a label inside an `.alloc`
   body, where it answered "No information available"; a top-level label
   shows its own docstring instead of the module's, and a macro shows its
-  parameters.
+  parameters, with or without a docstring.
 - LSP goto-definition on a struct member (`Entry.ptr`, `thing.ptr` of a
-  `.reserve thing as Entry`, a typed bind's `view.ptr`,
-  `(addr as Entry).ptr`, `Outer.head.ptr`, an `.istruct` field) lands on
-  the field's line, across files; it found nothing.
+  `.reserve thing as Entry`, a typed bind's `view.ptr`, also through its
+  scope as `render.view.ptr`, `(addr as Entry).ptr`, `Outer.head.ptr`, an
+  `.istruct` field) lands on the field's line, across files; it found
+  nothing.
 
 ## 1.1.1 (2026-10-12)
 
