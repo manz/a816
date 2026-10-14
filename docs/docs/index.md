@@ -138,7 +138,7 @@ adc, and, asl, bcc, bcs, beq, bit, bmi, bne, bpl, bra, brk, brl, bvc, bvs, clc, 
 ## Code pointer relocation
 
 ```ca65
-*=0x008000
+*= 0x008000
     jsr.l _intro
 ```
 
@@ -159,7 +159,7 @@ some_address = 0x54
 `.scope name { ... }` exports its labels as `name.label`:
 
 ```ca65
-*=0x009000
+*= 0x009000
 .scope named_scope {
    addr = 0x1234
    youhou_text:
@@ -170,10 +170,10 @@ some_address = 0x54
    .db 0
 }
 
-*=0x019A52
+*= 0x019A52
     load_system_menu_text_pointer(named_scope.youhou_text)
 
-*=0x019A80
+*= 0x019A80
     load_system_menu_text_pointer(named_scope.yaha_text)
 ```
 
@@ -206,7 +206,7 @@ pointer, an array stride:
     word OAMADDR
 }
 
-*=0x008000
+*= 0x008000
     lda.w 0x2100 + PPU.OAMADDR  ; assembles as LDA $2102
 
 player = 0x7E0010

@@ -16,6 +16,9 @@
 - `build_with_imports()` returns a failed module's own errors in
   `diagnostics` (e.g. the located `E0310`), not just "Failed to compile
   module '__main__'".
+- `a816 format` writes `*= ADDR` / `@= ADDR` with their space (it wrote
+  `*=0x008000`), and a full-line comment written flush-left after them
+  stays flush-left instead of being indented as section body.
 
 ## 1.1.2 (2026-10-14)
 
