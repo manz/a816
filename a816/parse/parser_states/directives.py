@@ -247,9 +247,7 @@ def parse_struct(p: Parser) -> StructAstNode:
 
     expect_token(p.next(), TokenType.RBRACE)
 
-    return StructAstNode(
-        variable.value, fields, current, body.items, docstring=docstring, field_tokens=field_tokens
-    )
+    return StructAstNode(variable.value, fields, current, body.items, docstring=docstring, field_tokens=field_tokens)
 
 
 class _StructBody:

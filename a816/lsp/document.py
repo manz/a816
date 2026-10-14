@@ -386,7 +386,7 @@ class A816Document:
 
     def _visit_node_for_symbols(self, node: AstNode) -> None:
         """Recursively visit AST nodes to extract symbols and labels."""
-        if isinstance(node, DocstringAstNode):
+        if isinstance(node, DocstringAstNode) or self._record_without_children(node):
             return
         if isinstance(node, LabelAstNode):
             self._record_label(node)
@@ -404,19 +404,23 @@ class A816Document:
             self._record_pool_directive(node)
         elif isinstance(node, ImportAstNode):
             self._record_import(node)
-        elif isinstance(node, StructAstNode):
-            self._record_struct(node)
-            return
-        elif isinstance(node, ReserveTypedAstNode):
-            self._record_reserve(node)
-            return
-        elif isinstance(node, IncludeAstNode):
-            self._visit_include(node)
-            return
         elif isinstance(node, IncludeBinaryAstNode):
             self._record_incbin(node)
 
         self._visit_children(node)
+
+    def _record_without_children(self, node: AstNode) -> bool:
+        """Record a node whose children hold no symbols to walk (a struct, a
+        typed reservation, an include visited on its own); False otherwise."""
+        if isinstance(node, StructAstNode):
+            self._record_struct(node)
+        elif isinstance(node, ReserveTypedAstNode):
+            self._record_reserve(node)
+        elif isinstance(node, IncludeAstNode):
+            self._visit_include(node)
+        else:
+            return False
+        return True
 
     def _record_incbin(self, node: IncludeBinaryAstNode) -> None:
         """Index the auto-generated `<sanitized_path>` + `<...>__size` symbols
