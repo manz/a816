@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.3 (unreleased)
+## 1.1.3 (2026-10-15)
 
 - Labels after `@= ADDR` count from ADDR, forward ones included: with a
   ROM-mapped ADDR (`@= 0x0000`), a label after any byte took the ROM
