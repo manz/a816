@@ -59,12 +59,15 @@ class ExpressionNode(ValueNodeProtocol):
         return rename, touches_label
 
     def _record_local_label_relocation(self) -> None:
-        from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+        from a816.parse.ast.expression import _inline_aliases, fold_nested_constants, reconstruct_expression
 
         rename, touches_label = self._compute_local_label_renames()
         if not touches_label:
             return
         expr_str = _inline_aliases(reconstruct_expression(self.expression, self.resolver), self.resolver)
+        # A `.for` variable or an alloc-body constant is this scope's alone:
+        # fold it, or the linker cannot resolve it (dq6's `grid_font + k * 320`).
+        expr_str = fold_nested_constants(expr_str, self.resolver)
         for short, mangled in rename.items():
             expr_str = re.sub(rf"\b{re.escape(short)}\b", mangled, expr_str)
         self._deferred_expression = expr_str

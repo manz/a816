@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.3 (unreleased)
+
+- Labels after `@= ADDR` count from ADDR, forward ones included: with a
+  ROM-mapped ADDR (`@= 0x0000`), a label after any byte took the ROM
+  window's address (`0x8004`, not `0x0004`), silently. A branch under
+  `@=` keeps its offset instead of being re-aimed at link from the
+  placement, which also makes it work over a WRAM `@=`.
+- `@=` works inside an `.alloc` body (pinned or pooled): the body was
+  sized from the `@=` address (`E0337`, an 8 MB slot), so a linted source
+  had no way to place bytes here and count labels from there.
+- A `.for` variable beside a label in an expression the linker evaluates
+  (`.dw (grid_font + k * 320) & 0xFFFF`) folds to its value; the link
+  failed with "cannot resolve `k`".
+- `build_with_imports()` returns a failed module's own errors in
+  `diagnostics` (e.g. the located `E0310`), not just "Failed to compile
+  module '__main__'".
+- `a816 format` writes `*= ADDR` / `@= ADDR` with their space (it wrote
+  `*=0x008000`), and a full-line comment written flush-left after them
+  stays flush-left instead of being indented as section body.
+
 ## 1.1.2 (2026-10-14)
 
 - `a816 check` / `format` / `fix` with no paths leave out what git

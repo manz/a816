@@ -573,7 +573,11 @@ class A816Formatter:
         last_emitted_line_num: int | None,
         in_label_section: bool,
         formatted: list[str],
+        flush_in_source: bool = False,
     ) -> None:
+        """A full-line comment the author wrote flush-left stays flush-left:
+        after `*=` / `@=` it is a top-level note, not section body (Bahamut
+        Lagoon's room scripts had it indented)."""
         comment_text = node_lines[0] if node_lines else ""
         on_same_line_as_prev = (
             last_emitted_line_num is not None
@@ -601,7 +605,7 @@ class A816Formatter:
             formatted[-1] = formatted[-1].rstrip() + " " + comment_text.strip()
         elif prev_is_flush_comment:
             formatted.extend(node_lines)
-        elif in_label_section and comment_text.strip() and not separated_by_blank:
+        elif in_label_section and comment_text.strip() and not separated_by_blank and not flush_in_source:
             formatted.append(self._indent(comment_text))
         else:
             formatted.extend(node_lines)
@@ -672,7 +676,9 @@ class A816Formatter:
         if isinstance(node, LabelAstNode):
             return self._emit_label(node_lines, formatted)
         if isinstance(node, CommentAstNode):
-            self._emit_comment(node_lines, node_line, last_line, in_label, formatted)
+            position = node.file_info.position
+            flush = position is not None and position.column == 0
+            self._emit_comment(node_lines, node_line, last_line, in_label, formatted, flush)
             return in_label
         if isinstance(node, self._instruction_like_nodes):
             return self._emit_instruction_like(node, node_lines, in_label, formatted, prev_was_label)

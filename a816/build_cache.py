@@ -176,14 +176,27 @@ class BuildCache:
 @contextmanager
 def recording_warnings() -> Iterator[list[str]]:
     """Collect the warnings logged while the block runs (still printed)."""
+    with _recording(logging.WARNING) as captured:
+        yield captured
+
+
+@contextmanager
+def recording_errors() -> Iterator[list[str]]:
+    """Collect the errors logged while the block runs (still printed)."""
+    with _recording(logging.ERROR) as captured:
+        yield captured
+
+
+@contextmanager
+def _recording(level: int) -> Iterator[list[str]]:
     captured: list[str] = []
 
     class _Capture(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
-            if record.levelno == logging.WARNING:
+            if record.levelno == level:
                 captured.append(record.getMessage())
 
-    handler = _Capture(logging.WARNING)
+    handler = _Capture(level)
     root = logging.getLogger()
     root.addHandler(handler)
     try:

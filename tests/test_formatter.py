@@ -241,7 +241,7 @@ end:
         formatted = self.formatter.format_text(input_code)
         lines = [line for line in formatted.splitlines() if line]
 
-        self.assertEqual(lines[0], "*=0x1000")
+        self.assertEqual(lines[0], "*= 0x1000")
         self.assertTrue(lines[1].startswith("    "), lines[1])
         self.assertTrue(lines[2].startswith("    "), lines[2])
 
@@ -321,7 +321,7 @@ end:
 
         formatted = self.formatter.format_text(input_code)
         self.assertIn(
-            '*=0x228000\n.incbin "assets/bank1_1.dat"\n\n*=0x24A000',
+            '*= 0x228000\n.incbin "assets/bank1_1.dat"\n\n*= 0x24A000',
             formatted,
         )
 
@@ -982,20 +982,20 @@ class TestPositionDirectiveBlanks(TestCase):
         )
         out = self.formatter.format_text(src)
         # No blank line between `*=` and the next directive.
-        self.assertNotIn("*=0x0AF000\n\n", out)
-        self.assertNotIn("*=0x0FA710\n\n", out)
-        self.assertIn('*=0x0AF000\n.incbin "fonts/8x8.bin"', out)
+        self.assertNotIn("*= 0x0AF000\n\n", out)
+        self.assertNotIn("*= 0x0FA710\n\n", out)
+        self.assertIn('*= 0x0AF000\n.incbin "fonts/8x8.bin"', out)
 
     def test_reloc_directive_also_tight(self) -> None:
         src = '"""m"""\n*= 0x008000\n@= 0x7E2000\n\nram_routine:\n    rts\n'
         out = self.formatter.format_text(src)
-        self.assertIn("*=0x008000\n@=0x7E2000\nram_routine:", out)
+        self.assertIn("*= 0x008000\n@= 0x7E2000\nram_routine:", out)
 
     def test_blank_before_position_preserved(self) -> None:
         """Blanks before a `*=` are kept — author uses them to break sections."""
         src = '"""m"""\nlabel_one:\n    rts\n\n*= 0x0AF000\n.incbin "x.bin"\n'
         out = self.formatter.format_text(src)
-        self.assertIn("\n\n*=0x0AF000", out)
+        self.assertIn("\n\n*= 0x0AF000", out)
 
 
 class TestBlockMoveFormatting(TestCase):
@@ -1029,3 +1029,25 @@ class TestBlockMoveFormatting(TestCase):
         formatter = A816Formatter(FormattingOptions(space_after_comma=False))
         formatted = formatter.format_text("main:\n    mvn 0x7E, 0x7E\n")
         self.assertIn("mvn 0x7E,0x7E", formatted)
+
+
+class TestPlacementLinesKeepTheirShape:
+    """Bahamut Lagoon (1.1.2): `*= 0x008000  ; c` became `*=0x008000`, and a
+    flush-left comment after `@=` was indented as section body."""
+
+    _SOURCE = '"""M."""\n*= 0x008000  ; place\n@= 0x7F0000  ; run there\n; a note\n\nstart:\n    rts\n'
+
+    def test_the_space_after_the_operator_stays(self) -> None:
+        out = A816Formatter().format_text(self._SOURCE)
+
+        assert "*= 0x008000  ; place\n@= 0x7F0000  ; run there\n" in out
+
+    def test_a_flush_left_comment_stays_flush_left(self) -> None:
+        out = A816Formatter().format_text(self._SOURCE)
+
+        assert "\n; a note\n" in out
+
+    def test_one_pass_converges(self) -> None:
+        once = A816Formatter().format_text(self._SOURCE)
+
+        assert A816Formatter().format_text(once) == once

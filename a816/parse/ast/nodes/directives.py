@@ -75,7 +75,7 @@ class CodePositionAstNode(AstNode):
         return self.kind, self.expression.to_representation()[0]
 
     def to_canonical(self) -> str:
-        return f"*={self.expression.to_canonical()}"
+        return f"*= {self.expression.to_canonical()}"
 
 
 class CodeRelocationAstNode(AstNode):
@@ -87,7 +87,7 @@ class CodeRelocationAstNode(AstNode):
         return self.kind, self.expression.to_representation()[0]
 
     def to_canonical(self) -> str:
-        return f"@={self.expression.to_canonical()}"
+        return f"@= {self.expression.to_canonical()}"
 
 
 class MapArgs(TypedDict, total=False):

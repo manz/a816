@@ -352,6 +352,18 @@ def canonicalize_local_label_refs(expression_str: str, resolver: Resolver) -> st
     return _IDENT_RE.sub(replace, expression_str)
 
 
+def fold_nested_constants(expression_str: str, resolver: Resolver) -> str:
+    """Replace each constant of a scope below the module root (an `.alloc`
+    body's `_CELLS`, a `.for` variable) with its value, so an expression
+    sent to the linker names no symbol only this scope knows."""
+
+    def replace(match: re.Match[str]) -> str:
+        constant = _nested_constant(match.group(0), resolver)
+        return str(constant) if constant is not None else match.group(0)
+
+    return _IDENT_RE.sub(replace, expression_str)
+
+
 def _nested_constant(name: str, resolver: Resolver) -> int | None:
     """The value of `name` when a scope below the module root defines it as
     a number constant, and no label of that name is in reach."""

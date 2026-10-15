@@ -8,7 +8,7 @@ and there is no path to configure.
 ```ca65
 .import "@std/snes/ppu"
 
-*=0x008000
+*= 0x008000
 init:
     ppu := (PPU_BASE as PPU)
         lda ppu.INIDISP
