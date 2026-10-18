@@ -654,7 +654,7 @@ class Linker:
                 try:
                     holds = self._evaluate_expression(check.expression, local_overlay)
                 except ExpressionEvaluationError as exc:
-                    reason = _as_written(exc.reason) + _alloc_private_hint(check.expression, local_overlay or {})
+                    reason = _assert_reason(exc.reason, check.expression, local_overlay or {})
                     failures.append(
                         (f"{check.message} (cannot evaluate: {reason})", _as_written(check.expression), check.source)
                     )
@@ -873,6 +873,24 @@ def _shown_local_name(name: str, obj_file: ObjectFile) -> str:
         return name
     module = obj_file.module or Path(obj_file.origin).stem
     return f"{module}.{match.group(1)}" if module else match.group(1)
+
+
+_UNRESOLVED_RE = re.compile(r"cannot resolve `([^`]+)` at link time")
+
+
+def _assert_reason(reason: str, expression: str, local_overlay: dict[str, int]) -> str:
+    """Why an assert could not be evaluated, as its author can act on it.
+
+    A name the evaluator left unresolved is in neither the linked symbols
+    nor the module's own: unless an `.alloc` body hides it, it is defined
+    nowhere (ff6: a test harness had dropped its `-D` flags, and the
+    link-time wording read like a linker limit)."""
+    private = _alloc_private_hint(expression, local_overlay)
+    unresolved = _UNRESOLVED_RE.fullmatch(reason)
+    if private or unresolved is None:
+        return _as_written(reason) + private
+    name = _as_written(unresolved.group(1))
+    return f"`{name}` is not defined; a `-D` name goes on the command line or under `[defines]` in a816.toml"
 
 
 def _alloc_private_hint(expression: str, local_overlay: dict[str, int]) -> str:

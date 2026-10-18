@@ -80,3 +80,14 @@ def test_parse_only_runs_skip_asserts() -> None:
 def test_formatter_keeps_asserts() -> None:
     src = '.assert (a & 0xFFFF) == 0, "msg"\n'
     assert '.assert ( a & 0xFFFF ) == 0, "msg"\n' in A816Formatter().format_text(src)
+
+
+def test_a_name_defined_nowhere_is_reported_as_undefined() -> None:
+    """ff6: `cannot resolve NAME at link time` read like a linker limit; the
+    name was a `-D` flag the test harness had dropped."""
+    with pytest.raises(LinkAssertError) as excinfo:
+        _link(_SRC + '.assert ASSASSIN17_RUNIC_E1, "needs runic_e1"\n')
+    message, _expression, _source = excinfo.value.failures[0]
+
+    assert "`ASSASSIN17_RUNIC_E1` is not defined" in message
+    assert "[defines]" in message
