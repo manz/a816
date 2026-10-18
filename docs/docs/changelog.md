@@ -20,6 +20,9 @@
 - `script.Table.to_bytes` honours a subclass's `joker_regex` again
   (1.0.4 did): a table writing jokers as `<NN>` had every one dropped,
   silently.
+- Two files pinning an anonymous `.alloc at` to one address on the same
+  line fail with E0408 "two blocks pinned at ..." naming both, not E0400
+  "symbol already defined" on the generated alloc name.
 
 ## 1.1.3 (2026-10-15)
 

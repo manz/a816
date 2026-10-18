@@ -339,6 +339,28 @@ def _overlap_hint(clash: tuple[EmittedBlock, EmittedBlock]) -> str:
     return "move or shrink one of the blocks so their bytes stay apart"
 
 
+class PinnedTwiceLinkError(LinkerError):
+    """Raised when two files pin an anonymous `.alloc at` to one address.
+
+    Its name comes from the address and the line, so the two collide before
+    any byte is placed; reported as the overlap it is, not as a name clash.
+    """
+
+    def __init__(self, address: int, sources: list[str]) -> None:
+        self.address = address
+        self.sources = sources
+        super().__init__(f"two blocks pinned at {_snes_address(address)}")
+
+    def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.error_codes import E_LINKER_BLOCK_OVERLAP
+        from a816.errors import format_error_simple
+
+        details = [("pinned", source) for source in self.sources]
+        details.append(("hint", "both write the same bytes: keep one, or move the other"))
+        return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_BLOCK_OVERLAP}]", str(self), details)
+
+
 class LinkAssertError(LinkerError):
     """Raised when `.assert` checks fail once every address is final."""
 
