@@ -84,6 +84,8 @@ class A816Parser:
         filename: str = "memory.s",
         include_paths: list[Path] | None = None,
         verbose_errors: bool = False,
+        *,
+        missing_includes_ok: bool = False,
     ) -> ParserResult:
         scanner = Scanner(lex_initial)
         ast: list[AstNode] = []
@@ -92,7 +94,7 @@ class A816Parser:
 
         try:
             tokens = scanner.scan(filename, program)
-            parser = Parser(tokens, parse_initial, include_paths=include_paths)
+            parser = Parser(tokens, parse_initial, include_paths=include_paths, missing_includes_ok=missing_includes_ok)
             ast = parser.parse()
         except ScannerException as e:
             # Defensive: scanner now recovers per line, but a state hard

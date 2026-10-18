@@ -61,11 +61,22 @@ logger = logging.getLogger("a816.parser")
 
 
 class Parser:
-    def __init__(self, tokens: list[Token], initial_state: "StateFunc", include_paths: list[Path] | None = None):
+    def __init__(
+        self,
+        tokens: list[Token],
+        initial_state: "StateFunc",
+        include_paths: list[Path] | None = None,
+        *,
+        missing_includes_ok: bool = False,
+    ):
         self.tokens: list[Token] = tokens
         self.pos = 0
         self.initial_state: StateFunc = initial_state
         self.include_paths: list[Path] = include_paths or []
+        # A missing `.include` parses as an empty body instead of E0500:
+        # the formatter only writes the directive back (ff6 formats before
+        # `build/gen` exists).
+        self.missing_includes_ok = missing_includes_ok
         # Errors collected during recovery. `parse_initial` appends every
         # ParserSyntaxError it survives so callers can render *all* of them
         # instead of only the first one.

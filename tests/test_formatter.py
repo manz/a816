@@ -1087,6 +1087,21 @@ class TestStringsKeepTheirQuotes:
         assert '.debug "it\'s"' in out
 
 
+class TestFormatWithoutTheIncludedFile:
+    """ff6: `format --check` failed E0500 on `.include "textes.s"` before the
+    build generated it; the formatter only writes the directive back."""
+
+    _SOURCE = '"""M."""\n.include "build/gen/not_there.s"\nnop\n'
+
+    def test_a_missing_include_formats(self) -> None:
+        assert A816Formatter().format_text(self._SOURCE, "m.s") == self._SOURCE
+
+    def test_the_parser_still_reports_it_by_default(self) -> None:
+        result = A816Parser.parse_as_ast(self._SOURCE, "m.s")
+
+        assert "E0500" in str(result.error)
+
+
 class TestIncludeIpsKeepsItsOffset:
     """ff6 (1.1.3): `.include_ips "x.ips", -0x200` lost `, -0x200`, and the
     parser requires it."""

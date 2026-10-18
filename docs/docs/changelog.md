@@ -23,6 +23,12 @@
 - Two files pinning an anonymous `.alloc at` to one address on the same
   line fail with E0408 "two blocks pinned at ..." naming both, not E0400
   "symbol already defined" on the generated alloc name.
+- `a816 format` formats a file whose `.include` is not generated yet
+  (`build/gen`): it failed E0500, so lint needed a build first. `a816
+  check` still needs the file.
+- A failed `.assert` on a name defined nowhere says "`NAME` is not
+  defined" and where a `-D` name goes, not "cannot resolve `NAME` at
+  link time".
 
 ## 1.1.3 (2026-10-15)
 

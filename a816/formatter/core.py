@@ -86,7 +86,7 @@ class A816Formatter:
         """Format assembly code from text content"""
         source = file_path or "<input>"
         try:
-            result = A816Parser.parse_as_ast(content, source, include_paths=include_paths)
+            result = A816Parser.parse_as_ast(content, source, include_paths=include_paths, missing_includes_ok=True)
 
             if result.error:
                 raise FormattingError(f"Unable to format {source}:\n{result.error}")

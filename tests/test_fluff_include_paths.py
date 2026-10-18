@@ -46,10 +46,18 @@ def test_an_importer_of_such_a_module_passes_check(project: Path) -> None:
     assert fluff_main(["check", "src/main.s"]) == 0
 
 
-def test_format_names_the_include_paths_it_searched(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """dq6: format's E0500 hint listed only the file's own directory."""
+def test_check_still_reports_a_missing_include(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Lint reads what an include defines, so it keeps the E0500."""
     (project / "gen" / "data.s").unlink()
 
-    fluff_main(["format", "--check", "src/menu.s"])
+    fluff_main(["check", "src/menu.s"])
 
-    assert "searched src, gen" in capsys.readouterr().err
+    assert "E0500" in capsys.readouterr().out
+
+
+def test_format_does_not_need_the_included_file(project: Path) -> None:
+    """ff6 formats before the build generates `build/gen`: the formatter only
+    writes `.include` back, so a missing file is no error there."""
+    (project / "gen" / "data.s").unlink()
+
+    assert fluff_main(["format", "--check", "src/menu.s"]) == 0
