@@ -11,6 +11,9 @@
   bodies inside an `.alloc` came out at the alloc's indent, and a macro
   block argument `m(x, { .dw 1 })` as `.dw 1}` then `)`. Files with such
   bodies need one `a816 format`; leading whitespace only.
+- `a816 fix --select UP001` leaves a `*=` run holding `.include_ips` to a
+  manual migration, like `.include` / `.incbin`; it wrapped every
+  `.include_ips` after the `*=` in its pinned alloc.
 
 ## 1.1.3 (2026-10-15)
 

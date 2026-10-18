@@ -31,6 +31,7 @@ from a816.parse.ast.nodes import (
     ImportAstNode,
     IncludeAstNode,
     IncludeBinaryAstNode,
+    IncludeIpsAstNode,
 )
 from a816.parse.ast.placement import is_placement_boundary
 from a816.parse.ast.visitor import walk
@@ -40,7 +41,12 @@ if TYPE_CHECKING:
     from a816.incbin_names import PathName
 
 # Run content UP001 leaves for a manual migration (see `_run_has_skip_trigger`).
-_SKIP_TRIGGERS: tuple[type[AstNode], ...] = (ImportAstNode, IncludeAstNode, IncludeBinaryAstNode)
+_SKIP_TRIGGERS: tuple[type[AstNode], ...] = (
+    ImportAstNode,
+    IncludeAstNode,
+    IncludeBinaryAstNode,
+    IncludeIpsAstNode,
+)
 
 
 class StarEqualToAllocAt(Rule):
@@ -53,8 +59,9 @@ class StarEqualToAllocAt(Rule):
         "hard error on cross-bank overflow instead of the silent wrap "
         "the legacy form allows. Migration is mechanical; the autofix "
         "wraps the run between `*=` and the next placement boundary "
-        "in an anonymous alloc. Runs holding `.import`, `.include` or "
-        "`.incbin` are flagged without an autofix: migrate those by hand."
+        "in an anonymous alloc. Runs holding `.import`, `.include`, "
+        "`.incbin` or `.include_ips` are flagged without an autofix: "
+        "migrate those by hand."
     )
     bad = '"""Module."""\n*= 0x008000\n.db 0xEA\n'
     good = '"""Module."""\n.alloc at 0x008000 {\n    .db 0xEA\n}\n'
@@ -176,7 +183,9 @@ def _emit_up001(rule: Rule, ctx: LintContext, siblings: list[AstNode], idx: int,
     addr_text = star_eq.expression.to_canonical()
     message = f"replace `*= {addr_text}` with `.alloc at {addr_text} {{ ... }}`"
     if _run_has_skip_trigger(siblings, idx):
-        return rule.diagnose(ctx, star_eq, f"{message}; migrate by hand: the run holds `.import`/`.include`/`.incbin`")
+        return rule.diagnose(
+            ctx, star_eq, f"{message}; migrate by hand: the run holds `.import`/`.include`/`.incbin`/`.include_ips`"
+        )
     return rule.diagnose(
         ctx,
         star_eq,
@@ -186,13 +195,16 @@ def _emit_up001(rule: Rule, ctx: LintContext, siblings: list[AstNode], idx: int,
 
 
 def _run_has_skip_trigger(siblings: list[AstNode], idx: int) -> bool:
-    """Does the `*=` run after `siblings[idx]` hold `.import` / `.include` / `.incbin`?
+    """Does the `*=` run after `siblings[idx]` hold `.import` / `.include` /
+    `.incbin` / `.include_ips`?
 
     The run ends at the next placement boundary, same as the autofix
     span. Those directives don't wrap mechanically: `.import` belongs in
     the file prelude (the assembler rejects it inside `.alloc`),
     `.include` may carry its own placement, and `.incbin` may rely on
     the legacy silent bank wrap that `.alloc at` turns into an error.
+    `.include_ips` replays a whole patch at its own addresses, which a
+    pinned slot would claim as its body.
     """
     for sibling in siblings[idx + 1 :]:
         if is_placement_boundary(sibling):
