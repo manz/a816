@@ -286,6 +286,22 @@ class A816Formatter:
         CodeLookupAstNode: lambda self, ast: f"{{{{ {ast.symbol} }}}}",
     }
 
+    # Emitters of nodes that may span several lines, keyed by AST node type.
+    _MULTI_LINE_EMITTERS: ClassVar[dict[type, Callable[[Any, Any], list[str]]]] = {
+        ScopeAstNode: lambda self, ast: self._format_scope(ast),
+        AllocAstNode: lambda self, ast: self._format_alloc(ast),
+        RelocateAstNode: lambda self, ast: self._format_relocate(ast),
+        PoolAstNode: lambda self, ast: self._format_pool(ast),
+        ReclaimAstNode: lambda self, ast: [self._format_reclaim(ast)],
+        MacroAstNode: lambda self, ast: self._format_macro(ast),
+        DocstringAstNode: lambda self, ast: self._format_docstring(ast.text),
+        IfAstNode: lambda self, ast: self._format_if(ast),
+        ForAstNode: lambda self, ast: self._format_for(ast),
+        StructAstNode: lambda self, ast: ast.to_canonical().splitlines(),
+        SymbolAffectationAstNode: lambda self, ast: self._format_symbol_affectation(ast),
+        MacroApplyAstNode: lambda self, ast: self._format_macro_apply(ast),
+    }
+
     def _format_ast(
         self, ast: AstNode, indent_instructions: bool = False, *, indent_after_label: bool = True
     ) -> list[str]:
@@ -296,30 +312,9 @@ class A816Formatter:
             return self._format_block(ast, indent_after_label)
         if isinstance(ast, CommentAstNode):
             return self._format_comment(ast)
-        if isinstance(ast, ScopeAstNode):
-            return self._format_scope(ast)
-        if isinstance(ast, AllocAstNode):
-            return self._format_alloc(ast)
-        if isinstance(ast, RelocateAstNode):
-            return self._format_relocate(ast)
-        if isinstance(ast, PoolAstNode):
-            return self._format_pool(ast)
-        if isinstance(ast, ReclaimAstNode):
-            return [self._format_reclaim(ast)]
-        if isinstance(ast, MacroAstNode):
-            return self._format_macro(ast)
-        if isinstance(ast, DocstringAstNode):
-            return self._format_docstring(ast.text)
-        if isinstance(ast, IfAstNode):
-            return self._format_if(ast)
-        if isinstance(ast, ForAstNode):
-            return self._format_for(ast)
-        if isinstance(ast, StructAstNode):
-            return ast.to_canonical().splitlines()
-        if isinstance(ast, SymbolAffectationAstNode):
-            return self._format_symbol_affectation(ast)
-        if isinstance(ast, MacroApplyAstNode):
-            return self._format_macro_apply(ast)
+        block_emitter = self._MULTI_LINE_EMITTERS.get(type(ast))
+        if block_emitter is not None:
+            return block_emitter(self, ast)
 
         emitter = self._SINGLE_LINE_EMITTERS.get(type(ast))
         if emitter is not None:
