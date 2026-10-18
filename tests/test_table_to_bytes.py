@@ -6,6 +6,7 @@ instead of a KeyError per length) must not move a byte: these pin each rule.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -78,3 +79,17 @@ def test_a_table_never_included_encodes_only_jokers() -> None:
     table.parse_table_line("01=a")
 
     assert table.to_bytes("a[0x02]") == b"\x02"
+
+
+class _AngleJokers(Table):
+    """ff6 merasint: jokers written `<NN>`."""
+
+    joker_regex = re.compile(r"^<(?P<byte>[0-9a-fA-F]{2})>")
+
+
+@pytest.mark.parametrize("extra", ["", KANJI], ids=["scanner", "index walk"])
+def test_a_subclass_joker_regex_is_honoured(extra: str, tmp_path: Path) -> None:
+    """1.1.x hardcoded `[0xNN]` and dropped every ff6 `<NN>` byte."""
+    (tmp_path / "t.tbl").write_text(BASE + extra, encoding="utf-8")
+
+    assert _AngleJokers(str(tmp_path / "t.tbl")).to_bytes("a<7f>b[0x7f]") == b"\x01\x7f\x02"

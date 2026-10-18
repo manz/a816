@@ -1,8 +1,5 @@
 import re
 
-# `joker_regex` without its `^`: matched at an index (`pattern.match(text, pos)`
-# doesn't anchor `^` there).
-_JOKER_AT = re.compile(r"\[0x(?P<byte>[0-9a-fA-F]+)]")
 # Past this many distinct first characters `to_bytes` walks an index (see `_refresh`).
 _SCANNER_MAX_FIRST_CHARS = 256
 
@@ -50,9 +47,10 @@ class Table:
         self.max_bytes_length = 0
         self.max_text_length = 0
         self._compiled: re.Pattern[str] = re.compile(".", re.DOTALL)
+        self._joker: re.Pattern[str] = self.joker_regex
         self._lengths: tuple[int, ...] = ()
         self._use_scanner = True
-        self._scanner_for: tuple[int, int] | None = None
+        self._scanner_for: tuple[int, int, re.Pattern[str]] | None = None
 
         if path is not None:
             self.include(path)
@@ -97,18 +95,22 @@ class Table:
     def _refresh(self) -> None:
         """Rebuild the encoders when keys were added since.
 
-        `_compiled` is one pattern for the whole encoding step: a `[0xNN]`
-        joker, else the table's longest key at that position, else any
-        character, which is skipped. `_lengths` serves the index walk. Keys
-        longer than `max_text_length` (set by `include`) are left out, as the
-        old scan never tried them.
+        `_compiled` is one pattern for the whole encoding step: a joker
+        (`joker_regex`, `[0xNN]` unless a subclass says otherwise), else the
+        table's longest key at that position, else any character, which is
+        skipped. `_lengths` serves the index walk. Keys longer than
+        `max_text_length` (set by `include`) are left out, as the old scan
+        never tried them.
         """
-        cache_key = (len(self.lookup), self.max_text_length)
+        cache_key = (len(self.lookup), self.max_text_length, self.joker_regex)
         if self._scanner_for == cache_key:
             return
+        # Matched at an index, where `^` never anchors: drop it.
+        joker = self.joker_regex.pattern.removeprefix("^")
+        self._joker = re.compile(joker, self.joker_regex.flags)
         keys = [k for k in self.lookup if 0 < len(k) <= self.max_text_length]
         key_group = f"(?P<key>{_trie_pattern(keys)})|" if keys else ""
-        self._compiled = re.compile(rf"\[0x(?P<byte>[0-9a-fA-F]+)]|{key_group}.", re.DOTALL)
+        self._compiled = re.compile(rf"(?P<joker>{joker})|{key_group}.", self.joker_regex.flags | re.DOTALL)
         self._lengths = tuple(sorted({len(k) for k in keys}, reverse=True))
         # The regex engine tries the trie's first characters one by one: past a
         # few hundred (BL's 733-kanji jp.tbl) the index walk is faster.
@@ -116,7 +118,7 @@ class Table:
         self._scanner_for = cache_key
 
     def to_bytes(self, text: str) -> bytes:
-        """Encode `text`: `[0xNN]` is that byte, else the longest table key at
+        """Encode `text`: a joker (`[0xNN]`) is that byte, else the longest table key at
         that position, else the character is skipped.
 
         Slicing the rest of the text at every step, and trying every length up
@@ -132,7 +134,7 @@ class Table:
         for token in self._compiled.finditer(text):
             if token.lastgroup == "key":
                 binary_text += lookup[token.group("key")]
-            elif token.lastgroup == "byte":
+            elif token.lastgroup == "joker":
                 binary_text.append(int(token.group("byte"), 16))
         return bytes(binary_text)
 
@@ -142,7 +144,7 @@ class Table:
         lookup = self.lookup
         position, end = 0, len(text)
         while position < end:
-            joker = _JOKER_AT.match(text, position)
+            joker = self._joker.match(text, position)
             if joker:
                 binary_text.append(int(joker.group("byte"), 16))
                 position = joker.end()

@@ -17,6 +17,9 @@
 - OP001's safe fix keeps the bytes: `.w` on a value above `0xFFFF`
   (`jsr.w 0xC006AC`, an in-bank call) and `.l` on `jmp` / `jsr` are no
   longer called redundant.
+- `script.Table.to_bytes` honours a subclass's `joker_regex` again
+  (1.0.4 did): a table writing jokers as `<NN>` had every one dropped,
+  silently.
 
 ## 1.1.3 (2026-10-15)
 
