@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Final, Literal, TypedDict
 
-from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
+from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode, quoted
 from a816.parse.ast.nodes.containers import BlockAstNode
 from a816.parse.tokens import Token
 
@@ -19,7 +19,7 @@ class TextAstNode(AstNode):
         return self.kind, self.text
 
     def to_canonical(self) -> str:
-        return f'.text "{self.text}"'
+        return f".text {quoted(self.text)}"
 
 
 class AsciiAstNode(AstNode):
@@ -31,7 +31,7 @@ class AsciiAstNode(AstNode):
         return self.kind, self.text
 
     def to_canonical(self) -> str:
-        return f'.ascii "{self.text}"'
+        return f".ascii {quoted(self.text)}"
 
 
 class CommentAstNode(AstNode):
@@ -295,7 +295,7 @@ class DebugAstNode(AstNode):
         return self.kind, self.message
 
     def to_canonical(self) -> str:
-        return f".debug '{self.message}'"
+        return f".debug {quoted(self.message, prefer="'")}"
 
 
 class RegisterSizeAstNode(AstNode):

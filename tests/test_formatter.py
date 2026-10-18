@@ -6,6 +6,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from unittest import TestCase
 
+import pytest
+
 from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter, FormattingOptions
 
@@ -1051,3 +1053,34 @@ class TestPlacementLinesKeepTheirShape:
         once = A816Formatter().format_text(self._SOURCE)
 
         assert A816Formatter().format_text(once) == once
+
+
+class TestStringsKeepTheirQuotes:
+    """ff6 (1.1.3): `.text 'l"ordre'` came out as `.text "l"ordre"`, which no
+    longer parses. A string is requoted only when its text fits the new quotes."""
+
+    @pytest.mark.parametrize(
+        ("line", "expected"),
+        [
+            (".text 'plain'", '.text "plain"'),
+            (".text 'l\"ordre'", ".text 'l\"ordre'"),
+            (".text 'it\\'s \"x\"'", ".text 'it\\'s \"x\"'"),
+            ('.text "it\\\'s"', '.text "it\\\'s"'),
+            (".ascii 'a\"b'", ".ascii 'a\"b'"),
+            ('.text "say \\"hi\\""', '.text "say \\"hi\\""'),
+        ],
+    )
+    def test_requoted_text_scans_back(self, line: str, expected: str) -> None:
+        out = A816Formatter().format_text(f'"""M."""\n{line}\n')
+
+        assert out.splitlines()[1] == expected
+
+    def test_assert_message_keeps_a_double_quote(self) -> None:
+        out = A816Formatter().format_text('"""M."""\n.assert 1, \'a "b"\'\n')
+
+        assert ".assert 1, 'a \"b\"'" in out
+
+    def test_debug_message_with_an_apostrophe_switches_quotes(self) -> None:
+        out = A816Formatter().format_text('"""M."""\n.debug "it\'s"\n')
+
+        assert '.debug "it\'s"' in out

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4 (unreleased)
+
+- `a816 format` keeps a string in single quotes when its text holds a
+  `"`: `.text 'l"ordre'` became `.text "l"ordre"`, which no longer
+  parses.
+
 ## 1.1.3 (2026-10-15)
 
 - Labels after `@= ADDR` count from ADDR, forward ones included: with a

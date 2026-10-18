@@ -269,8 +269,8 @@ class A816Formatter:
     _SINGLE_LINE_EMITTERS: ClassVar[dict[type, Callable[[Any, Any], str]]] = {
         LabelAstNode: lambda self, ast: ast.to_canonical(),
         OpcodeAstNode: lambda self, ast: format_opcode(ast, self.options),
-        TextAstNode: lambda self, ast: f'.text "{ast.text}"',
-        AsciiAstNode: lambda self, ast: f'.ascii "{ast.text}"',
+        TextAstNode: lambda self, ast: ast.to_canonical(),
+        AsciiAstNode: lambda self, ast: ast.to_canonical(),
         DataNode: lambda self, ast: format_data(ast, self.options),
         MacroApplyAstNode: lambda self, ast: format_macro_apply(ast, self.options),
         IncludeAstNode: lambda self, ast: f'.include "{ast.file_path}"',

@@ -14,6 +14,20 @@ from typing import Any, Final
 from a816.parse.tokens import Token, TokenType
 
 
+def _fits_in(text: str, quote: str) -> bool:
+    """True when `text` scans back unchanged between `quote`s: the scanner
+    ends a string on a bare `quote` and keeps `\\quote` as two characters."""
+    return all(index > 0 and text[index - 1] == "\\" for index, char in enumerate(text) if char == quote)
+
+
+def quoted(text: str, prefer: str = '"') -> str:
+    """`text` (a string's raw inner text) between quotes that keep it intact:
+    `prefer` when it fits, else the other quote."""
+    other = "'" if prefer == '"' else '"'
+    quote = prefer if _fits_in(text, prefer) or not _fits_in(text, other) else other
+    return f"{quote}{text}{quote}"
+
+
 class AstNode:
     """Base of every parsed node.
 
