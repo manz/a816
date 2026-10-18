@@ -57,15 +57,22 @@ def _literal_value(node: OpcodeAstNode) -> int | None:
         return None
 
 
-def _suffix_is_redundant(suffix: str, value: int) -> bool:
-    # `.l` is redundant when the value already needs 3 bytes — no
-    # shorter form can hold it, so inference also picks `.l`.
-    # `.w` is redundant when the value needs ≥ 2 bytes for the same
-    # reason; the shorter `.b` would truncate.
+# A bare 24-bit `jmp` / `jsr` target in the caller's bank takes the
+# absolute form (and another bank's is an error), so their `.l` always
+# picks JML / JSL where inference would not.
+_TRANSFERS = frozenset({"jmp", "jsr"})
+
+
+def _suffix_is_redundant(suffix: str, value: int, opcode: str = "") -> bool:
+    """Inference alone picks `suffix` for `value`.
+
+    `.l` when the value needs 3 bytes. `.w` when it needs exactly 2:
+    above 0xFFFF, `.w` truncates (`jsr.w 0xC006AC` is an in-bank call)
+    and dropping it widens the operand."""
     if suffix == "l":
-        return value > 0xFFFF
+        return value > 0xFFFF and opcode not in _TRANSFERS
     if suffix == "w":
-        return value > 0xFF
+        return 0xFF < value <= 0xFFFF
     return False
 
 
@@ -73,13 +80,14 @@ class RedundantOpcodeSizeSuffix(Rule):
     code = "OP001"
     description = "explicit `.w` / `.l` size suffix is redundant"
     rationale = (
-        "When the literal operand already exceeds the next-smaller "
-        "addressing form's range (`> 0xFF` for `.w`, `> 0xFFFF` for "
-        "`.l`), the assembler picks that exact width from the value "
+        "When the literal operand needs exactly that width (`0x100` to "
+        "`0xFFFF` for `.w`, above `0xFFFF` for `.l`), the assembler picks "
+        "it from the value "
         "alone. Writing the suffix anyway adds visual noise and "
         "lies about why the width was chosen. `.b` is left alone "
         "because under `rep #$20` / `.a16` it's the only way to "
-        "force an 8-bit immediate opcode."
+        "force an 8-bit immediate opcode, and `jmp.l` / `jsr.l` because "
+        "a bare 24-bit target in the caller's bank is a 16-bit jump."
     )
     bad = '"""Module."""\nlda.w #0x1234\n'
     good = '"""Module."""\nlda #0x1234\n'
@@ -95,7 +103,7 @@ class RedundantOpcodeSizeSuffix(Rule):
         value = _literal_value(node)
         if value is None:
             return
-        if not _suffix_is_redundant(suffix, value):
+        if not _suffix_is_redundant(suffix, value, node.opcode):
             return
         fix = _strip_suffix_fix(ctx, node, suffix)
         yield self.diagnose(

@@ -14,6 +14,9 @@
 - `a816 fix --select UP001` leaves a `*=` run holding `.include_ips` to a
   manual migration, like `.include` / `.incbin`; it wrapped every
   `.include_ips` after the `*=` in its pinned alloc.
+- OP001's safe fix keeps the bytes: `.w` on a value above `0xFFFF`
+  (`jsr.w 0xC006AC`, an in-bank call) and `.l` on `jmp` / `jsr` are no
+  longer called redundant.
 
 ## 1.1.3 (2026-10-15)
 
