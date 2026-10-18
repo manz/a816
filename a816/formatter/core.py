@@ -274,7 +274,7 @@ class A816Formatter:
         DataNode: lambda self, ast: format_data(ast, self.options),
         MacroApplyAstNode: lambda self, ast: format_macro_apply(ast, self.options),
         IncludeAstNode: lambda self, ast: f'.include "{ast.file_path}"',
-        IncludeIpsAstNode: lambda self, ast: f'.include_ips "{ast.file_path}"',
+        IncludeIpsAstNode: lambda self, ast: ast.to_canonical(),
         IncludeBinaryAstNode: lambda self, ast: f'.incbin "{ast.file_path}"',
         TableAstNode: lambda self, ast: f'.table "{ast.file_path}"',
         ExternAstNode: lambda self, ast: f".extern {ast.symbol}",

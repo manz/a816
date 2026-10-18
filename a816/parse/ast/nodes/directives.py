@@ -271,7 +271,7 @@ class IncludeIpsAstNode(AstNode):
 
     def to_canonical(self) -> str:
         expr = self.expression.to_canonical()
-        return f'.include_ips "{self.file_path}" {expr}'
+        return f'.include_ips "{self.file_path}", {expr}'
 
 
 class IncludeBinaryAstNode(AstNode):

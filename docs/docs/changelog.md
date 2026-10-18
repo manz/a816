@@ -5,6 +5,8 @@
 - `a816 format` keeps a string in single quotes when its text holds a
   `"`: `.text 'l"ordre'` became `.text "l"ordre"`, which no longer
   parses.
+- `a816 format` keeps the offset of `.include_ips "x.ips", -0x200`;
+  it dropped `, -0x200`, which the parser requires.
 
 ## 1.1.3 (2026-10-15)
 

@@ -10,6 +10,7 @@ import pytest
 
 from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter, FormattingOptions
+from a816.parse.mzparser import A816Parser
 
 
 class TestFormattingOptions(TestCase):
@@ -1084,3 +1085,20 @@ class TestStringsKeepTheirQuotes:
         out = A816Formatter().format_text('"""M."""\n.debug "it\'s"\n')
 
         assert '.debug "it\'s"' in out
+
+
+class TestIncludeIpsKeepsItsOffset:
+    """ff6 (1.1.3): `.include_ips "x.ips", -0x200` lost `, -0x200`, and the
+    parser requires it."""
+
+    _SOURCE = '"""M."""\n.include_ips "x.ips", -0x200\n'
+
+    def test_offset_survives(self) -> None:
+        out = A816Formatter().format_text(self._SOURCE)
+
+        assert out == self._SOURCE
+
+    def test_canonical_form_has_the_comma(self) -> None:
+        node = A816Parser.parse_as_ast(self._SOURCE, "m.s").nodes[-1]
+
+        assert node.to_canonical() == '.include_ips "x.ips", -0x200'
