@@ -56,6 +56,9 @@ class A816Formatter:
 
     def __init__(self, options: FormattingOptions | None = None):
         self.options = options or FormattingOptions()
+        # Bodies being formatted for `_indent_block_lines`; their lines
+        # carry only nesting, the block adds the indent.
+        self._nesting = 0
         self._instruction_like_nodes = (
             OpcodeAstNode,
             DataNode,
@@ -134,7 +137,10 @@ class A816Formatter:
         node_lines = self._format_ast(node, should_indent, indent_after_label=indent_after_label)
         # Docstrings after a label hug it flush-left, no body indent.
         indent_body_node = (
-            should_indent and isinstance(node, self._instruction_like_nodes) and not isinstance(node, DocstringAstNode)
+            not self._nesting
+            and should_indent
+            and isinstance(node, self._instruction_like_nodes)
+            and not isinstance(node, DocstringAstNode)
         )
         if indent_body_node:
             node_lines = self._indent_node_lines(node, node_lines)
@@ -201,9 +207,8 @@ class A816Formatter:
             # braces, which fused two adjacent local equates into one
             # duplicate-symbol error at link time.
             if isinstance(node, CompoundAstNode):
-                inner_lines = self._format_ast(node, True, indent_after_label=indent_after_label)
                 lines.append("{")
-                lines.extend(self._indent_block_lines(inner_lines))
+                lines.extend(self._nested(node, True, indent_after_label=indent_after_label))
                 lines.append("}")
                 prev_was_label = False
                 prev_line = self._advance_prev_line(node, node_line)
@@ -230,9 +235,8 @@ class A816Formatter:
                 continue
 
             if isinstance(node, CompoundAstNode):
-                inner_lines = self._format_ast(node, True, indent_after_label=indent_after_label)
                 lines.append("{")
-                lines.extend(self._indent_block_lines(inner_lines))
+                lines.extend(self._nested(node, True, indent_after_label=indent_after_label))
                 lines.append("}")
                 prev_line = self._advance_prev_line(node, node_line)
                 continue
@@ -257,7 +261,7 @@ class A816Formatter:
         lines = [f".scope {ast.name} {{"]
         if ast.docstring:
             lines.extend(self._format_docstring(ast.docstring, indent_level=1))
-        lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
+        lines.extend(self._nested(ast.body, True))
         lines.append("}")
         return lines
 
@@ -272,7 +276,6 @@ class A816Formatter:
         TextAstNode: lambda self, ast: ast.to_canonical(),
         AsciiAstNode: lambda self, ast: ast.to_canonical(),
         DataNode: lambda self, ast: format_data(ast, self.options),
-        MacroApplyAstNode: lambda self, ast: format_macro_apply(ast, self.options),
         IncludeAstNode: lambda self, ast: f'.include "{ast.file_path}"',
         IncludeIpsAstNode: lambda self, ast: ast.to_canonical(),
         IncludeBinaryAstNode: lambda self, ast: f'.incbin "{ast.file_path}"',
@@ -315,6 +318,8 @@ class A816Formatter:
             return ast.to_canonical().splitlines()
         if isinstance(ast, SymbolAffectationAstNode):
             return self._format_symbol_affectation(ast)
+        if isinstance(ast, MacroApplyAstNode):
+            return self._format_macro_apply(ast)
 
         emitter = self._SINGLE_LINE_EMITTERS.get(type(ast))
         if emitter is not None:
@@ -334,9 +339,28 @@ class A816Formatter:
         body_lines = []
         if macro_ast.docstring:
             body_lines.extend(self._format_docstring(macro_ast.docstring, indent_level=1))
-        body_lines.extend(self._indent_block_lines(self._format_ast(macro_ast.block)))
+        body_lines.extend(self._nested(macro_ast.block))
 
         return [header, *body_lines, "}"]
+
+    def _format_macro_apply(self, ast: MacroApplyAstNode) -> list[str]:
+        """A macro call; a `{ ... }` argument opens on the call line, its body
+        indented below and its `}` leading the line that goes on with the call."""
+        if not any(isinstance(arg, BlockAstNode) for arg in ast.args):
+            return [format_macro_apply(ast, self.options)]
+        separator = ", " if self.options.space_after_comma else ","
+        lines: list[str] = []
+        current = f"{ast.name}("
+        for index, arg in enumerate(ast.args):
+            current += separator if index else ""
+            if isinstance(arg, BlockAstNode):
+                lines.append(f"{current}{{")
+                lines.extend(self._nested(arg, True))
+                current = "}"
+            else:
+                current += arg.to_canonical()
+        lines.append(f"{current})")
+        return lines
 
     def _format_alloc(self, ast: AllocAstNode) -> list[str]:
         """Format `.alloc [NAME] at ADDR [size N] { body }` (PINNED)
@@ -357,7 +381,7 @@ class A816Formatter:
         else:
             header = f".alloc{name_part} in {ast.pool_name}{ast.flags_suffix()} {{"
         lines = [header]
-        lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
+        lines.extend(self._nested(ast.body, True))
         lines.append("}")
         return lines
 
@@ -374,7 +398,7 @@ class A816Formatter:
         old_start = ast.old_start.to_canonical()
         old_end = ast.old_end.to_canonical()
         lines = [f".relocate {ast.symbol} {old_start} {old_end} into {ast.pool_name} {{"]
-        lines.extend(self._indent_block_lines(self._format_ast(ast.body, True)))
+        lines.extend(self._nested(ast.body, True))
         lines.append("}")
         return lines
 
@@ -407,10 +431,10 @@ class A816Formatter:
         """Format an if statement with explicit braces"""
         condition = if_ast.expression.to_canonical()
         lines = [f".if {condition} {{"]
-        lines.extend(self._indent_block_lines(self._format_ast(if_ast.block)))
+        lines.extend(self._nested(if_ast.block))
         if if_ast.else_block:
             lines.append("} else {")
-            lines.extend(self._indent_block_lines(self._format_ast(if_ast.else_block)))
+            lines.extend(self._nested(if_ast.else_block))
         lines.append("}")
         return lines
 
@@ -443,7 +467,7 @@ class A816Formatter:
         comma = ", " if self.options.space_after_comma else ","
         header = f".for {symbol} := {min_val}{comma}{max_val} {{"
         lines = [header]
-        lines.extend(self._indent_block_lines(self._format_ast(for_ast.body)))
+        lines.extend(self._nested(for_ast.body))
         lines.append("}")
         return lines
 
@@ -486,6 +510,19 @@ class A816Formatter:
                 in_docstring = self._append_block_line(line, levels, in_docstring, indented)
         return indented
 
+    def _nested(self, ast: AstNode, indent_instructions: bool = False, *, indent_after_label: bool = True) -> list[str]:
+        """A block body, indented one level under its header.
+
+        Formatted without the after-label indent, which the block indent
+        replaces; what indent its lines keep is their own nesting (a
+        `.if` inside an `.alloc`), which re-indenting must not flatten."""
+        self._nesting += 1
+        try:
+            lines = self._format_ast(ast, indent_instructions, indent_after_label=indent_after_label)
+        finally:
+            self._nesting -= 1
+        return self._indent_block_lines(lines)
+
     def _append_block_line(self, line: str, levels: int, in_docstring: bool, out: list[str]) -> bool:
         """Indent one block line; returns whether a docstring is still open after it."""
         stripped = line.strip()
@@ -496,7 +533,10 @@ class A816Formatter:
         if in_docstring or triple_count:
             out.append(line.rstrip())
             return in_docstring != (triple_count % 2 == 1)
-        out.append(stripped if self._stays_flush_left(stripped) else self._indent(line, levels))
+        if self._stays_flush_left(stripped):
+            out.append(stripped)
+        else:
+            out.append(" " * (self.options.indent_size * levels) + line.rstrip())
         return in_docstring
 
     @staticmethod
@@ -513,13 +553,15 @@ class A816Formatter:
         """Re-indent one line of a multi-line `.istruct`, keeping its nesting.
 
         `base_ws` is the header's indentation; the block ends at the `}`
-        back at that column. Returns the indentation to keep tracking, or
-        None once the closing brace is emitted.
+        back at that column. The header keeps that indentation like any
+        other body line: it is the `.istruct`'s own nesting (inside an
+        `.alloc` inside a block). Returns the indentation to keep
+        tracking, or None once the closing brace is emitted.
         """
         if not line.strip():
             out.append("")
             return base_ws
-        out.append(" " * (self.options.indent_size * levels) + line[base_ws:])
+        out.append(" " * (self.options.indent_size * levels) + line.rstrip())
         closes = line.lstrip().startswith("}") and len(line) - len(line.lstrip()) == base_ws
         return None if closes else base_ws
 
@@ -644,15 +686,14 @@ class A816Formatter:
         A multi-line `.istruct` shifts as a whole so its fields stay nested
         under the header; other nodes indent only their flush-left lines.
         """
-        if isinstance(node, StructInstanceAstNode | StructPatchAstNode):
+        if isinstance(node, StructInstanceAstNode | StructPatchAstNode | MacroApplyAstNode):
             prefix = " " * self.options.indent_size
             return [f"{prefix}{line}" if line.strip() else line for line in node_lines]
         return [self._indent(line) if line.strip() and not line.startswith(" ") else line for line in node_lines]
 
     def _emit_compound(self, node: CompoundAstNode, formatted: list[str]) -> None:
-        block_lines = self._format_ast(node, indent_after_label=False)
         formatted.append("{")
-        formatted.extend(self._indent_block_lines(block_lines))
+        formatted.extend(self._nested(node, indent_after_label=False))
         formatted.append("}")
 
     def _node_positions_sorted(self, nodes: list[AstNode]) -> list[tuple[int, AstNode]]:

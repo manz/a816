@@ -7,6 +7,10 @@
   parses.
 - `a816 format` keeps the offset of `.include_ips "x.ips", -0x200`;
   it dropped `, -0x200`, which the parser requires.
+- `a816 format` keeps nested bodies nested: `.if` / `.for` / `.scope`
+  bodies inside an `.alloc` came out at the alloc's indent, and a macro
+  block argument `m(x, { .dw 1 })` as `.dw 1}` then `)`. Files with such
+  bodies need one `a816 format`; leading whitespace only.
 
 ## 1.1.3 (2026-10-15)
 
