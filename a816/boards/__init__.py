@@ -68,11 +68,20 @@ def _expand_names(name: str) -> list[str]:
     return [f"{prefix}{variant.strip()}{suffix}" for variant in variants.split(",")]
 
 
-def _map_regions(node: _Node, writable: bool) -> list[BoardRegion]:
+# `boards.bml` leaves a coprocessor's mcu windows unmasked: ares maps them in C++. These are the masks of
+# the power-on bank registers, per window. S-DD1 (`SDD1::mcuRead`): LoROM through bits 16-21, and the MMC
+# pages 0-3 at C0/D0/E0/F0.
+_MCU_DEFAULT_MASKS: dict[str, dict[str, int]] = {
+    "SDD1": {"00-3f,80-bf:8000-ffff": 0x808000, "c0-ff:0000-ffff": 0xC00000},
+}
+
+
+def _map_regions(node: _Node, writable: bool, default_masks: dict[str, int] | None = None) -> list[BoardRegion]:
+    defaults = default_masks or {}
     return [
         BoardRegion(
             address=child.attrs["address"],
-            mask=int(child.attrs.get("mask", "0"), 0),
+            mask=int(child.attrs["mask"], 0) if "mask" in child.attrs else defaults.get(child.attrs["address"], 0),
             base=int(child.attrs.get("base", "0"), 0),
             writable=writable,
         )
@@ -85,7 +94,7 @@ def _is_program_rom(node: _Node) -> bool:
     return node.name == "memory" and node.attrs.get("type") == "ROM"
 
 
-def _regions(node: _Node) -> list[BoardRegion]:
+def _regions(node: _Node, processor: str = "") -> list[BoardRegion]:
     """ROM and RAM regions under ``node``, in file order. Slots and MMIO maps are not memory."""
     out: list[BoardRegion] = []
     for child in node.children:
@@ -95,10 +104,10 @@ def _regions(node: _Node) -> list[BoardRegion]:
             out += _map_regions(child, writable=child.attrs.get("type") != "ROM")
         elif child.name == "mcu" and any(_is_program_rom(grand) for grand in child.children):
             # A coprocessor's mcu window is how the CPU sees program ROM (SA-1, SDD-1, ...).
-            out += _map_regions(child, writable=False)
-            out += _regions(child)
+            out += _map_regions(child, writable=False, default_masks=_MCU_DEFAULT_MASKS.get(processor))
+            out += _regions(child, processor)
         else:
-            out += _regions(child)
+            out += _regions(child, child.attrs.get("identifier", processor))
     return out
 
 
