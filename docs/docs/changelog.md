@@ -10,6 +10,9 @@
   new `a816 ips seal` appends the record that writes it, byte for byte
   what ff6's `tools/checksum.py` wrote. `E0517` to `E0519` cover a bad
   IPS, a copier-headered base ROM and a project with no cartridge.
+- `a816 bps diff --source ROM --target PATCHED -o x.bps` writes a
+  sealed linear patch between two ROMs (`--metadata FILE` for its
+  metadata), for a patch a816's linker does not build alone.
 - `[lint]` in `a816.toml` picks the lint rules: `select` and `ignore`
   take rule codes or prefixes (`ignore = ["N802"]`). `check`, `fix` and
   the LSP honour it; `a816 check --select/--ignore` replace its lists

@@ -34,15 +34,7 @@ def seal_bps(patch: bytes, source: bytes, cartridge: Cartridge | None) -> bytes:
     fixed = with_checksum(target, cartridge)
     if fixed == target:
         return bps.seal(patch, source)
-    patch_info = bps.info(patch)
-    reencoded = bps.encode_linear(
-        bps.diff_blocks(source, fixed),
-        source_size=patch_info.source_size,
-        source_crc32=patch_info.source_crc32,
-        target_size=len(fixed),
-        metadata=patch_info.metadata,
-    )
-    return bps.seal(reencoded, source)
+    return bps.diff(source, fixed, bps.info(patch).metadata)
 
 
 def seal_ips(patch: bytes, base: bytes, cartridge: Cartridge) -> bytes:

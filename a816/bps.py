@@ -127,6 +127,18 @@ def _differing(base: bytes, target: bytes, chunk: int) -> Iterator[int]:
             yield from (offset for offset in range(at, end) if target[offset] != base[offset])
 
 
+def diff(source: bytes, target: bytes, metadata: str = "") -> bytes:
+    """A sealed linear patch turning `source` into `target`."""
+    unsealed = encode_linear(
+        diff_blocks(source, target),
+        source_size=len(source),
+        source_crc32=zlib.crc32(source),
+        target_size=len(target),
+        metadata=metadata,
+    )
+    return seal(unsealed, source)
+
+
 def blocks_end(blocks: Iterable[tuple[int, bytes]]) -> int:
     """One past the last byte any block writes (0 for no block)."""
     return max((address + len(data) for address, data in blocks), default=0)

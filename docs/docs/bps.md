@@ -42,11 +42,16 @@ and refuses a patch with another name and no `-o`.
 
 ```
 a816 bps seal PATCH --source ROM [-o OUT] [--no-checksum]
+a816 bps diff --source ROM --target PATCHED -o OUT [--metadata FILE]
 a816 ips seal PATCH --source ROM [-o OUT]
 a816 bps apply PATCH --source ROM -o OUT [--unsealed]
 a816 bps info PATCH
 ```
 
+- `diff` writes a sealed linear patch from two ROMs, for a patch the
+  linker does not build alone (text spliced into an IPS by another
+  tool, say). `--metadata` names a file whose text becomes the patch's
+  metadata, as is.
 - `apply` checks all three CRCs; `--unsealed` skips the patched ROM's,
   to try a patch before sealing it. It applies any BPS patch, Flips'
   delta ones included.

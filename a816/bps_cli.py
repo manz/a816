@@ -1,9 +1,10 @@
-"""`a816 bps seal|apply|info`: BPS patches, where the base ROM is at hand.
+"""`a816 bps seal|diff|apply|info`: BPS patches, where the base ROM is at hand.
 
 `a816 build -f bps` never reads the base ROM, so its patch leaves the
 patched ROM's CRC32 zero. `seal` fills it in, and the SNES header
 checksum when a816.toml declares the cartridge; `apply` and `info` are
-the same codec for a project that would otherwise need Flips.
+the same codec for a project that would otherwise need Flips. `diff`
+makes a patch from two ROMs, for a patch a816's linker does not build alone.
 """
 
 from __future__ import annotations
@@ -39,6 +40,13 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("--no-checksum", action="store_true", help=NO_CHECKSUM_HELP)
     seal.set_defaults(run=_seal)
 
+    diff = commands.add_parser("diff", help="Make a sealed linear patch between two ROMs.")
+    diff.add_argument("--source", type=Path, required=True, help="The base ROM")
+    diff.add_argument("--target", type=Path, required=True, help="The patched ROM")
+    diff.add_argument("-o", "--output", type=Path, required=True, help="The patch")
+    diff.add_argument("--metadata", type=Path, help="A file whose text becomes the patch's metadata")
+    diff.set_defaults(run=_diff)
+
     apply = commands.add_parser("apply", help="Apply a BPS patch (any, Flips' delta ones included).")
     apply.add_argument("patch", type=Path)
     apply.add_argument("--source", type=Path, required=True, help="The base ROM")
@@ -68,6 +76,14 @@ def _seal(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     output.write_bytes(sealed)
     checksum_note = "" if cartridge is None else ", header checksum fixed"
     print(f"sealed {output} (patched ROM CRC32 {bps.info(sealed).target_crc32:08X}{checksum_note})")
+    return 0
+
+
+def _diff(args: argparse.Namespace, _parser: argparse.ArgumentParser) -> int:
+    metadata = args.metadata.read_text(encoding="utf-8") if args.metadata is not None else ""
+    patch = bps.diff(args.source.read_bytes(), args.target.read_bytes(), metadata)
+    args.output.write_bytes(patch)
+    print(f"wrote {args.output} ({len(patch)} bytes, patched ROM CRC32 {bps.info(patch).target_crc32:08X})")
     return 0
 
 
