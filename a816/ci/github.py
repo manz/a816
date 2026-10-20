@@ -16,6 +16,7 @@ from a816.ci.actions import Actions
 from a816.ci.process import CiError, Run
 
 NIGHTLY_TAG = "nightly"
+DEFAULT_MARKER = "A816-BUILD-COMMENT"
 # The layout the game repos' own workflows used, kept: the artifact,
 # its files, a link, how long it stays and the commit it came from.
 DEFAULT_COMMENT = """\
@@ -83,6 +84,7 @@ def expand(patterns: Sequence[str]) -> list[str]:
 
 
 def _marker(marker: str) -> str:
+    marker = marker or DEFAULT_MARKER
     return marker if marker.startswith("<!--") else f"<!-- {marker} -->"
 
 
@@ -91,7 +93,7 @@ class PrComment:
     """What the pr-artifact action knows about the artifact it uploaded."""
 
     name: str
-    marker: str
+    marker: str = ""
     title: str = ""
     body: str = ""
     sha: str = ""

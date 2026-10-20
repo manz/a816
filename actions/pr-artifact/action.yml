@@ -14,9 +14,10 @@ inputs:
     required: true
   marker:
     description: >-
-      Identifies the comment to update, as an HTML comment
-      (<!-- FF4-IPS-BUILD-COMMENT -->) or a bare word that is wrapped in one.
-    required: true
+      Identifies the comment to update, as an HTML comment or a bare word
+      wrapped in one. Empty means A816-BUILD-COMMENT; pass a repo's old marker
+      (FF4-IPS-BUILD-COMMENT) to keep updating the comments its workflow wrote.
+    default: ""
   title:
     description: The comment's heading, as in "<title> Build Ready!". Empty means the name.
     default: ""

@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from a816.ci.actions import Actions
-from a816.ci.github import Gh, PrComment, run_nightly, run_pr_comment, run_release
+from a816.ci.github import DEFAULT_MARKER, Gh, PrComment, run_nightly, run_pr_comment, run_release
 from a816.ci.process import CiError, Run, run_command
 from a816.ci.project import run_build, run_lint, run_seal
 from a816.ci.rom import PASSPHRASE_VAR, run_decrypt_rom
@@ -47,7 +47,7 @@ def _parser() -> argparse.ArgumentParser:
 
     comment = steps.add_parser("pr-comment", help="Keep the PR's artifact comment up to date.")
     comment.add_argument("--name", required=True)
-    comment.add_argument("--marker", required=True)
+    comment.add_argument("--marker", default="", help=f"The comment's marker (default: {DEFAULT_MARKER})")
     comment.add_argument("--title", default="")
     comment.add_argument("--body", default="")
     comment.add_argument("--sha", default="")

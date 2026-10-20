@@ -14,7 +14,7 @@ tag as the package.
 | `lint` | `a816 format --diff`, then `a816 check`; both run. No `paths`: the project `a816.toml` describes. |
 | `build` | `a816 build` to several `outputs` (one per line, format from the extension), with `defines`. Output `debug-info`. |
 | `seal` | `a816 bps seal` for each `x.bps.unsealed`, `a816 ips seal` for each `x.ips` in `patches`, against `rom`: the SNES header checksum is written when `a816.toml` declares the cartridge (`checksum: false` to skip). |
-| `pr-artifact` | Uploads `files` as `<name>-pr-<n>` and keeps one comment, found by `marker`, linking it; deletes it when `outcome` is not `success`. |
+| `pr-artifact` | Uploads `files` as `<name>-pr-<n>` and keeps one comment on the PR (marker `A816-BUILD-COMMENT`, or `marker` to adopt a repo's old one) with the files, their sizes and a link to the artifact; later builds update it, extras are deleted, and it goes when `outcome` is not `success`. |
 | `nightly` | Replaces the one `nightly` prerelease and its tag with `files`. |
 | `release` | Creates the tag's release with `assets` and an optional reproducible `zip`; prerelease for PEP 440 pre-release tags (`v1.2rc1`). A re-run re-uploads and keeps the notes. |
 
@@ -69,7 +69,6 @@ jobs:
           files: |
             build/game.ips
             build/game.bps
-          marker: GAME-BUILD-COMMENT
           outcome: ${{ job.status }}
       - if: github.event_name == 'push'
         uses: manz/a816/actions/nightly@v1.1.5

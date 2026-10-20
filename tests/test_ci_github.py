@@ -48,6 +48,12 @@ def test_a_first_build_creates_the_comment(tmp_path: Path) -> None:
     assert _writes(run) == [["POST", f"repos/{REPO}/issues/5/comments"]]
 
 
+def test_the_marker_defaults_to_a816s(tmp_path: Path) -> None:
+    run = _fresh()
+    ci_main(["pr-comment", "--name", "ff4"], actions_in(tmp_path, **PR), run)
+    assert _body(run).splitlines()[0] == "<!-- A816-BUILD-COMMENT -->"
+
+
 def test_the_comment_starts_with_its_marker(tmp_path: Path) -> None:
     run = _fresh()
     _comment(tmp_path, run)

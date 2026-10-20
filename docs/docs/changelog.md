@@ -7,7 +7,8 @@
   with the files and their sizes and a link straight to the artifact
   rather than the run. Two runs starting together no longer leave two
   comments: the extras are deleted, the oldest kept. A failure deletes
-  them all.
+  them all. `marker` is optional: it defaults to `A816-BUILD-COMMENT`;
+  a repo's old marker keeps its existing comments updated.
 - `nightly` defaults to the repos' own title (`Nightly Build <run>`) and
   notes; `title` takes `{run}`, `{sha}` and `{version}`.
 - `--dry-run` prints the comment or notes it would post.
