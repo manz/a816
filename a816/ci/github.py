@@ -9,14 +9,34 @@ import shlex
 import time
 import zipfile
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from a816.ci.actions import Actions
 from a816.ci.process import CiError, Run
 
 NIGHTLY_TAG = "nightly"
-DEFAULT_COMMENT = "Artifact `{artifact}`: [download it from the run]({url}).\n\nBuilt from {sha}."
-DEFAULT_NIGHTLY = "Nightly build {version}, from {sha}. Automated and possibly unstable."
+DEFAULT_MARKER = "A816-BUILD-COMMENT"
+# The layout the game repos' own workflows used, kept: the artifact,
+# its files, a link, how long it stays and the commit it came from.
+DEFAULT_COMMENT = """\
+🎮 **{title} Build Ready!**
+
+Your patch has been built successfully! Download it from the artifacts:
+
+📦 **Artifact:** `{artifact}`{files}{br}
+🔗 **Download:** [Click here to download the artifact]({url})
+
+The artifact will be available for {retention} days.
+*Last updated: {commit}*"""
+# As the game repos' own nightly.yml wrote them.
+DEFAULT_NIGHTLY_TITLE = "Nightly Build {run}"
+DEFAULT_NIGHTLY = """\
+Nightly build #{run}
+
+Built from commit: {sha}
+
+This is an automated nightly build and may be unstable."""
 # A PEP 440 pre-release tag: v1.2a1, v1.2.0b2, v1.2rc1.
 _PRERELEASE = re.compile(r"^v\d+(\.\d+)*[.-]?(a|b|rc)[.-]?\d*$")
 
@@ -31,6 +51,8 @@ class Gh:
     def write(self, *args: str, stdin: bytes | None = None) -> None:
         if self.dry_run:
             print("gh", shlex.join(args))
+            if stdin is not None:
+                print(stdin.decode())
             return
         self.run(["gh", *args], stdin)
 
@@ -62,41 +84,100 @@ def expand(patterns: Sequence[str]) -> list[str]:
 
 
 def _marker(marker: str) -> str:
+    marker = marker or DEFAULT_MARKER
     return marker if marker.startswith("<!--") else f"<!-- {marker} -->"
 
 
-def _find_comment(gh: Gh, repo: str, number: str, marker: str) -> str | None:
+@dataclass(frozen=True)
+class PrComment:
+    """What the pr-artifact action knows about the artifact it uploaded."""
+
+    name: str
+    marker: str = ""
+    title: str = ""
+    body: str = ""
+    sha: str = ""
+    outcome: str = "success"
+    artifact_url: str = ""
+    files: tuple[str, ...] = ()
+    retention: str = "30"
+
+
+def _size(path: Path) -> str:
+    size = path.stat().st_size
+    return f"{size / 1024:.0f} KiB" if size >= 1024 else f"{size} bytes"
+
+
+def _files_line(files: Sequence[str]) -> str:
+    """`  \\n📄 **Files:** `x.ips` (320 KiB), ...`, or nothing when no file is at hand."""
+    found = [Path(match) for pattern in files for match in sorted(glob.glob(pattern))]
+    if not found:
+        return ""
+    listed = ", ".join(f"`{path.name}` ({_size(path)})" for path in found)
+    return f"  \n📄 **Files:** {listed}"
+
+
+def _marked_comments(gh: Gh, repo: str, number: str, marker: str) -> list[str]:
+    """The ids of the comments carrying `marker`, oldest first."""
     listed = gh.read("api", "--paginate", f"repos/{repo}/issues/{number}/comments", "--jq", ".[] | {id, body} | tojson")
+    ids = []
     for line in (listed or b"").decode().splitlines():
         comment = json.loads(line)
         if marker in (comment.get("body") or ""):
-            return str(comment["id"])
-    return None
+            ids.append(str(comment["id"]))
+    return ids
 
 
-def run_pr_comment(
-    actions: Actions, gh: Gh, *, name: str, marker: str, title: str, body: str, sha: str, outcome: str
-) -> int:
-    """Keep one comment, found by its marker, that links the PR's artifact; delete it on a failure."""
+def _comment_body(actions: Actions, comment: PrComment, number: str, tag: str) -> bytes:
+    repo = actions.get("GITHUB_REPOSITORY")
+    server = actions.get("GITHUB_SERVER_URL", "https://github.com")
+    run_url = f"{server}/{repo}/actions/runs/{actions.get('GITHUB_RUN_ID')}"
+    values = {
+        "title": comment.title or repo.rpartition("/")[2] or comment.name,
+        "artifact": f"{comment.name}-pr-{number}",
+        "url": comment.artifact_url or run_url,
+        "sha": comment.sha,
+        "commit": f"[{comment.sha[:7]}]({server}/{repo}/commit/{comment.sha})" if comment.sha else "",
+        "retention": comment.retention,
+        "files": _files_line(comment.files),
+        "br": "  ",  # a markdown line break, as the old comments had
+    }
+    return json.dumps({"body": f"{tag}\n{fill(comment.body or DEFAULT_COMMENT, values)}"}, ensure_ascii=False).encode()
+
+
+def run_pr_comment(actions: Actions, gh: Gh, comment: PrComment) -> int:
+    """Keep one comment, found by its marker, that links the PR's artifact; delete it on a failure.
+
+    Two runs starting together (a PR opened and retargeted at once) can
+    both find no comment and both create one, so the extras are deleted
+    after writing: the oldest stays.
+    """
     repo = actions.get("GITHUB_REPOSITORY")
     pull = re.match(r"^refs/pull/(\d+)/", actions.get("GITHUB_REF"))
     if pull is None:
         raise CiError("pr-comment runs on a pull request only")
     number = pull.group(1)
-    tag = _marker(marker)
-    existing = _find_comment(gh, repo, number, tag)
-    if outcome != "success":
-        if existing:
-            gh.write("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{existing}")
+    tag = _marker(comment.marker)
+    existing = _marked_comments(gh, repo, number, tag)
+    if comment.outcome != "success":
+        for comment_id in existing:
+            gh.write("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}")
         return 0
-    url = f"{actions.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}/actions/runs/{actions.get('GITHUB_RUN_ID')}"
-    text = fill(body or DEFAULT_COMMENT, {"artifact": f"{name}-pr-{number}", "url": url, "sha": sha})
-    payload = json.dumps({"body": f"{tag}\n**{title or name}**\n\n{text}"}).encode()
+    payload = _comment_body(actions, comment, number, tag)
     if existing:
-        gh.write("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{existing}", "--input", "-", stdin=payload)
+        gh.write("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{existing[0]}", "--input", "-", stdin=payload)
     else:
         gh.write("api", "-X", "POST", f"repos/{repo}/issues/{number}/comments", "--input", "-", stdin=payload)
+    _drop_duplicates(gh, repo, number, tag)
     return 0
+
+
+def _drop_duplicates(gh: Gh, repo: str, number: str, tag: str) -> None:
+    for comment_id in _marked_comments(gh, repo, number, tag)[1:]:
+        try:
+            gh.write("api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}")
+        except CiError:
+            pass  # the other run deleted it first
 
 
 def run_nightly(actions: Actions, gh: Gh, *, files: Sequence[str], title: str, body: str) -> int:
@@ -105,11 +186,13 @@ def run_nightly(actions: Actions, gh: Gh, *, files: Sequence[str], title: str, b
     sha = actions.get("GITHUB_SHA")
     run_number = actions.get("GITHUB_RUN_NUMBER", "0")
     version = actions.get("A816_BUILD_VERSION", f"nightly-{run_number}")
-    notes = fill(body or DEFAULT_NIGHTLY, {"run": run_number, "sha": sha, "version": version})
+    values = {"run": run_number, "sha": sha, "version": version}
+    notes = fill(body or DEFAULT_NIGHTLY, values)
+    name = fill(title or DEFAULT_NIGHTLY_TITLE, values)
     if gh.read("release", "view", NIGHTLY_TAG) is not None:
         gh.write("release", "delete", NIGHTLY_TAG, "--cleanup-tag", "--yes")
     gh.write(
-        "release", "create", NIGHTLY_TAG, "--prerelease", "--target", sha, "--title", title, "--notes", notes, *assets
+        "release", "create", NIGHTLY_TAG, "--prerelease", "--target", sha, "--title", name, "--notes", notes, *assets
     )
     return 0
 

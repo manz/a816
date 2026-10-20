@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.7 (unreleased)
+
+- `pr-artifact` writes the comment the game repos' own workflows wrote
+  ("Build Ready!", the artifact, its link, retention, the commit), now
+  with the files and their sizes and a link straight to the artifact
+  rather than the run. Two runs starting together no longer leave two
+  comments: the extras are deleted, the oldest kept. A failure deletes
+  them all. `marker` is optional: it defaults to `A816-BUILD-COMMENT`;
+  a repo's old marker keeps its existing comments updated.
+- `nightly` defaults to the repos' own title (`Nightly Build <run>`) and
+  notes; `title` takes `{run}`, `{sha}` and `{version}`.
+- `--dry-run` prints the comment or notes it would post.
+
 ## 1.1.6 (2026-10-20)
 
 - The wheel ships `script/py.typed`, so a project importing `script`
