@@ -349,7 +349,7 @@ def _run_link(args: argparse.Namespace) -> int:
     return exit_code
 
 
-_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain", "bps")
+_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain", "bps", "ci")
 
 
 def _dispatch_subcommand(argv: list[str]) -> int | None:
@@ -366,7 +366,7 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
         return None
     cmd, rest = argv[0], argv[1:]
     if cmd == "build":
-        return _run_assemble(_parse_build_args(rest))
+        return build_main(rest)
     if cmd in {"check", "fix", "format", "explain"}:
         from a816.fluff import fluff_main
 
@@ -375,7 +375,16 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
         from a816.bps_cli import bps_main
 
         return bps_main(rest)
+    if cmd == "ci":
+        from a816.ci import ci_main
+
+        return ci_main(rest)
     return None
+
+
+def build_main(argv: list[str]) -> int:
+    """`a816 build ARGV`, for callers inside a816 (`a816 ci build`)."""
+    return _run_assemble(_parse_build_args(argv))
 
 
 def _run_assemble(args: argparse.Namespace) -> int:

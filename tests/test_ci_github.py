@@ -1,0 +1,206 @@
+"""`a816 ci pr-comment|nightly|release`: what a build publishes, through a fake `gh`."""
+
+from __future__ import annotations
+
+import json
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from a816.ci import ci_main
+from a816.ci.github import Gh, is_prerelease, make_zip
+from a816.cli import _dispatch_subcommand
+from tests.ci_fakes import FakeRun, actions_in
+
+REPO = "manz/ff4"
+PR = {"GITHUB_REPOSITORY": REPO, "GITHUB_REF": "refs/pull/5/merge", "GITHUB_RUN_ID": "99"}
+LIST = ("gh", "api", "--paginate")
+VIEW = ("gh", "release", "view")
+
+
+def _comments(*bodies: str) -> bytes:
+    return "".join(json.dumps({"id": i + 1, "body": b}) + "\n" for i, b in enumerate(bodies)).encode()
+
+
+def _comment(tmp_path: Path, run: FakeRun, *extra: str) -> int:
+    argv = ["pr-comment", "--name", "ff4", "--marker", "FF4-IPS", "--sha", "abc", *extra]
+    return ci_main(argv, actions_in(tmp_path, **PR), run)
+
+
+def test_a_first_build_creates_the_comment(tmp_path: Path) -> None:
+    run = FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
+    _comment(tmp_path, run)
+    assert run.commands()[-1][:4] == ["gh", "api", "-X", "POST"]
+
+
+def test_the_comment_carries_its_marker_and_link(tmp_path: Path) -> None:
+    run = FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
+    _comment(tmp_path, run)
+    body = json.loads(run.calls[-1][1] or b"")["body"]
+    assert body.splitlines()[0] == "<!-- FF4-IPS -->"
+
+
+def test_the_default_text_links_the_run(tmp_path: Path) -> None:
+    run = FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
+    _comment(tmp_path, run)
+    assert "](https://github.com/manz/ff4/actions/runs/99)" in json.loads(run.calls[-1][1] or b"")["body"]
+
+
+def test_a_body_fills_its_placeholders(tmp_path: Path) -> None:
+    run = FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
+    _comment(tmp_path, run, "--body", "{artifact} at {sha}")
+    assert json.loads(run.calls[-1][1] or b"")["body"].endswith("ff4-pr-5 at abc")
+
+
+def test_a_later_build_updates_the_marked_comment(tmp_path: Path) -> None:
+    run = FakeRun({LIST: _comments("unrelated", "<!-- FF4-IPS -->\nold"), ("gh", "api", "-X"): b""})
+    _comment(tmp_path, run)
+    assert run.commands()[-1][3:5] == ["PATCH", f"repos/{REPO}/issues/comments/2"]
+
+
+def test_a_failure_deletes_the_comment(tmp_path: Path) -> None:
+    run = FakeRun({LIST: _comments("<!-- FF4-IPS -->"), ("gh", "api", "-X"): b""})
+    _comment(tmp_path, run, "--outcome", "failure")
+    assert run.commands()[-1][3:] == ["DELETE", f"repos/{REPO}/issues/comments/1"]
+
+
+def test_a_failure_without_a_comment_writes_nothing(tmp_path: Path) -> None:
+    run = FakeRun({LIST: b""})
+    _comment(tmp_path, run, "--outcome", "failure")
+    assert len(run.calls) == 1
+
+
+def test_pr_comment_needs_a_pull_request(tmp_path: Path) -> None:
+    argv = ["pr-comment", "--name", "ff4", "--marker", "M"]
+    assert ci_main(argv, actions_in(tmp_path, GITHUB_REF="refs/heads/master"), FakeRun()) == 1
+
+
+def test_dry_run_prints_the_writes(capsys: pytest.CaptureFixture[str]) -> None:
+    Gh(FakeRun(), dry_run=True).write("release", "create", "v1")
+    assert capsys.readouterr().out == "gh release create v1\n"
+
+
+def test_dry_run_reads_nothing() -> None:
+    run = FakeRun({VIEW: b"{}"})
+    assert (Gh(run, dry_run=True).read("release", "view", "v1"), run.calls) == (None, [])
+
+
+def _nightly(tmp_path: Path, run: FakeRun, *extra: str) -> int:
+    (tmp_path / "ff4.ips").write_bytes(b"PATCH")
+    environ = {"GITHUB_SHA": "abc", "GITHUB_RUN_NUMBER": "12", "A816_BUILD_VERSION": "nightly-12"}
+    return ci_main(["nightly", "--files", str(tmp_path / "*.ips"), *extra], actions_in(tmp_path, **environ), run)
+
+
+def test_nightly_replaces_the_nightly_release(tmp_path: Path) -> None:
+    run = FakeRun({VIEW: b"{}", ("gh", "release"): b""})
+    _nightly(tmp_path, run)
+    assert [argv[2] for argv in run.commands()] == ["view", "delete", "create"]
+
+
+def test_the_first_nightly_deletes_nothing(tmp_path: Path) -> None:
+    run = FakeRun({("gh", "release", "create"): b""})
+    _nightly(tmp_path, run)
+    assert [argv[2] for argv in run.commands()] == ["view", "create"]
+
+
+def test_nightly_targets_the_commit_with_the_files(tmp_path: Path) -> None:
+    run = FakeRun({("gh", "release", "create"): b""})
+    _nightly(tmp_path, run, "--body", "{version} {run} {sha}")
+    create = run.commands()[-1]
+    assert create[3:] == [
+        "nightly",
+        "--prerelease",
+        "--target",
+        "abc",
+        "--title",
+        "Nightly build",
+        "--notes",
+        "nightly-12 12 abc",
+        str(tmp_path / "ff4.ips"),
+    ]
+
+
+def test_a_pattern_matching_nothing_fails(tmp_path: Path) -> None:
+    argv = ["nightly", "--files", str(tmp_path / "*.bps")]
+    assert ci_main(argv, actions_in(tmp_path), FakeRun()) == 1
+
+
+@pytest.mark.parametrize("tag", ["v1.2a1", "v1.2.0b2", "v1.2rc1", "v1.2.0-rc.1"])
+def test_pre_release_tags(tag: str) -> None:
+    assert is_prerelease(tag)
+
+
+@pytest.mark.parametrize("tag", ["v1.2", "v1.2.0", "vanilla", "v1.2.0-patch"])
+def test_final_tags(tag: str) -> None:
+    assert not is_prerelease(tag)
+
+
+def _release(tmp_path: Path, run: FakeRun, tag: str, *extra: str) -> int:
+    (tmp_path / "bl.ips").write_bytes(b"PATCH")
+    environ = {"GITHUB_REF_NAME": tag, "SOURCE_DATE_EPOCH": "1700000000"}
+    return ci_main(["release", *extra], actions_in(tmp_path, **environ), run)
+
+
+def test_a_new_release_generates_notes(tmp_path: Path) -> None:
+    run = FakeRun({("gh", "release", "create"): b""})
+    _release(tmp_path, run, "v1.0", "--assets", str(tmp_path / "bl.ips"))
+    assert run.commands()[-1][3:] == [
+        "v1.0",
+        "--verify-tag",
+        "--title",
+        "v1.0",
+        "--generate-notes",
+        str(tmp_path / "bl.ips"),
+    ]
+
+
+def test_a_pre_release_tag_is_marked(tmp_path: Path) -> None:
+    run = FakeRun({("gh", "release", "create"): b""})
+    _release(tmp_path, run, "v1.0rc1", "--assets", str(tmp_path / "bl.ips"), "--notes-file", "NOTES.md")
+    assert run.commands()[-1][5:10] == ["--title", "v1.0rc1", "--prerelease", "--notes-file", "NOTES.md"]
+
+
+def test_an_existing_release_keeps_its_notes(tmp_path: Path) -> None:
+    run = FakeRun({VIEW: b"{}", ("gh", "release", "upload"): b""})
+    _release(tmp_path, run, "v1.0", "--assets", str(tmp_path / "bl.ips"))
+    assert run.commands()[-1][2:] == ["upload", "v1.0", "--clobber", str(tmp_path / "bl.ips")]
+
+
+def test_the_zip_is_added(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    run = FakeRun({("gh", "release", "create"): b""})
+    _release(tmp_path, run, "v1.0", "--zip", "bl-fr.zip", "--zip-files", "bl.ips")
+    assert run.commands()[-1][-1] == "bl-fr.zip"
+
+
+def test_a_zip_needs_its_files(tmp_path: Path) -> None:
+    assert _release(tmp_path, FakeRun(), "v1.0", "--zip", "bl-fr.zip") == 1
+
+
+def test_nothing_to_release_fails(tmp_path: Path) -> None:
+    assert _release(tmp_path, FakeRun(), "v1.0") == 1
+
+
+def test_the_zip_flattens_its_files(tmp_path: Path) -> None:
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "bl.ips").write_bytes(b"PATCH")
+    make_zip(tmp_path / "x.zip", [str(tmp_path / "build" / "bl.ips")], "1700000000")
+    assert zipfile.ZipFile(tmp_path / "x.zip").namelist() == ["bl.ips"]
+
+
+def test_the_zip_is_reproducible(tmp_path: Path) -> None:
+    (tmp_path / "bl.ips").write_bytes(b"PATCH")
+    make_zip(tmp_path / "a.zip", [str(tmp_path / "bl.ips")], "1700000000")
+    make_zip(tmp_path / "b.zip", [str(tmp_path / "bl.ips")], "1700000000")
+    assert (tmp_path / "a.zip").read_bytes() == (tmp_path / "b.zip").read_bytes()
+
+
+def test_the_zip_dates_start_in_1980(tmp_path: Path) -> None:
+    (tmp_path / "bl.ips").write_bytes(b"PATCH")
+    make_zip(tmp_path / "x.zip", [str(tmp_path / "bl.ips")], "")
+    assert zipfile.ZipFile(tmp_path / "x.zip").infolist()[0].date_time == (1980, 1, 1, 0, 0, 0)
+
+
+def test_a816_dispatches_ci(tmp_path: Path) -> None:
+    assert _dispatch_subcommand(["ci", "nightly", "--dry-run", f"--files={tmp_path}/*.none"]) == 1
