@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.5 (unreleased)
+## 1.1.5 (2026-10-20)
 
 - S-DD1 boards (`SHVC-LN3B-01`): the mcu windows `boards.bml` leaves
   unmasked take the power-on MMC bank masks (`0x808000` for
