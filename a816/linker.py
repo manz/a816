@@ -9,6 +9,7 @@ from a816.exceptions import (
     DuplicateSymbolError,
     ExpressionEvaluationError,
     LinkAssertError,
+    PinnedTwiceLinkError,
     PlacedSpan,
     PoolOverflowLinkError,
     PoolOverlapLinkError,
@@ -30,7 +31,7 @@ from a816.parse.ast.expression import eval_constant_expression
 from a816.parse.errors import ParserSyntaxError, ScannerException
 from a816.parse.nodes.errors import NodeError
 from a816.pool import Allocation, Pool, PoolOverflowError
-from a816.section import PINNED_POOL_PREFIX, Placement
+from a816.section import ANONYMOUS_ALLOC_PREFIX, PINNED_POOL_PREFIX, Placement
 
 _SIZE_SYMBOL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\.__size\b")
 _IDENT_RE = re.compile(r"[A-Za-z_][\w.]*")
@@ -262,7 +263,7 @@ class Linker:
                 key = (req.pool_name, req.symbol_name)
                 alloc_obj = first_placed.get(key)
                 if alloc_obj is not None:
-                    _reject_a_second_alloc(req, self._alloc_sources[key])
+                    _reject_a_second_alloc(req, self._alloc_sources[key], pool)
                 else:
                     alloc_obj = first_placed[key] = _request(pool, req)
                     request_sites[key] = (obj_idx, req.section_idx)
@@ -653,7 +654,7 @@ class Linker:
                 try:
                     holds = self._evaluate_expression(check.expression, local_overlay)
                 except ExpressionEvaluationError as exc:
-                    reason = _as_written(exc.reason) + _alloc_private_hint(check.expression, local_overlay or {})
+                    reason = _assert_reason(exc.reason, check.expression, local_overlay or {})
                     failures.append(
                         (f"{check.message} (cannot evaluate: {reason})", _as_written(check.expression), check.source)
                     )
@@ -874,6 +875,24 @@ def _shown_local_name(name: str, obj_file: ObjectFile) -> str:
     return f"{module}.{match.group(1)}" if module else match.group(1)
 
 
+_UNRESOLVED_RE = re.compile(r"cannot resolve `([^`]+)` at link time")
+
+
+def _assert_reason(reason: str, expression: str, local_overlay: dict[str, int]) -> str:
+    """Why an assert could not be evaluated, as its author can act on it.
+
+    A name the evaluator left unresolved is in neither the linked symbols
+    nor the module's own: unless an `.alloc` body hides it, it is defined
+    nowhere (ff6: a test harness had dropped its `-D` flags, and the
+    link-time wording read like a linker limit)."""
+    private = _alloc_private_hint(expression, local_overlay)
+    unresolved = _UNRESOLVED_RE.fullmatch(reason)
+    if private or unresolved is None:
+        return _as_written(reason) + private
+    name = _as_written(unresolved.group(1))
+    return f"`{name}` is not defined; a `-D` name goes on the command line or under `[defines]` in a816.toml"
+
+
 def _alloc_private_hint(expression: str, local_overlay: dict[str, int]) -> str:
     """Why an assert misses a `_` label of an `.alloc` body: the name is
     private to that body, which exports it as `__sc<idx>__name`."""
@@ -950,10 +969,16 @@ def _request(pool: Pool, request: PoolAlloc) -> Allocation:
     return pool.request(request.symbol_name, request.size, pinned, align=request.align, cross_bank=request.cross_bank)
 
 
-def _reject_a_second_alloc(request: PoolAlloc, first_source: str) -> None:
+def _reject_a_second_alloc(request: PoolAlloc, first_source: str, pool: Pool) -> None:
     """The same (pool, name) reached from another `file:line` is a second alloc
-    reusing the name, not one module's request seen through two importers."""
+    reusing the name, not one module's request seen through two importers.
+
+    An anonymous alloc is named from its address and line: two files pinning
+    one address on the same line are two blocks writing the same bytes (ff6
+    assassin17), which the name clash did not say."""
     if request.source and first_source and request.source != first_source:
+        if request.symbol_name.startswith(ANONYMOUS_ALLOC_PREFIX) and pool.name.startswith(PINNED_POOL_PREFIX):
+            raise PinnedTwiceLinkError(pool.ranges[0].start, [first_source, request.source])
         raise DuplicateSymbolError(
             request.symbol_name,
             [(first_source, None), (request.source, None)],

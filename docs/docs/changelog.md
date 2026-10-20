@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.1.4 (unreleased)
+
+- `a816 build -f bps` writes a BPS patch without the base ROM, from a
+  `[bps]` table in `a816.toml` (the base ROM's size and CRC32, and
+  `<patch/>` metadata filled from the defines). The patch is unsealed:
+  its patched-ROM CRC32 waits for the base ROM.
+- `a816 bps seal` fills that CRC32 in from the base ROM; `a816 bps
+  apply` and `a816 bps info` apply and inspect any BPS patch (Flips'
+  delta ones included), so a project needs no Flips build.
+- `-o` repeats to write several outputs from one link, each in the
+  format its extension names: `-o game.ips -o game.bps.unsealed`.
+  `build_with_imports()` takes `extra_outputs=[(format, path)]`. A
+  single `-o` still follows `-f`.
+- `a816 format` keeps a string in single quotes when its text holds a
+  `"`: `.text 'l"ordre'` became `.text "l"ordre"`, which no longer
+  parses.
+- `a816 format` keeps the offset of `.include_ips "x.ips", -0x200`;
+  it dropped `, -0x200`, which the parser requires.
+- `a816 format` keeps nested bodies nested: `.if` / `.for` / `.scope`
+  bodies inside an `.alloc` came out at the alloc's indent, and a macro
+  block argument `m(x, { .dw 1 })` as `.dw 1}` then `)`. Files with such
+  bodies need one `a816 format`; leading whitespace only.
+- `a816 fix --select UP001` leaves a `*=` run holding `.include_ips` to a
+  manual migration, like `.include` / `.incbin`; it wrapped every
+  `.include_ips` after the `*=` in its pinned alloc.
+- OP001's safe fix keeps the bytes: `.w` on a value above `0xFFFF`
+  (`jsr.w 0xC006AC`, an in-bank call) and `.l` on `jmp` / `jsr` are no
+  longer called redundant.
+- `script.Table.to_bytes` honours a subclass's `joker_regex` again
+  (1.0.4 did): a table writing jokers as `<NN>` had every one dropped,
+  silently.
+- Two files pinning an anonymous `.alloc at` to one address on the same
+  line fail with E0408 "two blocks pinned at ..." naming both, not E0400
+  "symbol already defined" on the generated alloc name.
+- `a816 format` formats a file whose `.include` is not generated yet
+  (`build/gen`): it failed E0500, so lint needed a build first. `a816
+  check` still needs the file.
+- A failed `.assert` on a name defined nowhere says "`NAME` is not
+  defined" and where a `-D` name goes, not "cannot resolve `NAME` at
+  link time".
+
 ## 1.1.3 (2026-10-15)
 
 - Labels after `@= ADDR` count from ADDR, forward ones included: with a

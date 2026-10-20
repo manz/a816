@@ -2,6 +2,7 @@ import logging
 import struct
 from typing import BinaryIO, Literal, Protocol
 
+from a816 import bps
 from a816.object_file import (
     BusMapping,
     LinkAssert,
@@ -120,6 +121,47 @@ class IPSWriter(Writer):
 
     def end(self) -> None:
         self.file.write(b"EOF")
+
+
+class BPSWriter(Writer):
+    """An unsealed linear BPS patch over the base ROM `[bps]` describes.
+
+    BPS walks the target front to back, so the blocks are buffered and
+    encoded at `end()`, in address order, a later one winning an overlap.
+    The target is `rom_size` long when the project sets it, else as long
+    as the source or the last block.
+    """
+
+    def __init__(
+        self, file: BinaryIO, source_size: int, source_crc32: int, metadata: str = "", rom_size: int = 0
+    ) -> None:
+        self.file = file
+        self.source_size = source_size
+        self.source_crc32 = source_crc32
+        self.metadata = metadata
+        self.rom_size = rom_size
+        self._blocks: list[tuple[int, bytes]] = []
+
+    def begin(self) -> None:
+        """Nothing to write before the blocks are known."""
+
+    def write_block_header(self, block: bytes, block_address: int) -> None:
+        """Blocks are encoded together at `end()`."""
+
+    def write_block(self, block: bytes, block_address: int) -> None:
+        self._blocks.append((block_address, bytes(block)))
+
+    def end(self) -> None:
+        target_size = max(self.source_size, self.rom_size, bps.blocks_end(self._blocks))
+        self.file.write(
+            bps.encode_linear(
+                self._blocks,
+                source_size=self.source_size,
+                source_crc32=self.source_crc32,
+                target_size=target_size,
+                metadata=self.metadata,
+            )
+        )
 
 
 class SFCWriter(Writer):

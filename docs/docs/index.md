@@ -36,8 +36,12 @@ for backwards compatibility: existing scripts keep working.
 #### `a816 build` flags
 
 ```
--o, --output OUTPUT      Output file (default a.out)
--f FORMAT                Output format (ips, sfc, obj)
+-o, --output OUTPUT      Output file (default a.out). Repeat it to write
+                         several outputs from one link, each one's format
+                         from its extension: .ips, .sfc/.smc, .bps or
+                         .bps.unsealed (no -f then).
+-f {ips,sfc,bps}         Output format (default ips). bps writes an
+                         unsealed patch; it needs `[bps]` in a816.toml.
 -m {low,low2,high}       Default bus when the project declares no map:
                          LoROM (default), LoROM variant 2, HiROM.
 --copier-header          Add 0x200 address delta for ips writer.
@@ -92,6 +96,17 @@ docstrings without firing DOC002: naming alone marks them internal.
 
 The legacy `a816-fluff` binary still works but prints a deprecation
 notice on stderr; prefer `a816 check` / `a816 format` going forward.
+
+#### BPS patches
+
+See [BPS patches](bps.md).
+
+```
+$ a816 build main.s -f bps -o game.bps.unsealed
+$ a816 bps seal game.bps.unsealed --source base.sfc   # writes game.bps
+$ a816 bps apply game.bps --source base.sfc -o game.sfc
+$ a816 bps info game.bps
+```
 
 ### From Python
 
@@ -286,6 +301,7 @@ track_register_size = true
 | `rom_size` | build | ROM image size in bytes; required with read-only `[map.N]` regions |
 | `[defines]` | build, fluff | names a build passes with `-D`, each with its default |
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
+| `[bps]` | build | the base ROM a `-f bps` patch applies to, and its metadata |
 | `exclude` | fluff | glob patterns of files and directories a run with no paths leaves out |
 
 `--include-path` / `-I` replace the file's `include-paths` /
@@ -293,6 +309,35 @@ track_register_size = true
 `-D NAME=VALUE` overrides that name's `[defines]` default. A default is
 an integer or a string. `a816 check` counts a declared name as defined
 (no `W0002`); a `-D` name left out of `[defines]` still works.
+
+### BPS patches: `[bps]`
+
+`a816 build -f bps` writes a BPS patch straight from the linked blocks,
+without the base ROM. BPS records the base ROM's size and CRC32, so a
+patcher rejects a wrong or headered ROM instead of producing a broken
+game; `[bps]` gives them:
+
+```toml
+[bps]
+source_size  = 0x100000
+source_crc32 = 0xCAA15E97
+
+[bps.metadata]  # one attribute per key on <patch/>
+name    = "Final Fantasy IV"
+version = "${VERSION}"  # filled from the defines, as spelled
+```
+
+- The patched ROM is `rom_size` long when the project sets it, else as
+  long as the base ROM or the last block. Bytes no block writes come
+  from the base ROM, zeros past it.
+- `${NAME}` in a metadata value takes the define's value as written:
+  `-D VERSION=0x10` gives `0x10`. A name no define binds is `E0514`.
+- The patched ROM's CRC32 needs the base ROM, so the patch leaves it
+  zero: it is *unsealed*, and no patcher takes it until
+  `a816 bps seal` fills it in where the ROM is at hand (see
+  [BPS patches](bps.md)). a816 writes it to `-o` as given; name it
+  `*.bps.unsealed` so nobody ships it by mistake.
+- `-f bps` without `[bps]` is `E0513`; with `--copier-header`, `E0515`.
 
 ### Bus map: `board` and `[map.N]`
 

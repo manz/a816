@@ -16,6 +16,7 @@ from pathlib import Path
 from a816.boards import boards
 from a816.cpu.mapping import parse_bml_address
 from a816.error_codes import (
+    E_CONFIG_BAD_BPS,
     E_CONFIG_BAD_DEFINE,
     E_CONFIG_BAD_EXPERIMENTAL,
     E_CONFIG_BAD_MAP_ENTRY,
@@ -34,6 +35,19 @@ _MAP_REQUIRED_KEYS = ("address",)
 _MAP_KEYS = frozenset(_MAP_REQUIRED_KEYS + ("mask", "base", "writable"))
 # A symbol a source can spell: what `-D NAME=VALUE` and `[defines]` accept.
 DEFINE_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\Z", re.ASCII)
+# An attribute name on the BPS metadata's `<patch/>` element.
+_XML_NAME = re.compile(r"[A-Za-z_][\w.-]*\Z", re.ASCII)
+_BPS_KEYS = frozenset(("source_size", "source_crc32", "metadata"))
+
+
+@dataclass(frozen=True)
+class BpsConfig:
+    """The `[bps]` table: the base ROM a `-f bps` patch applies to."""
+
+    source_size: int
+    source_crc32: int
+    # `[bps.metadata]`: attribute -> value, `${NAME}` filled from the defines.
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -58,6 +72,8 @@ class A816Config:
     # `exclude`: glob patterns, relative to the toml, of files and
     # directories a fluff run over the whole project leaves out.
     exclude: list[str] = field(default_factory=list)
+    # The `[bps]` table, None when the project has none.
+    bps: BpsConfig | None = None
 
     @property
     def root(self) -> Path:
@@ -242,6 +258,38 @@ def _defines(raw: object, config_path: Path) -> dict[str, int | str]:
     return dict(raw)
 
 
+def _bps(raw: object, config_path: Path) -> BpsConfig | None:
+    """The `[bps]` table: `source_size`, `source_crc32` and flat `[bps.metadata]`."""
+    if raw is None:
+        return None
+
+    def bad(message: str) -> A816ConfigError:
+        return A816ConfigError(E_CONFIG_BAD_BPS, f"[bps] {message}", config_path)
+
+    if not isinstance(raw, dict):
+        raise bad("must be a table")
+    unknown = sorted(set(raw) - _BPS_KEYS)
+    if unknown:
+        raise bad(f"has unknown keys: {', '.join(unknown)}")
+    sizes: dict[str, int] = {}
+    for name in ("source_size", "source_crc32"):
+        value = raw.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise bad(f"{name} must be a non-negative integer, got {value!r}")
+        sizes[name] = value
+    if sizes["source_crc32"] > 0xFFFFFFFF:
+        raise bad(f"source_crc32 {sizes['source_crc32']:#x} does not fit in 32 bits")
+    metadata = raw.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise bad("metadata must be a table of attribute = string")
+    for name, value in metadata.items():
+        if not _XML_NAME.match(name):
+            raise bad(f"metadata key {name!r} is not an attribute name")
+        if not isinstance(value, str):
+            raise bad(f"metadata {name} must be a string, got {value!r}")
+    return BpsConfig(sizes["source_size"], sizes["source_crc32"], dict(metadata))
+
+
 def _exclude(raw: object, config_path: Path) -> list[str]:
     """The `exclude` list: glob patterns relative to the toml."""
     if not isinstance(raw, list) or not all(isinstance(pattern, str) for pattern in raw):
@@ -256,7 +304,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
 
     Raises:
         A816ConfigError: the file is not valid TOML, or `[experimental]` /
-            `[defines]` / `board` / `rom_size` / `[map.N]` is invalid.
+            `[defines]` / `[bps]` / `board` / `rom_size` / `[map.N]` is invalid.
     """
     try:
         with config_path.open("rb") as handle:
@@ -279,6 +327,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
         bus_map=bus_map,
         defines=_defines(data.get("defines", {}), config_path),
         exclude=_exclude(data.get("exclude", []), config_path),
+        bps=_bps(data.get("bps"), config_path),
     )
 
 
@@ -300,6 +349,7 @@ class BuildSettings:
     module_paths: list[Path]
     experimental: list[str]
     symbols: dict[str, int | str] = field(default_factory=dict)
+    bps: BpsConfig | None = None
 
 
 def merge_build_settings(
@@ -334,4 +384,5 @@ def merge_build_settings(
         module_paths=list(module_paths) if module_paths else list(config.module_paths),
         experimental=flags,
         symbols={**config.defines, **(symbols or {})},
+        bps=config.bps,
     )

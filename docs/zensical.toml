@@ -17,6 +17,7 @@ nav = [
     { "Modules" = "modules.md" },
     { "Placement" = "placement.md" },
     { "Freespace pools" = "freespace-pools.md" },
+    { "BPS patches" = "bps.md" },
     { "Fluff (lint + format)" = "fluff.md" },
     { "Error codes" = "errors.md" },
     { "LSP" = "lsp.md" },

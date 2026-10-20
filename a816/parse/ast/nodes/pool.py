@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Final
 
-from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode
+from a816.parse.ast.nodes.base import AstNode, ExpressionAstNode, quoted
 from a816.parse.ast.nodes.containers import BlockAstNode, _indent_block_body
 from a816.parse.tokens import Token
 
@@ -202,7 +202,7 @@ class AssertAstNode(AstNode):
         return self.kind, self.message
 
     def to_canonical(self) -> str:
-        return f'.assert {self.expression.to_canonical()}, "{self.message}"'
+        return f".assert {self.expression.to_canonical()}, {quoted(self.message)}"
 
 
 class ReclaimAstNode(AstNode):

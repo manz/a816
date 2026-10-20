@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from a816.cli import _apply_a816_toml, _build_arg_parser, _run_assemble
+from a816.cli import _apply_a816_toml, _parse_build_args, _run_assemble
 from a816.fluff.cli import fluff_main
 from a816.module_builder import BuildResult, ModuleBuilder, build_with_imports
 from a816.object_file import BusMapping, ObjectFile
@@ -137,7 +137,7 @@ def test_changing_the_toml_map_invalidates_cached_objects(tmp_path: Path) -> Non
 def _args(tmp_path: Path, toml: str, *argv: str) -> argparse.Namespace:
     (tmp_path / "a816.toml").write_text(toml, encoding="utf-8")
     (tmp_path / "main.s").write_text(_PLACED_CODE, encoding="utf-8")
-    return _build_arg_parser().parse_args([*argv, str(tmp_path / "main.s")])
+    return _parse_build_args([*argv, str(tmp_path / "main.s")])
 
 
 def test_cli_reads_bus_map_from_toml(tmp_path: Path) -> None:
@@ -154,7 +154,7 @@ def test_cli_defaults_to_low_without_mapper(tmp_path: Path) -> None:
 
 def test_cli_defaults_to_low_without_toml(tmp_path: Path) -> None:
     (tmp_path / "main.s").write_text("nop\n", encoding="utf-8")
-    args = _build_arg_parser().parse_args([str(tmp_path / "main.s")])
+    args = _parse_build_args([str(tmp_path / "main.s")])
     _apply_a816_toml(args)
     assert args.mapping == "low"
 

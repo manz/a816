@@ -6,8 +6,11 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from unittest import TestCase
 
+import pytest
+
 from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter, FormattingOptions
+from a816.parse.mzparser import A816Parser
 
 
 class TestFormattingOptions(TestCase):
@@ -1051,3 +1054,66 @@ class TestPlacementLinesKeepTheirShape:
         once = A816Formatter().format_text(self._SOURCE)
 
         assert A816Formatter().format_text(once) == once
+
+
+class TestStringsKeepTheirQuotes:
+    """ff6 (1.1.3): `.text 'l"ordre'` came out as `.text "l"ordre"`, which no
+    longer parses. A string is requoted only when its text fits the new quotes."""
+
+    @pytest.mark.parametrize(
+        ("line", "expected"),
+        [
+            (".text 'plain'", '.text "plain"'),
+            (".text 'l\"ordre'", ".text 'l\"ordre'"),
+            (".text 'it\\'s \"x\"'", ".text 'it\\'s \"x\"'"),
+            ('.text "it\\\'s"', '.text "it\\\'s"'),
+            (".ascii 'a\"b'", ".ascii 'a\"b'"),
+            ('.text "say \\"hi\\""', '.text "say \\"hi\\""'),
+        ],
+    )
+    def test_requoted_text_scans_back(self, line: str, expected: str) -> None:
+        out = A816Formatter().format_text(f'"""M."""\n{line}\n')
+
+        assert out.splitlines()[1] == expected
+
+    def test_assert_message_keeps_a_double_quote(self) -> None:
+        out = A816Formatter().format_text('"""M."""\n.assert 1, \'a "b"\'\n')
+
+        assert ".assert 1, 'a \"b\"'" in out
+
+    def test_debug_message_with_an_apostrophe_switches_quotes(self) -> None:
+        out = A816Formatter().format_text('"""M."""\n.debug "it\'s"\n')
+
+        assert '.debug "it\'s"' in out
+
+
+class TestFormatWithoutTheIncludedFile:
+    """ff6: `format --check` failed E0500 on `.include "textes.s"` before the
+    build generated it; the formatter only writes the directive back."""
+
+    _SOURCE = '"""M."""\n.include "build/gen/not_there.s"\nnop\n'
+
+    def test_a_missing_include_formats(self) -> None:
+        assert A816Formatter().format_text(self._SOURCE, "m.s") == self._SOURCE
+
+    def test_the_parser_still_reports_it_by_default(self) -> None:
+        result = A816Parser.parse_as_ast(self._SOURCE, "m.s")
+
+        assert "E0500" in str(result.error)
+
+
+class TestIncludeIpsKeepsItsOffset:
+    """ff6 (1.1.3): `.include_ips "x.ips", -0x200` lost `, -0x200`, and the
+    parser requires it."""
+
+    _SOURCE = '"""M."""\n.include_ips "x.ips", -0x200\n'
+
+    def test_offset_survives(self) -> None:
+        out = A816Formatter().format_text(self._SOURCE)
+
+        assert out == self._SOURCE
+
+    def test_canonical_form_has_the_comma(self) -> None:
+        node = A816Parser.parse_as_ast(self._SOURCE, "m.s").nodes[-1]
+
+        assert node.to_canonical() == '.include_ips "x.ips", -0x200'

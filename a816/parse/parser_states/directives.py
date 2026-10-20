@@ -675,6 +675,8 @@ def parse_include(p: Parser, keyword: Token) -> IncludeAstNode:
     try:
         included = _included_ast(resolved_path, p.include_paths)
     except FileNotFoundError as missing:
+        if p.missing_includes_ok:
+            return IncludeAstNode(include_path, (), keyword, resolved_path=resolved_path)
         raise _include_not_found(p, keyword, path_token, include_path) from missing
     p.imports.extend(included.imports)
     return IncludeAstNode(include_path, included.body, keyword, resolved_path=resolved_path)

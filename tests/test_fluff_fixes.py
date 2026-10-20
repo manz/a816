@@ -318,6 +318,11 @@ class TestStarEqMigrationSkipTriggers:
         src = '"""m"""\n*=0x008000\n.incbin "blob.bin"\n'
         assert [d.fix for d in _up001(src)] == [None]
 
+    def test_up001_offers_no_fix_when_run_holds_include_ips(self) -> None:
+        # ff6.s: the ROM header `*=` swallowed the 40 `.include_ips` after it.
+        src = '"""m"""\n*=0x00FFC0\n.db 0x01\n.include_ips "x.ips", -0x200\n'
+        assert [d.fix for d in _up001(src)] == [None]
+
     def test_up001_offers_no_fix_when_trigger_is_nested_in_the_run(self) -> None:
         src = '"""m"""\n*=0x008000\n.scope s {\n    .incbin "blob.bin"\n}\n'
         assert [d.fix for d in _up001(src)] == [None]

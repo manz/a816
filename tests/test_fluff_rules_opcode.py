@@ -11,6 +11,14 @@ from pathlib import Path
 import pytest
 
 from a816.fluff.runner import apply_fixes, lint_text
+from a816.program import Program
+from tests import StubWriter
+
+
+def _assemble(src: str) -> bytes:
+    writer = StubWriter()
+    Program().assemble_string_with_emitter(src, "x.s", writer)
+    return b"".join(writer.data)
 
 
 def _hits(src: str, code: str = "OP001") -> list[str]:
@@ -56,6 +64,29 @@ class TestSuffixIsNotRedundant:
 
     def test_bare_opcode_without_suffix(self) -> None:
         assert _hits('"""m."""\nlda #0x1234\n') == []
+
+    def test_w_on_24_bit_literal_truncates(self) -> None:
+        # ff6: `jsr.w 0xC006AC` is an in-bank call; bare, it is long.
+        assert _hits('"""m."""\njsr.w 0xC006AC\n') == []
+
+    @pytest.mark.parametrize("opcode", ["jmp", "jsr"])
+    def test_l_on_transfer_to_24_bit_literal(self, opcode: str) -> None:
+        # ff6 pol_8x8.s: a bare same-bank target is a 3-byte jmp / jsr.
+        assert _hits(f'"""m."""\n{opcode}.l 0xC3FC00\n') == []
+
+
+class TestSafeFixKeepsTheBytes:
+    """A [*] fix must not change what assembles."""
+
+    @pytest.mark.parametrize(
+        "line",
+        ["jsr.w 0xC006AC", "jmp.l 0xC3FC00", "jsr.l 0xC3FC00", "lda.w 0xC00000", "lda.w 0x1234", "lda.l 0xC00000"],
+    )
+    def test_fixed_source_assembles_the_same(self, line: str) -> None:
+        src = f'"""m."""\n*= 0xC3F000\n    {line}\n'
+        fixed, _ = apply_fixes(src, lint_text(src, Path("x.s")))
+
+        assert _assemble(fixed) == _assemble(src)
 
 
 class TestAutofix:
