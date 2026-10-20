@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.6 (unreleased)
+
+- The wheel ships `script/py.typed`, so a project importing `script`
+  (`Table`, `script.pointers`) type-checks under strict mypy instead of
+  failing with `import-untyped`. Only an editable install hid it.
+
 ## 1.1.5 (2026-10-20)
 
 - S-DD1 boards (`SHVC-LN3B-01`): the mcu windows `boards.bml` leaves
