@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.5 (unreleased)
+
+- Shared GitHub actions under `manz/a816/actions/`: `setup`,
+  `decrypt-rom`, `lint`, `build`, `seal`, `pr-artifact`, `nightly` and
+  `release`. Each calls `a816 ci <step>`, which also runs locally, with
+  `--dry-run` for the publishing steps. A Renovate preset,
+  `github>manz/a816//renovate/a816`, bumps the actions and the package
+  together. See [GitHub actions](ci.md).
+
 ## 1.1.4 (2026-10-20)
 
 - `a816 build -f bps` writes a BPS patch without the base ROM, from a

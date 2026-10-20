@@ -1,0 +1,56 @@
+name: a816 pr-artifact
+description: >-
+  Upload a pull request's patches as an artifact and keep one comment on the
+  pull request linking to it. Call it with `if: always()` and `outcome` set to
+  the job.status expression: on a failure it deletes the comment instead.
+  Needs `pull-requests: write` and `issues: write`.
+inputs:
+  name:
+    description: The artifact is <name>-pr-<number>.
+    required: true
+  files:
+    description: Files to upload, one per line.
+    required: true
+  marker:
+    description: >-
+      Identifies the comment to update, as an HTML comment
+      (<!-- FF4-IPS-BUILD-COMMENT -->) or a bare word that is wrapped in one.
+    required: true
+  title:
+    description: The comment's heading. Empty means the name.
+    default: ""
+  body:
+    description: >-
+      Markdown replacing the default text, with {artifact}, {url} and {sha}
+      placeholders.
+    default: ""
+  outcome:
+    description: The job's status so far; anything but success deletes the comment.
+    default: success
+  retention-days:
+    description: How long the artifact is kept.
+    default: "30"
+  token:
+    description: Token allowed to write pull request comments.
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - if: inputs.outcome == 'success'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}-pr-${{ github.event.pull_request.number }}
+        path: ${{ inputs.files }}
+        retention-days: ${{ inputs.retention-days }}
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        NAME: ${{ inputs.name }}
+        MARKER: ${{ inputs.marker }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        SHA: ${{ github.event.pull_request.head.sha }}
+        OUTCOME: ${{ inputs.outcome }}
+      run: >-
+        uv run --no-sync a816 ci pr-comment --name="$NAME" --marker="$MARKER" --title="$TITLE"
+        --body="$BODY" --sha="$SHA" --outcome="$OUTCOME"

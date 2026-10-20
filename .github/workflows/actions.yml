@@ -1,0 +1,59 @@
+name: Actions
+
+# Runs the shared actions (actions/*) from this checkout on the docs example,
+# the way a game repository calls them. Publishing steps run with --dry-run.
+on:
+  pull_request:
+    paths:
+      - 'actions/**'
+      - 'a816/ci/**'
+      - '.github/workflows/actions.yml'
+  push:
+    branches:
+      - 'master'
+    paths:
+      - 'actions/**'
+      - 'a816/ci/**'
+      - '.github/workflows/actions.yml'
+
+jobs:
+  actions:
+    runs-on: ubuntu-26.04-arm
+    steps:
+    - uses: actions/checkout@v7
+    - id: setup
+      uses: ./actions/setup
+    - name: Check the derived version
+      env:
+        VERSION: ${{ steps.setup.outputs.version }}
+      run: test -n "$VERSION" && test "$VERSION" = "$A816_BUILD_VERSION" && test -n "$SOURCE_DATE_EPOCH"
+    - uses: ./actions/lint
+      with:
+        paths: docs/examples/modules-walkthrough
+    - id: build
+      uses: ./actions/build
+      with:
+        entry: docs/examples/modules-walkthrough/src/main.s
+        outputs: |
+          build/selftest/walkthrough.ips
+          build/selftest/walkthrough.sfc
+    - name: Check the build outputs
+      env:
+        DEBUG_INFO: ${{ steps.build.outputs.debug-info }}
+      run: |
+        test -s build/selftest/walkthrough.ips
+        test -s build/selftest/walkthrough.sfc
+        grep -qx build/selftest/walkthrough.ips.adbg <<< "$DEBUG_INFO"
+    - uses: ./actions/decrypt-rom
+      id: rom
+      with:
+        passphrase: ''
+        encrypted: missing.sfc.gz.gpg
+        to: build/selftest/base.sfc
+    - name: Check an empty passphrase skips
+      run: test "${{ steps.rom.outputs.available }}" = false
+    - name: Dry-run the publishing steps
+      run: |
+        uv run --no-sync a816 ci nightly --dry-run --files='build/selftest/*.ips'
+        GITHUB_REF_NAME=v0.0.0rc1 uv run --no-sync a816 ci release --dry-run --assets='build/selftest/*.ips' \
+          --zip=build/selftest/walkthrough.zip --zip-files=build/selftest/walkthrough.sfc

@@ -1,0 +1,29 @@
+name: a816 nightly
+description: >-
+  Replace the repository's one `nightly` prerelease (and its tag) with this
+  push's files. Needs `contents: write`; give the job a concurrency group so
+  two pushes do not race.
+inputs:
+  files:
+    description: Files or globs to attach, one per line.
+    required: true
+  title:
+    description: The release's title.
+    default: Nightly build
+  body:
+    description: Markdown with {run}, {sha} and {version} placeholders. Empty gives a short default.
+    default: ""
+  token:
+    description: Token allowed to write releases.
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        FILES: ${{ inputs.files }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+      run: uv run --no-sync a816 ci nightly --files="$FILES" --title="$TITLE" --body="$BODY"

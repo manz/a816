@@ -1,0 +1,23 @@
+name: a816 seal
+description: >-
+  Seal x.bps.unsealed patches into x.bps against the base ROM (a816 bps seal).
+inputs:
+  rom:
+    description: The decrypted base ROM.
+    required: true
+  patches:
+    description: Patches to seal, one per line.
+    required: true
+outputs:
+  sealed:
+    description: The sealed patches, one per line.
+    value: ${{ steps.seal.outputs.sealed }}
+runs:
+  using: composite
+  steps:
+    - id: seal
+      shell: bash
+      env:
+        ROM: ${{ inputs.rom }}
+        PATCHES: ${{ inputs.patches }}
+      run: uv run --no-sync a816 ci seal --rom="$ROM" --patches="$PATCHES"

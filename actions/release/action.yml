@@ -1,0 +1,40 @@
+name: a816 release
+description: >-
+  Publish the tag's GitHub release. Assets are uploaded as they are; `zip`
+  adds one more, reproducible archive. A re-run uploads the assets again but
+  never touches the notes of a release that already exists. Needs
+  `contents: write`.
+inputs:
+  assets:
+    description: Files or globs to attach as they are, one per line.
+    default: ""
+  zip:
+    description: Name of an extra zip asset (x.zip), built from zip-files.
+    default: ""
+  zip-files:
+    description: Files for the zip, one per line, stored without their directories.
+    default: ""
+  title:
+    description: The release's title. Empty means the tag name.
+    default: ""
+  notes-file:
+    description: Markdown notes for a new release. Empty generates them.
+    default: ""
+  token:
+    description: Token allowed to write releases.
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ASSETS: ${{ inputs.assets }}
+        ZIP: ${{ inputs.zip }}
+        ZIP_FILES: ${{ inputs.zip-files }}
+        TITLE: ${{ inputs.title }}
+        NOTES_FILE: ${{ inputs.notes-file }}
+      run: >-
+        uv run --no-sync a816 ci release --assets="$ASSETS" --zip="$ZIP" --zip-files="$ZIP_FILES"
+        --title="$TITLE" --notes-file="$NOTES_FILE"

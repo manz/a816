@@ -1,0 +1,33 @@
+name: a816 decrypt-rom
+description: >-
+  Decrypt the project's gpg-encrypted base ROM (gunzipping a .gz.gpg). Skips,
+  with `available` false, when the passphrase is empty, as on a fork's pull
+  request.
+inputs:
+  passphrase:
+    description: The ROM's passphrase, from a secret.
+    required: true
+  encrypted:
+    description: The encrypted ROM in the repository, x.sfc.gpg or x.sfc.gz.gpg.
+    required: true
+  to:
+    description: Where the decrypted ROM goes. Parent directories are created.
+    required: true
+  sha1:
+    description: When given, the decrypted ROM must have this SHA-1.
+    default: ""
+outputs:
+  available:
+    description: "'true' when the ROM was decrypted, 'false' without a passphrase."
+    value: ${{ steps.decrypt.outputs.available }}
+runs:
+  using: composite
+  steps:
+    - id: decrypt
+      shell: bash
+      env:
+        A816_ROM_PASSPHRASE: ${{ inputs.passphrase }}
+        ENCRYPTED: ${{ inputs.encrypted }}
+        TO: ${{ inputs.to }}
+        SHA1: ${{ inputs.sha1 }}
+      run: uv run --no-sync a816 ci decrypt-rom "$ENCRYPTED" --to="$TO" --sha1="$SHA1"
