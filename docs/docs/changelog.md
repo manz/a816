@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.6 (unreleased)
+## 1.1.6 (2026-10-20)
 
 - The wheel ships `script/py.typed`, so a project importing `script`
   (`Table`, `script.pointers`) type-checks under strict mypy instead of
