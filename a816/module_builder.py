@@ -473,6 +473,27 @@ def apply_experimental_flags(program: "Program", flags: list[str] | None) -> Non
             logger.warning(f"unknown experimental flag: {flag}")
 
 
+def _spelled_defines(defines: dict[str, str] | None, symbols: dict[str, int | str] | None) -> dict[str, str]:
+    """The defines as spelled for BPS metadata: the caller's, else `str()` of the symbols."""
+    if defines is not None:
+        return defines
+    return {name: str(value) for name, value in (symbols or {}).items()}
+
+
+def _build_result(program: "Program", exit_code: int, output_file: Path) -> BuildResult:
+    """The linked build's outcome: its symbol map and, on success, its `.adbg`."""
+    symbol_map = dict(program.resolver.get_all_labels())
+    # `.label`-declared names are absolute addresses that should appear in
+    # the exported symbol map alongside real labels.
+    symbol_map.update(program.resolver.get_all_absolute_labels())
+    debug_path: Path | None = None
+    if exit_code == 0:
+        candidate = output_file.with_suffix(output_file.suffix + ".adbg")
+        if candidate.exists():
+            debug_path = candidate
+    return BuildResult(exit_code=exit_code, symbol_map=symbol_map, program=program, debug_info_path=debug_path)
+
+
 # Public API: peer build scripts pass these by keyword; a grouping object
 # would break every caller for no gain.
 def build_with_imports(
@@ -563,7 +584,6 @@ def build_with_imports(
         if output_format not in OUTPUT_FORMATS:
             logger.error(f"Unknown output format: {output_format}")
             return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
-        spelled = defines if defines is not None else {name: str(value) for name, value in (symbols or {}).items()}
         exit_code = program.link_as(
             output_format,
             linked,
@@ -571,24 +591,9 @@ def build_with_imports(
             mapping=mapping,
             copier_header=copier_header,
             bps=bps,
-            defines=spelled,
+            defines=_spelled_defines(defines, symbols),
         )
-
-        symbol_map = dict(program.resolver.get_all_labels())
-        # `.label`-declared names are absolute addresses that should appear in
-        # the exported symbol map alongside real labels.
-        symbol_map.update(program.resolver.get_all_absolute_labels())
-        debug_path: Path | None = None
-        if exit_code == 0:
-            candidate = output_file.with_suffix(output_file.suffix + ".adbg")
-            if candidate.exists():
-                debug_path = candidate
-        return BuildResult(
-            exit_code=exit_code,
-            symbol_map=symbol_map,
-            program=program,
-            debug_info_path=debug_path,
-        )
+        return _build_result(program, exit_code, output_file)
 
     except Exception as e:
         # A816Error subclasses carry a `format()` that renders a source-located,
