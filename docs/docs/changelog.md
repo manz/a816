@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.4 (unreleased)
+## 1.1.4 (2026-10-20)
 
 - `a816 build -f bps` writes a BPS patch without the base ROM, from a
   `[bps]` table in `a816.toml` (the base ROM's size and CRC32, and
