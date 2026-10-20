@@ -303,6 +303,7 @@ track_register_size = true
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
 | `[bps]` | build | the base ROM a `-f bps` patch applies to, and its metadata |
 | `exclude` | fluff | glob patterns of files and directories a run with no paths leaves out |
+| `[lint]` | fluff, LSP | `select` / `ignore`: rule codes or prefixes to run or skip ([fluff](fluff.md#selecting-rules-lint)) |
 
 `--include-path` / `-I` replace the file's `include-paths` /
 `module-paths`; `--experimental` flags add to `[experimental]`;

@@ -10,13 +10,14 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from a816.config import find_a816_toml
+from a816.config import discover_a816_config, find_a816_toml
 from a816.error_catalog import category, explanation, is_error_code
-from a816.error_codes import lookup
+from a816.error_codes import E_CONFIG_UNKNOWN_LINT_RULE, lookup
 from a816.exceptions import A816ConfigError, FormattingError
 from a816.fluff.core import Diagnostic, Rule
 from a816.fluff.project import project_sources
 from a816.fluff.runner import apply_fixes, lint_file, lint_text
+from a816.fluff.selection import RuleSelection, parse_codes, unknown_codes
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
@@ -69,6 +70,21 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
         nargs="*",
         type=Path,
         help=_PATHS_HELP.format(verb="lint"),
+    )
+    check_parser.add_argument(
+        "--select",
+        action="append",
+        default=None,
+        help=(
+            "Run only these rules (codes or prefixes, comma-separated, or repeat the flag)."
+            " Replaces `select` from `[lint]` in a816.toml."
+        ),
+    )
+    check_parser.add_argument(
+        "--ignore",
+        action="append",
+        default=None,
+        help="Skip these rules (codes or prefixes). Replaces `ignore` from `[lint]` in a816.toml.",
     )
     format_parser = subparsers.add_parser("format", help="Format .s/.i sources under the given path.")
     format_parser.add_argument(
@@ -265,13 +281,24 @@ def _run_format(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
     return _write_formatted(computed) or missing_err
 
 
+def _flag_codes(raw: list[str] | None, flag: str) -> tuple[str, ...] | None:
+    codes = parse_codes(raw)
+    bad = unknown_codes(codes or ())
+    if bad:
+        raise A816ConfigError(E_CONFIG_UNKNOWN_LINT_RULE, f"{flag} names no rule: {', '.join(bad)}")
+    return codes
+
+
 def _run_check(args: argparse.Namespace) -> int:
+    select = _flag_codes(args.select, "--select")
+    ignore = _flag_codes(args.ignore, "--ignore")
     sources, missing_err = _collect_sources(list(args.paths))
     if not sources:
         return missing_err
     total = warnings = 0
     for source in sources:
-        for diag in lint_file(source):
+        selection = RuleSelection.of(discover_a816_config(source), select, ignore)
+        for diag in selection.filter(lint_file(source)):
             print(diag.format())
             total += 1
             # A `W` code is a warning, as in the build: shown, not failing.
@@ -297,8 +324,6 @@ def _parse_select(raw: list[str] | None) -> set[str] | None:
 
 
 def _config_paths_for(source: Path) -> tuple[list[Path] | None, list[Path] | None]:
-    from a816.config import discover_a816_config
-
     config = discover_a816_config(source)
     return (
         config.include_paths if config is not None else None,
@@ -319,7 +344,9 @@ def _process_fix_target(source: Path, args: argparse.Namespace, select: set[str]
     """Read `source`, run lint + fix, dispatch to diff / check / write."""
     original = source.read_text(encoding="utf-8")
     include_paths, module_paths = _config_paths_for(source)
-    diagnostics = lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
+    diagnostics = RuleSelection.of(discover_a816_config(source)).filter(
+        lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
+    )
     new_text, applied = apply_fixes(original, diagnostics, allow_unsafe=args.unsafe_fixes, select=select)
     unfixed = [d for d in diagnostics if d not in applied]
     if args.diff:

@@ -270,6 +270,9 @@ separate blocks separated by a blank line.
   `-D NAME=...` or declare it under `[defines]`.
 - `E0515` `--copier-header` with `-f bps`: a BPS patch records the
   CRC32 of a headerless ROM, so a header offset cannot apply.
+- `E0516` `[lint]` `select`/`ignore`, or `a816 check --select/--ignore`,
+  names a code no lint rule starts with: `a816 explain CODE` lists a
+  rule, and the codes match by prefix (`N` is every naming rule).
 
 ### Warnings
 

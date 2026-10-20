@@ -2,6 +2,10 @@
 
 ## 1.1.5 (unreleased)
 
+- `[lint]` in `a816.toml` picks the lint rules: `select` and `ignore`
+  take rule codes or prefixes (`ignore = ["N802"]`). `check`, `fix` and
+  the LSP honour it; `a816 check --select/--ignore` replace its lists
+  for one run. A code no rule starts with is `E0516`.
 - Shared GitHub actions under `manz/a816/actions/`: `setup`,
   `decrypt-rom`, `lint`, `build`, `seal`, `pr-artifact`, `nightly` and
   `release`. Each calls `a816 ci <step>`, which also runs locally, with
