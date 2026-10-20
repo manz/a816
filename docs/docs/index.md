@@ -104,7 +104,9 @@ See [BPS patches](bps.md).
 ```
 $ a816 build main.s -f bps -o game.bps.unsealed
 $ a816 bps seal game.bps.unsealed --source base.sfc   # writes game.bps
+$ a816 ips seal game.ips --source base.sfc              # header checksum record
 $ a816 bps apply game.bps --source base.sfc -o game.sfc
+$ a816 bps diff --source base.sfc --target game.sfc -o game.bps
 $ a816 bps info game.bps
 ```
 
@@ -303,6 +305,7 @@ track_register_size = true
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
 | `[bps]` | build | the base ROM a `-f bps` patch applies to, and its metadata |
 | `exclude` | fluff | glob patterns of files and directories a run with no paths leaves out |
+| `[lint]` | fluff, LSP | `select` / `ignore`: rule codes or prefixes to run or skip ([fluff](fluff.md#selecting-rules-lint)) |
 
 `--include-path` / `-I` replace the file's `include-paths` /
 `module-paths`; `--experimental` flags add to `[experimental]`;

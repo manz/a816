@@ -1,0 +1,25 @@
+name: a816 lint
+description: >-
+  `a816 format --diff` then `a816 check`. Both run; the step fails when either
+  does. Place it after the steps that generate sources the project includes.
+inputs:
+  paths:
+    description: >-
+      Files or directories, one per line. Empty: the project a816.toml
+      describes (its entrypoint and module paths, git-visible, minus its
+      `exclude`).
+    default: ""
+  format:
+    description: Check the formatting too.
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+        FORMAT: ${{ inputs.format }}
+      run: |
+        args=(--paths="$PATHS")
+        if [ "$FORMAT" != true ]; then args+=(--no-format); fi
+        uv run --no-sync a816 ci lint "${args[@]}"

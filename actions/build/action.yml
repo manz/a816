@@ -1,0 +1,31 @@
+name: a816 build
+description: >-
+  `a816 build` for projects that build with the CLI. Projects with their own
+  build script run it as a plain step instead. Can be called several times in
+  one job, for example a debug ROM to test and a release patch to ship.
+inputs:
+  entry:
+    description: The source to build. Empty means the a816.toml entrypoint.
+    default: ""
+  outputs:
+    description: >-
+      Output paths, one per line, each format taken from its extension (.ips,
+      .sfc, .bps.unsealed). Parent directories are created.
+    required: true
+  defines:
+    description: KEY=VALUE lines, passed as -D.
+    default: ""
+outputs:
+  debug-info:
+    description: The .adbg files the build wrote, one per line.
+    value: ${{ steps.build.outputs.debug-info }}
+runs:
+  using: composite
+  steps:
+    - id: build
+      shell: bash
+      env:
+        ENTRY: ${{ inputs.entry }}
+        OUTPUTS: ${{ inputs.outputs }}
+        DEFINES: ${{ inputs.defines }}
+      run: uv run --no-sync a816 ci build --entry="$ENTRY" --outputs="$OUTPUTS" --defines="$DEFINES"

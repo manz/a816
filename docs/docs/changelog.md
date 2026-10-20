@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.1.5 (unreleased)
+
+- S-DD1 boards (`SHVC-LN3B-01`): the mcu windows `boards.bml` leaves
+  unmasked take the power-on MMC bank masks (`0x808000` for
+  `00-3f,80-bf:8000-ffff`, `0xC00000` for `c0-ff`), so their addresses
+  resolve to the right ROM offsets. An explicit mask still wins; banks
+  a game remaps at runtime are not modelled.
+- Sealing writes the SNES header checksum, which only the base ROM
+  can give, when `a816.toml` declares the cartridge: the header is
+  found through the bus map (`$00:FFC0`), the sum covers the ROM padded
+  to `rom_size`, mirrored when that is not a power of two. `a816 bps
+  seal` encodes the patch again with it (`--no-checksum` to skip); the
+  new `a816 ips seal` appends the record that writes it, byte for byte
+  what ff6's `tools/checksum.py` wrote. `E0517` to `E0519` cover a bad
+  IPS, a copier-headered base ROM and a project with no cartridge.
+- `a816 ips seal` also pads: when the patched ROM falls short of
+  `rom_size`, a one-byte zero record at `rom_size - 1` comes before the
+  checksum. ff4's 2 MB IPS over its 1 MB base gave 0x18A3E7 bytes, which
+  the Analogue Pocket SNES core read as carrying a copier header
+  (`size & 0x200`). `a816 build` leaves IPS output as it was: an IPS
+  used as a byte container (ff6's intro) stays contiguous.
+- `a816 bps diff --source ROM --target PATCHED -o x.bps` writes a
+  sealed linear patch between two ROMs (`--metadata FILE` for its
+  metadata), for a patch a816's linker does not build alone.
+- `[lint]` in `a816.toml` picks the lint rules: `select` and `ignore`
+  take rule codes or prefixes (`ignore = ["N802"]`). `check`, `fix` and
+  the LSP honour it; `a816 check --select/--ignore` replace its lists
+  for one run. A code no rule starts with is `E0516`.
+- Shared GitHub actions under `manz/a816/actions/`: `setup`,
+  `decrypt-rom`, `lint`, `build`, `seal`, `pr-artifact`, `nightly` and
+  `release`. Each calls `a816 ci <step>`, which also runs locally, with
+  `--dry-run` for the publishing steps. A Renovate preset,
+  `github>manz/a816//renovate/a816`, bumps the actions and the package
+  together. See [GitHub actions](ci.md).
+
 ## 1.1.4 (2026-10-20)
 
 - `a816 build -f bps` writes a BPS patch without the base ROM, from a

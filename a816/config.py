@@ -74,6 +74,10 @@ class A816Config:
     exclude: list[str] = field(default_factory=list)
     # The `[bps]` table, None when the project has none.
     bps: BpsConfig | None = None
+    # The `[lint]` table: rule codes (or prefixes) `check` runs, and drops.
+    # An empty `lint_select` runs every rule.
+    lint_select: tuple[str, ...] = ()
+    lint_ignore: tuple[str, ...] = ()
 
     @property
     def root(self) -> Path:
@@ -299,6 +303,24 @@ def _exclude(raw: object, config_path: Path) -> list[str]:
     return list(raw)
 
 
+def _lint(raw: object, config_path: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The `[lint]` table's `select` and `ignore`: lists of rule codes or prefixes."""
+    if not isinstance(raw, dict):
+        raise A816ConfigError(E_CONFIG_INVALID, "[lint] must be a table", config_path)
+    unknown = sorted(set(raw) - {"select", "ignore"})
+    if unknown:
+        raise A816ConfigError(E_CONFIG_INVALID, f"[lint] has unknown keys: {', '.join(unknown)}", config_path)
+    lists: list[tuple[str, ...]] = []
+    for name in ("select", "ignore"):
+        value = raw.get(name, [])
+        if not isinstance(value, list) or not all(isinstance(code, str) for code in value):
+            raise A816ConfigError(
+                E_CONFIG_INVALID, f'[lint] {name} must be a list of rule codes, e.g. ["N802"]', config_path
+            )
+        lists.append(tuple(code.strip().upper() for code in value))
+    return lists[0], lists[1]
+
+
 def load_a816_toml(config_path: Path) -> A816Config | None:
     """Parse the project config. Return None when the file can't be read.
 
@@ -318,6 +340,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
     entry_path = (root / entry).resolve() if isinstance(entry, str) else None
     experimental = _experimental(data.get("experimental", {}), config_path)
     bus_map = _BusMapParser(config_path).parse(data)
+    lint_select, lint_ignore = _lint(data.get("lint", {}), config_path)
     return A816Config(
         config_path=config_path,
         entrypoint=entry_path,
@@ -328,6 +351,8 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
         defines=_defines(data.get("defines", {}), config_path),
         exclude=_exclude(data.get("exclude", []), config_path),
         bps=_bps(data.get("bps"), config_path),
+        lint_select=lint_select,
+        lint_ignore=lint_ignore,
     )
 
 

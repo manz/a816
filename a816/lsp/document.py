@@ -612,12 +612,19 @@ class A816Document:
         """Surface a816 fluff lint hits as LSP warnings."""
         from urllib.parse import urlparse
 
+        from a816.config import discover_a816_config
+        from a816.exceptions import A816ConfigError
         from a816.fluff import lint_text
+        from a816.fluff.selection import RuleSelection
 
         parsed = urlparse(self.uri)
         path = Path(parsed.path) if parsed.scheme == "file" else Path(self.uri)
         try:
-            hits = lint_text(self.content, path, include_paths=self.include_paths)
+            selection = RuleSelection.of(discover_a816_config(path.parent))
+            hits = selection.filter(lint_text(self.content, path, include_paths=self.include_paths))
+        except A816ConfigError as exc:
+            logger.warning("fluff lint skipped for %s: %s", self.uri, exc.message)
+            return
         except (AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
             logger.warning("fluff lint failed for %s: %s", self.uri, exc)
             return

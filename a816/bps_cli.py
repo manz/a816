@@ -1,8 +1,10 @@
-"""`a816 bps seal|apply|info`: BPS patches, where the base ROM is at hand.
+"""`a816 bps seal|diff|apply|info`: BPS patches, where the base ROM is at hand.
 
 `a816 build -f bps` never reads the base ROM, so its patch leaves the
-patched ROM's CRC32 zero. `seal` fills it in; `apply` and `info` are the
-same codec for a project that would otherwise need Flips.
+patched ROM's CRC32 zero. `seal` fills it in, and the SNES header
+checksum when a816.toml declares the cartridge; `apply` and `info` are
+the same codec for a project that would otherwise need Flips. `diff`
+makes a patch from two ROMs, for a patch a816's linker does not build alone.
 """
 
 from __future__ import annotations
@@ -16,8 +18,15 @@ from a816 import bps
 from a816.bps import BpsError
 from a816.error_codes import E_IO_FILE_NOT_FOUND
 from a816.errors import format_error_simple
+from a816.exceptions import A816ConfigError
+from a816.ips import IpsError
+from a816.seal import seal_bps
+from a816.snes_header import cartridge_at
 
 UNSEALED_SUFFIX = ".unsealed"
+NO_CHECKSUM_HELP = (
+    "Leave the SNES header checksum as the patch wrote it (default: fix it when a816.toml declares the cartridge)"
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -28,7 +37,15 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("patch", type=Path, help="The patch `a816 build -f bps` wrote")
     seal.add_argument("--source", type=Path, required=True, help="The base ROM the patch applies to")
     seal.add_argument("-o", "--output", type=Path, help="Sealed patch (default: PATCH without .unsealed)")
+    seal.add_argument("--no-checksum", action="store_true", help=NO_CHECKSUM_HELP)
     seal.set_defaults(run=_seal)
+
+    diff = commands.add_parser("diff", help="Make a sealed linear patch between two ROMs.")
+    diff.add_argument("--source", type=Path, required=True, help="The base ROM")
+    diff.add_argument("--target", type=Path, required=True, help="The patched ROM")
+    diff.add_argument("-o", "--output", type=Path, required=True, help="The patch")
+    diff.add_argument("--metadata", type=Path, help="A file whose text becomes the patch's metadata")
+    diff.set_defaults(run=_diff)
 
     apply = commands.add_parser("apply", help="Apply a BPS patch (any, Flips' delta ones included).")
     apply.add_argument("patch", type=Path)
@@ -54,9 +71,19 @@ def _sealed_path(args: argparse.Namespace, parser: argparse.ArgumentParser) -> P
 
 def _seal(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     output = _sealed_path(args, parser)
-    sealed = bps.seal(args.patch.read_bytes(), args.source.read_bytes())
+    cartridge = None if args.no_checksum else cartridge_at(Path.cwd())
+    sealed = seal_bps(args.patch.read_bytes(), args.source.read_bytes(), cartridge)
     output.write_bytes(sealed)
-    print(f"sealed {output} (patched ROM CRC32 {bps.info(sealed).target_crc32:08X})")
+    checksum_note = "" if cartridge is None else ", header checksum fixed"
+    print(f"sealed {output} (patched ROM CRC32 {bps.info(sealed).target_crc32:08X}{checksum_note})")
+    return 0
+
+
+def _diff(args: argparse.Namespace, _parser: argparse.ArgumentParser) -> int:
+    metadata = args.metadata.read_text(encoding="utf-8") if args.metadata is not None else ""
+    patch = bps.diff(args.source.read_bytes(), args.target.read_bytes(), metadata)
+    args.output.write_bytes(patch)
+    print(f"wrote {args.output} ({len(patch)} bytes, patched ROM CRC32 {bps.info(patch).target_crc32:08X})")
     return 0
 
 
@@ -79,12 +106,16 @@ def _info(args: argparse.Namespace, _parser: argparse.ArgumentParser) -> int:
 
 def bps_main(argv: list[str]) -> int:
     """Run one `a816 bps` command. 0 on success, 1 on a patch, ROM or file error."""
-    parser = _parser()
+    return run_patch_command(_parser(), argv)
+
+
+def run_patch_command(parser: argparse.ArgumentParser, argv: list[str]) -> int:
+    """Parse `argv` and run its command, a patch, ROM, config or file error printed as exit 1."""
     args = parser.parse_args(argv)
     run: Callable[[argparse.Namespace, argparse.ArgumentParser], int] = args.run
     try:
         return run(args, parser)
-    except BpsError as error:
+    except (BpsError, IpsError, A816ConfigError) as error:
         print(error.format(), file=sys.stderr)
     except OSError as error:
         code = f"[{E_IO_FILE_NOT_FOUND}]" if isinstance(error, FileNotFoundError) else ""

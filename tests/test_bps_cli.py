@@ -75,6 +75,42 @@ class TestSeal:
         assert "io error" in capsys.readouterr().err
 
 
+class TestDiff:
+    @pytest.fixture
+    def roms(self, tmp_path: Path) -> Path:
+        (tmp_path / "base.sfc").write_bytes(source_rom())
+        (tmp_path / "hack.sfc").write_bytes(delta_target())
+        return tmp_path
+
+    def _diff(self, roms: Path, *extra: str | Path) -> int | None:
+        return _bps("diff", "--source", roms / "base.sfc", "--target", roms / "hack.sfc", "-o", roms / "x.bps", *extra)
+
+    def test_the_patch_gives_the_target(self, roms: Path) -> None:
+        self._diff(roms)
+        assert bps.apply((roms / "x.bps").read_bytes(), source_rom()) == delta_target()
+
+    def test_the_patch_is_sealed(self, roms: Path) -> None:
+        self._diff(roms)
+        assert bps.info((roms / "x.bps").read_bytes()).target_crc32 == zlib.crc32(delta_target())
+
+    def test_metadata_comes_from_a_file(self, roms: Path) -> None:
+        (roms / "meta.xml").write_text('<patch name="hack"/>', encoding="utf-8")
+        self._diff(roms, "--metadata", roms / "meta.xml")
+        assert bps.info((roms / "x.bps").read_bytes()).metadata == '<patch name="hack"/>'
+
+    def test_it_reports_the_patch(self, roms: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        self._diff(roms)
+        assert f"patched ROM CRC32 {zlib.crc32(delta_target()):08X}" in capsys.readouterr().out
+
+    def test_a_missing_rom_is_e0500(self, roms: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        (roms / "hack.sfc").unlink()
+        assert (self._diff(roms), "E0500" in capsys.readouterr().err) == (1, True)
+
+    def test_identical_roms_give_an_empty_patch(self) -> None:
+        patch = bps.diff(source_rom(), source_rom())
+        assert bps.apply(patch, source_rom()) == source_rom()
+
+
 class TestApply:
     def test_applies_a_flips_delta_patch(self, tmp_path: Path) -> None:
         (tmp_path / "base.sfc").write_bytes(source_rom())

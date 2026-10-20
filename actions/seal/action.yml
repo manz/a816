@@ -1,0 +1,32 @@
+name: a816 seal
+description: >-
+  Seal patches against the base ROM: x.bps.unsealed into x.bps (a816 bps
+  seal), x.ips in place (a816 ips seal). Both get the SNES header checksum
+  when a816.toml declares the cartridge.
+inputs:
+  rom:
+    description: The decrypted base ROM.
+    required: true
+  patches:
+    description: Patches to seal, one per line (.bps.unsealed or .ips).
+    required: true
+  checksum:
+    description: Fix the SNES header checksum.
+    default: "true"
+outputs:
+  sealed:
+    description: The sealed patches, one per line.
+    value: ${{ steps.seal.outputs.sealed }}
+runs:
+  using: composite
+  steps:
+    - id: seal
+      shell: bash
+      env:
+        ROM: ${{ inputs.rom }}
+        PATCHES: ${{ inputs.patches }}
+        CHECKSUM: ${{ inputs.checksum }}
+      run: |
+        args=(--rom="$ROM" --patches="$PATCHES")
+        if [ "$CHECKSUM" != true ]; then args+=(--no-checksum); fi
+        uv run --no-sync a816 ci seal "${args[@]}"

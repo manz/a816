@@ -25,7 +25,9 @@ sealed build/ff4.bps (patched ROM CRC32 1A2B3C4D)
 2. `a816 bps seal`, run where the base ROM is, checks it against the
    size and CRC32 the patch expects, applies the patch in memory and
    writes the patched ROM's CRC32 (and the patch's own) into the
-   trailer.
+   trailer. When `a816.toml` declares the cartridge (`board` or
+   `[map.N]`, and `rom_size`), it first writes the SNES header
+   checksum, which also depends on the base ROM (see below).
 
 The IPS and the BPS can come from one link:
 `a816 build ff4.s -o build/ff4.ips -o build/ff4.bps.unsealed` (from
@@ -39,11 +41,17 @@ and refuses a patch with another name and no `-o`.
 ## Commands
 
 ```
-a816 bps seal PATCH --source ROM [-o OUT]
+a816 bps seal PATCH --source ROM [-o OUT] [--no-checksum]
+a816 bps diff --source ROM --target PATCHED -o OUT [--metadata FILE]
+a816 ips seal PATCH --source ROM [-o OUT]
 a816 bps apply PATCH --source ROM -o OUT [--unsealed]
 a816 bps info PATCH
 ```
 
+- `diff` writes a sealed linear patch from two ROMs, for a patch the
+  linker does not build alone (text spliced into an IPS by another
+  tool, say). `--metadata` names a file whose text becomes the patch's
+  metadata, as is.
 - `apply` checks all three CRCs; `--unsealed` skips the patched ROM's,
   to try a patch before sealing it. It applies any BPS patch, Flips'
   delta ones included.
@@ -52,6 +60,28 @@ a816 bps info PATCH
 - A wrong base ROM is `E0512`, and one exactly 512 bytes too long is
   named as carrying a copier header. A patch that is not BPS, is
   truncated or fails a CRC is `E0511`.
+
+## The header checksum
+
+The SNES header holds the 16-bit sum of every ROM byte (at `$00:FFDE`,
+its complement at `$00:FFDC`). A patch built without the base ROM
+cannot know it, so emulators and flash carts that check it see a bad
+checksum. Sealing has the base ROM, so it writes it:
+
+- the header is found through the project's bus map: bus `$00:FFC0` is
+  ROM offset `0x7FC0` on LoROM, `0xFFC0` on HiROM;
+- the sum covers the ROM padded to `rom_size`; a size that is not a
+  power of two counts its last part mirrored, as the bus does;
+- `a816 bps seal` writes it into the patched ROM and encodes the patch
+  again from its differences with the base ROM, metadata kept.
+  `--no-checksum` leaves the header as the build wrote it;
+- `a816 ips seal` appends the record that writes it, after a pad
+  record when the patch does not reach `rom_size`. It writes the patch
+  in place unless `-o` names another file, and sealing again replaces
+  that record. It needs the cartridge (`E0519`) and a headerless base
+  ROM (`E0518`).
+
+Both run from the project directory, where `a816.toml` is found.
 
 ## The patch a816 writes
 

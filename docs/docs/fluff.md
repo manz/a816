@@ -176,6 +176,25 @@ MyLabel:                                ; noqa: N801
 
 Code lists are case-insensitive: `; noqa: e501,n801` works the same.
 
+## Selecting rules: `[lint]`
+
+A rule the project breaks on purpose goes in `a816.toml` rather than on
+every line:
+
+```toml
+[lint]
+ignore = ["N802"]       # French CamelCase constants
+# select = ["DOC", "N"] # only these; empty or absent runs every rule
+```
+
+Codes match by prefix, as in ruff: `N` is every naming rule. `check`,
+`fix` and the LSP all honour the table. `a816 check --select CODES` and
+`--ignore CODES` (comma-separated, or repeat the flag) replace the
+table's list of the same name for one run. The other list still
+applies: with `ignore = ["N802"]` in the table, `--select N802` shows
+nothing; add `--ignore ""` to clear the table's ignore. A code no rule
+starts with is an error (`E0516`). Parse errors always show.
+
 ## `a816.toml` discovery
 
 Both `a816 check` and `a816 format` walk upwards from each input file

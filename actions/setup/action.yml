@@ -1,0 +1,49 @@
+name: a816 setup
+description: >-
+  Install uv and the project's locked environment, which must hold a816, then
+  derive the build version and SOURCE_DATE_EPOCH (a816 ci version) before the
+  build runs.
+inputs:
+  python-version:
+    description: Python the project's environment uses.
+    default: "3.14"
+  cache:
+    description: Cache uv's downloads between runs.
+    default: "true"
+outputs:
+  a816-version:
+    description: The a816 the project's environment holds.
+    value: ${{ steps.version.outputs.a816-version }}
+  version:
+    description: >-
+      The tag name on a tag push, pr-<number> on a pull request, else
+      nightly-<run number>. Also exported as A816_BUILD_VERSION.
+    value: ${{ steps.version.outputs.version }}
+  source-date-epoch:
+    description: >-
+      The commit time. Also exported as SOURCE_DATE_EPOCH unless the job
+      already sets it.
+    value: ${{ steps.version.outputs.source-date-epoch }}
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v10.3.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        enable-cache: ${{ inputs.cache }}
+    - name: Install the locked environment
+      shell: bash
+      run: uv sync --locked
+    - id: version
+      name: Derive the build version
+      shell: bash
+      run: |
+        if ! installed=$(uv run --no-sync a816 --version 2> /dev/null); then
+          echo "::error::the project's environment has no a816: add it to the project's dependencies"
+          exit 1
+        fi
+        if ! uv run --no-sync a816 ci --help > /dev/null 2>&1; then
+          echo "::error::the a816 actions need a816 1.1.5 or later; the project locks $installed"
+          exit 1
+        fi
+        uv run --no-sync a816 ci version

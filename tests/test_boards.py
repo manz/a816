@@ -8,8 +8,9 @@ import pytest
 
 from a816.boards import ARES_REVISION, BoardRegion, _expand_names, boards
 from a816.config import load_a816_toml
-from a816.cpu.mapping import BsnesRegion, parse_bml_address
+from a816.cpu.mapping import BsnesRegion, Bus, parse_bml_address
 from a816.exceptions import A816ConfigError
+from a816.mappers import map_on_bus
 from a816.module_builder import build_with_imports
 
 
@@ -53,6 +54,22 @@ def test_exhirom_board_offsets_its_low_banks() -> None:
 def test_coprocessor_program_rom_comes_from_its_mcu_window() -> None:
     rom = [r.address for r in boards()["SHVC-1L5B-20"] if not r.writable]
     assert rom == ["00-3f,80-bf:8000-ffff", "c0-ff:0000-ffff"]
+
+
+def test_sdd1_mcu_windows_take_the_default_mmc_masks() -> None:
+    rom = [(r.address, r.mask) for r in boards()["SHVC-LN3B-01"] if not r.writable]
+    assert rom == [("00-3f,80-bf:8000-ffff", 0x808000), ("c0-ff:0000-ffff", 0xC00000)]
+
+
+@pytest.mark.parametrize(
+    ("logical", "physical"),
+    [(0x008000, 0x000000), (0x808000, 0x000000), (0x01FFFF, 0x00FFFF), (0xC263A0, 0x0263A0), (0xFF0000, 0x3F0000)],
+)
+def test_sdd1_board_resolves_through_default_mmc_pages(tmp_path: Path, logical: int, physical: int) -> None:
+    bus = Bus("sdd1")
+    for mapping in _load(tmp_path, 'board = "SHVC-LN3B-01"\nrom_size = 0x600000\n').bus_map:
+        map_on_bus(bus, mapping)
+    assert bus.get_address(logical).physical == physical
 
 
 def test_slots_are_not_board_memory() -> None:

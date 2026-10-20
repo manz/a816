@@ -1,0 +1,10 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Bump the a816 package and the manz/a816 actions in one pull request.",
+  "packageRules": [
+    {
+      "matchPackageNames": ["a816", "manz/a816", "manz/a816/**"],
+      "groupName": "a816"
+    }
+  ]
+}
