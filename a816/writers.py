@@ -93,10 +93,21 @@ class OverlapError(Exception):
 
 
 class IPSWriter(Writer):
-    def __init__(self, file: BinaryIO, copier_header: bool = False) -> None:
+    """An IPS patch: one record per block (split at 64 KiB), then `EOF`.
+
+    `pad_to` (the project's `rom_size`) makes the patched ROM exactly that
+    long: a patcher only grows the ROM up to the last byte a record writes,
+    so when no block reaches `pad_to - 1` the patch ends with a one-byte
+    zero record there. Without it, a 2 MB ROM patched over a 1 MB base came
+    out 0x18A3E7 bytes, which loaders read as carrying a copier header.
+    """
+
+    def __init__(self, file: BinaryIO, copier_header: bool = False, pad_to: int = 0) -> None:
         self.file = file
         self._sections: list[tuple[int, int]] = []
         self._copier_header = copier_header
+        self._pad_to = pad_to
+        self._end = 0
 
     def begin(self) -> None:
         self.file.write(b"PATCH")
@@ -108,6 +119,7 @@ class IPSWriter(Writer):
         self.file.write(struct.pack(">H", len(block)))
 
     def write_block(self, block: bytes, block_address: int) -> None:
+        self._end = max(self._end, block_address + len(block))
         k = 0
         while block[k:]:
             slice_size = min(0xFFFF, len(block) - k)
@@ -120,6 +132,8 @@ class IPSWriter(Writer):
             k += slice_size
 
     def end(self) -> None:
+        if self._end < self._pad_to:
+            self.write_block(b"\x00", self._pad_to - 1)
         self.file.write(b"EOF")
 
 

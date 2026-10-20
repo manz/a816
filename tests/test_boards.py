@@ -184,4 +184,5 @@ def _build(root: Path, toml: str) -> list[tuple[int, bytes]]:
 def test_board_build_matches_the_hand_written_regions(tmp_path: Path) -> None:
     by_board = _build(tmp_path / "board", 'board = "SHVC-1A3M-30"\nrom_size = 0x400000\n')
     assert by_board == _build(tmp_path / "hand", _HAND_WRITTEN)
-    assert sorted(by_board) == [(0x008000, b"\xea"), (0x380000, b"\x60")]
+    # The last record pads the patched ROM to rom_size.
+    assert sorted(by_board) == [(0x008000, b"\xea"), (0x380000, b"\x60"), (0x3FFFFF, b"\x00")]

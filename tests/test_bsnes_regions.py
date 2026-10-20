@@ -194,7 +194,7 @@ def test_toml_board_places_rom_code_in_an_sram_bank(tmp_path: Path) -> None:
     (tmp_path / "main.s").write_text(".alloc at 0x708000 {\n    rts\n}\n", encoding="utf-8")
     result = build_with_imports(tmp_path / "main.s", tmp_path / "out.ips", output_dir=tmp_path / "obj")
     assert result.exit_code == 0, result.diagnostics
-    assert _ips_records(tmp_path / "out.ips") == [(0x380000, b"\x60")]
+    assert _ips_records(tmp_path / "out.ips") == [(0x380000, b"\x60"), (0x3FFFFF, b"\x00")]
 
 
 def test_unsized_region_does_not_fold() -> None:

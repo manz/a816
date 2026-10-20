@@ -143,7 +143,10 @@ class LinkMixin:
             0 on success, -1 on failure.
         """
         self._prepare_link_output(linked_obj, mapping)
-        return self._emit_linked(linked_obj, ips_file, lambda f: IPSWriter(f, copier_header), "IPS patch")
+        rom_size = self._rom_size(linked_obj)
+        return self._emit_linked(
+            linked_obj, ips_file, lambda f: IPSWriter(f, copier_header, pad_to=rom_size), "IPS patch"
+        )
 
     def link_as_sfc(self, linked_obj: ObjectFile, sfc_file: Path, mapping: str | None = None) -> int:
         """Create SFC file from linked object file.

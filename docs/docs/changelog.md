@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.5 (unreleased)
+
+- An IPS patch makes the patched ROM exactly `rom_size` long when the
+  project sets it: a one-byte zero record at `rom_size - 1` ends the
+  patch when no block reaches it. ff4's 2 MB IPS over the 1 MB base gave
+  0x18A3E7 bytes, which the Analogue Pocket SNES core read as carrying a
+  copier header (`size & 0x200`), skipping 512 bytes. The patched bytes
+  are unchanged; IPS outputs gain that one record.
+
 ## 1.1.4 (2026-10-20)
 
 - `a816 build -f bps` writes a BPS patch without the base ROM, from a
