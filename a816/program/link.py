@@ -8,15 +8,23 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO
 
+from a816.bps import BpsError, metadata_xml
 from a816.cpu.cpu_65c816 import RomType
-from a816.exceptions import BlockOverlapLinkError
+from a816.error_codes import E_BPS_COPIER_HEADER, E_CONFIG_BAD_BPS
+from a816.exceptions import A816ConfigError, BlockOverlapLinkError
 from a816.mappers import map_on_bus
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.program.block_overlaps import emitted_blocks, overlapping_blocks
-from a816.writers import IPSWriter, SFCWriter, Writer
+from a816.writers import BPSWriter, IPSWriter, SFCWriter, Writer
 
 if TYPE_CHECKING:
+    from a816.config import BpsConfig
     from a816.symbols import Resolver
+
+
+# What `-f` accepts for a linked build (`obj` is `-c`'s, not a link output).
+OUTPUT_FORMATS = ("ips", "sfc", "bps")
+_ROM_TYPES = {"low": RomType.low_rom, "low2": RomType.low_rom_2, "high": RomType.high_rom}
 
 
 class LinkMixin:
@@ -124,15 +132,7 @@ class LinkMixin:
         Returns:
             0 on success, -1 on failure.
         """
-        if mapping is not None:
-            address_mapping = {
-                "low": RomType.low_rom,
-                "low2": RomType.low_rom_2,
-                "high": RomType.high_rom,
-            }
-            self.resolver.rom_type = address_mapping[mapping]
-
-        self.import_linked_symbols(linked_obj)
+        self._prepare_link_output(linked_obj, mapping)
         return self._emit_linked(linked_obj, ips_file, lambda f: IPSWriter(f, copier_header), "IPS patch")
 
     def link_as_sfc(self, linked_obj: ObjectFile, sfc_file: Path, mapping: str | None = None) -> int:
@@ -149,17 +149,78 @@ class LinkMixin:
         Returns:
             0 on success, -1 on failure.
         """
-        if mapping is not None:
-            address_mapping = {
-                "low": RomType.low_rom,
-                "low2": RomType.low_rom_2,
-                "high": RomType.high_rom,
-            }
-            self.resolver.rom_type = address_mapping[mapping]
+        self._prepare_link_output(linked_obj, mapping)
+        return self._emit_linked(linked_obj, sfc_file, SFCWriter, "SFC file", pad_to=self._rom_size(linked_obj))
 
+    def link_as_bps(
+        self,
+        linked_obj: ObjectFile,
+        bps_file: Path,
+        mapping: str | None = None,
+        bps: BpsConfig | None = None,
+        defines: dict[str, str] | None = None,
+    ) -> int:
+        """Create an unsealed linear BPS patch from a linked object file.
+
+        Args:
+            linked_obj: The linked object file containing code and symbols.
+            bps_file: Output path, as given (projects name it `*.bps.unsealed`).
+            mapping: ROM mapping type ('low', 'low2', 'high').
+            bps: The project's `[bps]` table: the base ROM's size and CRC32.
+            defines: Each define's value as spelled, for `${NAME}` in the metadata.
+
+        Returns:
+            0 on success, -1 on failure.
+
+        Raises:
+            A816ConfigError: no `[bps]` table (E0513), or a metadata
+                `${NAME}` no define binds (E0514).
+        """
+        if bps is None:
+            raise A816ConfigError(E_CONFIG_BAD_BPS, "`-f bps` needs a `[bps]` table in a816.toml")
+        metadata = metadata_xml(bps.metadata, defines or {})
+        self._prepare_link_output(linked_obj, mapping)
+        rom_size = self._rom_size(linked_obj)
+        return self._emit_linked(
+            linked_obj,
+            bps_file,
+            lambda f: BPSWriter(f, bps.source_size, bps.source_crc32, metadata, rom_size),
+            "BPS patch",
+        )
+
+    def link_as(
+        self,
+        output_format: str,
+        linked_obj: ObjectFile,
+        output_file: Path,
+        *,
+        mapping: str | None = None,
+        copier_header: bool = False,
+        bps: BpsConfig | None = None,
+        defines: dict[str, str] | None = None,
+    ) -> int:
+        """Write `linked_obj` as one of `OUTPUT_FORMATS`: the one place `-f` is dispatched."""
+        if output_format == "bps":
+            if copier_header:
+                raise BpsError(
+                    E_BPS_COPIER_HEADER, "`--copier-header` does not apply to `-f bps`: BPS checks a headerless ROM"
+                )
+            return self.link_as_bps(linked_obj, output_file, mapping, bps, defines)
+        if output_format == "sfc":
+            return self.link_as_sfc(linked_obj, output_file, mapping)
+        if output_format == "ips":
+            return self.link_as_patch(linked_obj, output_file, mapping, copier_header)
+        raise ValueError(f"unknown output format {output_format!r}, expected one of {', '.join(OUTPUT_FORMATS)}")
+
+    def _prepare_link_output(self, linked_obj: ObjectFile, mapping: str | None) -> None:
+        if mapping is not None:
+            self.resolver.rom_type = _ROM_TYPES[mapping]
         self.import_linked_symbols(linked_obj)
-        rom_size = max((m.rom_size for m in linked_obj.bus_mappings if not m.writeable), default=0)
-        return self._emit_linked(linked_obj, sfc_file, SFCWriter, "SFC file", pad_to=rom_size)
+
+    @staticmethod
+    def _rom_size(linked_obj: ObjectFile) -> int:
+        """The project's `rom_size`: the largest read-only bus region's."""
+        return max((m.rom_size for m in linked_obj.bus_mappings if not m.writeable), default=0)
 
     def _emit_linked(
         self,

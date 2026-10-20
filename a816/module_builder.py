@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 from a816.build_cache import BuildCache, BuildSettings, ModuleInputs, recording_errors, recording_warnings
 from a816.build_inputs import recording_misses
-from a816.config import discover_a816_config, merge_build_settings
+from a816.config import BpsConfig, discover_a816_config, merge_build_settings
 from a816.exceptions import A816Error
 from a816.linker import Linker
 from a816.module_loader import resolve_module
@@ -490,13 +490,15 @@ def build_with_imports(
     bus_map: "list[BusMapping] | None" = None,
     use_a816_toml: bool = True,
     use_cache: bool = True,
+    bps: BpsConfig | None = None,
+    defines: dict[str, str] | None = None,
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
     Args:
         main_source: Path to the main source file.
         output_file: Path to the output file (IPS or SFC).
-        output_format: Output format ("ips" or "sfc").
+        output_format: Output format: "ips", "sfc" or "bps".
         module_paths: Additional directories to search for modules.
         output_dir: Directory for compiled object files.
         symbols: Predefined symbols (-D-style) seeded into every
@@ -508,6 +510,9 @@ def build_with_imports(
         mapping: `-m` ROM type used to translate addresses at link time.
         bus_map: `a816.toml` bus regions seeded onto every module's bus.
         use_cache: Reuse up-to-date objects (False compiles every module: `--no-cache`).
+        bps: The `[bps]` table for `output_format="bps"` (from `a816.toml` when not given).
+        defines: Each define's value as spelled, for `${NAME}` in the BPS
+            metadata (`str()` of `symbols` when not given).
 
     Returns:
         BuildResult with exit_code, symbol_map, diagnostics, and program.
@@ -528,6 +533,7 @@ def build_with_imports(
         mapping, bus_map = settings.mapping, settings.bus_map
         include_paths, module_paths = settings.include_paths, settings.module_paths
         experimental, symbols = settings.experimental, settings.symbols
+        bps = bps or settings.bps
 
     paths = module_paths or []
     if main_source.parent not in paths:
@@ -548,18 +554,25 @@ def build_with_imports(
 
         # Output the final file
         from a816.program import Program
+        from a816.program.link import OUTPUT_FORMATS
 
         program = Program(overlap_mode=overlap_mode)
         apply_experimental_flags(program, experimental)
         program.enable_debug_capture()
 
-        if output_format == "ips":
-            exit_code = program.link_as_patch(linked, output_file, mapping=mapping, copier_header=copier_header)
-        elif output_format == "sfc":
-            exit_code = program.link_as_sfc(linked, output_file, mapping=mapping)
-        else:
+        if output_format not in OUTPUT_FORMATS:
             logger.error(f"Unknown output format: {output_format}")
             return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
+        spelled = defines if defines is not None else {name: str(value) for name, value in (symbols or {}).items()}
+        exit_code = program.link_as(
+            output_format,
+            linked,
+            output_file,
+            mapping=mapping,
+            copier_header=copier_header,
+            bps=bps,
+            defines=spelled,
+        )
 
         symbol_map = dict(program.resolver.get_all_labels())
         # `.label`-declared names are absolute addresses that should appear in

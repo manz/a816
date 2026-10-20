@@ -263,6 +263,13 @@ separate blocks separated by a blank line.
 - `E0512` the source ROM is not the one the BPS patch expects: its
   size or CRC32 differs. A ROM 512 bytes too long carries a copier
   header; strip it first.
+- `E0513` `-f bps` without a `[bps]` table in `a816.toml`, or a
+  malformed one: `source_size` and `source_crc32` are non-negative
+  integers, `[bps.metadata]` a flat table of attribute names to strings.
+- `E0514` a `${NAME}` in a `[bps.metadata]` value names no define: pass
+  `-D NAME=...` or declare it under `[defines]`.
+- `E0515` `--copier-header` with `-f bps`: a BPS patch records the
+  CRC32 of a headerless ROM, so a header offset cannot apply.
 
 ### Warnings
 

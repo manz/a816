@@ -36,6 +36,7 @@ from a816.module_builder import apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
 from a816.program import Program
+from a816.program.link import OUTPUT_FORMATS
 from a816.version import a816_version
 
 logger = logging.getLogger("x816")
@@ -64,6 +65,8 @@ def _apply_a816_toml(args: argparse.Namespace) -> None:
     args.module_paths = [str(p) for p in settings.module_paths]
     args.experimental = settings.experimental
     args.symbols = settings.symbols
+    args.bps = settings.bps
+    args.define_values = _spelled_defines(settings.symbols, args.defines)
 
 
 def _discover_config(args: argparse.Namespace) -> A816Config | None:
@@ -82,7 +85,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("-V", "--version", action="version", version=f"a816 {a816_version()}")
     parser.add_argument("-o", "--output", type=Path, dest="output_file", default="a.out", help="Output file")
     parser.add_argument("input_files", nargs="+", type=Path, help="Input files (asm files or object files for linking)")
-    parser.add_argument("-f", dest="format", default="ips", help="Output format (ips, sfc, obj)")
+    parser.add_argument(
+        "-f",
+        dest="format",
+        default="ips",
+        choices=OUTPUT_FORMATS,
+        help="Output format: ips, sfc, or bps (an unsealed patch; needs [bps] in a816.toml, see `a816 bps seal`)",
+    )
     parser.add_argument(
         "-m",
         dest="mapping",
@@ -196,6 +205,15 @@ def _parse_defines(defines: list[str] | None) -> dict[str, int | str]:
     return symbols
 
 
+def _spelled_defines(symbols: dict[str, int | str], defines: list[str] | None) -> dict[str, str]:
+    """Each define's value as written: `-D VERSION=0x10` stays `0x10` in BPS metadata."""
+    spelled = {name: str(value) for name, value in symbols.items()}
+    for item in defines or []:
+        key, value = item.split("=", 1)
+        spelled[key] = value
+    return spelled
+
+
 def _run_auto_imports(args: argparse.Namespace) -> int:
     from a816.module_builder import build_with_imports
 
@@ -214,6 +232,8 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         bus_map=list(args.bus_map),
         use_a816_toml=False,
         use_cache=args.use_cache,
+        bps=args.bps,
+        defines=args.define_values,
     )
     return result.exit_code
 
@@ -278,12 +298,15 @@ def _run_link(args: argparse.Namespace) -> int:
     linked_obj = Linker(object_files).link(base_address=0x8000)
     program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
     apply_experimental_flags(program, args.experimental)
-    if args.format == "ips":
-        return program.link_as_patch(linked_obj, args.output_file, args.mapping, args.copier_header)
-    if args.format == "sfc":
-        return program.link_as_sfc(linked_obj, args.output_file, args.mapping)
-    logger.error(f"Unknown output format: {args.format}")
-    sys.exit(-1)
+    return program.link_as(
+        args.format,
+        linked_obj,
+        args.output_file,
+        mapping=args.mapping,
+        copier_header=args.copier_header,
+        bps=args.bps,
+        defines=args.define_values,
+    )
 
 
 _SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain")

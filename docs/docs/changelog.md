@@ -2,6 +2,10 @@
 
 ## 1.1.4 (unreleased)
 
+- `a816 build -f bps` writes a BPS patch without the base ROM, from a
+  `[bps]` table in `a816.toml` (the base ROM's size and CRC32, and
+  `<patch/>` metadata filled from the defines). The patch is unsealed:
+  its patched-ROM CRC32 waits for the base ROM.
 - `a816 format` keeps a string in single quotes when its text holds a
   `"`: `.text 'l"ordre'` became `.text "l"ordre"`, which no longer
   parses.

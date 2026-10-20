@@ -37,7 +37,8 @@ for backwards compatibility: existing scripts keep working.
 
 ```
 -o, --output OUTPUT      Output file (default a.out)
--f FORMAT                Output format (ips, sfc, obj)
+-f {ips,sfc,bps}         Output format (default ips). bps writes an
+                         unsealed patch; it needs `[bps]` in a816.toml.
 -m {low,low2,high}       Default bus when the project declares no map:
                          LoROM (default), LoROM variant 2, HiROM.
 --copier-header          Add 0x200 address delta for ips writer.
@@ -286,6 +287,7 @@ track_register_size = true
 | `rom_size` | build | ROM image size in bytes; required with read-only `[map.N]` regions |
 | `[defines]` | build, fluff | names a build passes with `-D`, each with its default |
 | `[experimental]` | build | opt-in feature flags (`--experimental NAME`) |
+| `[bps]` | build | the base ROM a `-f bps` patch applies to, and its metadata |
 | `exclude` | fluff | glob patterns of files and directories a run with no paths leaves out |
 
 `--include-path` / `-I` replace the file's `include-paths` /
@@ -293,6 +295,34 @@ track_register_size = true
 `-D NAME=VALUE` overrides that name's `[defines]` default. A default is
 an integer or a string. `a816 check` counts a declared name as defined
 (no `W0002`); a `-D` name left out of `[defines]` still works.
+
+### BPS patches: `[bps]`
+
+`a816 build -f bps` writes a BPS patch straight from the linked blocks,
+without the base ROM. BPS records the base ROM's size and CRC32, so a
+patcher rejects a wrong or headered ROM instead of producing a broken
+game; `[bps]` gives them:
+
+```toml
+[bps]
+source_size  = 0x100000
+source_crc32 = 0xCAA15E97
+
+[bps.metadata]  # one attribute per key on <patch/>
+name    = "Final Fantasy IV"
+version = "${VERSION}"  # filled from the defines, as spelled
+```
+
+- The patched ROM is `rom_size` long when the project sets it, else as
+  long as the base ROM or the last block. Bytes no block writes come
+  from the base ROM, zeros past it.
+- `${NAME}` in a metadata value takes the define's value as written:
+  `-D VERSION=0x10` gives `0x10`. A name no define binds is `E0514`.
+- The patched ROM's CRC32 needs the base ROM, so the patch leaves it
+  zero: it is *unsealed*, and no patcher takes it until it is sealed
+  where the ROM is at hand. a816 writes it to `-o` as given; name it
+  `*.bps.unsealed` so nobody ships it by mistake.
+- `-f bps` without `[bps]` is `E0513`; with `--copier-header`, `E0515`.
 
 ### Bus map: `board` and `[map.N]`
 

@@ -136,6 +136,9 @@ E_CONFIG_UNKNOWN_BOARD = ErrorCode("E0509", "config", "`board` names no known ca
 E_CONFIG_BAD_DEFINE = ErrorCode("E0510", "config", "`[defines]` entry is not a name with an integer or string default")
 E_BPS_MALFORMED = ErrorCode("E0511", "io", "not a valid BPS patch")
 E_BPS_SOURCE_MISMATCH = ErrorCode("E0512", "io", "the source ROM is not the one the BPS patch expects")
+E_CONFIG_BAD_BPS = ErrorCode("E0513", "config", "`[bps]` missing or malformed")
+E_BPS_UNDEFINED_VARIABLE = ErrorCode("E0514", "config", "`${NAME}` in `[bps.metadata]` names no define")
+E_BPS_COPIER_HEADER = ErrorCode("E0515", "io", "`--copier-header` with `-f bps`")
 
 # --- Warnings (W0001..): reported, the build still succeeds ---
 W_INCBIN_PATH_NAME = ErrorCode("W0001", "deprecated", "a name `.incbin` derived from its file path")

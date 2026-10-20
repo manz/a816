@@ -13,13 +13,16 @@ patches as well as a816's linear ones.
 
 from __future__ import annotations
 
+import re
 import struct
 import zlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from functools import partial
+from xml.sax.saxutils import escape
 
-from a816.error_codes import E_BPS_MALFORMED, E_BPS_SOURCE_MISMATCH, ErrorCode
-from a816.exceptions import A816Error
+from a816.error_codes import E_BPS_MALFORMED, E_BPS_SOURCE_MISMATCH, E_BPS_UNDEFINED_VARIABLE, ErrorCode
+from a816.exceptions import A816ConfigError, A816Error
 
 MAGIC = b"BPS1"
 _TRAILER = 12
@@ -313,3 +316,29 @@ def seal(patch: bytes, source: bytes) -> bytes:
     target = apply(patch, source, unsealed=True)
     body = patch[:-8] + struct.pack("<I", zlib.crc32(target))
     return _with_patch_crc(body)
+
+
+_VARIABLE = re.compile(r"\$\{([^}]*)\}")
+_QUOTE = {'"': "&quot;"}
+
+
+def metadata_xml(attributes: Mapping[str, str], defines: Mapping[str, str]) -> str:
+    """`[bps.metadata]` as one `<patch …/>` element, `${NAME}` filled from `defines`.
+
+    `defines` maps each name to its value as spelled (`-D VERSION=0x10`
+    gives `0x10`). An empty table gives no metadata at all.
+    """
+    if not attributes:
+        return ""
+
+    def fill(key: str, match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in defines:
+            raise A816ConfigError(
+                E_BPS_UNDEFINED_VARIABLE,
+                f"`${{{name}}}` in [bps.metadata] {key} names no define; pass -D {name}=... or declare it under [defines]",
+            )
+        return defines[name]
+
+    pairs = [f'{key}="{escape(_VARIABLE.sub(partial(fill, key), value), _QUOTE)}"' for key, value in attributes.items()]
+    return f"<patch {' '.join(pairs)}/>"
