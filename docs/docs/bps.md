@@ -27,6 +27,10 @@ sealed build/ff4.bps (patched ROM CRC32 1A2B3C4D)
    writes the patched ROM's CRC32 (and the patch's own) into the
    trailer.
 
+The IPS and the BPS can come from one link:
+`a816 build ff4.s -o build/ff4.ips -o build/ff4.bps.unsealed` (from
+Python, `build_with_imports(..., extra_outputs=[("bps", path)])`).
+
 An unsealed patch is not valid BPS: every patcher rejects it on the
 CRC. Naming it `*.bps.unsealed` keeps it from being shipped by mistake;
 `seal` writes `PATCH` without `.unsealed` unless `-o` names the output,

@@ -36,7 +36,7 @@ from a816.module_builder import apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
 from a816.program import Program
-from a816.program.link import OUTPUT_FORMATS
+from a816.program.link import OUTPUT_FORMATS, format_for_path
 from a816.version import a816_version
 
 logger = logging.getLogger("x816")
@@ -83,12 +83,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="a816", description="a816 usage", epilog="")
     parser.add_argument("--verbose", action="store_true", help="Displays all log levels.")
     parser.add_argument("-V", "--version", action="version", version=f"a816 {a816_version()}")
-    parser.add_argument("-o", "--output", type=Path, dest="output_file", default="a.out", help="Output file")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        dest="output_files",
+        action="append",
+        help=(
+            "Output file (default a.out). Repeat it to write several outputs from one link; "
+            "each one's format then comes from its extension: .ips, .sfc, .bps or .bps.unsealed."
+        ),
+    )
     parser.add_argument("input_files", nargs="+", type=Path, help="Input files (asm files or object files for linking)")
     parser.add_argument(
         "-f",
         dest="format",
-        default="ips",
+        default=None,
         choices=OUTPUT_FORMATS,
         help="Output format: ips, sfc, or bps (an unsealed patch; needs [bps] in a816.toml, see `a816 bps seal`)",
     )
@@ -176,6 +186,32 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_build_args(argv: list[str]) -> argparse.Namespace:
+    """Parse a build command line and resolve its outputs into `args.outputs`.
+
+    One `-o` keeps `-f` (default ips) whatever its extension. Several `-o`
+    each take their format from their extension, and `-f` is refused.
+    """
+    parser = _build_arg_parser()
+    args = parser.parse_args(argv)
+    paths = args.output_files or [Path("a.out")]
+    if len(paths) == 1:
+        args.outputs = [(args.format or "ips", paths[0])]
+    elif args.format is not None:
+        parser.error("-f picks the format of a single -o; with several -o each takes its format from its extension")
+    else:
+        args.outputs = [(_format_of(path, parser), path) for path in paths]
+    args.format, args.output_file = args.outputs[0]
+    return args
+
+
+def _format_of(path: Path, parser: argparse.ArgumentParser) -> str:
+    fmt = format_for_path(path)
+    if fmt is None:
+        parser.error(f"{path}: name no format; with several -o, use .ips, .sfc, .bps or .bps.unsealed")
+    return fmt
+
+
 def _define(text: str) -> str:
     """One `-D NAME=VALUE`, checked as argparse reads it.
 
@@ -221,6 +257,7 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         main_source=args.input_files[0],
         output_file=args.output_file,
         output_format=args.format,
+        extra_outputs=args.outputs[1:],
         module_paths=[Path(p) for p in args.module_paths],
         output_dir=args.obj_dir,
         symbols=args.symbols,
@@ -298,15 +335,18 @@ def _run_link(args: argparse.Namespace) -> int:
     linked_obj = Linker(object_files).link(base_address=0x8000)
     program = Program(dump_symbols=args.dump_symbols, overlap_mode=args.overlap_mode)
     apply_experimental_flags(program, args.experimental)
-    return program.link_as(
-        args.format,
-        linked_obj,
-        args.output_file,
-        mapping=args.mapping,
-        copier_header=args.copier_header,
-        bps=args.bps,
-        defines=args.define_values,
-    )
+    exit_code = 0
+    for fmt, path in args.outputs:
+        exit_code = exit_code or program.link_as(
+            fmt,
+            linked_obj,
+            path,
+            mapping=args.mapping,
+            copier_header=args.copier_header,
+            bps=args.bps,
+            defines=args.define_values,
+        )
+    return exit_code
 
 
 _SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain", "bps")
@@ -326,8 +366,7 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
         return None
     cmd, rest = argv[0], argv[1:]
     if cmd == "build":
-        args = _build_arg_parser().parse_args(rest)
-        return _run_assemble(args)
+        return _run_assemble(_parse_build_args(rest))
     if cmd in {"check", "fix", "format", "explain"}:
         from a816.fluff import fluff_main
 
@@ -365,8 +404,7 @@ def cli_main() -> None:
         rc = _dispatch_subcommand(argv)
         if rc is not None:
             sys.exit(rc)
-        args = _build_arg_parser().parse_args(argv)
-        sys.exit(_run_assemble(args))
+        sys.exit(_run_assemble(_parse_build_args(argv)))
     except LinkerError as e:
         print(e.format(), file=sys.stderr)
         sys.exit(1)

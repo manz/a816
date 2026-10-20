@@ -24,6 +24,16 @@ if TYPE_CHECKING:
 
 # What `-f` accepts for a linked build (`obj` is `-c`'s, not a link output).
 OUTPUT_FORMATS = ("ips", "sfc", "bps")
+# Output extensions, for a build writing several outputs from one link.
+_FORMAT_SUFFIXES = ((".bps.unsealed", "bps"), (".bps", "bps"), (".ips", "ips"), (".sfc", "sfc"), (".smc", "sfc"))
+
+
+def format_for_path(path: Path) -> str | None:
+    """The output format `path`'s extension names (`.bps.unsealed` is bps), or None."""
+    name = path.name.lower()
+    return next((fmt for suffix, fmt in _FORMAT_SUFFIXES if name.endswith(suffix)), None)
+
+
 _ROM_TYPES = {"low": RomType.low_rom, "low2": RomType.low_rom_2, "high": RomType.high_rom}
 
 

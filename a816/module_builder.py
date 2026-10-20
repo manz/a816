@@ -513,6 +513,7 @@ def build_with_imports(
     use_cache: bool = True,
     bps: BpsConfig | None = None,
     defines: dict[str, str] | None = None,
+    extra_outputs: list[tuple[str, str | Path]] | None = None,
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
@@ -534,6 +535,8 @@ def build_with_imports(
         bps: The `[bps]` table for `output_format="bps"` (from `a816.toml` when not given).
         defines: Each define's value as spelled, for `${NAME}` in the BPS
             metadata (`str()` of `symbols` when not given).
+        extra_outputs: More (format, path) outputs written from the same
+            link as `output_file`: `[("bps", "build/game.bps.unsealed")]`.
 
     Returns:
         BuildResult with exit_code, symbol_map, diagnostics, and program.
@@ -581,18 +584,17 @@ def build_with_imports(
         apply_experimental_flags(program, experimental)
         program.enable_debug_capture()
 
-        if output_format not in OUTPUT_FORMATS:
-            logger.error(f"Unknown output format: {output_format}")
-            return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {output_format}"])
-        exit_code = program.link_as(
-            output_format,
-            linked,
-            output_file,
-            mapping=mapping,
-            copier_header=copier_header,
-            bps=bps,
-            defines=_spelled_defines(defines, symbols),
-        )
+        outputs = [(output_format, output_file)] + [(fmt, Path(path)) for fmt, path in extra_outputs or []]
+        unknown = [fmt for fmt, _ in outputs if fmt not in OUTPUT_FORMATS]
+        if unknown:
+            logger.error(f"Unknown output format: {unknown[0]}")
+            return BuildResult(exit_code=1, diagnostics=[f"Unknown output format: {unknown[0]}"])
+        spelled = _spelled_defines(defines, symbols)
+        exit_code = 0
+        for fmt, path in outputs:
+            exit_code = exit_code or program.link_as(
+                fmt, linked, path, mapping=mapping, copier_header=copier_header, bps=bps, defines=spelled
+            )
         return _build_result(program, exit_code, output_file)
 
     except Exception as e:

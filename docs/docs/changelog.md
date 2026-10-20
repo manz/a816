@@ -9,6 +9,10 @@
 - `a816 bps seal` fills that CRC32 in from the base ROM; `a816 bps
   apply` and `a816 bps info` apply and inspect any BPS patch (Flips'
   delta ones included), so a project needs no Flips build.
+- `-o` repeats to write several outputs from one link, each in the
+  format its extension names: `-o game.ips -o game.bps.unsealed`.
+  `build_with_imports()` takes `extra_outputs=[(format, path)]`. A
+  single `-o` still follows `-f`.
 - `a816 format` keeps a string in single quotes when its text holds a
   `"`: `.text 'l"ordre'` became `.text "l"ordre"`, which no longer
   parses.

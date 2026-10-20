@@ -36,7 +36,10 @@ for backwards compatibility: existing scripts keep working.
 #### `a816 build` flags
 
 ```
--o, --output OUTPUT      Output file (default a.out)
+-o, --output OUTPUT      Output file (default a.out). Repeat it to write
+                         several outputs from one link, each one's format
+                         from its extension: .ips, .sfc/.smc, .bps or
+                         .bps.unsealed (no -f then).
 -f {ips,sfc,bps}         Output format (default ips). bps writes an
                          unsealed patch; it needs `[bps]` in a816.toml.
 -m {low,low2,high}       Default bus when the project declares no map:
