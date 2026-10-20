@@ -28,41 +28,121 @@ def _comment(tmp_path: Path, run: FakeRun, *extra: str) -> int:
     return ci_main(argv, actions_in(tmp_path, **PR), run)
 
 
+def _writes(run: FakeRun) -> list[list[str]]:
+    return [argv[3:5] for argv in run.commands() if argv[:3] == ["gh", "api", "-X"]]
+
+
+def _body(run: FakeRun) -> str:
+    sent = next(stdin for argv, stdin in run.calls if argv[3:4] in (["POST"], ["PATCH"]))
+    body: str = json.loads(sent or b"")["body"]
+    return body
+
+
+def _fresh() -> FakeRun:
+    return FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
+
+
 def test_a_first_build_creates_the_comment(tmp_path: Path) -> None:
-    run = FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
+    run = _fresh()
     _comment(tmp_path, run)
-    assert run.commands()[-1][:4] == ["gh", "api", "-X", "POST"]
+    assert _writes(run) == [["POST", f"repos/{REPO}/issues/5/comments"]]
 
 
-def test_the_comment_carries_its_marker_and_link(tmp_path: Path) -> None:
-    run = FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
+def test_the_comment_starts_with_its_marker(tmp_path: Path) -> None:
+    run = _fresh()
     _comment(tmp_path, run)
-    body = json.loads(run.calls[-1][1] or b"")["body"]
-    assert body.splitlines()[0] == "<!-- FF4-IPS -->"
+    assert _body(run).splitlines()[0] == "<!-- FF4-IPS -->"
 
 
-def test_the_default_text_links_the_run(tmp_path: Path) -> None:
-    run = FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
+def test_the_default_keeps_the_game_repos_layout(tmp_path: Path) -> None:
+    run = _fresh()
+    _comment(tmp_path, run, "--title", "FF4 IPS")
+    assert _body(run).splitlines()[1:4] == [
+        "🎮 **FF4 IPS Build Ready!**",
+        "",
+        "Your patch has been built successfully! Download it from the artifacts:",
+    ]
+
+
+def test_the_default_names_the_artifact(tmp_path: Path) -> None:
+    run = _fresh()
     _comment(tmp_path, run)
-    assert "](https://github.com/manz/ff4/actions/runs/99)" in json.loads(run.calls[-1][1] or b"")["body"]
+    assert "📦 **Artifact:** `ff4-pr-5`" in _body(run)
+
+
+def test_the_link_goes_to_the_artifact(tmp_path: Path) -> None:
+    run = _fresh()
+    _comment(tmp_path, run, "--artifact-url", "https://github.com/manz/ff4/actions/runs/99/artifacts/7")
+    assert "(https://github.com/manz/ff4/actions/runs/99/artifacts/7)" in _body(run)
+
+
+def test_without_an_artifact_url_the_link_goes_to_the_run(tmp_path: Path) -> None:
+    run = _fresh()
+    _comment(tmp_path, run)
+    assert "(https://github.com/manz/ff4/actions/runs/99)" in _body(run)
+
+
+def test_the_default_says_how_long_and_from_what(tmp_path: Path) -> None:
+    run = _fresh()
+    _comment(tmp_path, run, "--retention-days", "14")
+    assert _body(run).splitlines()[-2:] == ["The artifact will be available for 14 days.", "*Last updated: abc*"]
+
+
+def test_the_files_are_listed_with_their_sizes(tmp_path: Path) -> None:
+    (tmp_path / "ff4.ips").write_bytes(bytes(3 * 1024))
+    (tmp_path / "ff4.bps").write_bytes(bytes(10))
+    run = _fresh()
+    _comment(tmp_path, run, "--files", f"{tmp_path / 'ff4.ips'}\n{tmp_path / 'ff4.bps'}")
+    assert "📄 **Files:** `ff4.ips` (3 KiB), `ff4.bps` (10 bytes)" in _body(run)
+
+
+def test_the_lines_break_as_in_markdown(tmp_path: Path) -> None:
+    (tmp_path / "ff4.ips").write_bytes(b"PATCH")
+    run = _fresh()
+    _comment(tmp_path, run, "--files", str(tmp_path / "ff4.ips"))
+    assert "`ff4-pr-5`  \n📄 **Files:** `ff4.ips` (5 bytes)  \n🔗 **Download:**" in _body(run)
+
+
+def test_no_file_at_hand_leaves_the_list_out(tmp_path: Path) -> None:
+    run = _fresh()
+    _comment(tmp_path, run, "--files", str(tmp_path / "missing.ips"))
+    assert "Files:" not in _body(run)
 
 
 def test_a_body_fills_its_placeholders(tmp_path: Path) -> None:
-    run = FakeRun({LIST: b"", ("gh", "api", "-X"): b""})
-    _comment(tmp_path, run, "--body", "{artifact} at {sha}")
-    assert json.loads(run.calls[-1][1] or b"")["body"].endswith("ff4-pr-5 at abc")
+    run = _fresh()
+    _comment(tmp_path, run, "--body", "{artifact} at {sha}, {retention} days")
+    assert _body(run).endswith("ff4-pr-5 at abc, 30 days")
 
 
 def test_a_later_build_updates_the_marked_comment(tmp_path: Path) -> None:
     run = FakeRun({LIST: _comments("unrelated", "<!-- FF4-IPS -->\nold"), ("gh", "api", "-X"): b""})
     _comment(tmp_path, run)
-    assert run.commands()[-1][3:5] == ["PATCH", f"repos/{REPO}/issues/comments/2"]
+    assert _writes(run) == [["PATCH", f"repos/{REPO}/issues/comments/2"]]
 
 
-def test_a_failure_deletes_the_comment(tmp_path: Path) -> None:
-    run = FakeRun({LIST: _comments("<!-- FF4-IPS -->"), ("gh", "api", "-X"): b""})
+def test_duplicates_are_deleted_and_the_oldest_kept(tmp_path: Path) -> None:
+    # Two runs started together both created a comment.
+    run = FakeRun({LIST: _comments("<!-- FF4-IPS -->\na", "<!-- FF4-IPS -->\nb"), ("gh", "api", "-X"): b""})
+    _comment(tmp_path, run)
+    assert _writes(run) == [
+        ["PATCH", f"repos/{REPO}/issues/comments/1"],
+        ["DELETE", f"repos/{REPO}/issues/comments/2"],
+    ]
+
+
+def test_a_duplicate_the_other_run_deleted_is_fine(tmp_path: Path) -> None:
+    run = FakeRun({LIST: _comments("<!-- FF4-IPS -->\na", "<!-- FF4-IPS -->\nb"), ("gh", "api", "-X", "PATCH"): b""})
+    assert _comment(tmp_path, run) == 0
+
+
+def test_a_failure_deletes_every_marked_comment(tmp_path: Path) -> None:
+    run = FakeRun({LIST: _comments("<!-- FF4-IPS -->", "x", "<!-- FF4-IPS -->"), ("gh", "api", "-X"): b""})
     _comment(tmp_path, run, "--outcome", "failure")
-    assert run.commands()[-1][3:] == ["DELETE", f"repos/{REPO}/issues/comments/1"]
+    assert _writes(run) == [
+        ["DELETE", f"repos/{REPO}/issues/comments/1"],
+        ["DELETE", f"repos/{REPO}/issues/comments/3"],
+    ]
 
 
 def test_a_failure_without_a_comment_writes_nothing(tmp_path: Path) -> None:
@@ -114,11 +194,31 @@ def test_nightly_targets_the_commit_with_the_files(tmp_path: Path) -> None:
         "--target",
         "abc",
         "--title",
-        "Nightly build",
+        "Nightly Build 12",
         "--notes",
         "nightly-12 12 abc",
         str(tmp_path / "ff4.ips"),
     ]
+
+
+def test_the_default_notes_are_the_repos_own(tmp_path: Path) -> None:
+    run = FakeRun({("gh", "release", "create"): b""})
+    _nightly(tmp_path, run)
+    notes = run.commands()[-1][run.commands()[-1].index("--notes") + 1]
+    assert notes == (
+        "Nightly build #12\n\nBuilt from commit: abc\n\nThis is an automated nightly build and may be unstable."
+    )
+
+
+def test_a_title_fills_its_placeholders(tmp_path: Path) -> None:
+    run = FakeRun({("gh", "release", "create"): b""})
+    _nightly(tmp_path, run, "--title", "FF4 {version}")
+    assert run.commands()[-1][run.commands()[-1].index("--title") + 1] == "FF4 nightly-12"
+
+
+def test_dry_run_shows_the_comment_it_would_post(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _comment(tmp_path, FakeRun(), "--dry-run")
+    assert "Build Ready!" in capsys.readouterr().out
 
 
 def test_a_pattern_matching_nothing_fails(tmp_path: Path) -> None:

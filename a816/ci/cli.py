@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from a816.ci.actions import Actions
-from a816.ci.github import Gh, run_nightly, run_pr_comment, run_release
+from a816.ci.github import Gh, PrComment, run_nightly, run_pr_comment, run_release
 from a816.ci.process import CiError, Run, run_command
 from a816.ci.project import run_build, run_lint, run_seal
 from a816.ci.rom import PASSPHRASE_VAR, run_decrypt_rom
@@ -52,10 +52,13 @@ def _parser() -> argparse.ArgumentParser:
     comment.add_argument("--body", default="")
     comment.add_argument("--sha", default="")
     comment.add_argument("--outcome", default="success")
+    comment.add_argument("--artifact-url", default="", help="The uploaded artifact's page (default: the run's)")
+    comment.add_argument("--files", type=lines, default=[], help="The uploaded files, listed with their sizes")
+    comment.add_argument("--retention-days", default="30")
 
     nightly = steps.add_parser("nightly", help="Replace the nightly prerelease.")
     nightly.add_argument("--files", type=lines, required=True)
-    nightly.add_argument("--title", default="Nightly build")
+    nightly.add_argument("--title", default="", help="The release title, with {run}, {sha} and {version}")
     nightly.add_argument("--body", default="")
 
     release = steps.add_parser("release", help="Publish the tag's release.")
@@ -96,16 +99,18 @@ def _dispatch(args: argparse.Namespace, actions: Actions, run: Run) -> int:
         return run_seal(actions, rom=args.rom, patches=args.patches, checksum=args.checksum)
     gh = Gh(run, dry_run=args.dry_run)
     if step == "pr-comment":
-        return run_pr_comment(
-            actions,
-            gh,
+        comment = PrComment(
             name=args.name,
             marker=args.marker,
             title=args.title,
             body=args.body,
             sha=args.sha,
             outcome=args.outcome,
+            artifact_url=args.artifact_url,
+            files=tuple(args.files),
+            retention=args.retention_days,
         )
+        return run_pr_comment(actions, gh, comment)
     if step == "nightly":
         return run_nightly(actions, gh, files=args.files, title=args.title, body=args.body)
     return run_release(

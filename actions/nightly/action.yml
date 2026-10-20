@@ -8,10 +8,14 @@ inputs:
     description: Files or globs to attach, one per line.
     required: true
   title:
-    description: The release's title.
-    default: Nightly build
+    description: >-
+      The release's title, with {run}, {sha} and {version} placeholders. Empty
+      gives "Nightly Build <run>", as the repos' own nightly.yml did.
+    default: ""
   body:
-    description: Markdown with {run}, {sha} and {version} placeholders. Empty gives a short default.
+    description: >-
+      Markdown with {run}, {sha} and {version} placeholders. Empty gives the
+      repos' own nightly.yml text (run number, commit, "may be unstable").
     default: ""
   token:
     description: Token allowed to write releases.

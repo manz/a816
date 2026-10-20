@@ -1,15 +1,16 @@
 name: a816 pr-artifact
 description: >-
   Upload a pull request's patches as an artifact and keep one comment on the
-  pull request linking to it. Call it with `if: always()` and `outcome` set to
-  the job.status expression: on a failure it deletes the comment instead.
-  Needs `pull-requests: write` and `issues: write`.
+  pull request linking to it, updated by every later build. Call it with
+  `if: always()` and `outcome` set to the job.status expression: on a failure
+  it deletes the comment instead. Needs `pull-requests: write` and
+  `issues: write`.
 inputs:
   name:
     description: The artifact is <name>-pr-<number>.
     required: true
   files:
-    description: Files to upload, one per line.
+    description: Files to upload, one per line. The comment lists them with their sizes.
     required: true
   marker:
     description: >-
@@ -17,12 +18,12 @@ inputs:
       (<!-- FF4-IPS-BUILD-COMMENT -->) or a bare word that is wrapped in one.
     required: true
   title:
-    description: The comment's heading. Empty means the name.
+    description: The comment's heading, as in "<title> Build Ready!". Empty means the name.
     default: ""
   body:
     description: >-
-      Markdown replacing the default text, with {artifact}, {url} and {sha}
-      placeholders.
+      Markdown replacing the default text, with {title}, {artifact}, {files},
+      {url}, {retention} and {sha} placeholders.
     default: ""
   outcome:
     description: The job's status so far; anything but success deletes the comment.
@@ -36,7 +37,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - if: inputs.outcome == 'success'
+    - id: upload
+      if: inputs.outcome == 'success'
       uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.name }}-pr-${{ github.event.pull_request.number }}
@@ -51,6 +53,10 @@ runs:
         BODY: ${{ inputs.body }}
         SHA: ${{ github.event.pull_request.head.sha }}
         OUTCOME: ${{ inputs.outcome }}
+        ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        FILES: ${{ inputs.files }}
+        RETENTION: ${{ inputs.retention-days }}
       run: >-
         uv run --no-sync a816 ci pr-comment --name="$NAME" --marker="$MARKER" --title="$TITLE"
-        --body="$BODY" --sha="$SHA" --outcome="$OUTCOME"
+        --body="$BODY" --sha="$SHA" --outcome="$OUTCOME" --artifact-url="$ARTIFACT_URL"
+        --files="$FILES" --retention-days="$RETENTION"
