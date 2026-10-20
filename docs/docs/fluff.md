@@ -190,8 +190,10 @@ ignore = ["N802"]       # French CamelCase constants
 Codes match by prefix, as in ruff: `N` is every naming rule. `check`,
 `fix` and the LSP all honour the table. `a816 check --select CODES` and
 `--ignore CODES` (comma-separated, or repeat the flag) replace the
-table's list of the same name for one run. A code no rule starts with
-is an error (`E0516`). Parse errors always show.
+table's list of the same name for one run. The other list still
+applies: with `ignore = ["N802"]` in the table, `--select N802` shows
+nothing; add `--ignore ""` to clear the table's ignore. A code no rule
+starts with is an error (`E0516`). Parse errors always show.
 
 ## `a816.toml` discovery
 

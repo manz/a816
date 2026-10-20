@@ -15,6 +15,12 @@
   new `a816 ips seal` appends the record that writes it, byte for byte
   what ff6's `tools/checksum.py` wrote. `E0517` to `E0519` cover a bad
   IPS, a copier-headered base ROM and a project with no cartridge.
+- `a816 ips seal` also pads: when the patched ROM falls short of
+  `rom_size`, a one-byte zero record at `rom_size - 1` comes before the
+  checksum. ff4's 2 MB IPS over its 1 MB base gave 0x18A3E7 bytes, which
+  the Analogue Pocket SNES core read as carrying a copier header
+  (`size & 0x200`). `a816 build` leaves IPS output as it was: an IPS
+  used as a byte container (ff6's intro) stays contiguous.
 - `a816 bps diff --source ROM --target PATCHED -o x.bps` writes a
   sealed linear patch between two ROMs (`--metadata FILE` for its
   metadata), for a patch a816's linker does not build alone.
