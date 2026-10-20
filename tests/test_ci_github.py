@@ -91,7 +91,27 @@ def test_without_an_artifact_url_the_link_goes_to_the_run(tmp_path: Path) -> Non
 def test_the_default_says_how_long_and_from_what(tmp_path: Path) -> None:
     run = _fresh()
     _comment(tmp_path, run, "--retention-days", "14")
-    assert _body(run).splitlines()[-2:] == ["The artifact will be available for 14 days.", "*Last updated: abc*"]
+    assert _body(run).splitlines()[-2:] == [
+        "The artifact will be available for 14 days.",
+        "*Last updated: [abc](https://github.com/manz/ff4/commit/abc)*",
+    ]
+
+
+def test_the_commit_is_a_short_linked_sha(tmp_path: Path) -> None:
+    run = _fresh()
+    ci_main(
+        ["pr-comment", "--name", "ff4", "--sha", "be342efb8c727159aa477252ee5f2db91e9e8790"],
+        actions_in(tmp_path, **PR),
+        run,
+    )
+    link = "[be342ef](https://github.com/manz/ff4/commit/be342efb8c727159aa477252ee5f2db91e9e8790)"
+    assert _body(run).splitlines()[-1] == f"*Last updated: {link}*"
+
+
+def test_the_heading_defaults_to_the_repository(tmp_path: Path) -> None:
+    run = _fresh()
+    _comment(tmp_path, run)
+    assert _body(run).splitlines()[1] == "🎮 **ff4 Build Ready!**"
 
 
 def test_the_files_are_listed_with_their_sizes(tmp_path: Path) -> None:

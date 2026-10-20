@@ -28,7 +28,7 @@ Your patch has been built successfully! Download it from the artifacts:
 🔗 **Download:** [Click here to download the artifact]({url})
 
 The artifact will be available for {retention} days.
-*Last updated: {sha}*"""
+*Last updated: {commit}*"""
 # As the game repos' own nightly.yml wrote them.
 DEFAULT_NIGHTLY_TITLE = "Nightly Build {run}"
 DEFAULT_NIGHTLY = """\
@@ -130,14 +130,14 @@ def _marked_comments(gh: Gh, repo: str, number: str, marker: str) -> list[str]:
 
 def _comment_body(actions: Actions, comment: PrComment, number: str, tag: str) -> bytes:
     repo = actions.get("GITHUB_REPOSITORY")
-    run_url = (
-        f"{actions.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}/actions/runs/{actions.get('GITHUB_RUN_ID')}"
-    )
+    server = actions.get("GITHUB_SERVER_URL", "https://github.com")
+    run_url = f"{server}/{repo}/actions/runs/{actions.get('GITHUB_RUN_ID')}"
     values = {
-        "title": comment.title or comment.name,
+        "title": comment.title or repo.rpartition("/")[2] or comment.name,
         "artifact": f"{comment.name}-pr-{number}",
         "url": comment.artifact_url or run_url,
         "sha": comment.sha,
+        "commit": f"[{comment.sha[:7]}]({server}/{repo}/commit/{comment.sha})" if comment.sha else "",
         "retention": comment.retention,
         "files": _files_line(comment.files),
         "br": "  ",  # a markdown line break, as the old comments had
