@@ -134,6 +134,8 @@ E_CONFIG_BAD_MAP_ENTRY = ErrorCode("E0505", "config", "malformed `[map.N]` entry
 E_CONFIG_BAD_MAP_VALUE = ErrorCode("E0506", "config", "`[map.N]` value of the wrong type")
 E_CONFIG_UNKNOWN_BOARD = ErrorCode("E0509", "config", "`board` names no known cartridge board")
 E_CONFIG_BAD_DEFINE = ErrorCode("E0510", "config", "`[defines]` entry is not a name with an integer or string default")
+E_BPS_MALFORMED = ErrorCode("E0511", "io", "not a valid BPS patch")
+E_BPS_SOURCE_MISMATCH = ErrorCode("E0512", "io", "the source ROM is not the one the BPS patch expects")
 
 # --- Warnings (W0001..): reported, the build still succeeds ---
 W_INCBIN_PATH_NAME = ErrorCode("W0001", "deprecated", "a name `.incbin` derived from its file path")

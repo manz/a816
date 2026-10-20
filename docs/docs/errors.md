@@ -257,6 +257,12 @@ separate blocks separated by a blank line.
   suggests close names.
 - `E0510` `[defines]` is not a table, a key is not a symbol name, or a
   default is not an integer or a string.
+- `E0511` not a valid BPS patch: no `BPS1` header, truncated, an action
+  reading outside the ROM or the bytes written so far, or a CRC32 that
+  does not match (the patch's own, or the patched ROM's).
+- `E0512` the source ROM is not the one the BPS patch expects: its
+  size or CRC32 differs. A ROM 512 bytes too long carries a copier
+  header; strip it first.
 
 ### Warnings
 
