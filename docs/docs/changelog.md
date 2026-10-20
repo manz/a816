@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.7 (unreleased)
+## 1.1.7 (2026-10-20)
 
 - `pr-artifact` writes the comment the game repos' own workflows wrote
   ("Build Ready!", the artifact, its link, retention, the commit), now
