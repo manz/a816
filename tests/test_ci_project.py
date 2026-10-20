@@ -109,13 +109,13 @@ def _unsealed(tmp_path: Path) -> Path:
 
 
 def test_seal_writes_the_sealed_patch(tmp_path: Path) -> None:
-    sealed = seal_patch(_unsealed(tmp_path), source_rom())
+    sealed = seal_patch(_unsealed(tmp_path), source_rom(), None)
     assert (sealed.name, bps.info(sealed.read_bytes()).sealed) == ("x.bps", True)
 
 
 def test_seal_refuses_other_patches(tmp_path: Path) -> None:
-    with pytest.raises(CiError, match="only .bps.unsealed"):
-        seal_patch(tmp_path / "x.ips", b"")
+    with pytest.raises(CiError, match="only .bps.unsealed and .ips"):
+        seal_patch(tmp_path / "x.sfc", b"", None)
 
 
 def test_seal_outputs_the_sealed_paths(tmp_path: Path) -> None:

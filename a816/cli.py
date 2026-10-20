@@ -349,7 +349,7 @@ def _run_link(args: argparse.Namespace) -> int:
     return exit_code
 
 
-_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain", "bps", "ci")
+_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain", "bps", "ips", "ci")
 
 
 def _dispatch_subcommand(argv: list[str]) -> int | None:
@@ -375,6 +375,10 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
         from a816.bps_cli import bps_main
 
         return bps_main(rest)
+    if cmd == "ips":
+        from a816.ips_cli import ips_main
+
+        return ips_main(rest)
     if cmd == "ci":
         from a816.ci import ci_main
 

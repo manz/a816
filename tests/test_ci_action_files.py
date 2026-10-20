@@ -16,12 +16,15 @@ from a816.ci.cli import _parser
 
 ACTIONS = Path(__file__).resolve().parent.parent / "actions"
 _CALL = re.compile(r"uv run --no-sync a816 ci ([a-z][a-z-]*)(.*)")
+_ARGS = re.compile(r"args=\((.*)\)")
 
 
 def _calls(text: str) -> list[list[str]]:
-    """Each `a816 ci STEP ...` command, folded (`>-`) lines joined back."""
+    """Each `a816 ci STEP ...` command, folded (`>-`) lines joined back, `${args[@]}` expanded."""
     joined = re.sub(r"\n\s+--", " --", text)
-    return [[step, *shlex.split(rest)] for step, rest in _CALL.findall(joined)]
+    array = _ARGS.search(joined)
+    expanded = joined.replace('"${args[@]}"', array.group(1) if array else "")
+    return [[step, *shlex.split(rest)] for step, rest in _CALL.findall(expanded)]
 
 
 def _action_calls() -> list[tuple[str, list[str]]]:
@@ -45,7 +48,5 @@ def test_every_action_has_a_file() -> None:
 
 @pytest.mark.parametrize(("action", "call"), _action_calls(), ids=lambda value: str(value))
 def test_the_call_parses(action: str, call: list[str]) -> None:
-    args = [re.sub(r"\$\{?\w+\}?", "x", arg) for arg in call if arg != "${args[@]}"]
-    if args[0] == "lint":
-        args.append("--paths=x")
+    args = [re.sub(r"\$\{?\w+\}?", "x", arg) for arg in call]
     assert _parser().parse_args(args).step == args[0], action

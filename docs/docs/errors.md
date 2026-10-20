@@ -273,6 +273,14 @@ separate blocks separated by a blank line.
 - `E0516` `[lint]` `select`/`ignore`, or `a816 check --select/--ignore`,
   names a code no lint rule starts with: `a816 explain CODE` lists a
   rule, and the codes match by prefix (`N` is every naming rule).
+- `E0517` not a valid IPS patch: it does not start with `PATCH`, or a
+  record runs past the end before `EOF`.
+- `E0518` sealing against a base ROM that carries a 512-byte copier
+  header: the checksum and the patch offsets are for a headerless ROM.
+  Strip the header first.
+- `E0519` `a816 ips seal` outside a project that declares its
+  cartridge: the checksum's place and the ROM size come from the
+  `a816.toml` `board` or `[map.N]` and `rom_size`.
 
 ### Warnings
 

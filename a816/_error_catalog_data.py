@@ -96,6 +96,9 @@ ENTRIES: dict[str, str] = {
     "E0514": "a `${NAME}` in a `[bps.metadata]` value names no define: pass `-D NAME=...` or declare it under `[defines]`.",
     "E0515": "`--copier-header` with `-f bps`: a BPS patch records the CRC32 of a headerless ROM, so a header offset cannot apply.",
     "E0516": "`[lint]` `select`/`ignore`, or `a816 check --select/--ignore`, names a code no lint rule starts with: `a816 explain CODE` lists a rule, and the codes match by prefix (`N` is every naming rule).",
+    "E0517": "not a valid IPS patch: it does not start with `PATCH`, or a record runs past the end before `EOF`.",
+    "E0518": "sealing against a base ROM that carries a 512-byte copier header: the checksum and the patch offsets are for a headerless ROM. Strip the header first.",
+    "E0519": "`a816 ips seal` outside a project that declares its cartridge: the checksum's place and the ROM size come from the `a816.toml` `board` or `[map.N]` and `rom_size`.",
     "W0001": 'a reference to a name `.incbin` derived from its file path: `.incbin "assets/vwf.bin"` binds `assets_vwf_bin` and `assets_vwf_bin__size`, which change when the file moves. Name the blob instead: alone in `.alloc vwf_font { ... }` it is `vwf_font`, and its size `sizeof(vwf_font)`; `a816 fix` rewrites those references. Where the blob shares its block, put a label before it. The path names go in 1.2. Reported by the build (by the linker for a module that names the blob without importing its module, and again when a module comes from the build cache) and by `a816 check`.',
     "W0002": "an `.if` names something the project defines nowhere (in no `.s` / `.i` file under its `a816.toml`). An undefined name reads as false, which is how `.if DEBUG` works without `-D DEBUG`, so a deleted or misspelt flag silently drops what it gated. Declare a name that only comes from `-D` under `[defines]` in `a816.toml`. Reported by `a816 check`.",
 }

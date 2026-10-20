@@ -40,9 +40,10 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--outputs", type=lines, required=True)
     build.add_argument("--defines", type=lines, default=[])
 
-    seal = steps.add_parser("seal", help="Seal .bps.unsealed patches against the base ROM.")
+    seal = steps.add_parser("seal", help="Seal .bps.unsealed and .ips patches against the base ROM.")
     seal.add_argument("--rom", type=Path, required=True)
     seal.add_argument("--patches", type=lines, required=True)
+    seal.add_argument("--no-checksum", dest="checksum", action="store_false")
 
     comment = steps.add_parser("pr-comment", help="Keep the PR's artifact comment up to date.")
     comment.add_argument("--name", required=True)
@@ -92,7 +93,7 @@ def _dispatch(args: argparse.Namespace, actions: Actions, run: Run) -> int:
     if step == "build":
         return run_build(actions, _build, entry=args.entry, outputs=args.outputs, defines=args.defines)
     if step == "seal":
-        return run_seal(actions, rom=args.rom, patches=args.patches)
+        return run_seal(actions, rom=args.rom, patches=args.patches, checksum=args.checksum)
     gh = Gh(run, dry_run=args.dry_run)
     if step == "pr-comment":
         return run_pr_comment(

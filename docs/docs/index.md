@@ -104,6 +104,7 @@ See [BPS patches](bps.md).
 ```
 $ a816 build main.s -f bps -o game.bps.unsealed
 $ a816 bps seal game.bps.unsealed --source base.sfc   # writes game.bps
+$ a816 ips seal game.ips --source base.sfc              # header checksum record
 $ a816 bps apply game.bps --source base.sfc -o game.sfc
 $ a816 bps info game.bps
 ```

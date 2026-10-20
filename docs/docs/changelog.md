@@ -2,6 +2,14 @@
 
 ## 1.1.5 (unreleased)
 
+- Sealing writes the SNES header checksum, which only the base ROM
+  can give, when `a816.toml` declares the cartridge: the header is
+  found through the bus map (`$00:FFC0`), the sum covers the ROM padded
+  to `rom_size`, mirrored when that is not a power of two. `a816 bps
+  seal` encodes the patch again with it (`--no-checksum` to skip); the
+  new `a816 ips seal` appends the record that writes it, byte for byte
+  what ff6's `tools/checksum.py` wrote. `E0517` to `E0519` cover a bad
+  IPS, a copier-headered base ROM and a project with no cartridge.
 - `[lint]` in `a816.toml` picks the lint rules: `select` and `ignore`
   take rule codes or prefixes (`ignore = ["N802"]`). `check`, `fix` and
   the LSP honour it; `a816 check --select/--ignore` replace its lists

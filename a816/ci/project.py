@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from a816 import bps
 from a816.bps_cli import UNSEALED_SUFFIX
 from a816.ci.actions import Actions
 from a816.ci.process import CiError
 from a816.config import discover_a816_config
+from a816.seal import seal_bps, seal_ips
+from a816.snes_header import Cartridge, cartridge_at
 
 Main = Callable[[list[str]], int]
 
@@ -52,18 +53,25 @@ def run_build(actions: Actions, build: Main, *, entry: str, outputs: Sequence[st
     return 0
 
 
-def seal_patch(patch: Path, rom: bytes) -> Path:
+def seal_patch(patch: Path, rom: bytes, cartridge: Cartridge | None) -> Path:
+    """x.bps.unsealed into x.bps, or x.ips in place; the header checksum fixed with a cartridge."""
     if patch.name.endswith(".bps" + UNSEALED_SUFFIX):
         sealed = patch.with_suffix("")
         # The path is the workflow author's own `patches` input, as with `a816 bps seal -o`.
-        sealed.write_bytes(bps.seal(patch.read_bytes(), rom))  # NOSONAR
+        sealed.write_bytes(seal_bps(patch.read_bytes(), rom, cartridge))  # NOSONAR
         return sealed
-    raise CiError(f"{patch}: only .bps.unsealed patches can be sealed")
+    if patch.suffix == ".ips":
+        if cartridge is None:
+            raise CiError(f"{patch}: sealing an IPS needs the cartridge in a816.toml (`board` or `[map.N]`)")
+        patch.write_bytes(seal_ips(patch.read_bytes(), rom, cartridge))  # NOSONAR
+        return patch
+    raise CiError(f"{patch}: only .bps.unsealed and .ips patches can be sealed")
 
 
-def run_seal(actions: Actions, *, rom: Path, patches: Sequence[str]) -> int:
+def run_seal(actions: Actions, *, rom: Path, patches: Sequence[str], checksum: bool = True) -> int:
     base = rom.read_bytes()
-    sealed = [seal_patch(Path(patch), base) for patch in patches]
+    cartridge = cartridge_at(Path.cwd()) if checksum else None
+    sealed = [seal_patch(Path(patch), base, cartridge) for patch in patches]
     for path in sealed:
         print(f"sealed {path}")
     actions.output("sealed", "\n".join(str(path) for path in sealed))

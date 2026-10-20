@@ -13,7 +13,7 @@ tag as the package.
 | `decrypt-rom` | Decrypts `x.sfc.gz.gpg` with `passphrase`; `available` is `false`, and nothing fails, without one (a fork's pull request). Optional `sha1`. |
 | `lint` | `a816 format --diff`, then `a816 check`; both run. No `paths`: the project `a816.toml` describes. |
 | `build` | `a816 build` to several `outputs` (one per line, format from the extension), with `defines`. Output `debug-info`. |
-| `seal` | `a816 bps seal` for each `x.bps.unsealed` in `patches`, against `rom`. |
+| `seal` | `a816 bps seal` for each `x.bps.unsealed`, `a816 ips seal` for each `x.ips` in `patches`, against `rom`: the SNES header checksum is written when `a816.toml` declares the cartridge (`checksum: false` to skip). |
 | `pr-artifact` | Uploads `files` as `<name>-pr-<n>` and keeps one comment, found by `marker`, linking it; deletes it when `outcome` is not `success`. |
 | `nightly` | Replaces the one `nightly` prerelease and its tag with `files`. |
 | `release` | Creates the tag's release with `assets` and an optional reproducible `zip`; prerelease for PEP 440 pre-release tags (`v1.2rc1`). A re-run re-uploads and keeps the notes. |
