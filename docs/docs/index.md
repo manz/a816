@@ -94,6 +94,17 @@ docstrings without firing DOC002: naming alone marks them internal.
 The legacy `a816-fluff` binary still works but prints a deprecation
 notice on stderr; prefer `a816 check` / `a816 format` going forward.
 
+#### BPS patches
+
+See [BPS patches](bps.md).
+
+```
+$ a816 build main.s -f bps -o game.bps.unsealed
+$ a816 bps seal game.bps.unsealed --source base.sfc   # writes game.bps
+$ a816 bps apply game.bps --source base.sfc -o game.sfc
+$ a816 bps info game.bps
+```
+
 ### From Python
 
 ```python
@@ -319,8 +330,9 @@ version = "${VERSION}"  # filled from the defines, as spelled
 - `${NAME}` in a metadata value takes the define's value as written:
   `-D VERSION=0x10` gives `0x10`. A name no define binds is `E0514`.
 - The patched ROM's CRC32 needs the base ROM, so the patch leaves it
-  zero: it is *unsealed*, and no patcher takes it until it is sealed
-  where the ROM is at hand. a816 writes it to `-o` as given; name it
+  zero: it is *unsealed*, and no patcher takes it until
+  `a816 bps seal` fills it in where the ROM is at hand (see
+  [BPS patches](bps.md)). a816 writes it to `-o` as given; name it
   `*.bps.unsealed` so nobody ships it by mistake.
 - `-f bps` without `[bps]` is `E0513`; with `--copier-header`, `E0515`.
 

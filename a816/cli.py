@@ -309,7 +309,7 @@ def _run_link(args: argparse.Namespace) -> int:
     )
 
 
-_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain")
+_SUBCOMMANDS: tuple[str, ...] = ("build", "check", "fix", "format", "explain", "bps")
 
 
 def _dispatch_subcommand(argv: list[str]) -> int | None:
@@ -332,6 +332,10 @@ def _dispatch_subcommand(argv: list[str]) -> int | None:
         from a816.fluff import fluff_main
 
         return fluff_main([cmd, *rest])
+    if cmd == "bps":
+        from a816.bps_cli import bps_main
+
+        return bps_main(rest)
     return None
 
 
