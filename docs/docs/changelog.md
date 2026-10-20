@@ -2,6 +2,11 @@
 
 ## 1.1.5 (unreleased)
 
+- S-DD1 boards (`SHVC-LN3B-01`): the mcu windows `boards.bml` leaves
+  unmasked take the power-on MMC bank masks (`0x808000` for
+  `00-3f,80-bf:8000-ffff`, `0xC00000` for `c0-ff`), so their addresses
+  resolve to the right ROM offsets. An explicit mask still wins; banks
+  a game remaps at runtime are not modelled.
 - Sealing writes the SNES header checksum, which only the base ROM
   can give, when `a816.toml` declares the cartridge: the header is
   found through the bus map (`$00:FFC0`), the sum covers the ROM padded
