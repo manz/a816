@@ -74,6 +74,25 @@ def test_no_entry_and_no_toml_fails(tmp_path: Path) -> None:
         entrypoint("", tmp_path)
 
 
+@pytest.mark.parametrize("name", ["rom.sfc", "rom.smc"])
+def test_a_single_rom_output_is_a_rom(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    # cacheguard's report: one `--outputs` path came out as an IPS whatever its extension.
+    _project(tmp_path, monkeypatch)
+    ci_main(["build", "--outputs", f"out/{name}"], actions_in(tmp_path), FakeRun())
+    assert not (tmp_path / "out" / name).read_bytes().startswith(b"PATCH")
+
+
+def test_a_single_ips_output_is_an_ips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _project(tmp_path, monkeypatch)
+    ci_main(["build", "--outputs", "out/a.ips"], actions_in(tmp_path), FakeRun())
+    assert (tmp_path / "out" / "a.ips").read_bytes().startswith(b"PATCH")
+
+
+def test_an_unknown_extension_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _project(tmp_path, monkeypatch)
+    assert ci_main(["build", "--outputs", "out/a.bin"], actions_in(tmp_path), FakeRun()) == 1
+
+
 def test_build_writes_every_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _project(tmp_path, monkeypatch)
     ci_main(["build", "--outputs", "out/a.ips\nout/a.sfc", "--defines", "X=1"], actions_in(tmp_path), FakeRun())

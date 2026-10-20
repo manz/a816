@@ -9,6 +9,7 @@ from a816.bps_cli import UNSEALED_SUFFIX
 from a816.ci.actions import Actions
 from a816.ci.process import CiError
 from a816.config import discover_a816_config
+from a816.program.link import format_for_path
 from a816.seal import seal_bps, seal_ips
 from a816.snes_header import Cartridge, cartridge_at
 
@@ -35,14 +36,27 @@ def entrypoint(entry: str, start: Path) -> str:
     return str(config.entrypoint)
 
 
+def output_format(output: str) -> str:
+    fmt = format_for_path(Path(output))
+    if fmt is None:
+        raise CiError(f"{output}: name the format with the extension (.ips, .sfc, .smc, .bps.unsealed)")
+    return fmt
+
+
 def run_build(actions: Actions, build: Main, *, entry: str, outputs: Sequence[str], defines: Sequence[str]) -> int:
-    """`a816 build` with one `-o` per output; `debug-info` lists the `.adbg` written."""
+    """`a816 build` with one `-o` per output, each in the format its extension names.
+
+    `debug-info` lists the `.adbg` written.
+    """
     if not outputs:
         raise CiError("no outputs: give at least one path")
     argv = [entrypoint(entry, Path.cwd())]
     for output in outputs:
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         argv += ["-o", output]
+    if len(outputs) == 1:
+        # A lone `-o` follows `-f` (default ips) in `a816 build`; name the format from the extension.
+        argv += ["-f", output_format(outputs[0])]
     for define in defines:
         argv += ["-D", define]
     status = build(argv)
