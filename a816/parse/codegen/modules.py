@@ -417,7 +417,6 @@ def _import_object_mode(plan: _ImportPlan, resolver: Resolver, macro_definitions
     root = resolver.scopes[0]
     before_labels = set(root.labels.keys())
     before_symbols = set(root.symbols.keys())
-    _record_imported_reservations(plan.reservations, resolver)
 
     for step in plan.steps:
         if isinstance(step, _Inline):
@@ -431,6 +430,8 @@ def _import_object_mode(plan: _ImportPlan, resolver: Resolver, macro_definitions
         else:
             resolver.imported_runtime_names.update(step.names)
             out.extend(ExternNode(name, resolver) for name in step.names)
+    # After the inline pass: a typed reservation's struct is known by now.
+    _record_imported_reservations(plan.reservations, resolver)
 
     resolver.imported_symbol_names.update(set(root.labels.keys()) - before_labels)
     resolver.imported_symbol_names.update(set(root.symbols.keys()) - before_symbols)
@@ -460,6 +461,8 @@ def _record_imported_reservations(reservations: tuple[tuple[str, str | None], ..
     """
     for name, type_name in reservations:
         resolver.reservation_sizes[name] = None if type_name is None else resolver.struct_sizes.get(type_name)
+        if type_name in resolver.struct_sizes:
+            resolver.typed_instances[name] = type_name
 
 
 def _is_typed_bind(node: AssignAstNode) -> bool:
