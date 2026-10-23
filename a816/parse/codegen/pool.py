@@ -374,9 +374,9 @@ def _check_cross_bank_body(node: AllocAstNode) -> None:
     edges itself: only data may sit in it. Code can't execute through an
     edge, and a label inside would need an address a816 doesn't track
     across the edge."""
-    from a816.parse.ast.nodes import CommentAstNode, DataNode, DocstringAstNode, IncludeBinaryAstNode
+    from a816.parse.ast.nodes import CommentAstNode, DataNode, DocstringAstNode, IncludeBinaryAstNode, PadToAstNode
 
-    allowed = (CommentAstNode, DataNode, DocstringAstNode, IncludeBinaryAstNode)
+    allowed = (CommentAstNode, DataNode, DocstringAstNode, IncludeBinaryAstNode, PadToAstNode)
     for child in node.body.body:
         if not isinstance(child, allowed):
             raise NodeError(

@@ -21,6 +21,7 @@ from a816.parse.ast.nodes.directives import (
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
     MapAstNode,
+    PadToAstNode,
     RegisterSizeAstNode,
     ReserveAstNode,
     ReserveTypedAstNode,
@@ -67,6 +68,7 @@ KeywordAstNode = (
     | RelocateAstNode
     | ReclaimAstNode
     | ReserveAstNode
+    | PadToAstNode
     | ReserveTypedAstNode
 )
 

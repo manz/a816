@@ -360,6 +360,7 @@ DIRECTIVE_NAMES = {
     "reclaim",
     "assert",
     "res",
+    "pad_to",
     "reserve",
     "a8",
     "a16",

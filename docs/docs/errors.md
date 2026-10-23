@@ -208,6 +208,9 @@ separate blocks separated by a blank line.
 - `E0348` a `.patch` gives some fields of a bit-field byte but not
   all: a816 never sees the ROM's byte, so give every field that
   shares it.
+- `E0349` a `.pad_to OFFSET [, BYTE]` cannot pad its block: the block
+  is already longer than OFFSET, OFFSET is negative, BYTE does not fit
+  a byte, or no `.alloc` body or `*=` section encloses it.
 
 ### Linker
 

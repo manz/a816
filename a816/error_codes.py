@@ -112,6 +112,7 @@ E_CODEGEN_BAD_LABEL_ADDRESS = ErrorCode("E0345", "codegen", "`.label` address is
 E_CODEGEN_CROSS_BANK_TRANSFER = ErrorCode("E0346", "codegen", "bare `jsr` / `jmp` into another bank")
 E_CODEGEN_AMBIGUOUS_PATH_NAME = ErrorCode("E0347", "codegen", "a path-derived `.incbin` name bound by two blobs")
 E_CODEGEN_PATCH_PARTIAL_BITS = ErrorCode("E0348", "codegen", "`.patch` gives only some fields of a bit-field byte")
+E_CODEGEN_BAD_PAD = ErrorCode("E0349", "codegen", "`.pad_to` cannot pad its block to the offset")
 
 # --- Linker (E0400..) ---
 E_LINKER_DUPLICATE_SYMBOL = ErrorCode("E0400", "linker", "duplicate global symbol")

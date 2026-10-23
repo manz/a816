@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `.pad_to OFFSET [, BYTE]` fills the current `.alloc` body or `*=`
+  section with `BYTE` (default 0) until it is `OFFSET` bytes long. A
+  block already longer than `OFFSET` is `E0349`.
 - a816 depends on `katsuji` (no extras: no numpy or pillow) and its
   `.table` directive reads tables with `katsuji.script.Table`. The
   `script` package moved there: `from script import ...` still works

@@ -413,3 +413,13 @@ class LinearAddress(Address):
 
     def __repr__(self) -> str:
         return f"LinearAddress({self.logical_value:#06x})"
+
+
+def byte_distance(start: Address, end: Address) -> int:
+    """Bytes from `start` to `end`. Physical (file-offset) difference so
+    bank-edge allocs measure right: the logical one jumps `0x8020` for a
+    32-byte alloc ending at `$00:FFFF`, since `$01:0000` is bus-mapped past
+    bank 1's WRAM-mirror low half. Logical where either end has no offset."""
+    if start.physical is not None and end.physical is not None:
+        return end.physical - start.physical
+    return end.logical_value - start.logical_value

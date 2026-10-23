@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 
-from a816.cpu.mapping import Address, LinearAddress
+from a816.cpu.mapping import Address, LinearAddress, byte_distance
 from a816.error_codes import E_IO_FILE_NOT_FOUND, E_IO_NOT_IPS
 from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import ExpressionAstNode
@@ -22,7 +22,9 @@ class CodePositionNode(NodeBase):
 
     def pc_after(self, current_pc: Address) -> Address:
         self.resolver.reloc = False
-        return self.resolver.get_bus().get_address(self.value_node.get_value())
+        position = self.resolver.get_bus().get_address(self.value_node.get_value())
+        self.resolver.block_origin = (position, 0)
+        return position
 
     def emit(self, current_addr: Address) -> bytes:
         self.resolver.set_position(self.value_node.get_value())
@@ -46,7 +48,13 @@ class RelocationAddressNode(NodeBase):
         ROM-mapped ADDR through the ROM window (`@= 0x0001` then 4 bytes gave
         `0x8005`, not `0x0005`), so every forward label came out wrong."""
         self.resolver.reloc = True
-        return LinearAddress(self.pc_value_node.get_value())
+        position = LinearAddress(self.pc_value_node.get_value())
+        origin = self.resolver.block_origin
+        if origin is not None:
+            # The block keeps its byte count: `.pad_to` counts on from here.
+            start, before = origin
+            self.resolver.block_origin = (position, before + byte_distance(start, current_pc))
+        return position
 
     def emit(self, current_addr: Address) -> bytes:
         """Emit in the same run-time address space the labels were bound in,

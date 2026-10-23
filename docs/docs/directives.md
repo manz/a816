@@ -554,6 +554,25 @@ directive; a `dword` struct field (`.istruct`) emits four bytes.
 .pointer handler      ; 24-bit address of `handler`
 ```
 
+### `.pad_to OFFSET [, BYTE]`
+
+Fills the current block with `BYTE` (default `0x00`) until it is `OFFSET`
+bytes long. The block is the enclosing `.alloc` body or `*=` section, so
+a fixed-size table can follow data whose size is only known at build
+time:
+
+```ca65
+.alloc names in code {
+    .incbin "names.bin"
+    .pad_to 0x200, 0xff   ; the table is always 0x200 bytes
+}
+```
+
+`OFFSET` must be known when the block is laid out (a number or a
+constant). An `OFFSET` the block has already passed is an error that
+names the block's length (`E0349`), and so is a `.pad_to` outside any
+block. Bytes before an `@=` count: the block's length is what it emits.
+
 ### `.istruct Type { field = value, ... }`
 
 Emits one instance of a `.struct` as data: every field in declaration

@@ -18,6 +18,7 @@ from a816.parse.ast.nodes import (
     IncludeIpsAstNode,
     LabelAstNode,
     LabelDeclAstNode,
+    PadToAstNode,
     RegisterSizeAstNode,
     ReserveAstNode,
     TableAstNode,
@@ -36,6 +37,7 @@ from a816.parse.nodes import (
     LabelNode,
     LongNode,
     NodeError,
+    PadToNode,
     RegisterSizeNode,
     RelocationAddressNode,
     ReserveNode,
@@ -166,6 +168,17 @@ def generate_reserve(
     return [ReserveNode(ExpressionNode(node.size, resolver, file_info), resolver, file_info)]
 
 
+def generate_pad_to(
+    node: PadToAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    offset = ExpressionNode(node.offset, resolver, file_info)
+    fill = ExpressionNode(node.fill, resolver, file_info) if node.fill is not None else None
+    return [PadToNode(offset, fill, resolver, file_info)]
+
+
 def generate_label(
     node: LabelAstNode,
     resolver: Resolver,
@@ -253,6 +266,7 @@ generators["dl"] = generate_dl
 generators["pointer"] = generate_dl
 generators["register_size"] = generate_register_size
 generators["res"] = generate_reserve
+generators["pad_to"] = generate_pad_to
 generators["label"] = generate_label
 generators["label_decl"] = generate_label_decl
 generators["text"] = generate_text

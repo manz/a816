@@ -49,6 +49,7 @@ from a816.parse.ast.nodes import (
     MacroAstNode,
     MapArgs,
     MapAstNode,
+    PadToAstNode,
     PoolAstNode,
     ReclaimAstNode,
     RegisterSizeAstNode,
@@ -500,6 +501,16 @@ def parse_assert(p: Parser, keyword: Token) -> AssertAstNode:
             hint='write `.assert EXPR, "what must hold"`; the message is what a failure reports',
         )
     return AssertAstNode(expression, parse_directive_with_quoted_string(p), keyword)
+
+
+def parse_pad_to(p: Parser, keyword: Token) -> PadToAstNode:
+    """`.pad_to OFFSET [, BYTE]`."""
+    offset = parse_expression(p)
+    fill: ExpressionAstNode | None = None
+    if p.current().type == TokenType.COMMA:
+        p.next()
+        fill = parse_expression(p)
+    return PadToAstNode(offset, fill, keyword)
 
 
 def parse_include_ips(p: Parser) -> IncludeIpsAstNode:
