@@ -132,9 +132,11 @@ EPSON_RTC_BASE = 0x4840
     at $D0-$DF, $E0-$EF and $F0-$FF. Power-on pages are 0, 1 and 2.
     `ROM_SIZE` ($4834): bits 0-1 give the data ROM size (1, 2, 4 or
     8 MiB); bit 2 maps the second program ROM megabyte at $D0-$DF.
-    Below 3, a data port offset with bit 22 set reads 0: games probe the
-    size that way, so an expanded data ROM must patch every write here
-    (Far East of Eden Zero writes it three times).
+    Data port offsets past the size read 0 (at 2, the power-on value Far
+    East of Eden Zero writes, any offset with bit 22 set). That game
+    probes the size this way (C1:05E6) and writes `ROM_SIZE` three times
+    (C0:001C at reset, C1:0602 after its probe, CF:E02B in its CHECK
+    PROGRAM): an expanded data ROM must patch every write.
     """
     byte CONTROL
     byte BANK_D0
