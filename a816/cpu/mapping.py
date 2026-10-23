@@ -42,7 +42,13 @@ class Mapping(BusRegion):
     def logical_address(self, value: int, near: int | None = None) -> int:
         bank = value // self.mask
 
-        return (bank + self.bank_range[0]) << 16 | (self.mask & 0xFFFF) + value % self.mask
+        return (bank + self._first_bank_near(near)) << 16 | (self.mask & 0xFFFF) + value % self.mask
+
+    def _first_bank_near(self, near: int | None) -> int:
+        """First bank of the range ``near`` sits in: the mirror's when ``near`` is in it, else this mapping's own."""
+        if near is not None and self.mirror is not None and self.mirror[0] <= near >> 16 <= self.mirror[1]:
+            return self.mirror[0]
+        return self.bank_range[0]
 
 
 def reduce(addr: int, mask: int) -> int:
@@ -244,9 +250,10 @@ class Bus:
         mirror_bank_range: tuple[int, int] | None = None,
     ) -> None:
         self._check_editable()
-        self._claim_banks(identifier, Mapping(bank_range, address_range, mask, writeable), bank_range)
+        mapping = Mapping(bank_range, address_range, mask, writeable, mirror=mirror_bank_range)
+        self._claim_banks(identifier, mapping, bank_range)
         if mirror_bank_range:
-            mirror_mapping = Mapping(mirror_bank_range, address_range, mask, writeable)
+            mirror_mapping = Mapping(mirror_bank_range, address_range, mask, writeable, mirror=bank_range)
             self._claim_banks(f"{identifier}_mirror", mirror_mapping, mirror_bank_range)
 
     def _claim_banks(self, identifier: str, mapping: Mapping, bank_range: tuple[int, int]) -> None:
