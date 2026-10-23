@@ -1,7 +1,8 @@
 """Which lint rules run: `[lint]` in a816.toml, overridden by `check --select/--ignore`.
 
 Codes match by prefix, as in ruff: `N` is every naming rule, `DOC00` the
-first docstring rules. Only lint rule codes are filtered; a parse error
+first docstring rules. An opt-in rule (`F002`) runs only when `select` names
+its exact code. Only lint rule codes are filtered; a parse error
 always shows.
 """
 
@@ -63,8 +64,11 @@ class RuleSelection:
         )
 
     def allows(self, code: str) -> bool:
-        if code not in Rule.registry:
+        rule = Rule.registry.get(code)
+        if rule is None:
             return True
+        if rule.opt_in and code not in self.select:
+            return False
         if self.select and not _matches(code, self.select):
             return False
         return not _matches(code, self.ignore)

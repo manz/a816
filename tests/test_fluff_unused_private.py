@@ -1,0 +1,231 @@
+"""F001 / F002: a module-private name nothing in its translation unit references.
+
+No other module can see a `_` name, so one its own module never uses is dead.
+F001 covers constants, macros, structs, pools, `.label` and `.reserve`; F002
+covers code labels and scopes, opt-in since a bare `_label:` is often a marker
+for the debugger or xdds.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from a816.fluff import lint_text
+from a816.fluff.runner import apply_fixes
+from a816.fluff.selection import RuleSelection
+
+HEAD = '"""M."""\n'
+
+
+def _hits(source: str, path: Path = Path("main.s")) -> list[tuple[str, int, int, str]]:
+    return [(d.code, d.line, d.column, d.message.split("`")[1]) for d in lint_text(source, path) if d.code[0] == "F"]
+
+
+def _names(source: str, path: Path = Path("main.s")) -> list[str]:
+    return [name for _, _, _, name in _hits(source, path)]
+
+
+def test_an_unused_private_constant_is_flagged_at_its_name() -> None:
+    assert _hits(HEAD + "_K = 3\n") == [("F001", 2, 1, "_K")]
+
+
+def test_a_constant_an_opcode_uses_is_quiet() -> None:
+    assert _names(HEAD + "_K = 3\nlda #_K\n") == []
+
+
+def test_a_typed_bind_is_a_constant() -> None:
+    assert _names(HEAD + "_p := 0x7E2000\n") == ["_p"]
+
+
+def test_an_unused_private_macro_is_flagged() -> None:
+    assert _names(HEAD + ".macro _m(x) {\n    lda #x\n}\n") == ["_m"]
+
+
+def test_a_macro_invocation_uses_the_macro() -> None:
+    assert _names(HEAD + ".macro _m(x) {\n    lda #x\n}\n_m(1)\n") == []
+
+
+def test_an_unused_private_struct_is_flagged() -> None:
+    assert _names(HEAD + ".struct _T {\n    word a\n}\n") == ["_T"]
+
+
+def test_sizeof_a_field_uses_the_struct() -> None:
+    assert _names(HEAD + ".struct _T {\n    word a\n}\nlda #sizeof(_T.a)\n") == []
+
+
+def test_an_unused_private_pool_is_flagged() -> None:
+    assert _names(HEAD + ".pool _p {\n    range 0x7E2000 0x7E2100\n    bss\n}\n") == ["_p"]
+
+
+def test_an_alloc_in_the_pool_uses_it() -> None:
+    source = HEAD + ".pool _p {\n    range 0x7E2000 0x7E2100\n    bss\n}\n.alloc buf in _p {\n    .res 4\n}\n"
+
+    assert _names(source) == []
+
+
+def test_an_unused_label_directive_is_flagged() -> None:
+    assert _names(HEAD + ".label _hook = 0x008000\n") == ["_hook"]
+
+
+def test_an_unused_reservation_is_flagged() -> None:
+    source = HEAD + ".struct T {\n    word a\n}\n.reserve _r as T in wram\n"
+
+    assert _names(source) == ["_r"]
+
+
+def test_a_field_access_uses_the_reservation() -> None:
+    source = HEAD + ".struct T {\n    word a\n}\n.reserve _r as T in wram\nlda.w _r.a\n"
+
+    assert _names(source) == []
+
+
+def test_a_private_alloc_is_a_placement_handle_not_a_name() -> None:
+    assert _names(HEAD + ".alloc _a in code {\n    rts\n}\n") == []
+
+
+def test_public_names_are_never_flagged() -> None:
+    assert _names(HEAD + "K = 3\n.macro m() {\n    rts\n}\n") == []
+
+
+def test_an_unused_code_label_is_f002() -> None:
+    assert _hits(HEAD + "_loop:\n    rts\n") == [("F002", 2, 1, "_loop")]
+
+
+def test_a_branch_uses_the_label() -> None:
+    assert _names(HEAD + "_loop:\n    bne _loop\n") == []
+
+
+def test_a_qualified_reference_uses_the_scoped_label() -> None:
+    assert _names(HEAD + ".scope s {\n_x:\n    rts\n}\njsr s._x\n") == []
+
+
+def test_a_text_interpolation_uses_the_name() -> None:
+    assert _names(HEAD + '_V = 1\n.text "${_V}"\n') == []
+
+
+def test_a_debug_interpolation_uses_the_name() -> None:
+    assert _names(HEAD + '_W = 1\n.debug "{_W + 1}"\n') == []
+
+
+def test_a_for_variable_is_not_a_module_name() -> None:
+    assert _names(HEAD + ".for _i := 0, 3 {\n    .db 0\n}\n") == []
+
+
+def test_a_name_defined_in_both_branches_is_reported_once() -> None:
+    source = HEAD + ".if X {\n    _K = 1\n} .else {\n    _K = 2\n}\n"
+
+    assert _names(source) == ["_K"]
+
+
+def test_noqa_silences_the_hit() -> None:
+    assert _names(HEAD + "_K = 3 ; noqa: F001\n") == []
+
+
+@pytest.fixture
+def unit(tmp_path: Path) -> Path:
+    (tmp_path / "a816.toml").write_text('entrypoint = "main.s"\n', encoding="utf-8")
+    return tmp_path
+
+
+def _lint(path: Path) -> list[str]:
+    return _names(path.read_text(encoding="utf-8"), path)
+
+
+def test_a_use_in_an_included_file_counts(unit: Path) -> None:
+    (unit / "inc.i").write_text("lda #_K\n", encoding="utf-8")
+    main = unit / "main.s"
+    main.write_text(HEAD + '_K = 3\n.include "inc.i"\n', encoding="utf-8")
+
+    assert _lint(main) == []
+
+
+def test_a_name_an_includer_uses_is_quiet_in_the_include(unit: Path) -> None:
+    inc = unit / "inc.i"
+    inc.write_text('"""Shared."""\n_K = 3\n', encoding="utf-8")
+    (unit / "main.s").write_text(HEAD + '.include "inc.i"\nlda #_K\n', encoding="utf-8")
+
+    assert _lint(inc) == []
+
+
+def test_a_name_no_includer_uses_is_reported_in_the_include_only(unit: Path) -> None:
+    inc = unit / "inc.i"
+    inc.write_text('"""Shared."""\n_K = 3\n', encoding="utf-8")
+    main = unit / "main.s"
+    main.write_text(HEAD + '.include "inc.i"\n', encoding="utf-8")
+
+    assert (_lint(inc), _lint(main)) == (["_K"], [])
+
+
+def test_a_sibling_unit_of_the_include_counts(unit: Path) -> None:
+    """`main.s` includes both: a use in `b.i` keeps `a.i`'s name alive."""
+    a = unit / "a.i"
+    a.write_text('"""A."""\n_K = 3\n', encoding="utf-8")
+    (unit / "b.i").write_text('"""B."""\nlda #_K\n', encoding="utf-8")
+    (unit / "main.s").write_text(HEAD + '.include "a.i"\n.include "b.i"\n', encoding="utf-8")
+
+    assert _lint(a) == []
+
+
+def test_default_selection_leaves_f002_out() -> None:
+    assert not RuleSelection().allows("F002")
+
+
+def test_a_prefix_does_not_select_f002() -> None:
+    assert not RuleSelection(select=("F",)).allows("F002")
+
+
+def test_the_exact_code_selects_f002() -> None:
+    assert RuleSelection(select=("F002",)).allows("F002")
+
+
+def test_f001_runs_by_default() -> None:
+    assert RuleSelection().allows("F001")
+
+
+def _fixed(source: str) -> str:
+    text, _ = apply_fixes(source, lint_text(source, Path("main.s")), allow_unsafe=True, select={"F001", "F002"})
+    return text
+
+
+def test_the_fix_deletes_a_constant_line() -> None:
+    assert _fixed(HEAD + "_K = 3\nlda #1\n") == HEAD + "lda #1\n"
+
+
+def test_the_fix_deletes_a_whole_macro() -> None:
+    assert _fixed(HEAD + ".macro _m(x) {\n    lda #x\n}\nrts\n") == HEAD + "rts\n"
+
+
+def test_the_fix_deletes_a_label_line() -> None:
+    assert _fixed(HEAD + "_loop:\n    rts\n") == HEAD + "    rts\n"
+
+
+def test_the_fix_is_unsafe() -> None:
+    (diag,) = [d for d in lint_text(HEAD + "_K = 3\n", Path("main.s")) if d.code == "F001"]
+
+    assert diag.fix is not None
+    assert diag.fix.applicability.value == "unsafe"
+
+
+def test_fix_select_reaches_the_opt_in_rule(tmp_path: Path) -> None:
+    from a816.fluff.cli import fluff_main
+
+    target = tmp_path / "patch.s"
+    target.write_text(HEAD + "_dead:\n    rts\n", encoding="utf-8")
+    fluff_main(["fix", "--select", "F002", "--unsafe-fixes", str(target)])
+
+    assert target.read_text(encoding="utf-8") == HEAD + "    rts\n"
+
+
+def _fix_of(source: str) -> object:
+    (diag,) = [d for d in lint_text(source, Path("main.s")) if d.code[0] == "F"]
+    return diag.fix
+
+
+def test_no_fix_for_a_label_with_code_on_its_line() -> None:
+    assert _fix_of(HEAD + "_dead: rts\n") is None
+
+
+def test_no_fix_for_a_constant_continuing_below() -> None:
+    assert _fix_of(HEAD + "_K = (1 +\n    2)\n") is None

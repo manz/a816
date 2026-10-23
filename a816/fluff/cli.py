@@ -344,9 +344,13 @@ def _process_fix_target(source: Path, args: argparse.Namespace, select: set[str]
     """Read `source`, run lint + fix, dispatch to diff / check / write."""
     original = source.read_text(encoding="utf-8")
     include_paths, module_paths = _config_paths_for(source)
-    diagnostics = RuleSelection.of(discover_a816_config(source)).filter(
-        lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
-    )
+    selection = RuleSelection.of(discover_a816_config(source))
+    # An opt-in rule the table leaves out still runs when `--select` names it.
+    diagnostics = [
+        diag
+        for diag in lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
+        if selection.allows(diag.code) or diag.code in (select or ())
+    ]
     new_text, applied = apply_fixes(original, diagnostics, allow_unsafe=args.unsafe_fixes, select=select)
     unfixed = [d for d in diagnostics if d not in applied]
     if args.diff:
