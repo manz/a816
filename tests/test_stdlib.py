@@ -278,16 +278,16 @@ def _emit(module: str, body: str) -> str:
 @pytest.mark.parametrize(
     ("module", "call", "code"),
     [
-        ("sdd1", "sdd1_decompress(0x03)", "a9 03 8d 00 48 8d 01 48 8d 0b 42"),
-        ("sdd1", "sdd1_banks(4, 5, 6, 7)", "a9 04 8d 04 48 a9 05 8d 05 48 a9 06 8d 06 48 a9 07 8d 07 48"),
+        ("sdd1", "sdd1_decompress(0x03)", "a9 03 8f 00 48 00 8f 01 48 00 8f 0b 42 00 a9 00 8f 00 48 00"),
+        ("sdd1", "sdd1_banks(4, 5, 6, 7)", "a9 04 8f 04 48 00 a9 05 8f 05 48 00 a9 06 8f 06 48 00 a9 07 8f 07 48 00"),
         (
             "spc7110",
             "spc7110_dcu_start(0x123456, 9, 0x0201)",
-            "a9 56 8d 01 48 a9 34 8d 02 48 a9 12 8d 03 48 a9 09 8d 04 48 a9 01 8d 05 48 a9 02 8d 06 48",
+            "a9 56 8f 01 48 00 a9 34 8f 02 48 00 a9 12 8f 03 48 00 a9 09 8f 04 48 00 a9 01 8f 05 48 00 a9 02 8f 06 48 00",
         ),
-        ("spc7110", "spc7110_dcu_wait()", "2c 0c 48 10 fb"),
-        ("spc7110", "spc7110_data_seek(0x0A0B0C)", "a9 0c 8d 11 48 a9 0b 8d 12 48 a9 0a 8d 13 48"),
-        ("spc7110", "spc7110_banks(1, 2, 3)", "a9 01 8d 31 48 a9 02 8d 32 48 a9 03 8d 33 48"),
+        ("spc7110", "spc7110_dcu_wait()", "af 0c 48 00 10 fa"),
+        ("spc7110", "spc7110_data_seek(0x0A0B0C)", "a9 0c 8f 11 48 00 a9 0b 8f 12 48 00 a9 0a 8f 13 48 00"),
+        ("spc7110", "spc7110_banks(1, 2, 3)", "a9 01 8f 31 48 00 a9 02 8f 32 48 00 a9 03 8f 33 48 00"),
     ],
 )
 def test_coprocessor_helpers_emit(module: str, call: str, code: str) -> None:
@@ -295,4 +295,4 @@ def test_coprocessor_helpers_emit(module: str, call: str, code: str) -> None:
 
 
 def test_spc7110_dcu_wait_expands_twice() -> None:
-    assert _emit("spc7110", "    spc7110_dcu_wait()\n    spc7110_dcu_wait()\n") == "2c 0c 48 10 fb 2c 0c 48 10 fb"
+    assert _emit("spc7110", "    spc7110_dcu_wait()\n    spc7110_dcu_wait()\n") == "af 0c 48 00 10 fa af 0c 48 00 10 fa"

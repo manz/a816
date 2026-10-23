@@ -12,6 +12,10 @@ ROM into those banks one megabyte at a time.
         sta sdd1.DMA_ENABLE          ; channel 0 decompresses ...
         sta sdd1.DMA_TRIGGER         ; ... on its next transfer
         sta 0x420B                   ; MDMAEN: run it
+        stz sdd1.DMA_ENABLE
+
+The example's absolute stores need DB in $00-$3F or $80-$BF; the macros
+use long stores and work whatever DB holds.
 
 Register layout follows ares (`sfc/coprocessor/sdd1`). $4802-$4803 and
 $4808-$480F are not registers: reads fall through to ROM.
@@ -44,22 +48,26 @@ SDD1_BASE = 0x4800
     """
     Decompress through the DMA `channels` (bit mask) and start them.
     Configure the channels first; the source is the compressed data's
-    address in $C0-$FF. A is 8-bit and clobbered.
+    address in $C0-$FF. Clears `DMA_ENABLE` once the transfer is done,
+    as the games do. Long stores, so any DB works. A is 8-bit and
+    clobbered.
     """
     lda.b #channels
-    sta.w SDD1_BASE + SDD1.DMA_ENABLE
-    sta.w SDD1_BASE + SDD1.DMA_TRIGGER
-    sta 0x420B  ; MDMAEN
+    sta.l SDD1_BASE + SDD1.DMA_ENABLE
+    sta.l SDD1_BASE + SDD1.DMA_TRIGGER
+    sta.l 0x00420B  ; MDMAEN
+    lda.b #0
+    sta.l SDD1_BASE + SDD1.DMA_ENABLE
 }
 
 .macro sdd1_banks(c0, d0, e0, f0) {
-    """Page ROM megabytes into $C0, $D0, $E0 and $F0. A is 8-bit and clobbered."""
+    """Page ROM megabytes into $C0, $D0, $E0 and $F0. Long stores, so any DB works. A is 8-bit and clobbered."""
     lda.b #c0
-    sta.w SDD1_BASE + SDD1.BANK_C0
+    sta.l SDD1_BASE + SDD1.BANK_C0
     lda.b #d0
-    sta.w SDD1_BASE + SDD1.BANK_D0
+    sta.l SDD1_BASE + SDD1.BANK_D0
     lda.b #e0
-    sta.w SDD1_BASE + SDD1.BANK_E0
+    sta.l SDD1_BASE + SDD1.BANK_E0
     lda.b #f0
-    sta.w SDD1_BASE + SDD1.BANK_F0
+    sta.l SDD1_BASE + SDD1.BANK_F0
 }

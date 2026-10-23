@@ -24,6 +24,8 @@ power-on banks 0, 1 and 2 in `SPC7110_MCU.BANK_D0`..`BANK_F0` show. A
 game that reprograms them (Far East of Eden Zero sets 1, 2, 3 at reset)
 describes its banks with `[map.N]` in its a816.toml.
 
+The macros use long stores, so they work whatever DB holds.
+
 Register layout follows ares (`sfc/coprocessor/spc7110`,
 `sfc/coprocessor/epsonrtc`).
 """
@@ -130,6 +132,9 @@ EPSON_RTC_BASE = 0x4840
     at $D0-$DF, $E0-$EF and $F0-$FF. Power-on pages are 0, 1 and 2.
     `ROM_SIZE` ($4834): bits 0-1 give the data ROM size (1, 2, 4 or
     8 MiB); bit 2 maps the second program ROM megabyte at $D0-$DF.
+    Below 3, a data port offset with bit 22 set reads 0: games probe the
+    size that way, so an expanded data ROM must patch every write here
+    (Far East of Eden Zero writes it three times).
     """
     byte CONTROL
     byte BANK_D0
@@ -156,27 +161,28 @@ EPSON_RTC_BASE = 0x4840
     """
     Load directory entry `index` from the directory at data ROM offset
     `table` and start decompressing. `offset` is skipped only when
-    `SPC7110_DCU.MODE` bit 1 is set. A is 8-bit and clobbered.
+    `SPC7110_DCU.MODE` bit 1 is set. Long stores, so any DB works. A is 8-bit
+    and clobbered.
     """
     lda.b #table & 0xFF
-    sta.w SPC7110_DCU_BASE + SPC7110_DCU.TABLE_L
+    sta.l SPC7110_DCU_BASE + SPC7110_DCU.TABLE_L
     lda.b #table >> 8 & 0xFF
-    sta.w SPC7110_DCU_BASE + SPC7110_DCU.TABLE_H
+    sta.l SPC7110_DCU_BASE + SPC7110_DCU.TABLE_H
     lda.b #table >> 16 & 0xFF
-    sta.w SPC7110_DCU_BASE + SPC7110_DCU.TABLE_B
+    sta.l SPC7110_DCU_BASE + SPC7110_DCU.TABLE_B
     lda.b #index
-    sta.w SPC7110_DCU_BASE + SPC7110_DCU.INDEX
+    sta.l SPC7110_DCU_BASE + SPC7110_DCU.INDEX
     lda.b #offset & 0xFF
-    sta.w SPC7110_DCU_BASE + SPC7110_DCU.OFFSET_L
+    sta.l SPC7110_DCU_BASE + SPC7110_DCU.OFFSET_L
     lda.b #offset >> 8 & 0xFF
-    sta.w SPC7110_DCU_BASE + SPC7110_DCU.OFFSET_H
+    sta.l SPC7110_DCU_BASE + SPC7110_DCU.OFFSET_H
 }
 
 .macro spc7110_dcu_wait() {
-    """Spin until the decompression unit has data ready."""
+    """Spin until the decompression unit has data ready. A is 8-bit and clobbered."""
     {
 _poll:
-        bit.w SPC7110_DCU_BASE + SPC7110_DCU.STATUS
+        lda.l SPC7110_DCU_BASE + SPC7110_DCU.STATUS
         bpl _poll
     }
 }
@@ -184,19 +190,19 @@ _poll:
 .macro spc7110_data_seek(offset) {
     """Point the data port at data ROM `offset`. A is 8-bit and clobbered."""
     lda.b #offset & 0xFF
-    sta.w SPC7110_DATA_BASE + SPC7110_DATA.OFFSET_L
+    sta.l SPC7110_DATA_BASE + SPC7110_DATA.OFFSET_L
     lda.b #offset >> 8 & 0xFF
-    sta.w SPC7110_DATA_BASE + SPC7110_DATA.OFFSET_H
+    sta.l SPC7110_DATA_BASE + SPC7110_DATA.OFFSET_H
     lda.b #offset >> 16 & 0xFF
-    sta.w SPC7110_DATA_BASE + SPC7110_DATA.OFFSET_B
+    sta.l SPC7110_DATA_BASE + SPC7110_DATA.OFFSET_B
 }
 
 .macro spc7110_banks(d0, e0, f0) {
     """Page data ROM megabytes into $D0, $E0 and $F0. A is 8-bit and clobbered."""
     lda.b #d0
-    sta.w SPC7110_MCU_BASE + SPC7110_MCU.BANK_D0
+    sta.l SPC7110_MCU_BASE + SPC7110_MCU.BANK_D0
     lda.b #e0
-    sta.w SPC7110_MCU_BASE + SPC7110_MCU.BANK_E0
+    sta.l SPC7110_MCU_BASE + SPC7110_MCU.BANK_E0
     lda.b #f0
-    sta.w SPC7110_MCU_BASE + SPC7110_MCU.BANK_F0
+    sta.l SPC7110_MCU_BASE + SPC7110_MCU.BANK_F0
 }
