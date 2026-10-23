@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- a816 requires Python 3.14 or later; CI only ever tested 3.14, and
+  3.10 already failed to import.
+
 ## 1.1.7 (2026-10-20)
 
 - `pr-artifact` writes the comment the game repos' own workflows wrote
