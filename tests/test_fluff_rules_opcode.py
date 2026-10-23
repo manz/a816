@@ -113,3 +113,23 @@ class TestAutofix:
 def test_op001_fires_across_common_opcodes(opcode: str) -> None:
     src = f'"""m."""\n{opcode}.w #0x1234\n'
     assert any("redundant" in m for m in _hits(src))
+
+
+_POOL = ".pool code {\n    range 0x008000 0x00FFFF\n}\n"
+
+
+class TestFiresInsidePlacementBodies:
+    def test_inside_pooled_alloc(self) -> None:
+        src = f'"""m."""\n{_POOL}.alloc main in code {{\n    lda.w #0x1234\n}}\n'
+        assert _hits(src)
+
+    def test_inside_pinned_alloc(self) -> None:
+        assert _hits('"""m."""\n.alloc at 0x008000 {\n    lda.w #0x1234\n}\n')
+
+    def test_inside_relocate(self) -> None:
+        src = f'"""m."""\n{_POOL}.relocate old 0x009000 0x0090FF into code {{\n    lda.w #0x1234\n}}\n'
+        assert _hits(src)
+
+    def test_inside_scope_in_alloc(self) -> None:
+        src = '"""m."""\n.alloc at 0x008000 {\n    .scope s {\n        lda.w #0x1234\n    }\n}\n'
+        assert _hits(src)

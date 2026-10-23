@@ -70,6 +70,10 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `W0002` | `.if` on a name the project defines nowhere: it reads as false, so a deleted or misspelt flag drops code silently. Declare a `-D`-only name under `[defines]` in `a816.toml`. |
 | `W0001` | Reference to a name `.incbin` derived from its path (`assets_vwf_bin`, `assets_vwf_bin__size`); the build warns on it too. A warning: `a816 check` prints it but still exits 0. |
 
+Per-node rules (`OP001`, `N801`, `N802`, `DOC007`, ...) look inside
+`.alloc`, `.relocate`, `.scope`, macro, `.if` and `.for` bodies, so
+code a module places itself is linted like top-level code.
+
 Rules marked fixable in `a816 check` output carry `[*]` (safe) or
 `[!]` (unsafe). Today: `S003`, `OP001`, `DOC003`, `DOC004`, `DOC006`,
 `DOC007` ship a safe fix, and `W0001` does when the blob is alone in a
