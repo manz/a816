@@ -14,7 +14,7 @@ from a816.pool import Pool
 if TYPE_CHECKING:
     from a816.incbin_names import PathName
     from a816.object_file import LinkAssert
-from script import Table
+from katsuji.script import Table
 
 
 def _is_exportable(name: str) -> bool:

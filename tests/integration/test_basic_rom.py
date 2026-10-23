@@ -30,7 +30,7 @@ HELLO_STRING = "Gyshal Whistle"
 def _decode_through_table(data: bytes, tbl_path: Path) -> str:
     """Decode tilemap glyph bytes back into the source string via a816's
     `script.Table`, so assertions read as plain text."""
-    from script import Table
+    from katsuji.script import Table
 
     return Table(str(tbl_path)).to_text(data)
 
