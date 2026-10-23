@@ -5,13 +5,14 @@ from __future__ import annotations
 import re
 import struct
 
+from katsuji.script import Table
+
 from a816.cpu.mapping import Address
 from a816.error_codes import E_SYMBOL_NO_TABLE
 from a816.parse.nodes.errors import NodeError
 from a816.parse.tokens import Token
 from a816.protocols import NodeBase, ValueNodeProtocol
 from a816.symbols import Resolver
-from script import Table
 
 
 class TableNode(NodeBase):

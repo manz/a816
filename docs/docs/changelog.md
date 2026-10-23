@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- a816 depends on `katsuji` (no extras: no numpy or pillow) and its
+  `.table` directive reads tables with `katsuji.script.Table`. The
+  `script` package moved there: `from script import ...` still works
+  but warns, and a816 1.3 removes it. Switch to
+  `from katsuji.script import ...`; `script.formulas.long_low_rom_pointer`
+  becomes `katsuji.script.formulas.long_pointer(bus.get_address(base))`.
 - a816 requires Python 3.14 or later; CI only ever tested 3.14, and
   3.10 already failed to import.
 
