@@ -40,12 +40,18 @@ def size_of(node: SizeofExprNode, resolver: Resolver) -> int | str:
 
 
 def _split_struct(path: str, resolver: Resolver) -> tuple[str, str] | None:
-    """`(struct, field path)` for the longest struct name `path` starts with."""
+    """`(struct, field path)` for the longest struct name `path` starts with.
+
+    A typed reservation's field (`buf.field`, `buf` reserved `as T`) sizes
+    like the type's: `(T, field)`.
+    """
     parts = path.split(".")
     for end in range(len(parts), 0, -1):
-        type_name = ".".join(parts[:end])
-        if type_name in resolver.struct_sizes:
-            return type_name, ".".join(parts[end:])
+        head = ".".join(parts[:end])
+        if head in resolver.struct_sizes:
+            return head, ".".join(parts[end:])
+        if end < len(parts) and head in resolver.typed_instances:
+            return resolver.typed_instances[head], ".".join(parts[end:])
     return None
 
 

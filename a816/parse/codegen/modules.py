@@ -33,6 +33,7 @@ from a816.parse.ast.nodes import (
     MapAstNode,
     PoolAstNode,
     ReclaimAstNode,
+    ReserveTypedAstNode,
     ScopeAstNode,
     StructAstNode,
     SymbolAffectationAstNode,
@@ -374,11 +375,11 @@ class _ImportPlan:
     """What an object-mode `.import` does with one source, worked out once
     from its AST and replayed against every importer's resolver.
 
-    `reservations` pairs each public reservation with its struct type (None
-    for a flat one); `steps` keeps the source order of externs and inlines.
+    `reservations` names the public flat reservations; typed ones are inline
+    steps. `steps` keeps the source order of externs and inlines.
     """
 
-    reservations: tuple[tuple[str, str | None], ...]
+    reservations: tuple[str, ...]
     steps: tuple[_Externs | _TypedBind | _Inline, ...]
 
 
@@ -386,7 +387,8 @@ def _plan_object_mode(nodes: list[AstNode]) -> _ImportPlan:
     """Per-node classifier for object-mode `.import`s.
 
     Inlines compile-time-only nodes (struct, macro, constant, typed
-    bind, `.label`, nested `.import`); `.if` / `.scope` / `.for` /
+    bind, `.label`, nested `.import`, a typed `.reserve`'s declaration);
+    `.if` / `.scope` / `.for` /
     `.include` are inlined with their bodies cut down to declarations
     (`_declarations_only`). Runtime-bound names become externs so
     cross-module references resolve at link time.
@@ -398,11 +400,11 @@ def _plan_object_mode(nodes: list[AstNode]) -> _ImportPlan:
             steps.append(_TypedBind(node) if _is_typed_bind(node) else _Externs((node.symbol,)))
         elif isinstance(node, _INLINE_IMPORT_TYPES):
             steps.append(_Inline([node]))
-        elif isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode):
+        elif isinstance(node, IfAstNode | ScopeAstNode | ForAstNode | IncludeAstNode | ReserveTypedAstNode):
             steps.append(_Inline(_declarations_only([node], bare_names=True)))
         elif names := _runtime_extern_names(node):
             steps.append(_Externs(tuple(names)))
-    return _ImportPlan(_reservations_in(nodes), tuple(steps))
+    return _ImportPlan(_flat_reservations_in(nodes), tuple(steps))
 
 
 def _import_object_mode(plan: _ImportPlan, resolver: Resolver, macro_definitions: MacroDefinitions) -> GenNodes:
@@ -437,29 +439,29 @@ def _import_object_mode(plan: _ImportPlan, resolver: Resolver, macro_definitions
     return out
 
 
-def _reservations_in(nodes: list[AstNode]) -> tuple[tuple[str, str | None], ...]:
-    """An imported module's public reservations, each with its struct type
-    (None for a flat one)."""
-    from a816.parse.ast.nodes import AllocAstNode, ReserveTypedAstNode
+def _flat_reservations_in(nodes: list[AstNode]) -> tuple[str, ...]:
+    """An imported module's public flat reservations (`.reserve NAME SIZE`).
+
+    Typed ones (`.reserve NAME as T`) are not listed: the plan inlines them
+    as declarations, so the importer records each where the module declares
+    it, after its struct and before any constant that sizes it.
+    """
+    from a816.parse.ast.nodes import AllocAstNode
     from a816.parse.ast.visitor import walk
 
-    found: list[tuple[str, str | None]] = []
-    for node in walk(nodes):
-        if isinstance(node, ReserveTypedAstNode) and not node.name.startswith("_"):
-            found.append((node.name, node.type_name))
-        elif isinstance(node, AllocAstNode) and node.reserve and node.name and not node.name.startswith("_"):
-            found.append((node.name, None))
-    return tuple(found)
+    return tuple(
+        node.name
+        for node in walk(nodes)
+        if isinstance(node, AllocAstNode) and node.reserve and node.name and not node.name.startswith("_")
+    )
 
 
-def _record_imported_reservations(reservations: tuple[tuple[str, str | None], ...], resolver: Resolver) -> None:
-    """Make an imported module's reservations known to `sizeof`.
-
-    A typed one's size is its (inlined) struct's; a flat one's is the
-    owner's `NAME.__size`, which reaches the importer as an extern.
-    """
-    for name, type_name in reservations:
-        resolver.reservation_sizes[name] = None if type_name is None else resolver.struct_sizes.get(type_name)
+def _record_imported_reservations(names: tuple[str, ...], resolver: Resolver) -> None:
+    """Make an imported module's flat reservations known to `sizeof`: the
+    size is the owner's `NAME.__size`, which reaches the importer as an
+    extern."""
+    for name in names:
+        resolver.reservation_sizes[name] = None
 
 
 def _is_typed_bind(node: AssignAstNode) -> bool:
@@ -513,9 +515,16 @@ def _declarations_of(node: AstNode, bare_names: bool) -> list[AstNode]:
     if isinstance(node, IncludeAstNode):
         included = _declarations_only(node.included_nodes, bare_names)
         return [IncludeAstNode(node.file_path, included, node.file_info, node.resolved_path)]
+    # A typed reservation stays as a declaration: the importer records its
+    # type there (`sizeof(NAME.field)`) without allocating it.
+    declared: list[AstNode] = [node] if _is_public_typed_reservation(node) else []
     if not bare_names:
-        return []
-    return [ExternAstNode(name, node.file_info) for name in _runtime_extern_names(node)]
+        return declared
+    return declared + [ExternAstNode(name, node.file_info) for name in _runtime_extern_names(node)]
+
+
+def _is_public_typed_reservation(node: AstNode) -> bool:
+    return isinstance(node, ReserveTypedAstNode) and not node.name.startswith("_")
 
 
 _IDENT_HEAD_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)", re.ASCII)

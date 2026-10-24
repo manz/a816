@@ -177,6 +177,69 @@ def test_sizeof_an_imported_reservation(tmp_path: Path, reserve: str, code: byte
     assert _ips_bytes(tmp_path / "out.ips") == code
 
 
+_PATH_RESERVE = (
+    ".struct Pt {\n    word x\n    word y\n}\n"
+    ".struct Path {\n    byte count\n    Pt[3] points\n}\n"
+    ".reserve route as Path in wram\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("expr", "code"),
+    [("sizeof(route.points)", b"\xa2\x0c\x00"), ("sizeof(route.points.y)", b"\xa2\x02\x00")],
+    ids=["array field", "nested field"],
+)
+def test_sizeof_a_typed_reservation_field(expr: str, code: bytes) -> None:
+    assert _object_code(_PATH_RESERVE + f".alloc user in code {{\n    ldx.w #{expr}\n}}\n") == code
+
+
+def test_countof_a_typed_reservation_field() -> None:
+    src = _PATH_RESERVE + ".alloc user in code {\n    ldx.w #countof(route.points)\n}\n"
+    assert _object_code(src) == b"\xa2\x03\x00"
+
+
+def _direct_word(expr: str) -> int:
+    writer = StubWriter()
+    src = _PREAMBLE + _PATH_RESERVE + f".alloc user at 0xc18000 {{\n    .dw {expr}\n}}\n"
+    Program().assemble_string_with_emitter(src, "m.s", writer)
+    return int.from_bytes(b"".join(writer.data), "little")
+
+
+def test_sizeof_a_typed_reservation_field_in_direct_mode() -> None:
+    assert _direct_word("sizeof(route.points)") == 12
+
+
+def test_sizeof_an_unknown_typed_reservation_field_names_its_type() -> None:
+    with pytest.raises(NodeError, match="struct `Path` has no field `nope`"):
+        _direct_word("sizeof(route.nope)")
+
+
+def test_sizeof_an_imported_typed_reservation_field(tmp_path: Path) -> None:
+    main = '.import "lib"\n.alloc user at 0xc1f000 {\n    ldx.w #sizeof(route.points)\n}\n'
+    result = _build(tmp_path, {"lib.s": _PREAMBLE + _PATH_RESERVE, "main.s": main})
+    assert result.exit_code == 0, result.diagnostics
+    assert _ips_bytes(tmp_path / "out.ips") == b"\xa2\x0c\x00"
+
+
+@pytest.mark.parametrize(
+    ("lib", "state"),
+    [
+        ('.include "state.i"\nN := sizeof(route.points)\n', _PATH_RESERVE),
+        ('.include "state.i"\n', _PATH_RESERVE + "N := sizeof(route.points)\n"),
+        (_PATH_RESERVE + "N := sizeof(route.points)\n", ""),
+    ],
+    ids=["constant after the include", "constant inside the include", "constant in the module"],
+)
+def test_an_importer_sizes_an_imported_typed_reservation_field(tmp_path: Path, lib: str, state: str) -> None:
+    """The importer replays `N := sizeof(route.points)` from the plan: the
+    reservation has to be known at that point of the module, not after it."""
+    main = '.import "lib"\n.alloc user at 0xc1f000 {\n    ldx.w #N\n}\n'
+    files = {"state.i": state, "lib.s": _PREAMBLE + lib, "main.s": main}
+    result = _build(tmp_path, files)
+    assert result.exit_code == 0, result.diagnostics
+    assert _ips_bytes(tmp_path / "out.ips") == b"\xa2\x0c\x00"
+
+
 def test_sizeof_an_imported_alloc_resolves_at_link(tmp_path: Path) -> None:
     lib = _PREAMBLE + ".alloc blob in code {\n    .db 1, 2, 3, 4, 5\n}\n"
     main = '.import "lib"\n.alloc user at 0xc1f000 {\n    ldx.w #sizeof(blob)\n}\n'

@@ -13,6 +13,10 @@
 - `@std/snes/sdd1` and `@std/snes/spc7110` name the S-DD1 and SPC7110
   registers (and the Epson RTC on SPC7110-RTC boards), with small
   macros: decompress, bank select, data port seek.
+- `sizeof(buf.field)` and `countof(buf.field)` on a reservation typed
+  `.reserve buf as T` size the field like `sizeof(T.field)`, imported
+  reservations included. They used to fail with E0321, or at link with
+  "cannot resolve `buf.field.__size`" and no source line.
 
 ## 1.1.7 (2026-10-20)
 
