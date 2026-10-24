@@ -16,7 +16,7 @@ from a816.config import A816Config
 from a816.error_codes import E_CONFIG_UNKNOWN_LINT_RULE
 from a816.exceptions import A816ConfigError
 from a816.fluff.core import Diagnostic, Rule
-from a816.fluff.project import matches_any
+from a816.fluff.project import expand_braces, matches_any, walk_sources
 from a816.fluff.runner import all_rule_codes
 
 
@@ -31,6 +31,38 @@ def unknown_codes(prefixes: Iterable[str]) -> list[str]:
 
 def _matches_any_rule(prefix: str) -> bool:
     return any(code.startswith(prefix) for code in all_rule_codes())
+
+
+def _check_codes(config: A816Config) -> None:
+    """Every `[lint]` code names a rule, or E0516 says which list holds the one that doesn't."""
+    lists = [("[lint]", (*config.lint_select, *config.lint_ignore))]
+    lists += [(f'[lint.per-file-ignores] "{pattern}"', codes) for pattern, codes in config.lint_per_file_ignores]
+    for where, codes in lists:
+        bad = unknown_codes(codes)
+        if bad:
+            raise A816ConfigError(
+                E_CONFIG_UNKNOWN_LINT_RULE, f"{where} names no rule: {', '.join(bad)}", config.config_path
+            )
+
+
+def unmatched_per_file_patterns(config: A816Config) -> list[str]:
+    """What in `[lint.per-file-ignores]` no source under the toml's
+    directory matches (a typo, or a file that moved): the key, or the
+    brace alternative when the others match (`"src/{menu,misz}.s":
+    alternative "src/misz.s"`)."""
+    if not config.lint_per_file_ignores:
+        return []
+    root = config.root.resolve()
+    sources = list(walk_sources(root, recursive=True))
+    unmatched: list[str] = []
+    for pattern, _ in config.lint_per_file_ignores:
+        alternatives = expand_braces(pattern)
+        dead = [glob for glob in alternatives if not any(matches_any(source, root, [glob]) for source in sources)]
+        if len(dead) == len(alternatives):
+            unmatched.append(f'"{pattern}"')
+        else:
+            unmatched.extend(f'"{pattern}": alternative "{glob}"' for glob in dead)
+    return unmatched
 
 
 def parse_codes(raw: Sequence[str] | None) -> tuple[str, ...] | None:
@@ -56,12 +88,7 @@ class RuleSelection:
     ) -> RuleSelection:
         """The project's `[lint]`, each list replaced by its flag when given."""
         if config is not None:
-            per_file_codes = [code for _, codes in config.lint_per_file_ignores for code in codes]
-            bad = unknown_codes((*config.lint_select, *config.lint_ignore, *per_file_codes))
-            if bad:
-                raise A816ConfigError(
-                    E_CONFIG_UNKNOWN_LINT_RULE, f"[lint] names no rule: {', '.join(bad)}", config.config_path
-                )
+            _check_codes(config)
         base_select = config.lint_select if config is not None else ()
         base_ignore = config.lint_ignore if config is not None else ()
         return cls(

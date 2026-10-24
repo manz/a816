@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess  # nosec B404: runs git, resolved to a full path, with fixed arguments
 from collections.abc import Iterator, Sequence
@@ -65,12 +66,26 @@ def _git_visible(directory: Path) -> set[Path] | None:
 
 def matches_any(source: Path, root: Path, patterns: Sequence[str]) -> bool:
     """`source`, or a directory above it up to `root`, matches one of the
-    glob `patterns` (relative to `root`): `exclude`, per-file ignores."""
+    glob `patterns` (relative to `root`): `exclude`, per-file ignores.
+    `{a,b}` alternatives expand as in ruff and editorconfig."""
     if not patterns or not source.is_relative_to(root):
         return False
     relative = PurePosixPath(source.relative_to(root).as_posix())
     candidates = [relative, *list(relative.parents)[:-1]]
-    return any(candidate.full_match(pattern) for candidate in candidates for pattern in patterns)
+    globs = [glob for pattern in patterns for glob in expand_braces(pattern)]
+    return any(candidate.full_match(glob) for candidate in candidates for glob in globs)
+
+
+_BRACES = re.compile(r"\{([^{}]*)\}")
+
+
+def expand_braces(pattern: str) -> list[str]:
+    """`src/{menu,miss}.s` as `src/menu.s` and `src/miss.s`; a pattern without braces as itself."""
+    found = _BRACES.search(pattern)
+    if found is None:
+        return [pattern]
+    head, tail = pattern[: found.start()], pattern[found.end() :]
+    return [glob for option in found.group(1).split(",") for glob in expand_braces(head + option + tail)]
 
 
 def walk_sources(root: Path, recursive: bool) -> Iterator[Path]:

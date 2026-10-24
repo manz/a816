@@ -227,11 +227,15 @@ keeping their original names) is dropped for those files only:
 [lint.per-file-ignores]
 "src/disasm/*.s" = ["N801"]   # labels named after the original ROM
 "src/gen" = ["N", "DOC"]      # a directory covers every file under it
+"src/{menu,miss}.s" = ["N8"]  # {a,b} lists alternatives
 ```
 
-Each glob is relative to `a816.toml` and matches like `exclude`. The
-codes match by prefix and an unknown one is `E0516`. `check`, `fix` and
-the LSP all honour it, and `--select` / `--ignore` leave it in place.
+Each glob is relative to `a816.toml` and matches like `exclude`; `*`
+stays in one directory, `**` crosses them. The codes match by prefix
+and an unknown one is `E0516`. `check`, `fix` and the LSP all honour
+it, and `--select` / `--ignore` leave it in place. `check` and `fix`
+warn about a glob no `.s` / `.i` file under the toml matches: a typo,
+a wrong case, or a file that moved.
 
 ## `a816.toml` discovery
 
