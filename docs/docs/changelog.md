@@ -10,6 +10,9 @@
   becomes `katsuji.script.formulas.long_pointer(bus.get_address(base))`.
 - a816 requires Python 3.14 or later; CI only ever tested 3.14, and
   3.10 already failed to import.
+- `@std/snes/sdd1` and `@std/snes/spc7110` name the S-DD1 and SPC7110
+  registers (and the Epson RTC on SPC7110-RTC boards), with small
+  macros: decompress, bank select, data port seek.
 
 ## 1.1.7 (2026-10-20)
 

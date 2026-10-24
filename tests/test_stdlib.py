@@ -224,3 +224,75 @@ def test_snes_header_istruct_emits_48_bytes() -> None:
     program.assemble_string_with_emitter(src, "main.s", writer)
     data = b"".join(writer.data)
     assert data == bytes(16) + b"A816" + bytes(17) + b"\x20" + bytes(4) + b"\x33" + bytes(5)
+
+
+@pytest.mark.parametrize(
+    ("expr", "address"),
+    [
+        ("SDD1_BASE + SDD1.DMA_ENABLE", 0x4800),
+        ("SDD1_BASE + SDD1.DMA_TRIGGER", 0x4801),
+        ("SDD1_BASE + SDD1.BANK_C0", 0x4804),
+        ("SDD1_BASE + SDD1.BANK_F0", 0x4807),
+    ],
+)
+def test_sdd1_registers(expr: str, address: int) -> None:
+    assert _resolve_symbols(f'.import "@std/snes/sdd1"\nprobe = {expr}\n')["probe"] == address
+
+
+@pytest.mark.parametrize(
+    ("expr", "address"),
+    [
+        ("SPC7110_DCU_BASE + SPC7110_DCU.DATA", 0x4800),
+        ("SPC7110_DCU_BASE + SPC7110_DCU.INDEX", 0x4804),
+        ("SPC7110_DCU_BASE + SPC7110_DCU.OFFSET_H", 0x4806),
+        ("SPC7110_DCU_BASE + SPC7110_DCU.COUNT_L", 0x4809),
+        ("SPC7110_DCU_BASE + SPC7110_DCU.MODE", 0x480B),
+        ("SPC7110_DCU_BASE + SPC7110_DCU.STATUS", 0x480C),
+        ("SPC7110_DATA_BASE + SPC7110_DATA.DATA", 0x4810),
+        ("SPC7110_DATA_BASE + SPC7110_DATA.OFFSET_B", 0x4813),
+        ("SPC7110_DATA_BASE + SPC7110_DATA.MODE", 0x4818),
+        ("SPC7110_DATA_BASE + SPC7110_DATA.ADJUST_STROBE", 0x481A),
+        ("SPC7110_ALU_BASE + SPC7110_ALU.MUL_H", 0x4825),
+        ("SPC7110_ALU_BASE + SPC7110_ALU.DIV_H", 0x4827),
+        ("SPC7110_ALU_BASE + SPC7110_ALU.REMAINDER_L", 0x482C),
+        ("SPC7110_ALU_BASE + SPC7110_ALU.STATUS", 0x482F),
+        ("SPC7110_MCU_BASE + SPC7110_MCU.CONTROL", 0x4830),
+        ("SPC7110_MCU_BASE + SPC7110_MCU.BANK_F0", 0x4833),
+        ("SPC7110_MCU_BASE + SPC7110_MCU.ROM_SIZE", 0x4834),
+        ("EPSON_RTC_BASE + EPSON_RTC.CHIP_SELECT", 0x4840),
+        ("EPSON_RTC_BASE + EPSON_RTC.STATUS", 0x4842),
+    ],
+)
+def test_spc7110_registers(expr: str, address: int) -> None:
+    assert _resolve_symbols(f'.import "@std/snes/spc7110"\nprobe = {expr}\n')["probe"] == address
+
+
+def _emit(module: str, body: str) -> str:
+    writer = StubWriter()
+    program = Program()
+    program.resolver.context.mode = AssemblyMode.DIRECT
+    program.assemble_string_with_emitter(f'.import "@std/snes/{module}"\n*=0x008000\n{body}', "main.s", writer)
+    return b"".join(writer.data).hex(" ")
+
+
+@pytest.mark.parametrize(
+    ("module", "call", "code"),
+    [
+        ("sdd1", "sdd1_decompress(0x03)", "a9 03 8f 00 48 00 8f 01 48 00 8f 0b 42 00 a9 00 8f 00 48 00"),
+        ("sdd1", "sdd1_banks(4, 5, 6, 7)", "a9 04 8f 04 48 00 a9 05 8f 05 48 00 a9 06 8f 06 48 00 a9 07 8f 07 48 00"),
+        (
+            "spc7110",
+            "spc7110_dcu_start(0x123456, 9, 0x0201)",
+            "a9 56 8f 01 48 00 a9 34 8f 02 48 00 a9 12 8f 03 48 00 a9 09 8f 04 48 00 a9 01 8f 05 48 00 a9 02 8f 06 48 00",
+        ),
+        ("spc7110", "spc7110_dcu_wait()", "af 0c 48 00 10 fa"),
+        ("spc7110", "spc7110_data_seek(0x0A0B0C)", "a9 0c 8f 11 48 00 a9 0b 8f 12 48 00 a9 0a 8f 13 48 00"),
+        ("spc7110", "spc7110_banks(1, 2, 3)", "a9 01 8f 31 48 00 a9 02 8f 32 48 00 a9 03 8f 33 48 00"),
+    ],
+)
+def test_coprocessor_helpers_emit(module: str, call: str, code: str) -> None:
+    assert _emit(module, f"    {call}\n") == code
+
+
+def test_spc7110_dcu_wait_expands_twice() -> None:
+    assert _emit("spc7110", "    spc7110_dcu_wait()\n    spc7110_dcu_wait()\n") == "af 0c 48 00 10 fa af 0c 48 00 10 fa"
