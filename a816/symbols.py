@@ -343,6 +343,11 @@ class Resolver:
         # by address) would route every label through the first
         # section's delta.
         self.alloc_sandbox_cursors: dict[str, int] = {}
+        # Where the block being walked began, for `.pad_to`: the address its
+        # bytes count from and how many bytes it held there. A `*=` or an
+        # alloc body opens one; an `@=` re-bases it keeping the count. None
+        # outside any block.
+        self.block_origin: tuple[Address, int] | None = None
         self.rom_type = RomType.low_rom
         self.current_scope_index = 0
         self.last_used_scope = 0
