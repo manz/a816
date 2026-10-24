@@ -44,8 +44,8 @@ class TestFixCli:
     ) -> None:
         target = self._write(tmp_path)
         rc = fluff_main(["fix", "--diff", str(target)])
-        # diff mode reports remaining (unfixed) hits as exit non-zero when any survive.
-        assert rc in (0, 1)
+        # rs3: a pending fix fails the run, as under `format --diff`.
+        assert rc == 1
         assert target.read_text(encoding="utf-8") == self.SRC
         out = capsys.readouterr().out
         assert "@@" in out
@@ -101,6 +101,11 @@ class TestFixCli:
             False,
             True,
         )
+
+    def test_fix_diff_on_a_clean_file_exits_0(self, tmp_path: Path) -> None:
+        clean = tmp_path / "clean.s"
+        clean.write_text('"""ok"""\n', encoding="utf-8")
+        assert fluff_main(["fix", "--diff", str(clean)]) == 0
 
     def test_fix_diff_is_plain_when_piped(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         target = self._write(tmp_path)

@@ -133,7 +133,7 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
     fix_parser.add_argument(
         "--diff",
         action="store_true",
-        help="Preview the fix as a unified diff. Does not write changes.",
+        help="Preview the fix as a unified diff without writing; exit 1 if any fix is pending.",
     )
     fix_parser.add_argument(
         "--check",
@@ -408,17 +408,16 @@ def _apply_fix_writes(
 
 
 def _report_fix_summary(args: argparse.Namespace, fixed_files: int, remaining: int, missing_err: int) -> int:
-    if args.check:
-        if fixed_files or remaining:
-            print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) would remain.", file=sys.stderr)
-            return missing_err or 1
+    """Exit 1 while anything is left: a pending fix under `--check` / `--diff`
+    (as `format --diff`, so CI showing the patch fails), or an unfixed hit."""
+    if args.check and not (fixed_files or remaining):
         print("No fixes needed.")
         return missing_err
-    if args.diff:
+    if args.check or args.diff:
         # stderr keeps stdout a diff `patch` can read.
         print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) would remain.", file=sys.stderr)
-    else:
-        print(f"Fixed {fixed_files} file(s), {remaining} hit(s) remain.")
+        return missing_err or (1 if fixed_files or remaining else 0)
+    print(f"Fixed {fixed_files} file(s), {remaining} hit(s) remain.")
     return missing_err or (1 if remaining else 0)
 
 

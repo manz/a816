@@ -99,7 +99,7 @@ deleting dead code is your call.
 
 ```
 $ a816 fix src/                       # apply safe fixes in place
-$ a816 fix --diff src/                # preview as unified diff
+$ a816 fix --diff src/                # preview as unified diff, exit 1 if any
 $ a816 fix --check src/               # exit non-zero if any file would change
 $ a816 fix --select DOC003,DOC004 src/  # only those rules
 $ a816 fix --unsafe-fixes src/        # also apply UNSAFE fixes

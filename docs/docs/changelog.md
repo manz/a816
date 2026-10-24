@@ -7,7 +7,8 @@
   unknown code is `E0516`, as in `check`. `fix` prints one line per
   file with its count (`Fixed 3 hit(s) in src/x.s (OP001 x2,
   DOC004)`), `--diff` and `--check` say what would be fixed and would
-  remain (`--diff` on stderr), and the `fix --diff` / `format --diff`
+  remain (`--diff` on stderr), `fix --diff` exits 1 while a fix is
+  pending (as `format --diff`), and the `fix --diff` / `format --diff`
   output carries no colour codes when piped.
 - `[lint.per-file-ignores]` in `a816.toml` drops rule codes in the
   files a glob matches: `"src/disasm/*.s" = ["N801"]`. Globs are
