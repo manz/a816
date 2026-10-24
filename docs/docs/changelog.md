@@ -62,6 +62,18 @@
   `near` too, and skips ROM regions that cannot reach the offset
   (ExHiROM's low banks) instead of raising.
 
+### Upgrading from 1.1
+
+- New lint hits fail `a816 check` (and the shared lint action, which
+  runs the project's own a816) on the bump: rules now look inside
+  `.alloc` bodies, and `F001` is on by default. `a816 fix` clears
+  `OP001` and `DOC007`. `F001` deletes code, so its fix is unsafe:
+  review it with `a816 fix --select F001 --unsafe-fixes --diff`, or
+  set `[lint] ignore = ["F001"]` to deal with it later. Disassembled
+  or generated sources take `[lint.per-file-ignores]`.
+- Run `a816 format` once after the bump: the comment fixes above move
+  a few comments back where they were written.
+
 ## 1.1.7 (2026-10-20)
 
 - `pr-artifact` writes the comment the game repos' own workflows wrote
