@@ -198,7 +198,7 @@ def test_the_fix_deletes_a_whole_macro() -> None:
 
 
 def test_the_fix_deletes_a_label_line() -> None:
-    assert _fixed(HEAD + "_loop:\n    rts\n") == HEAD + "    rts\n"
+    assert _fixed(HEAD + "    lda #1\n_loop:\n    rts\n") == HEAD + "    lda #1\n    rts\n"
 
 
 def test_the_fix_is_unsafe() -> None:
@@ -212,10 +212,10 @@ def test_fix_select_reaches_the_opt_in_rule(tmp_path: Path) -> None:
     from a816.fluff.cli import fluff_main
 
     target = tmp_path / "patch.s"
-    target.write_text(HEAD + "_dead:\n    rts\n", encoding="utf-8")
+    target.write_text(HEAD + "    nop\n_dead:\n    rts\n", encoding="utf-8")
     fluff_main(["fix", "--select", "F002", "--unsafe-fixes", str(target)])
 
-    assert target.read_text(encoding="utf-8") == HEAD + "    rts\n"
+    assert target.read_text(encoding="utf-8") == HEAD + "    nop\n    rts\n"
 
 
 def _fix_of(source: str) -> object:
@@ -312,10 +312,80 @@ def test_an_edited_file_replaces_its_cache_entries(unit: Path) -> None:
     assert len([key for key in rules_unused._EDGES if key[0] == str(shared.resolve())]) == 1
 
 
-def test_the_fix_takes_the_docstring_under_a_label() -> None:
-    source = HEAD + '_dead:\n"""\n    Doc.\n"""\n    rts\n'
+def test_no_fix_for_a_label_with_a_docstring() -> None:
+    assert _fix_of(HEAD + '    nop\n_dead:\n"""\n    Doc.\n"""\n    rts\n') is None
 
-    assert _fixed(source) == HEAD + "    rts\n"
+
+def test_the_label_fix_keeps_the_comment_above() -> None:
+    source = HEAD + "    lda #1\n    bne _right\n; Left side.\n_left:\n    nop\n_right:\n    rts\n"
+
+    assert _fixed(source) == HEAD + "    lda #1\n    bne _right\n; Left side.\n    nop\n_right:\n    rts\n"
+
+
+@pytest.mark.parametrize("boundary", ["rts", "rtl", "rti", "jmp.w 0x8000", "jml 0x808000", "bra _next", "brl _next"])
+def test_no_fix_for_a_label_heading_code_after_a_flow_boundary(boundary: str) -> None:
+    source = HEAD + f"_next:\n    bne _next\n    {boundary}\n; Unused: kept for reference.\n_dead:\n    sei\n    rts\n"
+
+    assert _fix_of(source) is None
+
+
+def test_no_fix_for_a_label_heading_code_at_the_start_of_a_file() -> None:
+    assert _fix_of(HEAD + "_dead:\n    rts\n") is None
+
+
+def test_no_fix_for_a_label_heading_code_at_the_start_of_a_block() -> None:
+    assert _fix_of(HEAD + ".alloc main at 0x008000 {\n_dead:\n    rts\n}\n") is None
+
+
+def test_a_macro_definition_between_does_not_hide_the_boundary() -> None:
+    source = HEAD + "    rts\n.macro m() {\n    nop\n}\n_dead:\n    sei\n    m()\n"
+
+    assert _fix_of(source) is None
+
+
+def test_code_after_a_macro_definition_can_still_fall_through() -> None:
+    source = HEAD + "    lda #1\n.macro m() {\n    nop\n}\n_mark:\n    m()\n"
+
+    assert _fixed(source) == HEAD + "    lda #1\n.macro m() {\n    nop\n}\n    m()\n"
+
+
+def test_no_fix_for_a_label_heading_code_after_an_alloc_body() -> None:
+    source = HEAD + ".alloc a at 0x008000 {\n    lda #1\n}\n_dead:\n    rts\n"
+
+    assert _fix_of(source) is None
+
+
+def test_a_label_after_an_if_block_keeps_its_fix() -> None:
+    source = HEAD + "    lda #1\n.if 1 {\n    nop\n}\n_mark:\n    rts\n"
+
+    assert _fixed(source) == HEAD + "    lda #1\n.if 1 {\n    nop\n}\n    rts\n"
+
+
+def test_no_fix_for_a_label_heading_an_anonymous_block_of_code() -> None:
+    assert _fix_of(HEAD + "    rtl\n_dead:\n    {\n        inc 0x1811\n    }\n") is None
+
+
+def test_no_fix_for_a_label_heading_a_macro_call() -> None:
+    source = HEAD + ".macro m() {\n    nop\n}\n    rts\n_dead:\n    m()\n"
+
+    assert _fix_of(source) is None
+
+
+def test_no_fix_for_a_label_after_a_block_ending_its_routine() -> None:
+    assert _fix_of(HEAD + "{\n    nop\n    rtl\n}\n_dead:\n    rts\n") is None
+
+
+@pytest.mark.parametrize("data", [".db 1", ".dw 2", ".dl 3", '.text "a"', '.ascii "a"'])
+def test_no_fix_for_a_label_heading_code_after_data(data: str) -> None:
+    assert _fix_of(HEAD + f"    lda #1\n    {data}\n_dead:\n    rts\n") is None
+
+
+def test_a_dead_routine_head_still_reports() -> None:
+    assert _names(HEAD + "    rts\n_dead:\n    sei\n") == ["_dead"]
+
+
+def test_a_label_ending_a_routine_keeps_its_fix() -> None:
+    assert _fixed(HEAD + "    nop\n    rts\n_end:\n") == HEAD + "    nop\n    rts\n"
 
 
 def test_neighbouring_fixes_leave_no_blank_line_run() -> None:

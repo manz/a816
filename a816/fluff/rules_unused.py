@@ -38,6 +38,11 @@ _DEFINING_KEYWORDS = {
     "scope": (F002, "scope"),
 }
 _BLOCK_KINDS = frozenset({"macro", "struct", "pool", "scope"})
+_FLOW_ENDS = frozenset({"rts", "rtl", "rti", "jmp", "jml", "bra", "brl"})
+_OPCODES = (TokenType.OPCODE, TokenType.OPCODE_NAKED)
+_NOTES = (TokenType.COMMENT, TokenType.DOCSTRING)
+_DEFINITION_BLOCKS = frozenset({"macro", "struct", "pool"})
+_DATA_KEYWORDS = frozenset({"db", "dw", "dl", "incbin", "text", "ascii"})
 _INTERPOLATION_RE = re.compile(r"\{([^{}]*)\}")
 _WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # path -> (mtime, tokens); a project's files are rescanned only when they
@@ -84,7 +89,8 @@ class UnusedPrivateLabel(_UnusedPrivateName):
         "is often a marker for the debugger or xdds, so it runs only when selected by its exact "
         "code (`a816 check --select F002`), not by the `F` prefix. A name reached only through "
         "debug symbols (a test hooking `module._label`) looks unused. The fix unwraps a scope "
-        "into an anonymous `{ }`, since its body emits bytes."
+        "into an anonymous `{ }`, since its body emits bytes, and deletes only a label's line. "
+        "A label heading a routine (a docstring, or code after a flow boundary) gets no fix."
     )
     bad = '"""Module."""\n_dead:\n    rts\n'
     good = '"""Module."""\n_loop:\n    bne _loop\n'
@@ -290,16 +296,19 @@ def _project_sources(path: Path) -> list[Path]:
 def _fixes(text: str, tokens: list[Token], definitions: list[_Definition]) -> dict[int, Fix | None]:
     """Unsafe fixes, by definition token index. A definition is deleted (its
     lines, a block one through its `}`, with the comment directly above it),
-    a scope unwrapped since its body emits bytes. None when the statement
-    shares a line with other code, and for a reservation, whose removal moves
-    every later one in its pool."""
+    a scope unwrapped since its body emits bytes. A code label loses only its
+    line: the comment above describes code that stays. None when the statement
+    shares a line with other code, for a reservation, whose removal moves
+    every later one in its pool, and for a label heading a routine (after a
+    flow boundary, or carrying a docstring): deleting dead code is a human
+    call."""
     fixes: dict[int, Fix | None] = {}
     deletions: list[tuple[int, int, _Definition]] = []
     for definition in definitions:
         fixes[definition.index] = None
         if definition.kind == "scope":
             fixes[definition.index] = _unwrap_fix(text, tokens, definition)
-        elif definition.kind != "reservation":
+        elif definition.kind != "reservation" and not _heads_routine(tokens, definition):
             span = _deletion(text, tokens, definition)
             if span is not None:
                 deletions.append((*span, definition))
@@ -324,12 +333,98 @@ def _statement_start(text: str, tokens: list[Token], index: int) -> tuple[int, i
 
 
 def _deletion(text: str, tokens: list[Token], definition: _Definition) -> tuple[int, int] | None:
-    """The lines a deletion removes, the comment directly above included."""
+    """The lines a deletion removes, with the comment directly above unless
+    the definition is a code label, whose code stays."""
     start, lead = _statement_start(text, tokens, definition.index)
     last = _statement_end(tokens, definition)
     if last is None or text[start:lead].strip(" \t."):
         return None
-    return _attached_comment(text, start), line_col_to_offset(text, _end_line(last) + 2, 1)
+    if definition.kind != "label":
+        start = _attached_comment(text, start)
+    return start, line_col_to_offset(text, _end_line(last) + 2, 1)
+
+
+def _heads_routine(tokens: list[Token], definition: _Definition) -> bool:
+    """A code label documented by a docstring, or starting code nothing falls
+    into: the file or block start, or after an rts, rtl, rti, jmp, jml, bra,
+    brl or data."""
+    if definition.kind != "label":
+        return False
+    following = _next_statement(tokens, definition.index)
+    if tokens[following].type is TokenType.DOCSTRING:
+        return True
+    return _is_code(tokens, following) and _ends_flow(tokens, _previous_statement(tokens, definition.index))
+
+
+def _next_statement(tokens: list[Token], index: int) -> int:
+    """The first token after `tokens[index]` past comments and block openers
+    (the EOF token at worst)."""
+    index += 1
+    while tokens[index].type in (TokenType.COMMENT, TokenType.LBRACE):
+        index += 1
+    return index
+
+
+def _is_code(tokens: list[Token], index: int) -> bool:
+    """An instruction, or a macro call (`name(...)`)."""
+    token = tokens[index]
+    if token.type is not TokenType.IDENTIFIER:
+        return token.type in _OPCODES
+    return tokens[index + 1].type is TokenType.LPAREN
+
+
+def _ends_flow(tokens: list[Token], previous: int | None) -> bool:
+    """Whether execution cannot fall past `tokens[previous]`. A block that is
+    not an alloc ends the way its last statement does."""
+    while previous is not None and tokens[previous].type is TokenType.RBRACE:
+        if _block_keyword(tokens, previous) == "alloc":
+            return True
+        previous = _previous_statement(tokens, previous)
+    if previous is None or tokens[previous].type is TokenType.LBRACE:
+        return True
+    statement = tokens[_statement_first(tokens, previous) : previous + 1]
+    if statement[0].type is TokenType.KEYWORD:
+        return statement[0].value in _DATA_KEYWORDS
+    opcode = next((token for token in statement if token.type in _OPCODES), None)
+    return opcode is not None and opcode.value.lower() in _FLOW_ENDS
+
+
+def _previous_statement(tokens: list[Token], index: int) -> int | None:
+    """The last token before `tokens[index]` that runs: notes and definition
+    blocks (macro, struct, pool), which emit nothing, are skipped."""
+    index -= 1
+    while index >= 0:
+        token = tokens[index]
+        if token.type in _NOTES:
+            index -= 1
+        elif token.type is TokenType.RBRACE and _block_keyword(tokens, index) in _DEFINITION_BLOCKS:
+            index = _statement_first(tokens, _opening_brace(tokens, index)) - 1
+        else:
+            return index
+    return None
+
+
+def _opening_brace(tokens: list[Token], index: int) -> int:
+    depth = 0
+    for back in range(index, -1, -1):
+        depth += {TokenType.RBRACE: 1, TokenType.LBRACE: -1}.get(tokens[back].type, 0)
+        if depth == 0:
+            return back
+    return 0
+
+
+def _statement_first(tokens: list[Token], index: int) -> int:
+    """The first token of the statement on `tokens[index]`'s line."""
+    line = _line(tokens[index])
+    while index and _line(tokens[index - 1]) == line and tokens[index - 1].type not in _NOTES:
+        index -= 1
+    return index
+
+
+def _block_keyword(tokens: list[Token], closing: int) -> str | None:
+    """The keyword opening the block `tokens[closing]` closes (`macro`, `alloc`, ...)."""
+    first = tokens[_statement_first(tokens, _opening_brace(tokens, closing))]
+    return first.value if first.type is TokenType.KEYWORD else None
 
 
 def _unwrap_fix(text: str, tokens: list[Token], definition: _Definition) -> Fix | None:
@@ -410,8 +505,6 @@ def _statement_end(tokens: list[Token], definition: _Definition) -> Token | None
         last = _closing_brace(tokens, index)
     elif tokens[index].type is TokenType.LABEL:
         last = _label_line_end(tokens, index)
-        if last is not None:
-            last = _docstring_below(tokens, last)
     else:
         last = _line_end(tokens, index)
     if last is None:
@@ -419,14 +512,6 @@ def _statement_end(tokens: list[Token], definition: _Definition) -> Token | None
     following = tokens[tokens.index(last) + 1]
     if following.type is not TokenType.EOF and _line(following) == _end_line(last):
         return None
-    return last
-
-
-def _docstring_below(tokens: list[Token], last: Token) -> Token:
-    """The docstring on the line right under a label documents it: it goes too."""
-    following = tokens[tokens.index(last) + 1]
-    if following.type is TokenType.DOCSTRING and _line(following) == _end_line(last) + 1:
-        return following
     return last
 
 

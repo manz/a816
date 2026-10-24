@@ -85,7 +85,15 @@ an unsafe fix, and so do `F001` / `F002`, which delete the definition
 (a block one through its `}`, with the comment directly above it) when it
 sits on lines of its own. A `.scope _name` is unwrapped into an anonymous
 `{ }` instead, since its body emits bytes; an unused `.reserve` gets no
-fix, since removing it moves every later reservation in its pool.
+fix, since removing it moves every later reservation in its pool. A code
+label loses only its own line and keeps the comment above, which
+describes code that stays. A label heading a routine gets no fix: one
+carrying a docstring, or starting code (an instruction or a macro call)
+nothing falls into: at the file or block start, after an alloc body, or
+after an `rts`, `rtl`, `rti`, `jmp`, `jml`, `bra`, `brl` or data, also as
+the last statement of a block. Macro, struct and pool definitions in
+between emit nothing and are looked through. The hit still reports;
+deleting dead code is your call.
 
 ## Autofix: `a816 fix`
 
