@@ -70,14 +70,17 @@
   `OP001` and `DOC007`. `F001` deletes code, so its fix is unsafe:
   review it with `a816 fix --select F001 --unsafe-fixes --diff`, or
   set `[lint] ignore = ["F001"]` to deal with it later. `N801` and
-  `N802` have no fix: rename hand-written names to snake case;
-  disassembled or generated sources, with labels like `L_D3541D`, take
-  `[lint.per-file-ignores]`.
+  `N802` have no fix: rename the names, or give disassembled,
+  generated or legacy-named sources (`L_D3541D`, a hack's CamelCase
+  routines) `[lint.per-file-ignores]`.
 - `from script import ...` warns: switch to `from katsuji.script import
-  ...` (see above).
+  ...` (see above). katsuji ships type hints, so a mypy override for
+  `script` can go.
 - Python 3.14 or later is required.
-- Run `a816 format` once after the bump: the comment fixes above move
-  a few comments back where they were written.
+- Run `a816 format` once after the bump and commit it on its own: the
+  comment fixes above move comments back where they were written. A
+  project formatted before 1.1.4, or never, also gets the block-body
+  re-indent: a large, whitespace-only diff.
 
 ## 1.1.7 (2026-10-20)
 
