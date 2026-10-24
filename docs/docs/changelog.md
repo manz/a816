@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-10-25)
 
 - `a816 format` keeps comments where the author put them in a block
   body. A label with a trailing comment stays at column 0 like a bare
