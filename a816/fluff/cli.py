@@ -410,13 +410,13 @@ def _apply_fix_writes(
 def _report_fix_summary(args: argparse.Namespace, fixed_files: int, remaining: int, missing_err: int) -> int:
     if args.check:
         if fixed_files or remaining:
-            print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) remain.", file=sys.stderr)
+            print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) would remain.", file=sys.stderr)
             return missing_err or 1
         print("No fixes needed.")
         return missing_err
     if args.diff:
         # stderr keeps stdout a diff `patch` can read.
-        print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) remain.", file=sys.stderr)
+        print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) would remain.", file=sys.stderr)
     else:
         print(f"Fixed {fixed_files} file(s), {remaining} hit(s) remain.")
     return missing_err or (1 if remaining else 0)

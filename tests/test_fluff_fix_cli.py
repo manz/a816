@@ -96,7 +96,11 @@ class TestFixCli:
         target = self._write(tmp_path)
         fluff_main(["fix", "--diff", str(target)])
         captured = capsys.readouterr()
-        assert ("Fixed" in captured.out, "1 file(s) would be fixed" in captured.err) == (False, True)
+        # dq6: "0 hit(s) remain" read as if they were already gone.
+        assert ("Fixed" in captured.out, "1 file(s) would be fixed, 0 hit(s) would remain" in captured.err) == (
+            False,
+            True,
+        )
 
     def test_fix_diff_is_plain_when_piped(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         target = self._write(tmp_path)
