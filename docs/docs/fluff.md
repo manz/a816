@@ -220,6 +220,23 @@ An opt-in rule (`F002`) runs only when a `select` names its exact code:
 it next to the prefixes it wants, `select = ["DOC", "E", "F", "N", "OP",
 "S", "ST", "UP", "W", "F002"]`.
 
+A rule some files break on purpose (disassembled or generated sources
+keeping their original names) is dropped for those files only:
+
+```toml
+[lint.per-file-ignores]
+"src/disasm/*.s" = ["N801"]   # labels named after the original ROM
+"src/gen" = ["N", "DOC"]      # a directory covers every file under it
+"src/{menu,miss}.s" = ["N8"]  # {a,b} lists alternatives
+```
+
+Each glob is relative to `a816.toml` and matches like `exclude`; `*`
+stays in one directory, `**` crosses them. The codes match by prefix
+and an unknown one is `E0516`. `check`, `fix` and the LSP all honour
+it, and `--select` / `--ignore` leave it in place. `check` and `fix`
+warn about a glob no `.s` / `.i` file under the toml matches: a typo,
+a wrong case, or a file that moved.
+
 ## `a816.toml` discovery
 
 Both `a816 check` and `a816 format` walk upwards from each input file

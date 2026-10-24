@@ -10,14 +10,14 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from a816.config import discover_a816_config, find_a816_toml
+from a816.config import A816Config, discover_a816_config, find_a816_toml
 from a816.error_catalog import category, explanation, is_error_code
 from a816.error_codes import E_CONFIG_UNKNOWN_LINT_RULE, lookup
 from a816.exceptions import A816ConfigError, FormattingError
 from a816.fluff.core import Diagnostic, Rule
 from a816.fluff.project import project_sources
 from a816.fluff.runner import apply_fixes, lint_file, lint_text
-from a816.fluff.selection import RuleSelection, parse_codes, unknown_codes
+from a816.fluff.selection import RuleSelection, parse_codes, unknown_codes, unmatched_per_file_patterns
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
@@ -289,6 +289,18 @@ def _flag_codes(raw: list[str] | None, flag: str) -> tuple[str, ...] | None:
     return codes
 
 
+def _warn_unmatched_per_file_ignores(config: A816Config | None, warned: set[Path]) -> None:
+    """Once per toml: name each `[lint.per-file-ignores]` glob that matches no source."""
+    if config is None or config.config_path in warned:
+        return
+    warned.add(config.config_path)
+    for pattern in unmatched_per_file_patterns(config):
+        print(
+            f"warning: {config.config_path}: [lint.per-file-ignores] {pattern} matches no source file",
+            file=sys.stderr,
+        )
+
+
 def _run_check(args: argparse.Namespace) -> int:
     select = _flag_codes(args.select, "--select")
     ignore = _flag_codes(args.ignore, "--ignore")
@@ -296,8 +308,11 @@ def _run_check(args: argparse.Namespace) -> int:
     if not sources:
         return missing_err
     total = warnings = 0
+    warned: set[Path] = set()
     for source in sources:
-        selection = RuleSelection.of(discover_a816_config(source), select, ignore)
+        config = discover_a816_config(source)
+        _warn_unmatched_per_file_ignores(config, warned)
+        selection = RuleSelection.of(config, select, ignore)
         for diag in selection.filter(lint_file(source)):
             print(diag.format())
             total += 1
@@ -349,7 +364,7 @@ def _process_fix_target(source: Path, args: argparse.Namespace, select: set[str]
     diagnostics = [
         diag
         for diag in lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
-        if selection.allows(diag.code) or diag.code in (select or ())
+        if selection.allows(diag.code, source) or diag.code in (select or ())
     ]
     new_text, applied = apply_fixes(original, diagnostics, allow_unsafe=args.unsafe_fixes, select=select)
     unfixed = [d for d in diagnostics if d not in applied]
@@ -414,7 +429,9 @@ def _run_fix(args: argparse.Namespace) -> int:
     select = _parse_select(args.select)
     fixed_files = 0
     remaining = 0
+    warned: set[Path] = set()
     for source in sources:
+        _warn_unmatched_per_file_ignores(discover_a816_config(source), warned)
         outcome = _process_fix_target(source, args, select)
         if outcome.error_code:
             return outcome.error_code
