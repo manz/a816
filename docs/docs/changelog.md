@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `a816 fix --select` narrows the report too: hits of other rules no
+  longer show (and no longer fail the run). It takes prefixes and an
+  unknown code is `E0516`, as in `check`. `fix` prints one line per
+  file with its count (`Fixed 3 hit(s) in src/x.s (OP001 x2,
+  DOC004)`), `--diff` says "would be fixed" on stderr, and the
+  `fix --diff` / `format --diff` output carries no colour codes when
+  piped.
 - `[lint.per-file-ignores]` in `a816.toml` drops rule codes in the
   files a glob matches: `"src/disasm/*.s" = ["N801"]`. Globs are
   relative to the toml, a directory covers its files, `{a,b}` lists

@@ -6,19 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from a816.fluff.cli import _parse_select, fluff_main
-
-
-def test_parse_select_flattens_repeats_and_comma_lists() -> None:
-    assert _parse_select(["DOC003,DOC004", "UP001"]) == {"DOC003", "DOC004", "UP001"}
-
-
-def test_parse_select_returns_none_when_unset() -> None:
-    assert _parse_select(None) is None
-
-
-def test_parse_select_uppercases_and_drops_blanks() -> None:
-    assert _parse_select(["doc003, ,up001"]) == {"DOC003", "UP001"}
+from a816.fluff.cli import fluff_main
 
 
 class TestFixCli:
@@ -39,7 +27,7 @@ class TestFixCli:
         assert '"""orphan"""' not in new
         assert "; orphan" in new
         out = capsys.readouterr().out
-        assert "fixed DOC004" in out
+        assert f"Fixed 1 hit(s) in {target} (DOC004)" in out
 
     def test_fix_check_exits_nonzero_when_changes_pending(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -49,7 +37,7 @@ class TestFixCli:
         assert rc == 1
         assert target.read_text(encoding="utf-8") == self.SRC  # unchanged
         out = capsys.readouterr().out
-        assert "Would fix" in out
+        assert f"Would fix 1 hit(s) in {target} (DOC004)" in out
 
     def test_fix_diff_prints_unified_diff_without_writing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -73,18 +61,56 @@ class TestFixCli:
         assert "*=" not in new
         assert ".alloc at 0x008000" in new
 
+    _MIXED = '"""m"""\n*=0x008000\nmain:\n    rts\n    """orphan"""\n    nop\n'
+
     def test_fix_select_skips_other_rules(self, tmp_path: Path) -> None:
         # File has both DOC004 (safe) and UP001 (unsafe). --select DOC004 should only
         # apply DOC004; UP001 is skipped entirely.
-        src = '"""m"""\n*=0x008000\nmain:\n    rts\n    """orphan"""\n    nop\n'
         target = tmp_path / "s.s"
-        target.write_text(src, encoding="utf-8")
+        target.write_text(self._MIXED, encoding="utf-8")
         rc = fluff_main(["fix", "--select", "DOC004", str(target)])
-        assert rc != 0  # UP001 still reported (unfixed)
+        assert rc == 0  # UP001 is outside the selection: not a remaining hit
         new = target.read_text(encoding="utf-8")
         # DOC004 applied, UP001 not.
         assert '"""orphan"""' not in new
         assert "*=0x008000" in new
+
+    def test_fix_select_narrows_the_report(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        target = tmp_path / "s.s"
+        target.write_text(self._MIXED, encoding="utf-8")
+        fluff_main(["fix", "--diff", "--select", "DOC", str(target)])
+        assert "UP001" not in capsys.readouterr().out
+
+    def test_fix_select_takes_a_prefix(self, tmp_path: Path) -> None:
+        target = tmp_path / "s.s"
+        target.write_text(self._MIXED, encoding="utf-8")
+        fluff_main(["fix", "--select", "doc", str(target)])
+        assert '"""orphan"""' not in target.read_text(encoding="utf-8")
+
+    def test_fix_select_unknown_code_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        target = self._write(tmp_path)
+        rc = fluff_main(["fix", "--select", "Z9", str(target)])
+        assert (rc, "E0516" in capsys.readouterr().err) == (2, True)
+
+    def test_fix_diff_summary_says_would(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        target = self._write(tmp_path)
+        fluff_main(["fix", "--diff", str(target)])
+        captured = capsys.readouterr()
+        assert ("Fixed" in captured.out, "1 file(s) would be fixed" in captured.err) == (False, True)
+
+    def test_fix_diff_is_plain_when_piped(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        target = self._write(tmp_path)
+        fluff_main(["fix", "--diff", str(target)])
+        assert "\033[" not in capsys.readouterr().out
+
+    def test_fix_diff_is_coloured_on_request(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        target = self._write(tmp_path)
+        fluff_main(["fix", "--diff", str(target)])
+        assert "\033[" in capsys.readouterr().out
 
     def test_fix_missing_path_reports_and_returns_2(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         rc = fluff_main(["fix", str(tmp_path / "does-not-exist.s")])

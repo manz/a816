@@ -74,7 +74,9 @@ def test_fluff_check_mode(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     assert "All files are formatted correctly." in captured.out
 
 
-def test_fluff_diff_mode(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_fluff_diff_mode(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
     file_path = tmp_path / "file.s"
     original = "start:\n    lda #0 ; comment\n"
     file_path.write_text(original, encoding="utf-8")
@@ -87,6 +89,13 @@ def test_fluff_diff_mode(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert "\x1b[32m+" in captured.out
     assert "Would reformat 1 file(s)." in captured.out
     assert file_path.read_text(encoding="utf-8") == original
+
+
+def test_fluff_diff_mode_is_plain_when_piped(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    file_path = tmp_path / "file.s"
+    file_path.write_text("start:\n    lda #0 ; comment\n", encoding="utf-8")
+    fluff_main(["format", "--diff", str(file_path)])
+    assert "\x1b[" not in capsys.readouterr().out
 
     # After formatting, diff should pass without output
     fluff_main(["format", str(file_path)])

@@ -105,6 +105,15 @@ $ a816 fix --select DOC003,DOC004 src/  # only those rules
 $ a816 fix --unsafe-fixes src/        # also apply UNSAFE fixes
 ```
 
+`fix` prints one line per file it changes (`Fixed 3 hit(s) in src/x.s
+(OP001 x2, DOC004)`, or `Would fix` under `--check`) and the hits no
+fix covers. `--select` takes codes or prefixes and replaces the
+`[lint]` table's `select`, as in `check`: it narrows the report as well
+as the fixes, and names an opt-in rule to run it. `--diff` writes the
+diff to stdout and its summary to stderr, so `a816 fix --diff | patch
+-p0` works; diffs are coloured only on a terminal (`FORCE_COLOR` and
+`NO_COLOR` override).
+
 Safe fixes are guaranteed behaviour-preserving: they don't change
 emitted bytes, drop comments, or restructure semantics. Unsafe fixes
 might change runtime behaviour, repackage author whitespace, or
