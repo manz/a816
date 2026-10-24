@@ -3,6 +3,7 @@
 import os
 import sys
 from dataclasses import dataclass
+from typing import TextIO
 
 # ANSI color codes
 _RESET = "\033[0m"
@@ -17,8 +18,8 @@ _CYAN = "\033[36m"
 _WHITE = "\033[37m"
 
 
-def _should_use_colors() -> bool:
-    """Determine if colors should be used based on environment and terminal."""
+def should_use_colors(stream: TextIO | None = None) -> bool:
+    """Colours on `stream` (stderr by default): the environment, else whether it is a terminal."""
     # NO_COLOR convention: https://no-color.org/
     if os.environ.get("NO_COLOR"):
         return False
@@ -28,12 +29,12 @@ def _should_use_colors() -> bool:
     # CLICOLOR_FORCE also forces colors
     if os.environ.get("CLICOLOR_FORCE"):
         return True
-    # Check if stderr is a TTY
-    return hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+    target = sys.stderr if stream is None else stream
+    return hasattr(target, "isatty") and target.isatty()
 
 
 # Check if output supports colors
-_USE_COLORS = _should_use_colors()
+_USE_COLORS = should_use_colors()
 
 
 def _color(text: str, *codes: str) -> str:
