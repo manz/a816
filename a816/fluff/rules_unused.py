@@ -40,10 +40,11 @@ _DEFINING_KEYWORDS = {
 _BLOCK_KINDS = frozenset({"macro", "struct", "pool", "scope"})
 _INTERPOLATION_RE = re.compile(r"\{([^{}]*)\}")
 _WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# (path, mtime) -> tokens; a project's files are rescanned only when they change.
-_TOKENS: dict[tuple[str, int], list[Token]] = {}
-# (path, mtime, include paths) -> the files its `.include`s resolve to.
-_EDGES: dict[tuple[str, int, tuple[str, ...]], tuple[Path, ...]] = {}
+# path -> (mtime, tokens); a project's files are rescanned only when they
+# change, and a rescan replaces the entry so a long-lived LSP does not grow.
+_TOKENS: dict[str, tuple[int, list[Token]]] = {}
+# (path, include paths) -> (mtime, the files its `.include`s resolve to).
+_EDGES: dict[tuple[str, tuple[str, ...]], tuple[int, tuple[Path, ...]]] = {}
 
 
 @dataclass(frozen=True)
@@ -63,12 +64,13 @@ class _UnusedPrivateName(Rule):
 
 class UnusedPrivateName(_UnusedPrivateName):
     code = F001
-    description = "module-private constant / macro / struct / pool / `.label` / `.reserve` is never used"
+    description = "private (`_`) constant / macro / struct / pool / `.label` / `.reserve` is never used"
     rationale = (
         "No other module can see a `_` name, so one its own module never references is dead. "
         "References through `.include` count both ways: a name in a shared `.i` is used when any "
         "file including it uses it. `.alloc _name` is a placement handle and never flagged. "
-        "The unsafe fix deletes the definition."
+        "The unsafe fix deletes the definition; a `.reserve` has none, since removing it moves "
+        "every later reservation in its pool."
     )
     bad = '"""Module."""\n_UNUSED = 3\n'
     good = '"""Module."""\n_STEP = 3\nlda #_STEP\n'
@@ -76,11 +78,13 @@ class UnusedPrivateName(_UnusedPrivateName):
 
 class UnusedPrivateLabel(_UnusedPrivateName):
     code = F002
-    description = "module-private code label / scope is never used"
+    description = "private (`_`) code label / scope is never used"
     rationale = (
         "Like F001 for `_label:` and `.scope _name`. Opt-in: a private label nothing branches to "
         "is often a marker for the debugger or xdds, so it runs only when selected by its exact "
-        "code (`a816 check --select F002`), not by the `F` prefix."
+        "code (`a816 check --select F002`), not by the `F` prefix. A name reached only through "
+        "debug symbols (a test hooking `module._label`) looks unused. The fix unwraps a scope "
+        "into an anonymous `{ }`, since its body emits bytes."
     )
     bad = '"""Module."""\n_dead:\n    rts\n'
     good = '"""Module."""\n_loop:\n    bne _loop\n'
@@ -97,17 +101,15 @@ def unused_private_names(ctx: LintContext) -> list[Diagnostic]:
     used = _references(tokens, skip=own)
     for path in _unit_files(ctx.path, tokens, ctx.include_paths_for_lookup or []):
         used |= _references(_file_tokens(path), skip=set())
-    reported: set[str] = set()
-    hits: list[Diagnostic] = []
+    unused: dict[str, _Definition] = {}
     for definition in definitions:
-        if definition.name in used or definition.name in reported:
-            continue
-        reported.add(definition.name)
-        hits.append(_diagnostic(ctx, tokens, definition))
-    return hits
+        if definition.name not in used:
+            unused.setdefault(definition.name, definition)
+    fixes = _fixes(ctx.text, tokens, list(unused.values()))
+    return [_diagnostic(ctx, tokens, definition, fixes[definition.index]) for definition in unused.values()]
 
 
-def _diagnostic(ctx: LintContext, tokens: list[Token], definition: _Definition) -> Diagnostic:
+def _diagnostic(ctx: LintContext, tokens: list[Token], definition: _Definition, fix: Fix | None) -> Diagnostic:
     token = tokens[definition.index]
     position = token.position
     assert position is not None
@@ -116,8 +118,8 @@ def _diagnostic(ctx: LintContext, tokens: list[Token], definition: _Definition) 
         line=position.line + 1,
         column=position.column + 1,
         code=definition.code,
-        message=f"module-private {definition.kind} `{definition.name}` is never used",
-        fix=_delete_fix(ctx.text, tokens, definition),
+        message=f"private {definition.kind} `{definition.name}` is never used",
+        fix=fix,
     )
 
 
@@ -129,10 +131,11 @@ def _scan(path: Path, text: str) -> list[Token]:
 
 
 def _file_tokens(path: Path) -> list[Token]:
-    key = (str(path), path.stat().st_mtime_ns)
-    if key not in _TOKENS:
-        _TOKENS[key] = _scan(path, path.read_text(encoding="utf-8", errors="replace"))
-    return _TOKENS[key]
+    stamp = path.stat().st_mtime_ns
+    cached = _TOKENS.get(str(path))
+    if cached is None or cached[0] != stamp:
+        cached = _TOKENS[str(path)] = (stamp, _scan(path, path.read_text(encoding="utf-8", errors="replace")))
+    return cached[1]
 
 
 def _definitions(tokens: list[Token]) -> Iterator[_Definition]:
@@ -214,10 +217,12 @@ class _IncludeGraph:
             return tuple(self._resolve(path, tokens))
         if not path.is_file():
             return ()
-        key = (str(path), path.stat().st_mtime_ns, tuple(str(directory) for directory in self._include_paths))
-        if key not in _EDGES:
-            _EDGES[key] = tuple(self._resolve(path, _file_tokens(path)))
-        return _EDGES[key]
+        key = (str(path), tuple(str(directory) for directory in self._include_paths))
+        stamp = path.stat().st_mtime_ns
+        cached = _EDGES.get(key)
+        if cached is None or cached[0] != stamp:
+            cached = _EDGES[key] = (stamp, tuple(self._resolve(path, _file_tokens(path))))
+        return cached[1]
 
     def _resolve(self, path: Path, tokens: list[Token]) -> Iterator[Path]:
         for keyword, target in pairwise(tokens):
@@ -282,24 +287,120 @@ def _project_sources(path: Path) -> list[Path]:
     return sorted(sources)
 
 
-def _delete_fix(text: str, tokens: list[Token], definition: _Definition) -> Fix | None:
-    """Unsafe: delete the defining statement's lines, a block one through its
-    `}`. None when the statement shares a line with other code."""
-    index = definition.index
+def _fixes(text: str, tokens: list[Token], definitions: list[_Definition]) -> dict[int, Fix | None]:
+    """Unsafe fixes, by definition token index. A definition is deleted (its
+    lines, a block one through its `}`, with the comment directly above it),
+    a scope unwrapped since its body emits bytes. None when the statement
+    shares a line with other code, and for a reservation, whose removal moves
+    every later one in its pool."""
+    fixes: dict[int, Fix | None] = {}
+    deletions: list[tuple[int, int, _Definition]] = []
+    for definition in definitions:
+        fixes[definition.index] = None
+        if definition.kind == "scope":
+            fixes[definition.index] = _unwrap_fix(text, tokens, definition)
+        elif definition.kind != "reservation":
+            span = _deletion(text, tokens, definition)
+            if span is not None:
+                deletions.append((*span, definition))
+    for start, end, definition in _without_blank_runs(text, sorted(deletions, key=lambda item: item[0])):
+        fixes[definition.index] = Fix(
+            edits=(TextEdit(start=start, end=end, replacement=""),),
+            applicability=Applicability.UNSAFE,
+            description=f"delete unused `{definition.name}`",
+        )
+    return fixes
+
+
+def _statement_start(text: str, tokens: list[Token], index: int) -> tuple[int, int]:
+    """(line start, statement start) offsets of the statement defining `tokens[index]`."""
     first = tokens[index] if _starts_statement(tokens, index) else tokens[index - 1]
-    first_position = first.position
-    assert first_position is not None
-    start = line_col_to_offset(text, first_position.line + 1, 1)
-    lead = line_col_to_offset(text, first_position.line + 1, first_position.column + 1)
+    position = first.position
+    assert position is not None
+    return (
+        line_col_to_offset(text, position.line + 1, 1),
+        line_col_to_offset(text, position.line + 1, position.column + 1),
+    )
+
+
+def _deletion(text: str, tokens: list[Token], definition: _Definition) -> tuple[int, int] | None:
+    """The lines a deletion removes, the comment directly above included."""
+    start, lead = _statement_start(text, tokens, definition.index)
     last = _statement_end(tokens, definition)
     if last is None or text[start:lead].strip(" \t."):
         return None
-    end = line_col_to_offset(text, _end_line(last) + 2, 1)
+    return _attached_comment(text, start), line_col_to_offset(text, _end_line(last) + 2, 1)
+
+
+def _unwrap_fix(text: str, tokens: list[Token], definition: _Definition) -> Fix | None:
+    """`.scope _name {` becomes an anonymous `{`: the body still emits, and its
+    labels stay local to the block."""
+    start, lead = _statement_start(text, tokens, definition.index)
+    indent = text[start:lead]
+    brace = next((token for token in tokens[definition.index :] if token.type is TokenType.LBRACE), None)
+    if brace is None or indent.strip(" \t."):
+        return None
+    brace_position = brace.position
+    assert brace_position is not None
+    end = line_col_to_offset(text, brace_position.line + 1, brace_position.column + 1) + 1
     return Fix(
-        edits=(TextEdit(start=start, end=end, replacement=""),),
+        edits=(TextEdit(start=start, end=end, replacement=indent.rstrip(".") + "{"),),
         applicability=Applicability.UNSAFE,
-        description=f"delete unused `{definition.name}`",
+        description=f"unwrap unused scope `{definition.name}`",
     )
+
+
+def _line_start(text: str, offset: int) -> int:
+    """Start of the line before the one starting at `offset`."""
+    return text.rfind("\n", 0, offset - 1) + 1
+
+
+def _next_line(text: str, offset: int) -> int:
+    """Start of the line after the one holding `offset`."""
+    newline = text.find("\n", offset)
+    return len(text) if newline < 0 else newline + 1
+
+
+def _attached_comment(text: str, start: int) -> int:
+    """Move `start` up over the `;` lines directly above it."""
+    while start and text[_line_start(text, start) : start].lstrip().startswith(";"):
+        start = _line_start(text, start)
+    return start
+
+
+def _is_blank(text: str, start: int, end: int) -> bool:
+    return not text[start:end].strip()
+
+
+def _without_blank_runs(
+    text: str, deletions: list[tuple[int, int, _Definition]]
+) -> Iterator[tuple[int, int, _Definition]]:
+    """Widen sorted deletions so they leave no longer run of blank lines than
+    the text had. Deletions only blank lines apart form a group: the later
+    ones take the blank lines above them, and the first takes those above the
+    group when a blank line (or the end of the file) follows it. Each edit
+    stays on its own lines, so applying only some of them never merges two
+    blank runs either."""
+    groups: list[list[tuple[int, int, _Definition]]] = []
+    for deletion in deletions:
+        if groups and _is_blank(text, groups[-1][-1][1], deletion[0]):
+            groups[-1].append(deletion)
+        else:
+            groups.append([deletion])
+    for group in groups:
+        end = group[-1][1]
+        below = end
+        while below < len(text) and _is_blank(text, below, _next_line(text, below)):
+            below = _next_line(text, below)
+        start = group[0][0]
+        if below != end or below == len(text):
+            while start and _is_blank(text, _line_start(text, start), start):
+                start = _line_start(text, start)
+        previous_end = start
+        for index, (_, deletion_end, definition) in enumerate(group):
+            last = index == len(group) - 1
+            yield previous_end, below if last and below == len(text) else deletion_end, definition
+            previous_end = deletion_end
 
 
 def _statement_end(tokens: list[Token], definition: _Definition) -> Token | None:
@@ -309,6 +410,8 @@ def _statement_end(tokens: list[Token], definition: _Definition) -> Token | None
         last = _closing_brace(tokens, index)
     elif tokens[index].type is TokenType.LABEL:
         last = _label_line_end(tokens, index)
+        if last is not None:
+            last = _docstring_below(tokens, last)
     else:
         last = _line_end(tokens, index)
     if last is None:
@@ -316,6 +419,14 @@ def _statement_end(tokens: list[Token], definition: _Definition) -> Token | None
     following = tokens[tokens.index(last) + 1]
     if following.type is not TokenType.EOF and _line(following) == _end_line(last):
         return None
+    return last
+
+
+def _docstring_below(tokens: list[Token], last: Token) -> Token:
+    """The docstring on the line right under a label documents it: it goes too."""
+    following = tokens[tokens.index(last) + 1]
+    if following.type is TokenType.DOCSTRING and _line(following) == _end_line(last) + 1:
+        return following
     return last
 
 

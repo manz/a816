@@ -229,3 +229,106 @@ def test_no_fix_for_a_label_with_code_on_its_line() -> None:
 
 def test_no_fix_for_a_constant_continuing_below() -> None:
     assert _fix_of(HEAD + "_K = (1 +\n    2)\n") is None
+
+
+def test_the_fix_unwraps_a_scope_keeping_its_body() -> None:
+    source = HEAD + ".scope _s {\n    lda #1\n_x:\n    bra _x\n}\n"
+
+    assert _fixed(source) == HEAD + "{\n    lda #1\n_x:\n    bra _x\n}\n"
+
+
+def _assembled(source: str) -> bytes:
+    import io
+
+    from a816.program import Program
+    from a816.writers import SFCWriter
+
+    buffer = io.BytesIO()
+    Program().assemble_string_with_emitter(source, "main.s", SFCWriter(buffer))
+    return buffer.getvalue()
+
+
+def test_an_unwrapped_scope_assembles_to_the_same_bytes() -> None:
+    source = HEAD + "*= 0x008000\n.scope _s {\n    lda #1\n_x:\n    bra _x\n}\n"
+
+    assert _assembled(_fixed(source)) == _assembled(source)
+
+
+def test_no_fix_for_a_reservation() -> None:
+    source = HEAD + ".pool p { bss\n    range 0x7E2000 0x7E2FFF\n}\n.reserve _r 4 in p\n"
+
+    assert _fix_of(source) is None
+
+
+def test_the_fix_takes_the_comment_attached_above() -> None:
+    source = HEAD + "lda #1\n\n; Step size.\n; In bytes.\n_K = 3\n\nrts\n"
+
+    assert _fixed(source) == HEAD + "lda #1\n\nrts\n"
+
+
+def test_a_comment_after_a_blank_line_stays() -> None:
+    source = HEAD + "; Section.\n\n_K = 3\nrts\n"
+
+    assert _fixed(source) == HEAD + "; Section.\n\nrts\n"
+
+
+def test_the_fix_leaves_no_blank_line_run() -> None:
+    source = HEAD + "lda #1\n\n\n_K = 3\n\n\nrts\n"
+
+    assert _fixed(source) == HEAD + "lda #1\n\n\nrts\n"
+
+
+def test_the_fix_leaves_no_trailing_blank_lines() -> None:
+    source = HEAD + "lda #1\n\n_K = 3\n"
+
+    assert _fixed(source) == HEAD + "lda #1\n"
+
+
+def test_a_fixed_file_passes_the_formatter() -> None:
+    from a816.formatter.core import A816Formatter
+
+    source = HEAD + "lda #1\n\n\n; K.\n_K = 3\n\n\n.macro _m() {\n    nop\n}\n\n\nrts\n"
+    fixed = _fixed(source)
+
+    assert A816Formatter().format_text(fixed) == fixed
+
+
+def test_an_edited_file_replaces_its_cache_entries(unit: Path) -> None:
+    import os
+
+    from a816.fluff import rules_unused
+
+    shared = unit / "shared.i"
+    shared.write_text('"""Shared."""\nlda #_K\n', encoding="utf-8")
+    main = unit / "main.s"
+    main.write_text(HEAD + '_K = 3\n.include "shared.i"\n', encoding="utf-8")
+    lint_text(main.read_text(encoding="utf-8"), main)
+    for step in (1, 2):
+        shared.write_text(shared.read_text(encoding="utf-8") + f"; edit {step}\n", encoding="utf-8")
+        os.utime(shared, ns=(step * 10**9, step * 10**9))
+        lint_text(main.read_text(encoding="utf-8"), main)
+
+    assert [key for key in rules_unused._TOKENS if key == str(shared.resolve())] == [str(shared.resolve())]
+    assert len([key for key in rules_unused._EDGES if key[0] == str(shared.resolve())]) == 1
+
+
+def test_the_fix_takes_the_docstring_under_a_label() -> None:
+    source = HEAD + '_dead:\n"""\n    Doc.\n"""\n    rts\n'
+
+    assert _fixed(source) == HEAD + "    rts\n"
+
+
+def test_neighbouring_fixes_leave_no_blank_line_run() -> None:
+    from a816.formatter.core import A816Formatter
+
+    source = HEAD + "K := 1\n_A := 2\n\n_B := 3\n\n\n_C := 4\n_D := 5\n\n\n; Next.\nE := K\n"
+    fixed = _fixed(source)
+
+    assert A816Formatter().format_text(fixed) == fixed
+
+
+def test_the_message_holds_for_a_label_local_to_an_alloc_body() -> None:
+    source = HEAD + ".alloc main at 0x008000 {\n_never:\n    rts\n}\n"
+    (diag,) = [d for d in lint_text(source, Path("main.s")) if d.code == "F002"]
+
+    assert diag.message == "private label `_never` is never used"

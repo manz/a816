@@ -9,8 +9,8 @@
   constant, macro, struct, pool, `.label` or `.reserve` nothing in its
   translation unit references (uses through `.include` count both
   ways), `F002` (opt-in, `--select F002`) for `_` code labels and
-  scopes. Both carry an unsafe fix that deletes the definition. A
-  project with dead private names gets new `F001` hits on the bump.
+  scopes. Both carry an unsafe fix that deletes the definition (a
+  scope is unwrapped, a `.reserve` has no fix). A project with dead private names gets new `F001` hits on the bump.
 - a816 depends on `katsuji` (no extras: no numpy or pillow) and its
   `.table` directive reads tables with `katsuji.script.Table`. The
   `script` package moved there: `from script import ...` still works

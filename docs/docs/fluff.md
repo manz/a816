@@ -60,7 +60,7 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `DOC007` | Docstring content is under- / over-indented relative to its opening `"""` (mirrors pydocstyle's D207 / D208). |
 | `E501` | Source line longer than 120 characters. |
 | `F001` | Module-private (`_`) constant, macro, struct, pool, `.label` or `.reserve` that nothing in its translation unit references. No other module can see it, so it is dead. A use in a file the module includes, or in a file including it, counts; a name in a shared `.i` that no includer uses is reported once, in the `.i`. `.alloc _name` is a placement handle and never flagged. |
-| `F002` | Same for code labels (`_name:`) and `.scope _name`. **Opt-in**: a private label nothing branches to is often a marker for the debugger or xdds, so it runs only when selected by its exact code (`a816 check --select F002`), never by default or through the `F` prefix. |
+| `F002` | Same for code labels (`_name:`, module-private or local to an alloc body) and `.scope _name`. **Opt-in**: a private label nothing branches to is often a marker for the debugger or xdds, so it runs only when selected by its exact code (`a816 check --select F002`), never by default or through the `F` prefix. A name reached only from outside the sources, like a test hooking `module._label` through the `.adbg`, looks unused to the rule. |
 | `N801` | Label name is not snake_case. |
 | `N802` | Constant name is not snake_case or SCREAMING_SNAKE_CASE. |
 | `S001` | `(expr as T).field` / `p := (expr as T)` / `.istruct T { ... }` references a struct type that isn't declared in the current translation unit. |
@@ -82,7 +82,10 @@ Rules marked fixable in `a816 check` output carry `[*]` (safe) or
 `DOC007` ship a safe fix, and `W0001` does when the blob is alone in a
 named alloc (`vwf_font`, `sizeof(vwf_font)`); `DOC005` and `UP001` ship
 an unsafe fix, and so do `F001` / `F002`, which delete the definition
-(a block one through its `}`) when it sits on lines of its own.
+(a block one through its `}`, with the comment directly above it) when it
+sits on lines of its own. A `.scope _name` is unwrapped into an anonymous
+`{ }` instead, since its body emits bytes; an unused `.reserve` gets no
+fix, since removing it moves every later reservation in its pool.
 
 ## Autofix: `a816 fix`
 
