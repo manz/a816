@@ -63,7 +63,7 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `S001` | `(expr as T).field` / `p := (expr as T)` / `.istruct T { ... }` references a struct type that isn't declared in the current translation unit. |
 | `S003` | Redundant cast: `(p as T).field` when `p` is already typed-bound to `T`. |
 | `S004` | The same `(expr as T)` cast appears more than once in the file; promote it to a `:=` typed bind. |
-| `OP001` | Explicit `.w` / `.l` size suffix the operand would get anyway. |
+| `OP001` | Explicit `.w` / `.l` size suffix a literal address would get anyway. Immediates are not flagged: `lda.w #0x1234` states the 16-bit accumulator the code expects. |
 | `ST001` | Placement directive (`*=`, `.alloc ... at`, `.relocate`) nested inside an `.alloc` body: it re-anchors the code the alloc was placing. |
 | `ST002` | `.import` outside the file prelude (after a placement or inside a block); the build rejects it with `E0311`. |
 | `UP001` | Legacy `*= ADDR` placement should be `.alloc at ADDR { ... }`. |

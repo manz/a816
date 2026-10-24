@@ -16,6 +16,9 @@
   nothing in a project whose modules own their placement. Expect new
   hits on the bump; `a816 fix` removes the redundant suffixes
   (`OP001`) and re-indents docstrings (`DOC007`).
+- `OP001` no longer flags `.w` / `.l` on an immediate: its width is
+  the M/X register width, which the suffix states. Literal addresses
+  (`sta.w 0x2115`) are still flagged.
 - a816 requires Python 3.14 or later; CI only ever tested 3.14, and
   3.10 already failed to import.
 - `@std/snes/sdd1` and `@std/snes/spc7110` name the S-DD1 and SPC7110
