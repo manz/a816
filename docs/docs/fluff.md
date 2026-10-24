@@ -63,12 +63,16 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `S001` | `(expr as T).field` / `p := (expr as T)` / `.istruct T { ... }` references a struct type that isn't declared in the current translation unit. |
 | `S003` | Redundant cast: `(p as T).field` when `p` is already typed-bound to `T`. |
 | `S004` | The same `(expr as T)` cast appears more than once in the file; promote it to a `:=` typed bind. |
-| `OP001` | Explicit `.w` / `.l` size suffix the operand would get anyway. |
+| `OP001` | Explicit `.w` / `.l` size suffix a literal address would get anyway. Immediates are not flagged: `lda.w #0x1234` states the 16-bit accumulator the code expects. |
 | `ST001` | Placement directive (`*=`, `.alloc ... at`, `.relocate`) nested inside an `.alloc` body: it re-anchors the code the alloc was placing. |
 | `ST002` | `.import` outside the file prelude (after a placement or inside a block); the build rejects it with `E0311`. |
 | `UP001` | Legacy `*= ADDR` placement should be `.alloc at ADDR { ... }`. |
 | `W0002` | `.if` on a name the project defines nowhere: it reads as false, so a deleted or misspelt flag drops code silently. Declare a `-D`-only name under `[defines]` in `a816.toml`. |
 | `W0001` | Reference to a name `.incbin` derived from its path (`assets_vwf_bin`, `assets_vwf_bin__size`); the build warns on it too. A warning: `a816 check` prints it but still exits 0. |
+
+Per-node rules (`OP001`, `N801`, `N802`, `DOC007`, ...) look inside
+`.alloc`, `.relocate`, `.scope`, macro, `.if` and `.for` bodies, so
+code a module places itself is linted like top-level code.
 
 Rules marked fixable in `a816 check` output carry `[*]` (safe) or
 `[!]` (unsafe). Today: `S003`, `OP001`, `DOC003`, `DOC004`, `DOC006`,

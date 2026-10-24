@@ -1,24 +1,21 @@
 """Opcode rules: opcode-size suffix hygiene.
 
 `OP001` flags an explicit `.w` / `.l` width suffix on an opcode whose
-literal numeric operand already forces the assembler to pick that
+literal address operand already forces the assembler to pick that
 same width. The suffix is noise; dropping it doesn't change the
 emitted bytes.
 
-`.b` is intentionally not flagged. Its meaning depends on the
-runtime M/X register width (which fluff doesn't track), so a `.b`
-on a small immediate may be the user's only way to force an
-8-bit-form opcode under `.a16` / `rep #$20`.
+`.b` is intentionally not flagged, and neither are immediates. An
+immediate's width is the M/X register width at run time, which fluff
+doesn't track: `lda.w #0x1234` states the 16-bit accumulator the code
+expects, and `.b` may be the only way to force an 8-bit-form opcode
+under `.a16` / `rep #$20`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-# Addressing modes whose width is purely a function of the operand
-# value width — what we can safely reason about without simulating
-# the resolver. Immediate is the obvious case; absolute / long share
-# the same value-width inference.
 from a816.cpu.types import AddressingMode
 from a816.fluff.core import (
     Applicability,
@@ -32,9 +29,11 @@ from a816.fluff.core import (
 from a816.parse.ast.nodes import AstNode, OpcodeAstNode
 from a816.parse.ast.nodes.base import Term
 
+# Addressing modes whose width is purely a function of the operand
+# value width, which we can reason about without simulating the
+# resolver. Immediate is left out: its width follows M/X.
 _WIDTH_DRIVEN_MODES = frozenset(
     {
-        AddressingMode.immediate,
         AddressingMode.direct,
         AddressingMode.direct_indexed,
     }
@@ -80,17 +79,18 @@ class RedundantOpcodeSizeSuffix(Rule):
     code = "OP001"
     description = "explicit `.w` / `.l` size suffix is redundant"
     rationale = (
-        "When the literal operand needs exactly that width (`0x100` to "
+        "When the literal address needs exactly that width (`0x100` to "
         "`0xFFFF` for `.w`, above `0xFFFF` for `.l`), the assembler picks "
         "it from the value "
         "alone. Writing the suffix anyway adds visual noise and "
-        "lies about why the width was chosen. `.b` is left alone "
-        "because under `rep #$20` / `.a16` it's the only way to "
-        "force an 8-bit immediate opcode, and `jmp.l` / `jsr.l` because "
+        "lies about why the width was chosen. Immediates are left alone "
+        "because their width is the M/X register width, which the suffix "
+        "documents; `.b` because under `rep #$20` / `.a16` it's the only way "
+        "to force an 8-bit immediate opcode; and `jmp.l` / `jsr.l` because "
         "a bare 24-bit target in the caller's bank is a 16-bit jump."
     )
-    bad = '"""Module."""\nlda.w #0x1234\n'
-    good = '"""Module."""\nlda #0x1234\n'
+    bad = '"""Module."""\nlda.w 0x1234\n'
+    good = '"""Module."""\nlda 0x1234\n'
     accepts = (OpcodeAstNode,)
 
     def visit(self, ctx: LintContext, node: AstNode) -> Iterable[Diagnostic]:

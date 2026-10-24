@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from a816.parse.ast.nodes import (
+    AllocAstNode,
     AstNode,
     BlockAstNode,
     CommentAstNode,
@@ -20,6 +21,7 @@ from a816.parse.ast.nodes import (
     LabelAstNode,
     LabelDeclAstNode,
     MacroAstNode,
+    RelocateAstNode,
     ScopeAstNode,
 )
 
@@ -249,7 +251,10 @@ def target_name(node: AstNode) -> str | None:
 
 
 def flatten_nodes(nodes: list[AstNode]) -> list[AstNode]:
-    """Flatten nodes through scopes / blocks / control-flow.
+    """Flatten nodes through scopes / blocks / placement bodies / control-flow.
+
+    `.alloc` and `.relocate` bodies hold most code since modules own
+    their placement, so per-node rules (OP001 and friends) must see them.
 
     `.if` / `.for` bodies are part of the AST regardless of whether
     the condition resolves at parse time, so the lint sees both
@@ -260,7 +265,7 @@ def flatten_nodes(nodes: list[AstNode]) -> list[AstNode]:
     for node in nodes:
         out.append(node)
         match node:
-            case ScopeAstNode():
+            case ScopeAstNode() | AllocAstNode() | RelocateAstNode():
                 out.extend(flatten_nodes(list(node.body.body)))
             case BlockAstNode() | CompoundAstNode():
                 out.extend(flatten_nodes(list(node.body)))
