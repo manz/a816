@@ -77,10 +77,12 @@
   ...` (see above). katsuji ships type hints, so a mypy override for
   `script` can go.
 - Python 3.14 or later is required.
-- Run `a816 format` once after the bump and commit it on its own: the
-  comment fixes above move comments back where they were written. A
-  project formatted before 1.1.4, or never, also gets the block-body
+- Run `a816 format` once after the bump and commit it on its own. A
+  project formatted before 1.1.4, or never, gets the block-body
   re-indent: a large, whitespace-only diff.
+- 1.2 stops moving comments, but comments an older format pass already
+  moved stay where it left them. Find them in that format commit's diff
+  (comment lines, `^[-+]\s*;`) and put them back by hand.
 
 ## 1.1.7 (2026-10-20)
 
