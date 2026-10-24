@@ -120,6 +120,7 @@ class LintContext:
     _placement_hits: dict[str, list[Diagnostic]] | None = field(default=None, init=False, repr=False)
     _imported_struct_types: set[str] | None = field(default=None, init=False, repr=False)
     _included_struct_types: set[str] | None = field(default=None, init=False, repr=False)
+    _unused_hits: list[Diagnostic] | None = field(default=None, init=False, repr=False)
 
     @property
     def flat_nodes(self) -> list[AstNode]:
@@ -149,6 +150,14 @@ class LintContext:
         if self._placement_hits is None:
             self._placement_hits = _PlacementWalker(self).scan()
         return self._placement_hits.get(code, [])
+
+    def unused_hits(self) -> list[Diagnostic]:
+        """F001 / F002 share one scan of the translation unit; cached."""
+        if self._unused_hits is None:
+            from a816.fluff.rules_unused import unused_private_names
+
+            self._unused_hits = unused_private_names(self)
+        return self._unused_hits
 
 
 def build_noqa_map(text: str) -> dict[int, set[str] | None]:
@@ -329,6 +338,8 @@ class Rule:
       `accepts`: per-node rules; tuple of AST node types the visitor wants.
       `needs_ast`: rules that can run on raw text (E501) set this to False
         so they keep working when parsing fails.
+      `opt_in`: the rule runs only when selected by its exact code, never by
+        default or through a prefix.
     """
 
     code: ClassVar[str] = ""
@@ -338,6 +349,7 @@ class Rule:
     good: ClassVar[str] = ""
     accepts: ClassVar[tuple[type[AstNode], ...]] = ()
     needs_ast: ClassVar[bool] = True
+    opt_in: ClassVar[bool] = False
 
     registry: ClassVar[dict[str, Rule]] = {}
 
