@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import re
 
-from a816.cpu.mapping import Address
-from a816.error_codes import E_CODEGEN_BAD_SIZE
+from a816.cpu.mapping import Address, byte_distance
+from a816.error_codes import E_CODEGEN_BAD_PAD, E_CODEGEN_BAD_SIZE
 from a816.parse.ast.expression import eval_expression_str
 from a816.parse.nodes.errors import NodeError
 from a816.parse.nodes.expr import ExpressionNode
@@ -80,6 +80,56 @@ class ReserveNode(NodeBase):
     def emit(self, current_addr: Address) -> bytes:
         del current_addr
         return b""
+
+
+class PadToNode(NodeBase):
+    """`.pad_to OFFSET [, BYTE]`: emit BYTE until the block is OFFSET bytes long.
+
+    The block is the enclosing alloc body or `*=` section, opened in
+    `resolver.block_origin` by whoever walks it. Each walk sizes the padding
+    from there, so `emit` writes what the last walk measured.
+    """
+
+    def __init__(
+        self, offset_node: ValueNodeProtocol, fill_node: ValueNodeProtocol | None, resolver: Resolver, file_info: Token
+    ) -> None:
+        self.offset_node = offset_node
+        self.fill_node = fill_node
+        self.resolver = resolver
+        self.file_info = file_info
+        self._count = 0
+        self._fill = 0
+
+    def _error(self, message: str) -> NodeError:
+        return NodeError(message, self.file_info, code=str(E_CODEGEN_BAD_PAD))
+
+    def _int(self, node: ValueNodeProtocol) -> int:
+        value = node.get_value()
+        if not isinstance(value, int):
+            raise self._error(f"`.pad_to` takes integers, got {value!r}")
+        return value
+
+    def pc_after(self, current_pc: Address) -> Address:
+        offset = self._int(self.offset_node)
+        if offset < 0:
+            raise self._error(f"`.pad_to` offset {offset} is negative")
+        fill = self._int(self.fill_node) if self.fill_node is not None else 0
+        if not 0 <= fill <= 0xFF:
+            raise self._error(f"`.pad_to` fill byte {fill:#x} is not a byte")
+        origin = self.resolver.block_origin
+        if origin is None:
+            raise self._error("`.pad_to` outside an `.alloc` body or `*=` section has no block to pad")
+        start, before = origin
+        length = before + byte_distance(start, current_pc)
+        if length > offset:
+            raise self._error(f"`.pad_to {offset:#x}`: the block is already {length:#x} bytes long")
+        self._count = offset - length
+        self._fill = fill
+        return current_pc + self._count
+
+    def emit(self, current_addr: Address) -> bytes:
+        del current_addr
+        return bytes([self._fill]) * self._count
 
 
 class BinaryNode(NodeBase):

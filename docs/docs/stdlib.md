@@ -27,6 +27,8 @@ init:
 | `@std/snes/joypad`   | `$4016`–`$4017` serial joypad ports               |
 | `@std/snes/wram`     | `$2180`–`$2183` WRAM streaming port               |
 | `@std/snes/header`   | `$FFB0`–`$FFFF` cartridge header + vectors        |
+| `@std/snes/sdd1`     | `$4800`–`$4807` S-DD1 decompression + ROM banks   |
+| `@std/snes/spc7110`  | `$4800`–`$4842` SPC7110 units + Epson RTC         |
 
 Each module exports a single struct named after the block (`PPU`,
 `CPU_REGS`, `DMAChannel`, …) plus a base-address constant
@@ -97,6 +99,32 @@ instead, which leaves the rest as the ROM has them.
 
 The checksum is out of scope: both checksum fields stay 0 until a
 post-link step fills them in.
+
+## Coprocessors
+
+`@std/snes/sdd1` and `@std/snes/spc7110` name the registers of the two
+decompression chips, after ares. a816 has no compressor or
+decompressor: that is tooling, in katsuji or the game's repo.
+
+| Module    | Structs                                                          | Macros |
+|-----------|------------------------------------------------------------------|--------|
+| `sdd1`    | `SDD1`                                                           | `sdd1_decompress(channels)`, `sdd1_banks(c0, d0, e0, f0)` |
+| `spc7110` | `SPC7110_DCU`, `SPC7110_DATA`, `SPC7110_ALU`, `SPC7110_MCU`, `EPSON_RTC` | `spc7110_dcu_start(table, index, offset)`, `spc7110_dcu_wait()`, `spc7110_data_seek(offset)`, `spc7110_banks(d0, e0, f0)` |
+
+The macros expect an 8-bit accumulator and clobber it.
+
+```ca65
+.import "@std/snes/spc7110"
+
+    spc7110_dcu_start(0x080000, 3, 0)  ; directory at data ROM $08:0000, entry 3
+    spc7110_dcu_wait()
+    lda SPC7110_DCU_BASE + SPC7110_DCU.DATA
+```
+
+The SPC7110 board maps `$D0`-`$FF` linearly over the data ROM, which
+is what the power-on banks 0, 1 and 2 at `$4831`-`$4833` show. A game
+that reprograms them (Far East of Eden Zero sets 1, 2, 3 at reset)
+describes its banks with `[map.N]` in its `a816.toml`.
 
 ## How resolution works
 

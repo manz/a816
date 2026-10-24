@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from a816.boards import boards
 from a816.cpu.cpu_65c816 import RomType
+from a816.cpu.mapping import Bus
+from a816.mappers import map_on_bus
+from a816.object_file import BusMapping
 from a816.symbols import high_rom_bus, low_rom_bus
 from a816.xdds import (
     apply_ips_patch,
@@ -19,6 +23,14 @@ from a816.xdds import (
     show_mapping_info,
     xdds_main,
 )
+
+
+def _board_bus(board: str) -> Bus:
+    bus = Bus(board)
+    for index, region in enumerate(boards()[board]):
+        if not region.writable:
+            map_on_bus(bus, BusMapping.bml(f"board.{index}", region.address, region.mask, region.base, 0x600000))
+    return bus
 
 
 class TestCreateParser:
@@ -153,6 +165,31 @@ class TestPhysicalToLogical:
         # Physical 0x10000 -> HiROM $41:0000
         logical = physical_to_logical(high_rom_bus, 0x10000)
         assert logical == 0x410000
+
+    def test_lorom_near_the_mirror_lands_in_the_mirror(self) -> None:
+        assert physical_to_logical(low_rom_bus, 0x8000, near=0x808000) == 0x818000
+
+    def test_hirom_near_the_fast_mirror_lands_there(self) -> None:
+        assert physical_to_logical(high_rom_bus, 0x10000, near=0xC00000) == 0xC10000
+
+    def test_near_a_writable_bank_falls_back_to_the_first_rom_mapping(self) -> None:
+        assert physical_to_logical(low_rom_bus, 0x8000, near=0x7E0000) == 0x018000
+
+    def test_exhirom_near_the_low_banks_lands_there(self) -> None:
+        bus = _board_bus("SHVC-LJ3M-01")
+        assert physical_to_logical(bus, 0x418000, near=0x400000) == 0x418000
+
+    def test_near_an_unmapped_bank_falls_back_to_the_first_rom_mapping(self) -> None:
+        assert physical_to_logical(low_rom_bus, 0x8000, near=0xFC0000) == 0x018000
+
+    def test_near_a_region_that_cannot_reach_the_offset_falls_back(self) -> None:
+        assert physical_to_logical(_board_bus("SHVC-LJ3M-01"), 0x410000, near=0x008000) == 0x410000
+
+    def test_exhirom_without_near_takes_the_first_rom_region(self) -> None:
+        assert physical_to_logical(_board_bus("SHVC-LJ3M-01"), 0x418000) == 0x018000
+
+    def test_exhirom_skips_regions_that_cannot_reach_the_offset(self) -> None:
+        assert physical_to_logical(_board_bus("SHVC-LJ3M-01"), 0x410000) == 0x410000
 
 
 class TestBusMappings:

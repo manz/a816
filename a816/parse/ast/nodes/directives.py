@@ -188,6 +188,24 @@ class ReserveAstNode(AstNode):
         return f".res {self.size.to_canonical()}"
 
 
+class PadToAstNode(AstNode):
+    """`.pad_to OFFSET [, BYTE]`: fill the current block with BYTE until it
+    is OFFSET bytes long. `fill` is None when the source gives no BYTE."""
+
+    def __init__(self, offset: ExpressionAstNode, fill: ExpressionAstNode | None, file_info: Token):
+        super().__init__("pad_to", file_info)
+        self.offset: Final[ExpressionAstNode] = offset
+        self.fill: Final[ExpressionAstNode | None] = fill
+
+    def to_representation(self) -> tuple[Any, ...]:
+        fill = self.fill.to_representation()[0] if self.fill is not None else None
+        return self.kind, self.offset.to_representation()[0], fill
+
+    def to_canonical(self) -> str:
+        fill = f", {self.fill.to_canonical()}" if self.fill is not None else ""
+        return f".pad_to {self.offset.to_canonical()}{fill}"
+
+
 class ReserveTypedAstNode(AstNode):
     """`.reserve NAME as TYPE [at ADDR] in POOL`: reserve sizeof(TYPE) in a bss
     pool and publish NAME plus NAME.<field> at the allocator-assigned (or

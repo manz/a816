@@ -208,6 +208,9 @@ separate blocks separated by a blank line.
 - `E0348` a `.patch` gives some fields of a bit-field byte but not
   all: a816 never sees the ROM's byte, so give every field that
   shares it.
+- `E0349` a `.pad_to OFFSET [, BYTE]` cannot pad its block: the block
+  is already longer than OFFSET, OFFSET is negative, BYTE does not fit
+  a byte, or no `.alloc` body or `*=` section encloses it.
 
 ### Linker
 
@@ -270,9 +273,10 @@ separate blocks separated by a blank line.
   `-D NAME=...` or declare it under `[defines]`.
 - `E0515` `--copier-header` with `-f bps`: a BPS patch records the
   CRC32 of a headerless ROM, so a header offset cannot apply.
-- `E0516` `[lint]` `select`/`ignore`, or `a816 check --select/--ignore`,
-  names a code no lint rule starts with: `a816 explain CODE` lists a
-  rule, and the codes match by prefix (`N` is every naming rule).
+- `E0516` `[lint]` `select`/`ignore`, `[lint.per-file-ignores]`, or
+  `a816 check --select/--ignore`, names a code no lint rule starts
+  with: `a816 explain CODE` lists a rule, and the codes match by prefix
+  (`N` is every naming rule).
 - `E0517` not a valid IPS patch: it does not start with `PATCH`, or a
   record runs past the end before `EOF`.
 - `E0518` sealing against a base ROM that carries a 512-byte copier

@@ -205,6 +205,7 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         on a `.a16` / tracked `rep` that must not resize the code ahead of it.
         """
         self.resolver.reset_register_sizes()
+        self.resolver.block_origin = None
         previous_pc = self.resolver.reloc_address
         node: NodeProtocol | None = None
         try:

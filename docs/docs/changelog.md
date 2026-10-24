@@ -2,14 +2,59 @@
 
 ## Unreleased
 
+- `a816 fix --select` narrows the report too: hits of other rules no
+  longer show (and no longer fail the run). It takes prefixes and an
+  unknown code is `E0516`, as in `check`. `fix` prints one line per
+  file with its count (`Fixed 3 hit(s) in src/x.s (OP001 x2,
+  DOC004)`). `--diff` and `--check` say what would be fixed and would
+  remain, and exit 1 only while a fix is pending, as `format --diff`
+  (`--check` used to fail on hits no fix covers too). `--diff` keeps
+  stdout for the diff, hits and summary go to stderr, and the
+  `fix --diff` / `format --diff` output carries no colour codes when
+  piped.
+- `[lint.per-file-ignores]` in `a816.toml` drops rule codes in the
+  files a glob matches: `"src/disasm/*.s" = ["N801"]`. Globs are
+  relative to the toml, a directory covers its files, `{a,b}` lists
+  alternatives, and `check`, `fix` and the LSP honour it. `check` and
+  `fix` warn about a glob that matches no source.
+- `.pad_to OFFSET [, BYTE]` fills the current `.alloc` body or `*=`
+  section with `BYTE` (default 0) until it is `OFFSET` bytes long. A
+  block already longer than `OFFSET` is `E0349`.
+- `a816 check` flags dead module-private names: `F001` for a `_`
+  constant, macro, struct, pool, `.label` or `.reserve` nothing in its
+  translation unit references (uses through `.include` count both
+  ways), `F002` (opt-in, `--select F002`) for `_` code labels and
+  scopes. Both carry an unsafe fix that deletes the definition (a
+  scope is unwrapped, a `.reserve` and a label heading a routine have
+  no fix). A project with dead private names gets new `F001` hits on the bump.
 - a816 depends on `katsuji` (no extras: no numpy or pillow) and its
   `.table` directive reads tables with `katsuji.script.Table`. The
   `script` package moved there: `from script import ...` still works
   but warns, and a816 1.3 removes it. Switch to
   `from katsuji.script import ...`; `script.formulas.long_low_rom_pointer`
   becomes `katsuji.script.formulas.long_pointer(bus.get_address(base))`.
+- Lint rules look inside `.alloc` and `.relocate` bodies. They used to
+  skip them, so `OP001`, `N801`, `N802` and `DOC007` checked almost
+  nothing in a project whose modules own their placement. Expect new
+  hits on the bump; `a816 fix` removes the redundant suffixes
+  (`OP001`) and re-indents docstrings (`DOC007`).
+- `OP001` no longer flags `.w` / `.l` on an immediate: its width is
+  the M/X register width, which the suffix states. Literal addresses
+  (`sta.w 0x2115`) are still flagged.
 - a816 requires Python 3.14 or later; CI only ever tested 3.14, and
   3.10 already failed to import.
+- `@std/snes/sdd1` and `@std/snes/spc7110` name the S-DD1 and SPC7110
+  registers (and the Epson RTC on SPC7110-RTC boards), with small
+  macros: decompress, bank select, data port seek.
+- `sizeof(buf.field)` and `countof(buf.field)` on a reservation typed
+  `.reserve buf as T` size the field like `sizeof(T.field)`, imported
+  reservations included. They used to fail with E0321, or at link with
+  "cannot resolve `buf.field.__size`" and no source line.
+- A legacy `.map` with `mirror_bank_range` answers
+  `logical_address(offset, near=...)` in the mirror `near` sits in,
+  like board regions already did. `xdds.physical_to_logical` takes
+  `near` too, and skips ROM regions that cannot reach the offset
+  (ExHiROM's low banks) instead of raising.
 
 ## 1.1.7 (2026-10-20)
 

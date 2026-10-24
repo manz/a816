@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from a816.cpu.mapping import Address, LinearAddress
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+from a816.cpu.mapping import Address, LinearAddress, byte_distance
 from a816.error_codes import E_CODEGEN_ALLOC_SIZE_DRIFT, E_CODEGEN_BAD_RECLAIM, E_SYMBOL_UNKNOWN_POOL
 from a816.exceptions import SymbolNotDefined
 from a816.parse.nodes.errors import NodeError
@@ -12,16 +15,6 @@ from a816.pool import Allocation
 from a816.protocols import NodeBase, NodeProtocol
 from a816.section import ANONYMOUS_ALLOC_PREFIX
 from a816.symbols import Resolver, Scope
-
-
-def _distance(start: Address, end: Address) -> int:
-    """Bytes from `start` to `end`. Physical (file-offset) difference so
-    bank-edge allocs measure right: the logical one jumps `0x8020` for a
-    32-byte alloc ending at `$00:FFFF`, since `$01:0000` is bus-mapped past
-    bank 1's WRAM-mirror low half. Logical where either end has no offset."""
-    if start.physical is not None and end.physical is not None:
-        return end.physical - start.physical
-    return end.logical_value - start.logical_value
 
 
 class AllocNode(NodeBase):
@@ -118,15 +111,27 @@ class AllocNode(NodeBase):
         # `@= 0x7F0000` at 8 MB, E0337).
         size = 0
         segment = pc = self._sandbox_pc()
-        for node in self.body:
-            if self._skip_in_pass1(node):
-                continue
-            after = node.pc_after(pc)
-            if isinstance(node, RelocationAddressNode):
-                size += _distance(segment, pc)
-                segment = after
-            pc = after
-        return size + _distance(segment, pc)
+        with self._block_at(pc):
+            for node in self.body:
+                if self._skip_in_pass1(node):
+                    continue
+                after = node.pc_after(pc)
+                if isinstance(node, RelocationAddressNode):
+                    size += byte_distance(segment, pc)
+                    segment = after
+                pc = after
+        return size + byte_distance(segment, pc)
+
+    @contextmanager
+    def _block_at(self, start: Address) -> Iterator[None]:
+        """Open the body's block at `start` for `.pad_to`, restoring the
+        enclosing one after the walk."""
+        saved = self.resolver.block_origin
+        self.resolver.block_origin = (start, 0)
+        try:
+            yield
+        finally:
+            self.resolver.block_origin = saved
 
     def _request_slot(self) -> None:
         pool = self.resolver.pools[self.pool_name]
@@ -193,21 +198,22 @@ class AllocNode(NodeBase):
         pc = target
         saved_current_scope = self.resolver.current_scope
         try:
-            for node in self.body:
-                try:
-                    pc = node.pc_after(pc)
-                except (NodeError, SymbolNotDefined):
-                    # Forward refs inside the alloc body (e.g. an `=`
-                    # RHS that uses an `.incbin` auto-symbol bound by a
-                    # later sibling) raise on the first bind walk. The
-                    # outer `resolve_labels` runs another pass after
-                    # the allocator places sections, and `_bind_body_labels`
-                    # re-enters this loop with the now-bound symbol in
-                    # scope. Swallowing the per-node error here lets
-                    # later body nodes still bind their own labels in
-                    # this pass; PASS 2's repeat bind walk catches up
-                    # once forward refs resolve.
-                    pass
+            with self._block_at(target):
+                for node in self.body:
+                    try:
+                        pc = node.pc_after(pc)
+                    except (NodeError, SymbolNotDefined):
+                        # Forward refs inside the alloc body (e.g. an `=`
+                        # RHS that uses an `.incbin` auto-symbol bound by a
+                        # later sibling) raise on the first bind walk. The
+                        # outer `resolve_labels` runs another pass after
+                        # the allocator places sections, and `_bind_body_labels`
+                        # re-enters this loop with the now-bound symbol in
+                        # scope. Swallowing the per-node error here lets
+                        # later body nodes still bind their own labels in
+                        # this pass; PASS 2's repeat bind walk catches up
+                        # once forward refs resolve.
+                        pass
         finally:
             self.resolver.current_scope = saved_current_scope
 

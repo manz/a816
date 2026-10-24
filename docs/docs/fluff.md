@@ -44,7 +44,8 @@ What it deliberately does not touch:
 ## Lint rules
 
 Codes follow `ruff` conventions: `DOC*` for docstring coverage and
-placement, `E***` for physical layout, `N***` for naming, `S***` for
+placement, `E***` for physical layout, `F***` for unused names,
+`N***` for naming, `S***` for
 struct casts, `OP***` for opcodes, `ST***` for program structure and
 `UP***` for upgrades from legacy syntax.
 
@@ -58,33 +59,65 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `DOC006` | Public target carries both a leading comment block and a docstring; pick one. |
 | `DOC007` | Docstring content is under- / over-indented relative to its opening `"""` (mirrors pydocstyle's D207 / D208). |
 | `E501` | Source line longer than 120 characters. |
+| `F001` | Module-private (`_`) constant, macro, struct, pool, `.label` or `.reserve` that nothing in its translation unit references. No other module can see it, so it is dead. A use in a file the module includes, or in a file including it, counts; a name in a shared `.i` that no includer uses is reported once, in the `.i`. `.alloc _name` is a placement handle and never flagged. |
+| `F002` | Same for code labels (`_name:`, module-private or local to an alloc body) and `.scope _name`. **Opt-in**: a private label nothing branches to is often a marker for the debugger or xdds, so it runs only when selected by its exact code (`a816 check --select F002`), never by default or through the `F` prefix. A name reached only from outside the sources, like a test hooking `module._label` through the `.adbg`, looks unused to the rule. |
 | `N801` | Label name is not snake_case. |
 | `N802` | Constant name is not snake_case or SCREAMING_SNAKE_CASE. |
 | `S001` | `(expr as T).field` / `p := (expr as T)` / `.istruct T { ... }` references a struct type that isn't declared in the current translation unit. |
 | `S003` | Redundant cast: `(p as T).field` when `p` is already typed-bound to `T`. |
 | `S004` | The same `(expr as T)` cast appears more than once in the file; promote it to a `:=` typed bind. |
-| `OP001` | Explicit `.w` / `.l` size suffix the operand would get anyway. |
+| `OP001` | Explicit `.w` / `.l` size suffix a literal address would get anyway. Immediates are not flagged: `lda.w #0x1234` states the 16-bit accumulator the code expects. |
 | `ST001` | Placement directive (`*=`, `.alloc ... at`, `.relocate`) nested inside an `.alloc` body: it re-anchors the code the alloc was placing. |
 | `ST002` | `.import` outside the file prelude (after a placement or inside a block); the build rejects it with `E0311`. |
 | `UP001` | Legacy `*= ADDR` placement should be `.alloc at ADDR { ... }`. |
 | `W0002` | `.if` on a name the project defines nowhere: it reads as false, so a deleted or misspelt flag drops code silently. Declare a `-D`-only name under `[defines]` in `a816.toml`. |
 | `W0001` | Reference to a name `.incbin` derived from its path (`assets_vwf_bin`, `assets_vwf_bin__size`); the build warns on it too. A warning: `a816 check` prints it but still exits 0. |
 
+Per-node rules (`OP001`, `N801`, `N802`, `DOC007`, ...) look inside
+`.alloc`, `.relocate`, `.scope`, macro, `.if` and `.for` bodies, so
+code a module places itself is linted like top-level code.
+
 Rules marked fixable in `a816 check` output carry `[*]` (safe) or
 `[!]` (unsafe). Today: `S003`, `OP001`, `DOC003`, `DOC004`, `DOC006`,
 `DOC007` ship a safe fix, and `W0001` does when the blob is alone in a
 named alloc (`vwf_font`, `sizeof(vwf_font)`); `DOC005` and `UP001` ship
-an unsafe fix.
+an unsafe fix, and so do `F001` / `F002`, which delete the definition
+(a block one through its `}`, with the comment directly above it) when it
+sits on lines of its own. A `.scope _name` is unwrapped into an anonymous
+`{ }` instead, since its body emits bytes; an unused `.reserve` gets no
+fix, since removing it moves every later reservation in its pool. A code
+label loses only its own line and keeps the comment above, which
+describes code that stays. A label heading a routine gets no fix: one
+carrying a docstring, or starting code (an instruction or a macro call)
+nothing falls into: at the file or block start, after an alloc body, or
+after an `rts`, `rtl`, `rti`, `jmp`, `jml`, `bra`, `brl` or data, also as
+the last statement of a block. Macro, struct and pool definitions in
+between emit nothing and are looked through. The hit still reports;
+deleting dead code is your call.
 
 ## Autofix: `a816 fix`
 
 ```
 $ a816 fix src/                       # apply safe fixes in place
-$ a816 fix --diff src/                # preview as unified diff
-$ a816 fix --check src/               # exit non-zero if any file would change
+$ a816 fix --diff src/                # preview as unified diff, exit 1 if any
+$ a816 fix --check src/               # exit 1 if any file would change
 $ a816 fix --select DOC003,DOC004 src/  # only those rules
 $ a816 fix --unsafe-fixes src/        # also apply UNSAFE fixes
 ```
+
+`fix` prints one line per file it changes (`Fixed 3 hit(s) in src/x.s
+(OP001 x2, DOC004)`, or `Would fix` under `--check`) and the hits no
+fix covers. `--select` takes codes or prefixes and replaces the
+`[lint]` table's `select`, as in `check`: it narrows the report as well
+as the fixes, and names an opt-in rule to run it. `--diff` writes the
+diff to stdout and its summary and the hits no fix covers to stderr, so `a816 fix --diff | patch
+-p0` works; diffs are coloured only on a terminal (`FORCE_COLOR` and
+`NO_COLOR` override).
+
+`--check` and `--diff` exit 1 only while a fix is pending, so a CI step
+can gate on "nothing left to fix" in a tree that keeps hits no safe fix
+covers; failing on those is `a816 check`'s job. A writing `a816 fix`
+exits 1 while any hit remains.
 
 Safe fixes are guaranteed behaviour-preserving: they don't change
 emitted bytes, drop comments, or restructure semantics. Unsafe fixes
@@ -194,6 +227,29 @@ table's list of the same name for one run. The other list still
 applies: with `ignore = ["N802"]` in the table, `--select N802` shows
 nothing; add `--ignore ""` to clear the table's ignore. A code no rule
 starts with is an error (`E0516`). Parse errors always show.
+
+An opt-in rule (`F002`) runs only when a `select` names its exact code:
+`a816 check --select F002` audits it once, `a816 fix --select F002
+--unsafe-fixes` deletes what it finds, and a project keeping it on lists
+it next to the prefixes it wants, `select = ["DOC", "E", "F", "N", "OP",
+"S", "ST", "UP", "W", "F002"]`.
+
+A rule some files break on purpose (disassembled or generated sources
+keeping their original names) is dropped for those files only:
+
+```toml
+[lint.per-file-ignores]
+"src/disasm/*.s" = ["N801"]   # labels named after the original ROM
+"src/gen" = ["N", "DOC"]      # a directory covers every file under it
+"src/{menu,miss}.s" = ["N8"]  # {a,b} lists alternatives
+```
+
+Each glob is relative to `a816.toml` and matches like `exclude`; `*`
+stays in one directory, `**` crosses them. The codes match by prefix
+and an unknown one is `E0516`. `check`, `fix` and the LSP all honour
+it, and `--select` / `--ignore` leave it in place. `check` and `fix`
+warn about a glob no `.s` / `.i` file under the toml matches: a typo,
+a wrong case, or a file that moved.
 
 ## `a816.toml` discovery
 

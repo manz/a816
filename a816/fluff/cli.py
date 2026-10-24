@@ -6,18 +6,20 @@ import argparse
 import difflib
 import sys
 import textwrap
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from a816.config import discover_a816_config, find_a816_toml
+from a816.config import A816Config, discover_a816_config, find_a816_toml
 from a816.error_catalog import category, explanation, is_error_code
 from a816.error_codes import E_CONFIG_UNKNOWN_LINT_RULE, lookup
+from a816.errors import should_use_colors
 from a816.exceptions import A816ConfigError, FormattingError
 from a816.fluff.core import Diagnostic, Rule
 from a816.fluff.project import project_sources
 from a816.fluff.runner import apply_fixes, lint_file, lint_text
-from a816.fluff.selection import RuleSelection, parse_codes, unknown_codes
+from a816.fluff.selection import RuleSelection, parse_codes, unknown_codes, unmatched_per_file_patterns
 from a816.formatter import A816Formatter
 
 SOURCE_SUFFIXES = {".s", ".i"}
@@ -42,6 +44,9 @@ def _discover_sources(path: Path) -> Iterable[Path]:
 
 
 def _colorize_diff(diff_lines: Iterable[str]) -> str:
+    """The diff, in colour only when stdout is a terminal (not piped to a file or `patch`)."""
+    if not should_use_colors(sys.stdout):
+        return "".join(diff_lines)
     colored: list[str] = []
     for line in diff_lines:
         if line.startswith(("@@", "+++", "---")):
@@ -116,8 +121,8 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         help=(
-            "Limit fixes to the given rule codes (comma-separated, or repeat the"
-            " flag). Diagnostics for other rules are still reported but not fixed."
+            "Limit fixes and the report to the given rule codes or prefixes"
+            " (comma-separated, or repeat the flag); replaces [lint] select."
         ),
     )
     fix_parser.add_argument(
@@ -128,7 +133,7 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
     fix_parser.add_argument(
         "--diff",
         action="store_true",
-        help="Preview the fix as a unified diff. Does not write changes.",
+        help="Preview the fix as a unified diff without writing; exit 1 if any fix is pending.",
     )
     fix_parser.add_argument(
         "--check",
@@ -289,6 +294,18 @@ def _flag_codes(raw: list[str] | None, flag: str) -> tuple[str, ...] | None:
     return codes
 
 
+def _warn_unmatched_per_file_ignores(config: A816Config | None, warned: set[Path]) -> None:
+    """Once per toml: name each `[lint.per-file-ignores]` glob that matches no source."""
+    if config is None or config.config_path in warned:
+        return
+    warned.add(config.config_path)
+    for pattern in unmatched_per_file_patterns(config):
+        print(
+            f"warning: {config.config_path}: [lint.per-file-ignores] {pattern} matches no source file",
+            file=sys.stderr,
+        )
+
+
 def _run_check(args: argparse.Namespace) -> int:
     select = _flag_codes(args.select, "--select")
     ignore = _flag_codes(args.ignore, "--ignore")
@@ -296,8 +313,11 @@ def _run_check(args: argparse.Namespace) -> int:
     if not sources:
         return missing_err
     total = warnings = 0
+    warned: set[Path] = set()
     for source in sources:
-        selection = RuleSelection.of(discover_a816_config(source), select, ignore)
+        config = discover_a816_config(source)
+        _warn_unmatched_per_file_ignores(config, warned)
+        selection = RuleSelection.of(config, select, ignore)
         for diag in selection.filter(lint_file(source)):
             print(diag.format())
             total += 1
@@ -308,19 +328,6 @@ def _run_check(args: argparse.Namespace) -> int:
     if total > warnings:
         return missing_err or 1
     return missing_err
-
-
-def _parse_select(raw: list[str] | None) -> set[str] | None:
-    """Flatten `--select A,B --select C` into `{A, B, C}`. None means "all"."""
-    if raw is None:
-        return None
-    out: set[str] = set()
-    for chunk in raw:
-        for code in chunk.split(","):
-            code = code.strip().upper()
-            if code:
-                out.add(code)
-    return out or None
 
 
 def _config_paths_for(source: Path) -> tuple[list[Path] | None, list[Path] | None]:
@@ -340,25 +347,35 @@ class _FixOutcome:
     error_code: int = 0
 
 
-def _process_fix_target(source: Path, args: argparse.Namespace, select: set[str] | None) -> _FixOutcome:
-    """Read `source`, run lint + fix, dispatch to diff / check / write."""
+def _process_fix_target(source: Path, args: argparse.Namespace, select: tuple[str, ...] | None) -> _FixOutcome:
+    """Read `source`, run lint + fix, dispatch to diff / check / write.
+
+    `--select` replaces the table's `select`, as in `check`: it narrows
+    the fixes and the report, and names an opt-in rule (`F002`) to run it.
+    """
     original = source.read_text(encoding="utf-8")
     include_paths, module_paths = _config_paths_for(source)
-    diagnostics = RuleSelection.of(discover_a816_config(source)).filter(
-        lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
-    )
-    new_text, applied = apply_fixes(original, diagnostics, allow_unsafe=args.unsafe_fixes, select=select)
+    selection = RuleSelection.of(discover_a816_config(source), select)
+    diagnostics = selection.filter(lint_text(original, source, include_paths=include_paths, module_paths=module_paths))
+    new_text, applied = apply_fixes(original, diagnostics, allow_unsafe=args.unsafe_fixes)
     unfixed = [d for d in diagnostics if d not in applied]
     if args.diff:
         _print_fix_diff(source, original, new_text, unfixed)
         return _FixOutcome(changed=new_text != original, unfixed_count=len(unfixed))
     if args.check:
         if new_text != original:
-            print(f"Would fix {source}")
+            print(f"Would fix {_fixed_summary(source, applied)}")
         for diag in unfixed:
             print(diag.format())
         return _FixOutcome(changed=new_text != original, unfixed_count=len(unfixed))
     return _apply_fix_writes(source, original, new_text, applied, unfixed)
+
+
+def _fixed_summary(source: Path, applied: list[Diagnostic]) -> str:
+    """`3 hit(s) in src/x.s (OP001 x2, DOC004)`: one line per file."""
+    counts = Counter(diag.code for diag in applied)
+    codes = ", ".join(code if n == 1 else f"{code} x{n}" for code, n in sorted(counts.items()))
+    return f"{len(applied)} hit(s) in {source} ({codes})"
 
 
 def _print_fix_diff(source: Path, original: str, new_text: str, unfixed: list[Diagnostic]) -> None:
@@ -370,8 +387,9 @@ def _print_fix_diff(source: Path, original: str, new_text: str, unfixed: list[Di
             tofile=str(source),
         )
         sys.stdout.write(_colorize_diff(diff_lines))
+    # The hits no fix covers go to stderr: stdout stays a diff `patch` reads.
     for diag in unfixed:
-        print(diag.format())
+        print(diag.format(), file=sys.stderr)
 
 
 def _apply_fix_writes(
@@ -384,20 +402,23 @@ def _apply_fix_writes(
         except OSError as exc:
             print(f"Failed to write {source}: {exc}", file=sys.stderr)
             return _FixOutcome(changed=False, unfixed_count=len(unfixed), error_code=2)
-        for diag in applied:
-            print(f"fixed {diag.code} in {source}")
+        print(f"Fixed {_fixed_summary(source, applied)}")
     for diag in unfixed:
         print(diag.format())
     return _FixOutcome(changed=changed, unfixed_count=len(unfixed))
 
 
-def _report_fix_summary(check: bool, fixed_files: int, remaining: int, missing_err: int) -> int:
-    if check:
-        if fixed_files or remaining:
-            print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) remain.", file=sys.stderr)
-            return missing_err or 1
+def _report_fix_summary(args: argparse.Namespace, fixed_files: int, remaining: int, missing_err: int) -> int:
+    """Under `--check` / `--diff`, exit 1 only while a fix is pending (as
+    `format --diff`); hits no fix covers are `a816 check`'s to fail on.
+    A writing run exits 1 while any hit remains."""
+    if args.check and not (fixed_files or remaining):
         print("No fixes needed.")
         return missing_err
+    if args.check or args.diff:
+        # stderr keeps stdout a diff `patch` can read.
+        print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) would remain.", file=sys.stderr)
+        return missing_err or (1 if fixed_files else 0)
     print(f"Fixed {fixed_files} file(s), {remaining} hit(s) remain.")
     return missing_err or (1 if remaining else 0)
 
@@ -407,17 +428,19 @@ def _run_fix(args: argparse.Namespace) -> int:
     if not sources:
         return missing_err
 
-    select = _parse_select(args.select)
+    select = _flag_codes(args.select, "--select")
     fixed_files = 0
     remaining = 0
+    warned: set[Path] = set()
     for source in sources:
+        _warn_unmatched_per_file_ignores(discover_a816_config(source), warned)
         outcome = _process_fix_target(source, args, select)
         if outcome.error_code:
             return outcome.error_code
         if outcome.changed:
             fixed_files += 1
         remaining += outcome.unfixed_count
-    return _report_fix_summary(args.check, fixed_files, remaining, missing_err)
+    return _report_fix_summary(args, fixed_files, remaining, missing_err)
 
 
 def _run_explain(args: argparse.Namespace) -> int:

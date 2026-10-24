@@ -34,6 +34,7 @@ from a816.fluff.rules_style import (
     RepeatedInlineCast,
     UnknownStructTypeCast,
 )
+from a816.fluff.rules_unused import UnusedPrivateLabel, UnusedPrivateName
 from a816.fluff.rules_upgrade import IncbinPathName, StarEqualToAllocAt
 from a816.parse.mzparser import A816Parser, ParserResult
 
@@ -57,6 +58,8 @@ RULES: list[Rule] = [
     ImportOutsidePrelude(),
     IncbinPathName(),
     UndefinedIfName(),
+    UnusedPrivateName(),
+    UnusedPrivateLabel(),
 ]
 Rule.registry = {rule.code: rule for rule in RULES}
 

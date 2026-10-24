@@ -17,6 +17,7 @@ from pathlib import Path
 from a816.cpu.cpu_65c816 import RomType
 from a816.cpu.disassembler import Disassembler, disassemble_function, format_disassembly, format_disassembly_block
 from a816.cpu.mapping import Bus
+from a816.exceptions import UnmappedBankError
 from a816.symbols import high_rom_bus, low_rom_bus
 
 logger = logging.getLogger("xdds")
@@ -71,14 +72,38 @@ def logical_to_physical(bus: Bus, logical_addr: int) -> int | None:
     return addr.physical
 
 
-def physical_to_logical(bus: Bus, physical_addr: int) -> int:
-    """Convert physical ROM address to SNES logical address."""
+def physical_to_logical(bus: Bus, physical_addr: int, near: int | None = None) -> int:
+    """Convert physical ROM address to SNES logical address.
+
+    ``near`` names the mirror to land in: the ROM region serving that logical
+    address, when it reaches ``physical_addr``. Otherwise the first ROM region
+    that reaches it.
+    """
+    if near is not None:
+        logical = _logical_near(bus, physical_addr, near)
+        if logical is not None:
+            return logical
     for mapping in bus.mappings.values():
         if mapping.writable:
             continue
-        logical = mapping.logical_address(physical_addr)
-        return logical
+        try:
+            return mapping.logical_address(physical_addr)
+        except ValueError:
+            continue
     return physical_addr
+
+
+def _logical_near(bus: Bus, physical_addr: int, near: int) -> int | None:
+    try:
+        region = bus.get_mapping(near)
+    except UnmappedBankError:
+        return None
+    if region.writable:
+        return None
+    try:
+        return region.logical_address(physical_addr, near=near)
+    except ValueError:
+        return None
 
 
 def apply_ips_patch(rom_path: Path, ips_path: Path, output_path: Path) -> None:

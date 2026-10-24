@@ -1,19 +1,22 @@
 """Which lint rules run: `[lint]` in a816.toml, overridden by `check --select/--ignore`.
 
 Codes match by prefix, as in ruff: `N` is every naming rule, `DOC00` the
-first docstring rules. Only lint rule codes are filtered; a parse error
-always shows.
+first docstring rules. An opt-in rule (`F002`) runs only when `select` names
+its exact code. `[lint.per-file-ignores]` drops codes in the files its globs
+match. Only lint rule codes are filtered; a parse error always shows.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from a816.config import A816Config
 from a816.error_codes import E_CONFIG_UNKNOWN_LINT_RULE
 from a816.exceptions import A816ConfigError
 from a816.fluff.core import Diagnostic, Rule
+from a816.fluff.project import expand_braces, matches_any, walk_sources
 from a816.fluff.runner import all_rule_codes
 
 
@@ -30,6 +33,38 @@ def _matches_any_rule(prefix: str) -> bool:
     return any(code.startswith(prefix) for code in all_rule_codes())
 
 
+def _check_codes(config: A816Config) -> None:
+    """Every `[lint]` code names a rule, or E0516 says which list holds the one that doesn't."""
+    lists = [("[lint]", (*config.lint_select, *config.lint_ignore))]
+    lists += [(f'[lint.per-file-ignores] "{pattern}"', codes) for pattern, codes in config.lint_per_file_ignores]
+    for where, codes in lists:
+        bad = unknown_codes(codes)
+        if bad:
+            raise A816ConfigError(
+                E_CONFIG_UNKNOWN_LINT_RULE, f"{where} names no rule: {', '.join(bad)}", config.config_path
+            )
+
+
+def unmatched_per_file_patterns(config: A816Config) -> list[str]:
+    """What in `[lint.per-file-ignores]` no source under the toml's
+    directory matches (a typo, or a file that moved): the key, or the
+    brace alternative when the others match (`"src/{menu,misz}.s":
+    alternative "src/misz.s"`)."""
+    if not config.lint_per_file_ignores:
+        return []
+    root = config.root.resolve()
+    sources = list(walk_sources(root, recursive=True))
+    unmatched: list[str] = []
+    for pattern, _ in config.lint_per_file_ignores:
+        alternatives = expand_braces(pattern)
+        dead = [glob for glob in alternatives if not any(matches_any(source, root, [glob]) for source in sources)]
+        if len(dead) == len(alternatives):
+            unmatched.append(f'"{pattern}"')
+        else:
+            unmatched.extend(f'"{pattern}": alternative "{glob}"' for glob in dead)
+    return unmatched
+
+
 def parse_codes(raw: Sequence[str] | None) -> tuple[str, ...] | None:
     """Flatten `--select A,B --select C` into `(A, B, C)`; None when the flag is absent."""
     if raw is None:
@@ -39,10 +74,13 @@ def parse_codes(raw: Sequence[str] | None) -> tuple[str, ...] | None:
 
 @dataclass(frozen=True)
 class RuleSelection:
-    """`select` empty means every rule; `ignore` then drops some."""
+    """`select` empty means every rule; `ignore` then drops some, and
+    `per_file` drops codes in the files under `root` its globs match."""
 
     select: tuple[str, ...] = ()
     ignore: tuple[str, ...] = ()
+    per_file: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    root: Path | None = None
 
     @classmethod
     def of(
@@ -50,24 +88,35 @@ class RuleSelection:
     ) -> RuleSelection:
         """The project's `[lint]`, each list replaced by its flag when given."""
         if config is not None:
-            bad = unknown_codes((*config.lint_select, *config.lint_ignore))
-            if bad:
-                raise A816ConfigError(
-                    E_CONFIG_UNKNOWN_LINT_RULE, f"[lint] names no rule: {', '.join(bad)}", config.config_path
-                )
+            _check_codes(config)
         base_select = config.lint_select if config is not None else ()
         base_ignore = config.lint_ignore if config is not None else ()
         return cls(
             select=base_select if select is None else select,
             ignore=base_ignore if ignore is None else ignore,
+            per_file=config.lint_per_file_ignores if config is not None else (),
+            root=config.root.resolve() if config is not None else None,
         )
 
-    def allows(self, code: str) -> bool:
-        if code not in Rule.registry:
+    def allows(self, code: str, path: Path | None = None) -> bool:
+        """`code` runs, in `path` when given (per-file ignores apply)."""
+        rule = Rule.registry.get(code)
+        if rule is None:
             return True
+        if rule.opt_in and code not in self.select:
+            return False
         if self.select and not _matches(code, self.select):
             return False
-        return not _matches(code, self.ignore)
+        if _matches(code, self.ignore):
+            return False
+        return path is None or not _matches(code, self._ignored_in(path))
+
+    def _ignored_in(self, path: Path) -> list[str]:
+        """The per-file codes whose glob matches `path`."""
+        if self.root is None:
+            return []
+        source = path.resolve()
+        return [code for pattern, codes in self.per_file if matches_any(source, self.root, [pattern]) for code in codes]
 
     def filter(self, diagnostics: Iterable[Diagnostic]) -> list[Diagnostic]:
-        return [diag for diag in diagnostics if self.allows(diag.code)]
+        return [diag for diag in diagnostics if self.allows(diag.code, diag.path)]
