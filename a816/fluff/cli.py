@@ -349,7 +349,7 @@ def _process_fix_target(source: Path, args: argparse.Namespace, select: set[str]
     diagnostics = [
         diag
         for diag in lint_text(original, source, include_paths=include_paths, module_paths=module_paths)
-        if selection.allows(diag.code) or diag.code in (select or ())
+        if selection.allows(diag.code, source) or diag.code in (select or ())
     ]
     new_text, applied = apply_fixes(original, diagnostics, allow_unsafe=args.unsafe_fixes, select=select)
     unfixed = [d for d in diagnostics if d not in applied]

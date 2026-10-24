@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess  # nosec B404: runs git, resolved to a full path, with fixed arguments
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path, PurePosixPath
 
 from a816.config import load_a816_toml
@@ -34,7 +34,7 @@ def project_sources(toml: Path) -> list[Path]:
         if config.entrypoint is not None:
             roots = [config.entrypoint.parent, *config.module_paths]
     found = {source for directory in roots for source in _visible_sources(directory)}
-    return sorted(source for source in found if not _excluded(source, root, exclude))
+    return sorted(source for source in found if not matches_any(source, root, exclude))
 
 
 def _visible_sources(directory: Path) -> Iterator[Path]:
@@ -63,8 +63,9 @@ def _git_visible(directory: Path) -> set[Path] | None:
     return {(directory / name).resolve() for name in names if name}
 
 
-def _excluded(source: Path, root: Path, patterns: list[str]) -> bool:
-    """`source`, or a directory above it, matches an `exclude` pattern."""
+def matches_any(source: Path, root: Path, patterns: Sequence[str]) -> bool:
+    """`source`, or a directory above it up to `root`, matches one of the
+    glob `patterns` (relative to `root`): `exclude`, per-file ignores."""
     if not patterns or not source.is_relative_to(root):
         return False
     relative = PurePosixPath(source.relative_to(root).as_posix())

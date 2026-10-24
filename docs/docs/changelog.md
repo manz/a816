@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `[lint.per-file-ignores]` in `a816.toml` drops rule codes in the
+  files a glob matches: `"src/disasm/*.s" = ["N801"]`. Globs are
+  relative to the toml, a directory covers its files, and `check`,
+  `fix` and the LSP honour it.
 - `.pad_to OFFSET [, BYTE]` fills the current `.alloc` body or `*=`
   section with `BYTE` (default 0) until it is `OFFSET` bytes long. A
   block already longer than `OFFSET` is `E0349`.

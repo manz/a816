@@ -84,7 +84,7 @@ def test_a_malformed_lint_table_is_refused(tmp_path: Path, lint: str) -> None:
 def test_flags_replace_the_toml_lists(tmp_path: Path) -> None:
     _project(tmp_path, '[lint]\nselect = ["DOC"]\nignore = ["N802"]\n')
     selection = RuleSelection.of(load_a816_toml(tmp_path / "a816.toml"), ("E",), ())
-    assert selection == RuleSelection(select=("E",), ignore=())
+    assert (selection.select, selection.ignore) == (("E",), ())
 
 
 def test_an_unknown_toml_code_is_refused(tmp_path: Path) -> None:

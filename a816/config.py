@@ -78,6 +78,8 @@ class A816Config:
     # An empty `lint_select` runs every rule.
     lint_select: tuple[str, ...] = ()
     lint_ignore: tuple[str, ...] = ()
+    # `[lint.per-file-ignores]`: (glob relative to the toml, codes) pairs.
+    lint_per_file_ignores: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def root(self) -> Path:
@@ -307,7 +309,7 @@ def _lint(raw: object, config_path: Path) -> tuple[tuple[str, ...], tuple[str, .
     """The `[lint]` table's `select` and `ignore`: lists of rule codes or prefixes."""
     if not isinstance(raw, dict):
         raise A816ConfigError(E_CONFIG_INVALID, "[lint] must be a table", config_path)
-    unknown = sorted(set(raw) - {"select", "ignore"})
+    unknown = sorted(set(raw) - {"select", "ignore", "per-file-ignores"})
     if unknown:
         raise A816ConfigError(E_CONFIG_INVALID, f"[lint] has unknown keys: {', '.join(unknown)}", config_path)
     lists: list[tuple[str, ...]] = []
@@ -319,6 +321,19 @@ def _lint(raw: object, config_path: Path) -> tuple[tuple[str, ...], tuple[str, .
             )
         lists.append(tuple(code.strip().upper() for code in value))
     return lists[0], lists[1]
+
+
+def _per_file_ignores(raw: object, config_path: Path) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """`[lint.per-file-ignores]`: each glob, relative to the toml, mapped to rule codes or prefixes."""
+    message = '[lint.per-file-ignores] maps glob patterns to lists of rule codes, e.g. "src/disasm/*.s" = ["N801"]'
+    if not isinstance(raw, dict):
+        raise A816ConfigError(E_CONFIG_INVALID, message, config_path)
+    pairs: list[tuple[str, tuple[str, ...]]] = []
+    for pattern, codes in raw.items():
+        if not isinstance(codes, list) or not all(isinstance(code, str) for code in codes):
+            raise A816ConfigError(E_CONFIG_INVALID, message, config_path)
+        pairs.append((pattern, tuple(code.strip().upper() for code in codes)))
+    return tuple(pairs)
 
 
 def load_a816_toml(config_path: Path) -> A816Config | None:
@@ -341,6 +356,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
     experimental = _experimental(data.get("experimental", {}), config_path)
     bus_map = _BusMapParser(config_path).parse(data)
     lint_select, lint_ignore = _lint(data.get("lint", {}), config_path)
+    per_file_ignores = _per_file_ignores(data.get("lint", {}).get("per-file-ignores", {}), config_path)
     return A816Config(
         config_path=config_path,
         entrypoint=entry_path,
@@ -353,6 +369,7 @@ def load_a816_toml(config_path: Path) -> A816Config | None:
         bps=_bps(data.get("bps"), config_path),
         lint_select=lint_select,
         lint_ignore=lint_ignore,
+        lint_per_file_ignores=per_file_ignores,
     )
 
 
