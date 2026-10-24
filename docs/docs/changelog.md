@@ -69,8 +69,9 @@
   `.alloc` bodies, and `F001` is on by default. `a816 fix` clears
   `OP001` and `DOC007`. `F001` deletes code, so its fix is unsafe:
   review it with `a816 fix --select F001 --unsafe-fixes --diff`, or
-  set `[lint] ignore = ["F001"]` to deal with it later. Disassembled
-  or generated sources take `[lint.per-file-ignores]`.
+  set `[lint] ignore = ["F001"]` to deal with it later. `N801` and
+  `N802` have no fix: disassembled or generated sources, with labels
+  like `L_D3541D`, take `[lint.per-file-ignores]`.
 - Run `a816 format` once after the bump: the comment fixes above move
   a few comments back where they were written.
 
