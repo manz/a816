@@ -221,6 +221,25 @@ def test_sizeof_an_imported_typed_reservation_field(tmp_path: Path) -> None:
     assert _ips_bytes(tmp_path / "out.ips") == b"\xa2\x0c\x00"
 
 
+@pytest.mark.parametrize(
+    ("lib", "state"),
+    [
+        ('.include "state.i"\nN := sizeof(route.points)\n', _PATH_RESERVE),
+        ('.include "state.i"\n', _PATH_RESERVE + "N := sizeof(route.points)\n"),
+        (_PATH_RESERVE + "N := sizeof(route.points)\n", ""),
+    ],
+    ids=["constant after the include", "constant inside the include", "constant in the module"],
+)
+def test_an_importer_sizes_an_imported_typed_reservation_field(tmp_path: Path, lib: str, state: str) -> None:
+    """The importer replays `N := sizeof(route.points)` from the plan: the
+    reservation has to be known at that point of the module, not after it."""
+    main = '.import "lib"\n.alloc user at 0xc1f000 {\n    ldx.w #N\n}\n'
+    files = {"state.i": state, "lib.s": _PREAMBLE + lib, "main.s": main}
+    result = _build(tmp_path, files)
+    assert result.exit_code == 0, result.diagnostics
+    assert _ips_bytes(tmp_path / "out.ips") == b"\xa2\x0c\x00"
+
+
 def test_sizeof_an_imported_alloc_resolves_at_link(tmp_path: Path) -> None:
     lib = _PREAMBLE + ".alloc blob in code {\n    .db 1, 2, 3, 4, 5\n}\n"
     main = '.import "lib"\n.alloc user at 0xc1f000 {\n    ldx.w #sizeof(blob)\n}\n'

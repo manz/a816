@@ -426,6 +426,12 @@ def generate_reserve_typed(
             code=str(E_SYMBOL_RESERVE_UNKNOWN_TYPE),
         )
     size = resolver.struct_sizes[node.type_name]
+    if resolver.inlining_import:
+        # An importer replaying the owner's declaration: the owner's `.o`
+        # allocates it, the importer only learns its type for `sizeof`.
+        resolver.typed_instances[node.name] = node.type_name
+        resolver.reservation_sizes[node.name] = size
+        return []
     layout = sorted(resolver.struct_layouts[node.type_name], key=lambda field: field[1])
 
     body: list[AstNode] = []

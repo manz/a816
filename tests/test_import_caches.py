@@ -17,6 +17,7 @@ from a816.module_builder import ModuleBuilder
 from a816.parse.codegen.modules import (
     ParsedImport,
     _import_view,
+    _Inline,
     _parse_import,
     _record_imported_reservations,
 )
@@ -141,17 +142,33 @@ def test_the_plan_lists_public_reservations(tmp_path: Path) -> None:
 
     plan = _plan_of(source).object_mode_plan()
 
-    assert plan.reservations == (("hero", "Actor"), ("buffer", None))
+    assert plan.reservations == ("buffer",)
 
 
-def test_a_replayed_plan_sizes_typed_reservations_per_importer() -> None:
-    """The struct size comes from the importer's resolver, not the plan."""
+def test_the_plan_inlines_a_typed_reservation_in_source_order(tmp_path: Path) -> None:
+    """A typed reservation replays as a declaration between its struct and
+    the constants after it, so `sizeof(hero.hp)` there sees its type."""
+    source = tmp_path / "core.s"
+    source.write_text(
+        ".struct Actor {\n    word hp\n}\n.reserve hero as Actor in wram\nHP := sizeof(hero.hp)\n",
+        encoding="utf-8",
+    )
+
+    steps = _plan_of(source).object_mode_plan().steps
+
+    assert [type(node).__name__ for step in steps if isinstance(step, _Inline) for node in step.nodes] == [
+        "StructAstNode",
+        "ReserveTypedAstNode",
+        "AssignAstNode",
+    ]
+
+
+def test_a_replayed_plan_leaves_flat_reservations_to_the_linker() -> None:
     resolver = Resolver()
-    resolver.struct_sizes["Actor"] = 2
 
-    _record_imported_reservations((("hero", "Actor"), ("buffer", None)), resolver)
+    _record_imported_reservations(("buffer",), resolver)
 
-    assert resolver.reservation_sizes == {"hero": 2, "buffer": None}
+    assert resolver.reservation_sizes == {"buffer": None}
 
 
 def test_private_names_are_worked_out_once(tmp_path: Path) -> None:
