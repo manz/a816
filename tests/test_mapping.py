@@ -34,6 +34,26 @@ class MappingTest(unittest.TestCase):
         next_bank_addr = (mirror_addr + 0x8000).logical_value
         self.assertEqual(next_bank_addr, 0x81_8000)
 
+    def test_logical_address_near_the_mirror_lands_in_the_mirror(self) -> None:
+        rom = self.bus.mappings["1"]
+        self.assertEqual(rom.logical_address(0x09_8000, near=0x80_8000), 0x93_8000)
+
+    def test_mirror_logical_address_near_the_primary_lands_in_the_primary(self) -> None:
+        mirror = self.bus.mappings["1_mirror"]
+        self.assertEqual(mirror.logical_address(0x09_8000, near=0x00_8000), 0x13_8000)
+
+    def test_logical_address_without_near_keeps_its_own_banks(self) -> None:
+        self.assertEqual(self.bus.mappings["1_mirror"].logical_address(0x09_8000), 0x93_8000)
+
+    def test_logical_address_near_an_unrelated_bank_keeps_its_own_banks(self) -> None:
+        self.assertEqual(self.bus.mappings["1"].logical_address(0x09_8000, near=0x7E_0000), 0x13_8000)
+
+    def test_hirom_mirror_address_crossing_a_bank_stays_there(self) -> None:
+        bus = Bus()
+        bus.map("1", (0x40, 0x7F), (0x0000, 0xFFFF), mask=0x1_0000, mirror_bank_range=(0xC0, 0xFF))
+        self.assertEqual((bus.get_address(0xC0_FFFF) + 1).logical_value, 0xC1_0000)
+        self.assertEqual((bus.get_address(0x40_FFFF) + 1).logical_value, 0x41_0000)
+
     def test_unmap(self) -> None:
         self.bus.unmap("1")
         self.assertNotIn("1", self.bus.mappings, "Mapping with identifier 1 should have been removed.")

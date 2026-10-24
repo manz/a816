@@ -17,6 +17,11 @@
   `.reserve buf as T` size the field like `sizeof(T.field)`, imported
   reservations included. They used to fail with E0321, or at link with
   "cannot resolve `buf.field.__size`" and no source line.
+- A legacy `.map` with `mirror_bank_range` answers
+  `logical_address(offset, near=...)` in the mirror `near` sits in,
+  like board regions already did. `xdds.physical_to_logical` takes
+  `near` too, and skips ROM regions that cannot reach the offset
+  (ExHiROM's low banks) instead of raising.
 
 ## 1.1.7 (2026-10-20)
 
