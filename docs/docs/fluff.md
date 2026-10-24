@@ -100,7 +100,7 @@ deleting dead code is your call.
 ```
 $ a816 fix src/                       # apply safe fixes in place
 $ a816 fix --diff src/                # preview as unified diff, exit 1 if any
-$ a816 fix --check src/               # exit non-zero if any file would change
+$ a816 fix --check src/               # exit 1 if any file would change
 $ a816 fix --select DOC003,DOC004 src/  # only those rules
 $ a816 fix --unsafe-fixes src/        # also apply UNSAFE fixes
 ```
@@ -110,9 +110,14 @@ $ a816 fix --unsafe-fixes src/        # also apply UNSAFE fixes
 fix covers. `--select` takes codes or prefixes and replaces the
 `[lint]` table's `select`, as in `check`: it narrows the report as well
 as the fixes, and names an opt-in rule to run it. `--diff` writes the
-diff to stdout and its summary to stderr, so `a816 fix --diff | patch
+diff to stdout and its summary and the hits no fix covers to stderr, so `a816 fix --diff | patch
 -p0` works; diffs are coloured only on a terminal (`FORCE_COLOR` and
 `NO_COLOR` override).
+
+`--check` and `--diff` exit 1 only while a fix is pending, so a CI step
+can gate on "nothing left to fix" in a tree that keeps hits no safe fix
+covers; failing on those is `a816 check`'s job. A writing `a816 fix`
+exits 1 while any hit remains.
 
 Safe fixes are guaranteed behaviour-preserving: they don't change
 emitted bytes, drop comments, or restructure semantics. Unsafe fixes

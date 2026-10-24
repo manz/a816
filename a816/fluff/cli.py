@@ -387,8 +387,9 @@ def _print_fix_diff(source: Path, original: str, new_text: str, unfixed: list[Di
             tofile=str(source),
         )
         sys.stdout.write(_colorize_diff(diff_lines))
+    # The hits no fix covers go to stderr: stdout stays a diff `patch` reads.
     for diag in unfixed:
-        print(diag.format())
+        print(diag.format(), file=sys.stderr)
 
 
 def _apply_fix_writes(
@@ -408,15 +409,16 @@ def _apply_fix_writes(
 
 
 def _report_fix_summary(args: argparse.Namespace, fixed_files: int, remaining: int, missing_err: int) -> int:
-    """Exit 1 while anything is left: a pending fix under `--check` / `--diff`
-    (as `format --diff`, so CI showing the patch fails), or an unfixed hit."""
+    """Under `--check` / `--diff`, exit 1 only while a fix is pending (as
+    `format --diff`); hits no fix covers are `a816 check`'s to fail on.
+    A writing run exits 1 while any hit remains."""
     if args.check and not (fixed_files or remaining):
         print("No fixes needed.")
         return missing_err
     if args.check or args.diff:
         # stderr keeps stdout a diff `patch` can read.
         print(f"{fixed_files} file(s) would be fixed, {remaining} hit(s) would remain.", file=sys.stderr)
-        return missing_err or (1 if fixed_files or remaining else 0)
+        return missing_err or (1 if fixed_files else 0)
     print(f"Fixed {fixed_files} file(s), {remaining} hit(s) remain.")
     return missing_err or (1 if remaining else 0)
 

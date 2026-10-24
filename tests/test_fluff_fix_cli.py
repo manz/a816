@@ -102,6 +102,26 @@ class TestFixCli:
             True,
         )
 
+    @pytest.mark.parametrize("mode", ["--diff", "--check"])
+    def test_a_dry_run_with_only_unfixable_hits_exits_0(self, tmp_path: Path, mode: str) -> None:
+        # ff4: 61 F001 (unsafe, not applied) kept `fix --diff` at 1 after `a816 fix`.
+        target = tmp_path / "s.s"
+        target.write_text('"""m"""\n*=0x008000\n.db 0xEA\n', encoding="utf-8")  # UP001: unsafe fix only
+        assert fluff_main(["fix", mode, str(target)]) == 0
+
+    def test_a_writing_run_with_unfixable_hits_exits_1(self, tmp_path: Path) -> None:
+        target = tmp_path / "s.s"
+        target.write_text('"""m"""\n*=0x008000\n.db 0xEA\n', encoding="utf-8")
+        assert fluff_main(["fix", str(target)]) == 1
+
+    def test_fix_diff_stdout_is_the_diff_alone(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        # ff6: unfixed hits mixed into the diff broke `a816 fix --diff | patch`.
+        target = tmp_path / "s.s"
+        target.write_text(self._MIXED, encoding="utf-8")
+        fluff_main(["fix", "--diff", str(target)])
+        captured = capsys.readouterr()
+        assert ("UP001" in captured.out, "UP001" in captured.err) == (False, True)
+
     def test_fix_diff_on_a_clean_file_exits_0(self, tmp_path: Path) -> None:
         clean = tmp_path / "clean.s"
         clean.write_text('"""ok"""\n', encoding="utf-8")
