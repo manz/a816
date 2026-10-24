@@ -110,14 +110,17 @@ $ a816 fix --unsafe-fixes src/        # also apply UNSAFE fixes
 fix covers. `--select` takes codes or prefixes and replaces the
 `[lint]` table's `select`, as in `check`: it narrows the report as well
 as the fixes, and names an opt-in rule to run it. `--diff` writes the
-diff to stdout and its summary and the hits no fix covers to stderr, so `a816 fix --diff | patch
--p0` works; diffs are coloured only on a terminal (`FORCE_COLOR` and
-`NO_COLOR` override).
+diff to stdout and its summary and the hits no fix covers to stderr, so
+`a816 fix --diff | patch -p0` (or `| git apply -p0`) works; the headers
+name the files as given, without git's `a/` `b/` prefixes. Diffs are
+coloured only on a terminal (`FORCE_COLOR` and `NO_COLOR` override).
 
 `--check` and `--diff` exit 1 only while a fix is pending, so a CI step
 can gate on "nothing left to fix" in a tree that keeps hits no safe fix
 covers; failing on those is `a816 check`'s job. A writing `a816 fix`
-exits 1 while any hit remains.
+exits 1 while any hit remains after its fixes, and 0 once none does,
+whether or not it changed a file; a script that needs to know whether
+fixes were pending runs `a816 fix --check` first.
 
 Safe fixes are guaranteed behaviour-preserving: they don't change
 emitted bytes, drop comments, or restructure semantics. Unsafe fixes

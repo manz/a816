@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `a816 format` keeps comments where the author put them in a block
+  body. A label with a trailing comment stays at column 0 like a bare
+  one, a comment trailing a block's `{` stays on that line, a comment
+  hanging under a trailing comment stays under it, and an indented
+  comment takes the body indent (one at column 0 stays there). A line
+  whose trailing comment ends in `:` is no longer taken for a label.
 - `a816 fix --select` narrows the report too: hits of other rules no
   longer show (and no longer fail the run). It takes prefixes and an
   unknown code is `E0516`, as in `check`. `fix` prints one line per
@@ -55,6 +61,28 @@
   like board regions already did. `xdds.physical_to_logical` takes
   `near` too, and skips ROM regions that cannot reach the offset
   (ExHiROM's low banks) instead of raising.
+
+### Upgrading from 1.1
+
+- New lint hits fail `a816 check` (and the shared lint action, which
+  runs the project's own a816) on the bump: rules now look inside
+  `.alloc` bodies, and `F001` is on by default. `a816 fix` clears
+  `OP001` and `DOC007`. `F001` deletes code, so its fix is unsafe:
+  review it with `a816 fix --select F001 --unsafe-fixes --diff`, or
+  set `[lint] ignore = ["F001"]` to deal with it later. `N801` and
+  `N802` have no fix: rename the names, or give disassembled,
+  generated or legacy-named sources (`L_D3541D`, a hack's CamelCase
+  routines) `[lint.per-file-ignores]`.
+- `from script import ...` warns: switch to `from katsuji.script import
+  ...` (see above). katsuji ships type hints, so a mypy override for
+  `script` can go.
+- Python 3.14 or later is required.
+- Run `a816 format` once after the bump and commit it on its own. A
+  project formatted before 1.1.4, or never, gets the block-body
+  re-indent: a large, whitespace-only diff.
+- 1.2 stops moving comments, but comments an older format pass already
+  moved stay where it left them. Find them in that format commit's diff
+  (comment lines, `^[-+]\s*;`) and put them back by hand.
 
 ## 1.1.7 (2026-10-20)
 
