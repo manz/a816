@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `a816 format` keeps comments where the author put them in a block
+  body. A label with a trailing comment stays at column 0 like a bare
+  one, a comment trailing a block's `{` stays on that line, a comment
+  hanging under a trailing comment stays under it, and an indented
+  comment takes the body indent (one at column 0 stays there). A line
+  whose trailing comment ends in `:` is no longer taken for a label.
 - `a816 fix --select` narrows the report too: hits of other rules no
   longer show (and no longer fail the run). It takes prefixes and an
   unknown code is `E0516`, as in `check`. `fix` prints one line per

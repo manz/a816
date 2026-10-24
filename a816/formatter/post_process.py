@@ -113,6 +113,31 @@ def _collect_inline_comment_groups(lines: list[str]) -> dict[int, list[tuple[int
     return groups
 
 
+def hanging_comments(lines: list[str]) -> list[int]:
+    """Comment-only lines in the column of the comment on the line above.
+
+    They continue that comment, so they follow it when it moves.
+    """
+    mask = docstring_mask(lines)
+    hanging: list[int] = []
+    for index in range(1, len(lines)):
+        line = lines[index]
+        if mask[index] or mask[index - 1] or not line.lstrip().startswith(";"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent and comment_start(lines[index - 1]) == indent:
+            hanging.append(index)
+    return hanging
+
+
+def realign_hanging_comments(lines: list[str], hanging: list[int]) -> None:
+    """Put each hanging comment back under the comment it continues."""
+    for index in hanging:
+        column = comment_start(lines[index - 1])
+        if column > 0:
+            lines[index] = " " * column + lines[index].lstrip()
+
+
 def align_inline_comments(lines: list[str], options: FormattingOptions) -> None:
     """Normalize inline comments without forcing column alignment.
 
@@ -204,7 +229,9 @@ def finalize_formatting(lines: list[str], options: FormattingOptions) -> str:
     # after `separate_labels` because that pass would otherwise
     # re-insert a blank between `*=` / `@=` and the next label.
     lines = strip_blanks_after_position_directive(lines)
+    hanging = hanging_comments(lines)
     align_inline_comments(lines, options)
+    realign_hanging_comments(lines, hanging)
     # Trailing blank lines would survive one pass but not the next.
     content = "\n".join(lines).rstrip("\n")
     return f"{content}\n" if content else content

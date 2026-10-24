@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 from a816.exceptions import FormattingError
 from a816.formatter.operand_emit import format_data, format_macro_apply, format_opcode
 from a816.formatter.options import FormattingOptions
-from a816.formatter.post_process import finalize_formatting
+from a816.formatter.post_process import comment_start, finalize_formatting
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AsciiAstNode,
@@ -51,6 +51,14 @@ from a816.parse.mzparser import A816Parser
 from a816.parse.tokens import Token
 
 
+class _BodyComment(str):
+    """A block-body comment the author indented: it takes the body indent."""
+
+
+class _HangingComment(str):
+    """A comment continuing the trailing comment above it, kept in its column."""
+
+
 class A816Formatter:
     """Assembly code formatter using AST"""
 
@@ -59,6 +67,8 @@ class A816Formatter:
         # Bodies being formatted for `_indent_block_lines`; their lines
         # carry only nesting, the block adds the indent.
         self._nesting = 0
+        # Comments trailing a block's `{`, already folded onto its header.
+        self._header_comments: set[int] = set()
         self._instruction_like_nodes = (
             OpcodeAstNode,
             DataNode,
@@ -171,9 +181,7 @@ class A816Formatter:
         when available; falls back to `tail_line + 1` (legacy single-brace
         behaviour) when the source isn't reachable.
         """
-        position = getattr(node.file_info, "position", None)
-        source_file = getattr(position, "file", None) if position else None
-        source_lines = getattr(source_file, "lines", None) if source_file else None
+        source_lines = self._source_lines(node)
         if not source_lines:
             return tail_line + 1
         i = tail_line + 1
@@ -186,6 +194,67 @@ class A816Formatter:
                 continue
             break
         return last
+
+    @staticmethod
+    def _source_lines(node: AstNode) -> list[str] | None:
+        position = getattr(node.file_info, "position", None)
+        source_file = getattr(position, "file", None) if position else None
+        lines: list[str] | None = getattr(source_file, "lines", None) if source_file else None
+        return lines
+
+    def _trails_code(self, node: CommentAstNode) -> bool:
+        """Whether code precedes the comment on its source line."""
+        position = node.file_info.position
+        lines = self._source_lines(node)
+        if position is None or not lines or position.line >= len(lines):
+            return False
+        return bool(lines[position.line][: position.column].strip())
+
+    def _hangs(self, node: CommentAstNode) -> bool:
+        """Whether the comment sits in the column of the comment ending the source line above."""
+        position = node.file_info.position
+        lines = self._source_lines(node)
+        if position is None or not lines or position.column == 0 or not 0 < position.line < len(lines):
+            return False
+        return comment_start(lines[position.line - 1]) == position.column and not self._trails_code(node)
+
+    def _body_comment(self, node: CommentAstNode) -> list[str]:
+        """A stand-alone comment in a block body. One the author wrote at
+        column 0 stays flush-left (a banner or a disassembly dump); an
+        indented one takes the body indent; one hanging under a trailing
+        comment keeps that comment's column."""
+        lines = self._format_comment(node)
+        position = node.file_info.position
+        if len(lines) != 1 or position is None or position.column == 0:
+            return lines
+        if self._hangs(node):
+            return [_HangingComment(lines[0])]
+        return [_BodyComment(lines[0])]
+
+    def _take_header_comment(self, body: AstNode) -> str | None:
+        """A comment trailing a block's opening `{` belongs on the header line."""
+        nodes = getattr(body, "body", None)
+        if not nodes or not isinstance(nodes[0], CommentAstNode) or not self._trails_code(nodes[0]):
+            return None
+        self._header_comments.add(id(nodes[0]))
+        return self._format_comment(nodes[0])[0]
+
+    def _nest_under(
+        self, lines: list[str], body: AstNode, indent_instructions: bool = False, *, indent_after_label: bool = True
+    ) -> None:
+        """Append a block body under the header that ends `lines`."""
+        comment = self._take_header_comment(body)
+        if comment is not None:
+            lines[-1] = f"{lines[-1]} {comment}"
+        lines.extend(self._nested(body, indent_instructions, indent_after_label=indent_after_label))
+
+    def _body_node_lines(self, node: AstNode, lines: list[str]) -> bool:
+        """Emit a block-body comment; False for any other node, which the caller emits."""
+        if not isinstance(node, CommentAstNode) or not self._nesting:
+            return False
+        if id(node) not in self._header_comments:
+            lines.extend(self._body_comment(node))
+        return True
 
     def _format_compound(self, ast: CompoundAstNode, indent_instructions: bool, indent_after_label: bool) -> list[str]:
         lines: list[str] = []
@@ -208,10 +277,15 @@ class A816Formatter:
             # duplicate-symbol error at link time.
             if isinstance(node, CompoundAstNode):
                 lines.append("{")
-                lines.extend(self._nested(node, True, indent_after_label=indent_after_label))
+                self._nest_under(lines, node, True, indent_after_label=indent_after_label)
                 lines.append("}")
                 prev_was_label = False
                 prev_line = self._advance_prev_line(node, node_line)
+                continue
+
+            if self._body_node_lines(node, lines):
+                prev_was_label = False
+                prev_line = node_line
                 continue
 
             should_indent = indent_instructions or (indent_after_label and prev_was_label)
@@ -236,9 +310,13 @@ class A816Formatter:
 
             if isinstance(node, CompoundAstNode):
                 lines.append("{")
-                lines.extend(self._nested(node, True, indent_after_label=indent_after_label))
+                self._nest_under(lines, node, True, indent_after_label=indent_after_label)
                 lines.append("}")
                 prev_line = self._advance_prev_line(node, node_line)
+                continue
+
+            if self._body_node_lines(node, lines):
+                prev_line = node_line
                 continue
 
             lines.extend(self._format_ast(node, True, indent_after_label=indent_after_label))
@@ -259,6 +337,9 @@ class A816Formatter:
 
     def _format_scope(self, ast: ScopeAstNode) -> list[str]:
         lines = [f".scope {ast.name} {{"]
+        comment = self._take_header_comment(ast.body)
+        if comment is not None:
+            lines[0] = f"{lines[0]} {comment}"
         if ast.docstring:
             lines.extend(self._format_docstring(ast.docstring, indent_level=1))
         lines.extend(self._nested(ast.body, True))
@@ -331,6 +412,9 @@ class A816Formatter:
             header += "()"
         header += " {"
 
+        comment = self._take_header_comment(macro_ast.block)
+        if comment is not None:
+            header = f"{header} {comment}"
         body_lines = []
         if macro_ast.docstring:
             body_lines.extend(self._format_docstring(macro_ast.docstring, indent_level=1))
@@ -350,7 +434,7 @@ class A816Formatter:
             current += separator if index else ""
             if isinstance(arg, BlockAstNode):
                 lines.append(f"{current}{{")
-                lines.extend(self._nested(arg, True))
+                self._nest_under(lines, arg, True)
                 current = "}"
             else:
                 current += arg.to_canonical()
@@ -376,7 +460,7 @@ class A816Formatter:
         else:
             header = f".alloc{name_part} in {ast.pool_name}{ast.flags_suffix()} {{"
         lines = [header]
-        lines.extend(self._nested(ast.body, True))
+        self._nest_under(lines, ast.body, True)
         lines.append("}")
         return lines
 
@@ -393,7 +477,7 @@ class A816Formatter:
         old_start = ast.old_start.to_canonical()
         old_end = ast.old_end.to_canonical()
         lines = [f".relocate {ast.symbol} {old_start} {old_end} into {ast.pool_name} {{"]
-        lines.extend(self._nested(ast.body, True))
+        self._nest_under(lines, ast.body, True)
         lines.append("}")
         return lines
 
@@ -426,10 +510,10 @@ class A816Formatter:
         """Format an if statement with explicit braces"""
         condition = if_ast.expression.to_canonical()
         lines = [f".if {condition} {{"]
-        lines.extend(self._nested(if_ast.block))
+        self._nest_under(lines, if_ast.block)
         if if_ast.else_block:
             lines.append("} else {")
-            lines.extend(self._nested(if_ast.else_block))
+            self._nest_under(lines, if_ast.else_block)
         lines.append("}")
         return lines
 
@@ -462,7 +546,7 @@ class A816Formatter:
         comma = ", " if self.options.space_after_comma else ","
         header = f".for {symbol} := {min_val}{comma}{max_val} {{"
         lines = [header]
-        lines.extend(self._nested(for_ast.body))
+        self._nest_under(lines, for_ast.body)
         lines.append("}")
         return lines
 
@@ -528,17 +612,26 @@ class A816Formatter:
         if in_docstring or triple_count:
             out.append(line.rstrip())
             return in_docstring != (triple_count % 2 == 1)
-        if self._stays_flush_left(stripped):
+        anchor = comment_start(out[-1]) if out and isinstance(line, _HangingComment) else -1
+        if anchor > 0:
+            out.append(_HangingComment(" " * anchor + stripped))
+        elif self._stays_flush_left(line):
             out.append(stripped)
         else:
-            out.append(" " * (self.options.indent_size * levels) + line.rstrip())
+            indented = " " * (self.options.indent_size * levels) + line.rstrip()
+            out.append(_BodyComment(indented) if isinstance(line, _BodyComment) else indented)
         return in_docstring
 
     @staticmethod
-    def _stays_flush_left(stripped: str) -> bool:
-        """Inner labels and stand-alone comments keep column 0 inside a block."""
-        is_label = stripped.endswith(":") and not stripped.startswith(":") and not stripped.startswith(".")
-        return is_label or stripped.startswith(";")
+    def _stays_flush_left(line: str) -> bool:
+        """Inner labels, trailing comment or not, and stand-alone comments
+        written at column 0 keep column 0 inside a block."""
+        stripped = line.strip()
+        if stripped.startswith(";"):
+            return not isinstance(line, _BodyComment)
+        end = comment_start(stripped)
+        code = stripped[:end].rstrip() if end >= 0 else stripped
+        return code.endswith(":") and not code.startswith((":", "."))
 
     @staticmethod
     def _opens_istruct_block(stripped: str) -> bool:
@@ -688,7 +781,7 @@ class A816Formatter:
 
     def _emit_compound(self, node: CompoundAstNode, formatted: list[str]) -> None:
         formatted.append("{")
-        formatted.extend(self._nested(node, indent_after_label=False))
+        self._nest_under(formatted, node, indent_after_label=False)
         formatted.append("}")
 
     def _node_positions_sorted(self, nodes: list[AstNode]) -> list[tuple[int, AstNode]]:
@@ -712,6 +805,10 @@ class A816Formatter:
         if isinstance(node, LabelAstNode):
             return self._emit_label(node_lines, formatted)
         if isinstance(node, CommentAstNode):
+            anchor = comment_start(formatted[-1]) if formatted and self._hangs(node) else -1
+            if anchor > 0:
+                formatted.append(" " * anchor + node_lines[0].strip())
+                return in_label
             position = node.file_info.position
             flush = position is not None and position.column == 0
             self._emit_comment(node_lines, node_line, last_line, in_label, formatted, flush)
