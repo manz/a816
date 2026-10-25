@@ -17,6 +17,7 @@ from a816.parse.ast.nodes.directives import (
     CommentAstNode,
     DataNode,
     DebugAstNode,
+    EmbedAstNode,
     IncludeAstNode,
     IncludeBinaryAstNode,
     IncludeIpsAstNode,
@@ -54,6 +55,7 @@ KeywordAstNode = (
     | IncludeAstNode
     | IncludeIpsAstNode
     | IncludeBinaryAstNode
+    | EmbedAstNode
     | BlockAstNode
     | TableAstNode
     | StructAstNode

@@ -4,6 +4,9 @@ label / label_decl."""
 
 from __future__ import annotations
 
+import json
+import os
+
 from a816.parse.ast.nodes import (
     AsciiAstNode,
     CodePositionAstNode,
@@ -12,6 +15,7 @@ from a816.parse.ast.nodes import (
     DataNode,
     DebugAstNode,
     DocstringAstNode,
+    EmbedAstNode,
     ExpressionAstNode,
     IncludeAstNode,
     IncludeBinaryAstNode,
@@ -45,6 +49,7 @@ from a816.parse.nodes import (
     TextNode,
     WordNode,
 )
+from a816.parse.nodes.data import EmbedNode
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
@@ -107,6 +112,40 @@ def generate_incbin(
             code=str(E_IO_FILE_NOT_FOUND),
             hint=f"the path resolves against the include paths ({searched})",
         ) from missing
+
+
+def generate_embed(
+    node: EmbedAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    """Emit an SPC700 program's ARAM image and name its symbols.
+
+    `.embed "sound/driver"` defines `driver.<symbol>` for each of the
+    program's global symbols, `driver.__base` (its load address) and
+    `driver.__size`: the uploader reads them instead of copies.
+    """
+    from a816.error_codes import E_IO_FILE_NOT_FOUND
+
+    image_path = resolver.context.embedded_programs.get(node.module_name)
+    if image_path is None:
+        raise NodeError(
+            f"`.embed`: no SPC700 program {node.module_name!r} was linked",
+            file_info,
+            code=str(E_IO_FILE_NOT_FOUND),
+            hint=f"`a816 build` links `{node.module_name}.spc.s` before the modules that embed it",
+        )
+    symbols_path = image_path.with_suffix(".json")
+    program = json.loads(symbols_path.read_text(encoding="utf-8"))
+    resolver.dependency_files.add(os.path.abspath(symbols_path))
+    embed = EmbedNode(image_path, resolver)
+    prefix = node.module_name.rsplit("/", 1)[-1]
+    for name, value in program["symbols"].items():
+        resolver.current_scope.add_symbol(f"{prefix}.{name}", value)
+    resolver.current_scope.add_symbol(f"{prefix}.__base", program["base"])
+    resolver.current_scope.add_symbol(f"{prefix}.__size", len(embed.image))
+    return [embed]
 
 
 def _generate_data(
@@ -260,6 +299,7 @@ generators["include_ips"] = generate_include_ips
 generators["include"] = generate_include
 generators["docstring"] = generate_docstring
 generators["incbin"] = generate_incbin
+generators["embed"] = generate_embed
 generators["db"] = generate_db
 generators["dw"] = generate_dw
 generators["dl"] = generate_dl

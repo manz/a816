@@ -15,6 +15,7 @@ from a816.parse.ast.nodes import (
     CommentAstNode,
     CompoundAstNode,
     DocstringAstNode,
+    EmbedAstNode,
     IncludeBinaryAstNode,
     KeywordAstNode,
     LabelAstNode,
@@ -81,6 +82,7 @@ _DIRECTIVE_HANDLERS: dict[str, Callable[[Parser, Token], AstNode]] = {
     # source line and makes the formatter fold that comment onto the directive.
     "incbin": lambda p, kw: IncludeBinaryAstNode(parse_directive_with_quoted_string(p), kw),
     "table": lambda p, kw: TableAstNode(parse_directive_with_quoted_string(p), kw),
+    "embed": lambda p, kw: EmbedAstNode(parse_directive_with_quoted_string(p), kw),
     "macro": lambda p, _kw: parse_macro(p),
     "map": parse_map,
     "if": lambda p, _kw: parse_if(p),

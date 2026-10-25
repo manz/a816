@@ -415,6 +415,7 @@ DIRECTIVE_NAMES = {
     "include",
     "include_ips",
     "incbin",
+    "embed",
     "pointer",
     "text",
     "ascii",

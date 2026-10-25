@@ -23,6 +23,7 @@ from a816.parse.ast.nodes import (
     CompoundAstNode,
     DataNode,
     DocstringAstNode,
+    EmbedAstNode,
     ExternAstNode,
     ForAstNode,
     IfAstNode,
@@ -46,6 +47,7 @@ from a816.parse.ast.nodes import (
     TableAstNode,
     TextAstNode,
 )
+from a816.parse.ast.nodes.spc700 import SpcOpcodeAstNode
 from a816.parse.errors import ParserSyntaxError
 from a816.parse.mzparser import A816Parser
 from a816.parse.tokens import Token
@@ -71,6 +73,7 @@ class A816Formatter:
         self._header_comments: set[int] = set()
         self._instruction_like_nodes = (
             OpcodeAstNode,
+            SpcOpcodeAstNode,
             DataNode,
             TextAstNode,
             AsciiAstNode,
@@ -360,6 +363,8 @@ class A816Formatter:
         IncludeAstNode: lambda self, ast: f'.include "{ast.file_path}"',
         IncludeIpsAstNode: lambda self, ast: ast.to_canonical(),
         IncludeBinaryAstNode: lambda self, ast: f'.incbin "{ast.file_path}"',
+        EmbedAstNode: lambda self, ast: ast.to_canonical(),
+        SpcOpcodeAstNode: lambda self, ast: ast.to_canonical(),
         TableAstNode: lambda self, ast: f'.table "{ast.file_path}"',
         ExternAstNode: lambda self, ast: f".extern {ast.symbol}",
         CodePositionAstNode: lambda self, ast: ast.to_canonical(),

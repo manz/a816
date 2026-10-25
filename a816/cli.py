@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from a816.config import DEFINE_NAME, A816Config, discover_a816_config, merge_build_settings
-from a816.cpu.arch import ARCHES, using_arch
+from a816.cpu.arch import ARCHES, arch_for_path, using_arch
 from a816.exceptions import A816Error, LinkerError
 from a816.linker import Linker
 from a816.mappers import CLI_MAPPERS
@@ -185,9 +185,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--arch",
-        default="65c816",
+        default=None,
         choices=ARCHES,
-        help="CPU to assemble for. `spc700` links an ARAM image (`-f aram`, the default for it).",
+        help=(
+            "CPU to assemble for; by default the main source's (`*.spc.s` is spc700). "
+            "spc700 links an ARAM image (`-f aram`, the default for it)."
+        ),
     )
     parser.set_defaults(bus_map=[])
     return parser
@@ -201,6 +204,7 @@ def _parse_build_args(argv: list[str]) -> argparse.Namespace:
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
+    args.arch = args.arch or arch_for_path(args.input_files[0])
     paths = args.output_files or [Path("a.out")]
     if len(paths) == 1:
         args.outputs = [(args.format or ("aram" if args.arch == "spc700" else "ips"), paths[0])]

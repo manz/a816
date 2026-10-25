@@ -120,7 +120,10 @@ class Linker:
         arches = {obj.arch for obj in self.object_files}
         if len(arches) > 1:
             listing = ", ".join(f"{obj.describe()} ({obj.arch})" for obj in self.object_files)
-            raise ArchMismatchLinkError(f"objects built for different CPUs: {listing}")
+            raise ArchMismatchLinkError(
+                f"objects built for different CPUs: {listing}; "
+                'an SPC700 program goes into a 65816 build with `.embed "name"`, not `.import`'
+            )
         return arches.pop() if arches else "65c816"
 
     def _allocate_pools_across_modules(self) -> None:

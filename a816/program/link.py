@@ -162,6 +162,18 @@ class LinkMixin:
         self._prepare_link_output(linked_obj, mapping)
         return self._emit_linked(linked_obj, sfc_file, SFCWriter, "SFC file", pad_to=self._rom_size(linked_obj))
 
+    def aram_image(self, linked_obj: ObjectFile) -> tuple[int, bytes]:
+        """A linked SPC700 program's load address and ARAM image, for `.embed`."""
+        self._prepare_link_output(linked_obj, None)
+        self._check_block_overlaps(linked_obj)
+        buffer = io.BytesIO()
+        writer = AramWriter(buffer)
+        for section in linked_obj.sections:
+            if section.code:
+                writer.write_block(section.code, self._to_physical(section.placed_base))
+        writer.end()
+        return writer.base or 0, buffer.getvalue()
+
     def link_as_aram(self, linked_obj: ObjectFile, aram_file: Path) -> int:
         """Write a linked SPC700 program as the ARAM image the S-CPU uploads."""
         self._prepare_link_output(linked_obj, None)

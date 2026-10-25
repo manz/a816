@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from a816.context import AssemblyMode
+from a816.cpu.arch import arch_for_path, using_arch
 from a816.cpu.cpu_65c816 import RomType
 from a816.exceptions import AssemblyError, LinkAssertError, SymbolNotDefined
 from a816.object_file import SymbolSection, SymbolType
@@ -200,18 +201,20 @@ class AssembleMixin:
         object_writer = ObjectWriter(str(output_file))
         object_writer.begin()
 
-        try:
-            exit_code = self.assemble_with_object_emitter(asm_file, object_writer, parsed)
-        except RuntimeError as e:
-            _log_internal_failure(e)
-            exit_code = -1
-        if exit_code == 0:
-            object_writer.end()
-        else:
-            # A failed compile writes no object, and drops the last good one:
-            # it no longer matches the source, and a build cache keyed on the
-            # source's contents would otherwise keep using it.
-            output_file.unlink(missing_ok=True)
+        # The object records the CPU its source is written for (`*.spc.s`).
+        with using_arch(arch_for_path(asm_file)):
+            try:
+                exit_code = self.assemble_with_object_emitter(asm_file, object_writer, parsed)
+            except RuntimeError as e:
+                _log_internal_failure(e)
+                exit_code = -1
+            if exit_code == 0:
+                object_writer.end()
+            else:
+                # A failed compile writes no object, and drops the last good one:
+                # it no longer matches the source, and a build cache keyed on the
+                # source's contents would otherwise keep using it.
+                output_file.unlink(missing_ok=True)
         return exit_code
 
     def _classify_object_symbol(
