@@ -149,7 +149,8 @@ them to the repository, not a fork).
 
 A toolchain bump that changes `a816 format` output or adds lint hits, as
 1.2.0 did, comes in red: run `a816 format` / `a816 fix` on Renovate's
-branch and push. Keeping it apart from the other dependencies means their
+branch, push, and merge it yourself once green (Renovate leaves a branch
+someone else committed to alone, automerge included). Keeping it apart from the other dependencies means their
 bumps still merge meanwhile.
 
 The preset is read from a816's default branch, so a change to it reaches
