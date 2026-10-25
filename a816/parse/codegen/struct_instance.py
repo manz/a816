@@ -74,6 +74,15 @@ def too_long_error(value: InitValue, length: int, count: int) -> NodeError:
     )
 
 
+def located(code: list[NodeProtocol], file_info: Token) -> list[NodeProtocol]:
+    """Give the byte runs (zero fill, string data) the directive's location;
+    expression fields already carry their own."""
+    for gen in code:
+        if isinstance(gen, BytesNode) and gen.file_info is None:
+            gen.file_info = file_info
+    return code
+
+
 def _zeros(size: int) -> list[NodeProtocol]:
     return [BytesNode(bytes(size))] if size else []
 
@@ -234,7 +243,7 @@ def generate_istruct(
             code=str(E_CODEGEN_ISTRUCT_UNKNOWN_TYPE),
             hint=f"declare `.struct {node.type_name} {{ ... }}` (or import it) first",
         )
-    return InstanceEmitter(resolver).struct(node.type_name, node.init)
+    return located(InstanceEmitter(resolver).struct(node.type_name, node.init), file_info)
 
 
 generators["istruct"] = generate_istruct

@@ -179,9 +179,12 @@ class _SizedValueNode(NodeBase):
     """
 
     SIZE: int = 0
+    coalesce_lines = True
+    """A run of values from one directive records one line entry, not one per value."""
 
     def __init__(self, value_node: ValueNodeProtocol) -> None:
         self.value_node = value_node
+        self.file_info: Token | None = getattr(value_node, "file_info", None)
 
     def emit(self, current_address: Address) -> bytes:
         value = self.value_node.get_value()
@@ -219,8 +222,11 @@ class ByteNode(_SizedValueNode):
 class BytesNode(NodeBase):
     """Emit a fixed byte string (zero fill, encoded string initializers)."""
 
-    def __init__(self, data: bytes) -> None:
+    coalesce_lines = True
+
+    def __init__(self, data: bytes, file_info: Token | None = None) -> None:
         self.data = data
+        self.file_info = file_info
 
     def emit(self, current_address: Address) -> bytes:
         del current_address

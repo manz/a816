@@ -321,9 +321,17 @@ class ObjectWriter(Writer):
         self._file_index[path] = idx
         return idx
 
-    def add_line(self, offset: int, file_path: str, line: int, column: int, flags: int = 0) -> None:
+    def add_line(
+        self, offset: int, file_path: str, line: int, column: int, flags: int = 0, *, coalesce: bool = False
+    ) -> None:
+        """Record where the bytes at `offset` come from. `coalesce` skips the
+        entry when the previous one already names the same source position
+        (the values of one `.db` line)."""
         file_idx = self.add_file(file_path)
-        self._ensure_section().lines.append((offset, file_idx, line, column, flags))
+        lines = self._ensure_section().lines
+        if coalesce and lines and lines[-1][1:4] == (file_idx, line, column):
+            return
+        lines.append((offset, file_idx, line, column, flags))
 
     def write_block_header(self, block: bytes, block_address: int) -> None:
         del block, block_address

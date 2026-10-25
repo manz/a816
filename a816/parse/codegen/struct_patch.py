@@ -35,7 +35,13 @@ from a816.parse.ast.nodes import (
 )
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, generators
 from a816.parse.codegen.pool import generate_alloc
-from a816.parse.codegen.struct_instance import InstanceEmitter, encode_string, too_long_error, value_kind_error
+from a816.parse.codegen.struct_instance import (
+    InstanceEmitter,
+    encode_string,
+    located,
+    too_long_error,
+    value_kind_error,
+)
 from a816.parse.codegen.structs import STRUCT_FIELD_SIZES, bit_width_from_type, split_array_type
 from a816.parse.nodes import BytesNode, NodeError
 from a816.parse.tokens import Token, TokenType
@@ -226,10 +232,10 @@ def generate_patch_chunk(
         if leaf.bits:
             code.extend(emitter.bit_run(list(leaf.bits), {entry.name: entry for entry in leaf.entries}))
         elif leaf.data:
-            code.append(BytesNode(leaf.data))
+            code.append(BytesNode(leaf.data, leaf.anchor))
         else:
             assert leaf.value is not None
-            code.extend(emitter.element(leaf.element_type, leaf.value))
+            code.extend(located(emitter.element(leaf.element_type, leaf.value), leaf.anchor))
     return code
 
 

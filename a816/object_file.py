@@ -160,7 +160,7 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 8  # 8: an alloc body's `.assert` names its `_` labels as they export
+CODEGEN_REVISION = 9  # 9: data directives and `.istruct` bytes record line entries
 
 PC_RELATIVE_PREFIX = "pc-relative:"
 """Marks an expression relocation whose value is the expression minus the

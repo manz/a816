@@ -77,7 +77,7 @@ ENTRIES: dict[str, str] = {
     "E0401": "unresolved external symbol.",
     "E0402": "relocation out of range.",
     "E0403": "relocation expression failed.",
-    "E0404": "alloc does not fit in its pool at link time (the pool is shared across modules, so the allocator only runs once every `.o` is in). Same message and hint as `E0318`, plus the pool and, when the body emitted code, the `file:line` of its first instruction.",
+    "E0404": "alloc does not fit in its pool at link time (the pool is shared across modules, so the allocator only runs once every `.o` is in). Same message and hint as `E0318`, plus the pool and the `file:line` of the `.alloc` (or `.reserve`).",
     "E0405": "an alloc request names a pool that no linked object declares.",
     "E0406": "reservations from two different `bss` pools share memory. Lists every clash with both reservations, their spans and their `file:line`. Memory used in turns goes in one pool's `contexts` (see [Freespace pools](freespace-pools.md#memory-pools-bss-and-contexts)).",
     "E0407": "a `.assert` is false once every address is final. Lists each failed assert with its message, expression and `file:line`.",

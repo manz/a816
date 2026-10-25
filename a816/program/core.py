@@ -286,7 +286,13 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         position = getattr(info, "position", None)
         if position is None or position.file is None:
             return
-        object_writer.add_line(offset, position.file.filename, position.line, position.column)
+        object_writer.add_line(
+            offset,
+            position.file.filename,
+            position.line,
+            position.column,
+            coalesce=getattr(node, "coalesce_lines", False),
+        )
 
     def _record_debug_line(self, node: NodeProtocol, address: int) -> None:
         """If debug capture is on, record one line entry for the node."""
@@ -298,7 +304,10 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         position = getattr(info, "position", None)
         if position is None or position.file is None:
             return
-        self._debug_lines.append((address, position.file.filename, position.line, position.column))
+        entry = (address, position.file.filename, position.line, position.column)
+        if getattr(node, "coalesce_lines", False) and self._debug_lines and self._debug_lines[-1][1:] == entry[1:]:
+            return
+        self._debug_lines.append(entry)
 
     def exports_symbol_file(self, filename: str) -> None:
         """
