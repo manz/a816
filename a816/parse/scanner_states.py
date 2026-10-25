@@ -457,7 +457,7 @@ def lex_directive(s: "Scanner") -> None:
     diagnostic otherwise.
     """
     s.ignore()
-    s.accept_run("abcdefghijklmnopqrstuvwxyz_0123456789")
+    s.accept_run("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789")
     if s.current_token_text() in DIRECTIVE_NAMES:
         s.emit(TokenType.KEYWORD)
     else:
