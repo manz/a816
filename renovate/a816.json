@@ -1,8 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "One Renovate config for a816 and the projects built with it: every dependency in one pull request, merged by Renovate once its checks pass.",
+  "description": "One Renovate config for a816 and the projects built with it: two grouped pull requests, merged by Renovate once their checks pass; majors wait for a human.",
   "extends": ["config:recommended"],
-  "separateMajorMinor": false,
   "platformAutomerge": false,
   "packageRules": [
     {
@@ -10,6 +9,15 @@
       "groupName": "all dependencies",
       "groupSlug": "all",
       "automerge": true
+    },
+    {
+      "matchPackageNames": ["a816", "katsuji", "manz/a816", "manz/a816/**"],
+      "groupName": "a816",
+      "groupSlug": "a816"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "automerge": false
     }
   ]
 }

@@ -135,13 +135,25 @@ GITHUB_REF_NAME=v1.2rc1 a816 ci release --dry-run --assets='build/*.ips'
 
 ## Renovate
 
-One preset is the whole Renovate config: every dependency, a816, katsuji
-and the actions included, goes in one pull request, and Renovate merges it
-once all its checks pass. A failing or pending check leaves the pull
-request open. Renovate merges it itself (`platformAutomerge` is off), so
-this holds on repositories without branch protection too. Majors are in
-the same pull request, and one dependency that breaks the build holds the
-others back until it is fixed or pinned.
+One preset is the whole Renovate config. a816, katsuji and the actions
+share one pull request, every other dependency shares another, and a
+major update gets a pull request of its own. Renovate merges the first
+two once every check on them has passed (`platformAutomerge` is off, so
+this holds without branch protection). A failing or pending check leaves
+the pull request open, and so does a repository with no checks at all:
+do not set `ignoreTests` to unstick one, add a check. Majors always wait
+for a human. A check is only as good as what it runs: a job that skips
+the build when the ROM secret is missing still reports success, so make
+sure Renovate's branches get the secret (they do when Renovate pushes
+them to the repository, not a fork).
+
+A toolchain bump that changes `a816 format` output or adds lint hits, as
+1.2.0 did, comes in red: run `a816 format` / `a816 fix` on Renovate's
+branch and push. Keeping it apart from the other dependencies means their
+bumps still merge meanwhile.
+
+The preset is read from a816's default branch, so a change to it reaches
+every project at once, not with the next release.
 
 ```json
 {
@@ -149,5 +161,4 @@ others back until it is fixed or pinned.
 }
 ```
 
-Rules a project needs on top go in its own `packageRules`, after the
-preset.
+Rules a project needs on top go in its own `packageRules`.

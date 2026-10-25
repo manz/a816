@@ -3,8 +3,11 @@
 ## Unreleased
 
 - The Renovate preset `github>manz/a816//renovate/a816` is a whole
-  config: every dependency in one pull request, which Renovate merges
-  once its checks pass. A project's `renovate.json` only extends it.
+  config: a816, katsuji and the actions in one pull request, the other
+  dependencies in another, majors apart. Renovate merges the first two
+  once their checks pass; majors wait for a human. A project's
+  `renovate.json` only extends it. Presets are read from a816's default
+  branch, so this applies as soon as it merges, not at release.
 
 ## 1.2.0 (2026-10-25)
 
