@@ -56,6 +56,7 @@ from lsprotocol.types import (
 from pygls.lsp.server import LanguageServer
 
 from a816.cpu.cpu_65c816 import AddressingMode, snes_opcode_table
+from a816.cpu.spc700 import SPC700_TABLE
 from a816.exceptions import FormattingError
 from a816.formatter import A816Formatter, FormattingOptions
 from a816.lsp.document import A816Document
@@ -64,6 +65,7 @@ from a816.lsp.handlers.hover import HoverMixin
 from a816.lsp.handlers.members import MemberDefinitionMixin
 from a816.lsp.handlers.tokens import TokensMixin
 from a816.lsp.mask import build_code_mask
+from a816.lsp.spc700 import SPC700_REGISTER_NAMES, is_spc700_uri, spc700_forms
 from a816.lsp.workspace import IndexProgress, ProgressCallback, WorkspaceIndex
 from a816.util import uri_to_path
 
@@ -96,6 +98,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin, MemberDefini
         self._opcode_completions = self._build_opcode_completions()
         self._keyword_completions = self._build_keyword_completions()
         self._register_completions = self._build_register_completions()
+        self._spc700_completions = self._build_spc700_completions()
 
     def _setup_handlers(self) -> None:
         """Register all LSP handlers; thin wrappers delegate to _handle_* methods."""
@@ -721,7 +724,7 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin, MemberDefini
         # Reject opcodes / registers / directives — those are language
         # built-ins, not user symbols.
         lowered = word.lower()
-        if lowered in snes_opcode_table:
+        if lowered in snes_opcode_table or lowered in SPC700_TABLE or lowered in SPC700_REGISTER_NAMES:
             return None
         if lowered in {"a", "x", "y", "s", "p", "pc"}:
             return None
@@ -805,6 +808,12 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin, MemberDefini
         if not words:
             return None
         opcode = words[0].lower()
+        if is_spc700_uri(doc.uri):
+            forms = spc700_forms(opcode)
+            if not forms:
+                return None
+            signatures = [SignatureInformation(label=form) for form in forms]
+            return SignatureHelp(signatures=signatures, active_signature=0, active_parameter=0)
         base_opcode = opcode.split(".")[0] if "." in opcode else opcode
         if base_opcode not in snes_opcode_table:
             return None
@@ -986,11 +995,19 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin, MemberDefini
             )
             if location is not None:
                 return location
-            return self._try_directive_location(
+            location = self._try_directive_location(
                 line,
                 char_pos,
                 r'\.import\s+[\'"]([^\'"]+)[\'"]',
                 lambda m: self._resolve_module_path(m, current_uri),
+            )
+            if location is not None:
+                return location
+            return self._try_directive_location(
+                line,
+                char_pos,
+                r'\.embed\s+[\'"]([^\'"]+)[\'"]',
+                lambda m: self._resolve_module_path(f"{m}.spc", current_uri),
             )
         except (OSError, ValueError, AttributeError) as e:
             logger.debug(f"Error checking include directive: {e}")
@@ -1035,7 +1052,10 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin, MemberDefini
             workspace = self.workspace_index
             if workspace:
                 search_paths.extend(workspace.module_paths)
-            resolved = resolve_module(module_name, ".s", search_paths)
+            resolved = None
+            if is_spc700_uri(current_uri):
+                resolved = resolve_module(f"{module_name}.spc", ".s", search_paths)
+            resolved = resolved or resolve_module(module_name, ".s", search_paths)
             return str(resolved.resolve()) if resolved is not None else None
         except (OSError, ValueError) as e:
             logger.debug(f"Error resolving module path '{module_name}' from '{current_uri}': {e}")

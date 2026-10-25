@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from lsprotocol.types import SemanticTokens, SemanticTokensParams
 
 from a816.cpu.cpu_65c816 import snes_opcode_table
+from a816.cpu.spc700 import SPC700_TABLE
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AsciiAstNode,
@@ -61,6 +62,7 @@ from a816.parse.ast.nodes import (
     TextAstNode,
     UnaryOp,
 )
+from a816.parse.ast.nodes.spc700 import SpcOpcodeAstNode
 from a816.parse.scanner_states import KEYWORDS
 from a816.parse.tokens import TokenType
 
@@ -181,7 +183,7 @@ class TokensMixin:
     def _semantic_token_type(node: AstNode) -> int | None:
         if isinstance(node, LabelAstNode):
             return 1  # function (label)
-        if isinstance(node, OpcodeAstNode):
+        if isinstance(node, OpcodeAstNode | SpcOpcodeAstNode):
             return 0  # keyword (opcode)
         if isinstance(node, CommentAstNode):
             return 2  # comment
@@ -228,6 +230,12 @@ class TokensMixin:
 
             if isinstance(node, OpcodeAstNode) and node.operand:
                 self._visit_node_for_tokens(node.operand, tokens, doc)
+                return
+            if isinstance(node, SpcOpcodeAstNode):
+                for operand in node.operands:
+                    for expression in (operand.expression, operand.bit):
+                        if expression is not None:
+                            self._visit_node_for_tokens(expression, tokens, doc)
                 return
             if isinstance(node, ExpressionAstNode):
                 self._analyze_expression_tokens(node, tokens)
@@ -338,7 +346,7 @@ class TokensMixin:
 
         # Check if it's an opcode
         base_identifier = identifier.lower().split(".")[0]
-        if base_identifier in snes_opcode_table:
+        if base_identifier in snes_opcode_table or base_identifier in SPC700_TABLE:
             return 0  # keyword (opcode)
 
         # Check if it's a macro parameter (within macro scope)
@@ -410,7 +418,7 @@ class TokensMixin:
 
         base_opcode = opcode.lower().split(".")[0]
 
-        if base_opcode in snes_opcode_table:
+        if base_opcode in snes_opcode_table or base_opcode in SPC700_TABLE:
             # It's an opcode
             tokens.append(
                 {

@@ -38,7 +38,7 @@ _DEFINING_KEYWORDS = {
     "scope": (F002, "scope"),
 }
 _BLOCK_KINDS = frozenset({"macro", "struct", "pool", "scope"})
-_FLOW_ENDS = frozenset({"rts", "rtl", "rti", "jmp", "jml", "bra", "brl"})
+_FLOW_ENDS = frozenset({"rts", "rtl", "rti", "jmp", "jml", "bra", "brl", "ret", "reti", "stop"})
 _OPCODES = (TokenType.OPCODE, TokenType.OPCODE_NAKED)
 _NOTES = (TokenType.COMMENT, TokenType.DOCSTRING)
 _DEFINITION_BLOCKS = frozenset({"macro", "struct", "pool"})
@@ -130,10 +130,12 @@ def _diagnostic(ctx: LintContext, tokens: list[Token], definition: _Definition, 
 
 
 def _scan(path: Path, text: str) -> list[Token]:
+    from a816.cpu.arch import arch_for_path, using_arch
     from a816.parse.scanner import Scanner
     from a816.parse.scanner_states import lex_initial
 
-    return Scanner(lex_initial).scan(str(path), text)
+    with using_arch(arch_for_path(path)):
+        return Scanner(lex_initial).scan(str(path), text)
 
 
 def _file_tokens(path: Path) -> list[Token]:

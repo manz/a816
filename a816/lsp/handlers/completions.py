@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 from lsprotocol.types import CompletionItem, CompletionItemKind, CompletionList, CompletionParams
 
 from a816.cpu.cpu_65c816 import snes_opcode_table
+from a816.cpu.spc700 import SPC700_TABLE
+from a816.lsp.spc700 import SPC700_REGISTER_NAMES, is_spc700_uri, spc700_forms
 from a816.parse.scanner_states import KEYWORDS
 from a816.util import uri_to_path
 
@@ -28,6 +30,7 @@ class CompletionsMixin:
     if TYPE_CHECKING:
         documents: dict[str, A816Document]
         _opcode_completions: list[CompletionItem]
+        _spc700_completions: list[CompletionItem]
         _keyword_completions: list[CompletionItem]
         _register_completions: list[CompletionItem]
 
@@ -91,9 +94,12 @@ class CompletionsMixin:
             return CompletionList(is_incomplete=False, items=filtered[:50])
 
         all_items: list[CompletionItem] = []
-        all_items.extend(self._opcode_completions)
+        if is_spc700_uri(doc.uri):
+            all_items.extend(self._spc700_completions)
+        else:
+            all_items.extend(self._opcode_completions)
+            all_items.extend(self._register_completions)
         all_items.extend(self._keyword_completions)
-        all_items.extend(self._register_completions)
         all_items.extend(self._build_labels_completions(doc))
         all_items.extend(self._local_completions(doc))
         workspace = self._ensure_workspace_index()
@@ -126,6 +132,23 @@ class CompletionsMixin:
         if workspace:
             names |= set(workspace.pools)
         return [CompletionItem(label=name, kind=CompletionItemKind.Module, detail=".pool") for name in sorted(names)]
+
+    def _build_spc700_completions(self) -> list[CompletionItem]:
+        """SPC700 mnemonics, each documented with its operand forms, and its registers."""
+        items = [
+            CompletionItem(
+                label=mnemonic,
+                kind=CompletionItemKind.Keyword,
+                detail="SPC700 Instruction",
+                documentation="\n".join(spc700_forms(mnemonic)),
+            )
+            for mnemonic in sorted(SPC700_TABLE)
+        ]
+        items.extend(
+            CompletionItem(label=register, kind=CompletionItemKind.Variable, detail="SPC700 Register")
+            for register in sorted(SPC700_REGISTER_NAMES)
+        )
+        return items
 
     def _build_opcode_completions(self) -> list[CompletionItem]:
         """Build completion items for all opcodes"""

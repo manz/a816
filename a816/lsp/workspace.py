@@ -19,6 +19,7 @@ from typing import NamedTuple
 from lsprotocol.types import Diagnostic, DiagnosticSeverity, Location, Position, Range
 
 from a816.config import A816Config, discover_a816_config
+from a816.cpu.arch import SPC700_SUFFIXES
 from a816.exceptions import A816ConfigError
 from a816.lsp.document import A816Document
 from a816.stdlib import resolve_stdlib_module
@@ -409,7 +410,14 @@ class WorkspaceIndex:
             if stdlib_path is not None:
                 found_paths.add(stdlib_path)
                 continue
-            resolved = self._resolve_in_paths(module_name + ".s", file_path.parent, self.module_paths)
+            resolved = None
+            if file_path.name.lower().endswith(SPC700_SUFFIXES):
+                resolved = self._resolve_in_paths(module_name + ".spc.s", file_path.parent, self.module_paths)
+            resolved = resolved or self._resolve_in_paths(module_name + ".s", file_path.parent, self.module_paths)
+            if resolved:
+                found_paths.add(resolved)
+        for match in re.finditer(r"\.embed\s+['\"]([^'\"]+)['\"]", content, re.IGNORECASE):
+            resolved = self._resolve_in_paths(match.group(1).strip() + ".spc.s", file_path.parent, self.module_paths)
             if resolved:
                 found_paths.add(resolved)
         return list(found_paths)
