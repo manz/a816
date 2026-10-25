@@ -208,6 +208,14 @@ class ScannerTest(TestCase):
         assert scanner.errors, "expected at least one collected ScannerException"
         self.assertIn("unterminated", str(scanner.errors[0]))
 
+    def test_unknown_uppercase_directive_is_named(self) -> None:
+        """An uppercase directive is reported by name, the caret on its first letter."""
+        scanner = Scanner(lex_initial)
+        scanner.scan("test.s", ".MEMORYMAP\n")
+        error = scanner.errors[0]
+        self.assertIn("unknown directive `.MEMORYMAP`", str(error))
+        self.assertEqual(error.position.column, 1)
+
     def test_token_after_recovered_error_has_correct_position(self) -> None:
         """Error recovery skips to the next line without counting that newline twice."""
         scanner = Scanner(lex_initial)

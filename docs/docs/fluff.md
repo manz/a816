@@ -20,6 +20,7 @@ $ a816 format src/             # rewrite in place
 $ a816 format --check src/     # exit non-zero if any file would change
 $ a816 format --diff src/      # print unified diffs without writing
 $ a816 format -                # read stdin, write formatted text to stdout
+$ a816 format --arch spc700 -  # same, for SPC700 code
 ```
 
 The formatter is a fixed-point pass: `format(format(x)) == format(x)`.
@@ -61,7 +62,7 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `E501` | Source line longer than 120 characters. |
 | `F001` | Module-private (`_`) constant, macro, struct, pool, `.label` or `.reserve` that nothing in its translation unit references. No other module can see it, so it is dead. A use in a file the module includes, or in a file including it, counts; a name in a shared `.i` that no includer uses is reported once, in the `.i`. `.alloc _name` is a placement handle and never flagged. |
 | `F002` | Same for code labels (`_name:`, module-private or local to an alloc body) and `.scope _name`. **Opt-in**: a private label nothing branches to is often a marker for the debugger or xdds, so it runs only when selected by its exact code (`a816 check --select F002`), never by default or through the `F` prefix. A name reached only from outside the sources, like a test hooking `module._label` through the `.adbg`, looks unused to the rule. |
-| `N801` | Label name is not snake_case. |
+| `N801` | Label name is not snake_case (`_1`-style private labels pass). |
 | `N802` | Constant name is not snake_case or SCREAMING_SNAKE_CASE. |
 | `S001` | `(expr as T).field` / `p := (expr as T)` / `.istruct T { ... }` references a struct type that isn't declared in the current translation unit. |
 | `S003` | Redundant cast: `(p as T).field` when `p` is already typed-bound to `T`. |

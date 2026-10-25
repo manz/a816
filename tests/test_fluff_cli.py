@@ -137,6 +137,23 @@ def test_fluff_stdin_check_dirty(monkeypatch: pytest.MonkeyPatch, capsys: pytest
     assert "Would reformat <stdin>" in captured.err
 
 
+def test_fluff_stdin_format_spc700(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("start:\nmov a, #1\n"))
+    exit_code = fluff_main(["format", "--arch", "spc700", "-"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "    mov a, #1" in captured.out
+
+
+def test_fluff_format_arch_rejects_file_paths(tmp_path: Path) -> None:
+    f = tmp_path / "a.s"
+    f.write_text("start:\n    rts\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        fluff_main(["format", "--arch", "spc700", str(f)])
+
+
 def test_fluff_multi_file_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """`format --check a.s b.s` reports both, exits 1 if either is dirty."""
     a = tmp_path / "a.s"

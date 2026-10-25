@@ -73,6 +73,7 @@ MAX_LINE_LENGTH = 120
 
 _SNAKE_CASE_RE = re.compile(r"^_?[a-z][a-z0-9_]*$")
 _SCREAMING_SNAKE_CASE_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
+_DIGIT_PRIVATE_RE = re.compile(r"^_\d[\d_]*$")
 # Deterministic match: locate `noqa` once, parse the codes text by hand
 # below. Avoids nested overlapping quantifiers that can spook ReDoS scanners.
 _NOQA_RE = re.compile(r";[ \t]*noqa\b(.*)$", re.IGNORECASE)
@@ -191,6 +192,11 @@ def is_public(name: str) -> bool:
 
 def is_snake_case(name: str) -> bool:
     return bool(_SNAKE_CASE_RE.match(name))
+
+
+def is_digit_private(name: str) -> bool:
+    """`_1`, `_2_0`: a private name with no letters has no case to get wrong."""
+    return bool(_DIGIT_PRIVATE_RE.match(name))
 
 
 def is_screaming_snake_case(name: str) -> bool:

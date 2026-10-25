@@ -131,6 +131,20 @@ def test_n801_accepts_snake_case_label(tmp_path: Path) -> None:
     assert all(d.code != "N801" for d in diags)
 
 
+def test_n801_accepts_digit_only_private_label(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text('"""Module."""\n_1:\n    rts\n_2_0:\n    rts\n', encoding="utf-8")
+    diags = lint_file(src)
+    assert all(d.code != "N801" for d in diags)
+
+
+def test_n801_flags_mixed_case_private_label(tmp_path: Path) -> None:
+    src = tmp_path / "lib.s"
+    src.write_text('"""Module."""\n_Foo:\n    rts\n', encoding="utf-8")
+    diags = lint_file(src)
+    assert any(d.code == "N801" for d in diags)
+
+
 def test_n801_flags_screaming_snake_label(tmp_path: Path) -> None:
     src = tmp_path / "lib.s"
     src.write_text(

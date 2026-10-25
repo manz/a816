@@ -8,6 +8,7 @@ from a816.fluff.core import (
     Diagnostic,
     LintContext,
     Rule,
+    is_digit_private,
     is_screaming_snake_case,
     is_snake_case,
 )
@@ -33,7 +34,7 @@ class LabelNaming(Rule):
     def visit(self, ctx: LintContext, node: AstNode) -> Iterable[Diagnostic]:
         assert isinstance(node, LabelAstNode)
         name = node.label
-        if not name or is_snake_case(name):
+        if not name or is_snake_case(name) or is_digit_private(name):
             return
         yield self.diagnose(ctx, node, f"label '{name}' should be snake_case")
 

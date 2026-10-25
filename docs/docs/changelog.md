@@ -31,6 +31,13 @@
 - `build_with_imports(objects={"name": obj})` links objects a Python
   generator built in memory with the compiled modules; source names
   their labels with `.extern`. See [Python usage](python_usage.md#generated-objects).
+- N801 accepts digit-only private labels (`_1`, `_2_0`): a name with
+  no letters has no case to get wrong. `_Foo` is still flagged.
+- `a816 format --arch spc700 -` formats SPC700 code read from stdin.
+  Files still take their CPU from the `.spc.s` suffix; `--arch` with
+  file paths is an error.
+- E0003 names an unknown uppercase directive (`.MEMORYMAP`, `.DB`)
+  with the caret on it; it used to read "unknown directive `.`".
 
 ## 1.2.0 (2026-10-25)
 

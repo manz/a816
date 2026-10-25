@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from a816.config import A816Config, discover_a816_config, find_a816_toml
+from a816.cpu.arch import ARCHES, current_arch, using_arch
 from a816.error_catalog import category, explanation, is_error_code
 from a816.error_codes import E_CONFIG_UNKNOWN_LINT_RULE, lookup
 from a816.errors import should_use_colors
@@ -108,6 +109,12 @@ def _build_fluff_parser() -> argparse.ArgumentParser:
         "--diff",
         action="store_true",
         help="Show unified diff per changed file and exit non-zero if any differ.",
+    )
+    format_parser.add_argument(
+        "--arch",
+        default=None,
+        choices=ARCHES,
+        help="CPU of the source read from stdin (`-`); files take theirs from the suffix (`*.spc.s` is spc700).",
     )
     fix_parser = subparsers.add_parser("fix", help="Apply fluff autofixes in place.")
     fix_parser.add_argument(
@@ -216,7 +223,8 @@ def _run_format_stdin(args: argparse.Namespace) -> int:
     """
     original = sys.stdin.read()
     try:
-        formatted = A816Formatter().format_text(original, STDIN_LABEL)
+        with using_arch(args.arch or current_arch.get()):
+            formatted = A816Formatter().format_text(original, STDIN_LABEL)
     except FormattingError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -271,6 +279,8 @@ def _run_format(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
         if len(paths) != 1:
             parser.error("`-` (stdin) cannot be combined with other paths")
         return _run_format_stdin(args)
+    if args.arch:
+        parser.error("--arch applies to stdin (`-`); files take their CPU from the suffix (`*.spc.s`)")
 
     sources, missing_err = _collect_sources(paths)
     if not sources:
