@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -472,12 +472,24 @@ class ModuleBuilder:
                 owners.update(dict.fromkeys(exported[name], name))
         return constants, owners
 
-    def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
-        """Build all modules in topo order, then link."""
-        with _rare_collections(), using_arch(self.arch):
-            return self._build(main_source, parsed_main_nodes)
+    def build(
+        self,
+        main_source: Path,
+        parsed_main_nodes: list[AstNode] | None = None,
+        objects: Mapping[str, ObjectFile] | None = None,
+    ) -> ObjectFile:
+        """Build all modules in topo order, then link them with `objects`.
 
-    def _build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None) -> ObjectFile:
+        `objects` are generated in memory (by a Python asset generator),
+        keyed by the module name diagnostics call them; source reaches
+        their labels with `.extern`.
+        """
+        with _rare_collections(), using_arch(self.arch):
+            return self._build(main_source, parsed_main_nodes, objects or {})
+
+    def _build(
+        self, main_source: Path, parsed_main_nodes: list[AstNode] | None, objects: Mapping[str, ObjectFile]
+    ) -> ObjectFile:
         self.discover_imports(main_source, parsed_main_nodes)
         self._link_embedded_programs()
         compilation_order = self.graph.topological_sort()
@@ -493,11 +505,27 @@ class ModuleBuilder:
             obj.module = module_name
             exported[module_name] = self._exported_constants(obj)
             object_files.append(obj)
+        object_files.extend(_generated_objects(objects, compilation_order))
 
         if len(object_files) == 1 and not _object_needs_linking(object_files[0]):
             return object_files[0]
         logger.info(f"Linking {len(object_files)} module(s)")
         return Linker(object_files).link(base_address=0x8000)
+
+
+def _generated_objects(objects: Mapping[str, ObjectFile], modules: list[str]) -> list[ObjectFile]:
+    """The caller's generated objects, each named for diagnostics; a name a source module has is refused.
+
+    An alloc the generator gave no `file:line` is located by the object's name.
+    """
+    clashes = sorted(set(objects) & set(modules))
+    if clashes:
+        raise ValueError(f"generated object {clashes[0]!r} has the name of a source module")
+    for name, obj in objects.items():
+        obj.module = name
+        for request in obj.pool_allocs:
+            request.source = request.source or name
+    return list(objects.values())
 
 
 def _write_if_changed(path: Path, content: bytes) -> None:
@@ -600,6 +628,7 @@ def build_with_imports(
     defines: dict[str, str] | None = None,
     extra_outputs: list[tuple[str, str | Path]] | None = None,
     arch: Arch | None = None,
+    objects: Mapping[str, ObjectFile] | None = None,
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
@@ -625,6 +654,10 @@ def build_with_imports(
             link as `output_file`: `[("bps", "build/game.bps.unsealed")]`.
         arch: CPU the project is assembled for, by default the main source's (`driver.spc.s` is
             SPC700): `spc700` links an ARAM image (`output_format="aram"`).
+        objects: Objects a Python generator built in memory, by module
+            name, linked with the compiled modules: source names their
+            labels with `.extern`. They join at link, never at `.import`,
+            and link afresh every build: no module's object depends on them.
 
     Returns:
         BuildResult with exit_code, symbol_map, diagnostics, and program.
@@ -664,7 +697,7 @@ def build_with_imports(
             arch=arch,
         )
 
-        linked = builder.build(main_source)
+        linked = builder.build(main_source, objects=objects)
 
         # Output the final file
         from a816.program import Program

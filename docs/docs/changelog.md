@@ -28,6 +28,9 @@
   `.adbg` (`boot.__size`, an embedded driver's `driver.start`) no longer
   show up as labels at addresses that merely equal their value; `--sym`
   still finds them by name.
+- `build_with_imports(objects={"name": obj})` links objects a Python
+  generator built in memory with the compiled modules; source names
+  their labels with `.extern`. See [Python usage](python_usage.md#generated-objects).
 
 ## 1.2.0 (2026-10-25)
 

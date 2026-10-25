@@ -34,5 +34,39 @@ Other keyword arguments mirror the CLI: `module_paths`, `include_paths`,
 `output_dir` (objects, default `build/obj`), `overlap_mode`,
 `experimental`, `mapping` (`-m`), `copier_header`, `use_cache`.
 
+## Generated objects
+
+A Python asset generator (compressed text, rendered fonts) does not
+know where its bytes will land. It hands its objects to the build with
+`objects`, keyed by the name diagnostics give them; the linker places
+them with the compiled modules, and source reads their labels with
+`.extern`:
+
+```python
+from pathlib import Path
+
+from a816.module_builder import build_with_imports
+from a816.object_file import ObjectFile
+from a816.program import Program
+
+pool = ".pool rom {\n    range 0x018000 0x01ffff\n}\n"
+Path("main.s").write_text(pool + ".extern message\n.alloc boot at 0x008000 {\n    lda.l message\n}\n")
+
+# The generator's output, compiled to an object.
+Path("text.s").write_text(pool + ".alloc text in rom {\nmessage:\n    .db 0x11, 0x22\n}\n")
+Program().assemble_as_object("text.s", Path("text.o"))
+text_object = ObjectFile.from_file("text.o")
+
+result = build_with_imports("main.s", "game.sfc", "sfc", objects={"assets/text": text_object})
+assert result.exit_code == 0, result.diagnostics
+```
+
+Their allocs take pools as source modules do: the object declares the
+pool it places into, with the same ranges as the source. Pool merging,
+overlap checks, `.assert`s and the `.adbg` cover them like any module.
+They join at link, never at `.import`, and link afresh on every build:
+no module's cached object depends on them. A name that a source module
+already has is refused.
+
 `Program` and its `assemble*` methods are the single-pass direct mode;
 it is deprecated and new features land in the build path only.
