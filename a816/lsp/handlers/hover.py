@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, ClassVar
 from lsprotocol.types import Hover, HoverParams, MarkupContent, MarkupKind
 
 from a816.cpu.cpu_65c816 import snes_opcode_table
+from a816.cpu.spc700 import SPC700_TABLE
+from a816.lsp.spc700 import is_spc700_uri, spc700_forms
 from a816.parse.ast.nodes import (
     ListInitAstNode,
     StructAstNode,
@@ -58,8 +60,12 @@ class HoverMixin:
     def _markdown_hover(value: str) -> Hover:
         return Hover(contents=MarkupContent(kind=MarkupKind.Markdown, value=value))
 
-    def _hover_for_opcode_or_keyword(self, base_word: str, word: str) -> Hover | None:
-        if base_word in snes_opcode_table:
+    def _hover_for_opcode_or_keyword(self, base_word: str, word: str, uri: str = "") -> Hover | None:
+        if is_spc700_uri(uri):
+            if base_word in SPC700_TABLE:
+                forms = "\n".join(f"- `{form}`" for form in spc700_forms(base_word))
+                return self._markdown_hover(f"**{word.upper()}** - SPC700 Instruction\n\n{forms}")
+        elif base_word in snes_opcode_table:
             return self._markdown_hover(
                 f"**{word.upper()}** - 65c816 Instruction\n\nSupported addressing modes: {len(snes_opcode_table[base_word])}"
             )
@@ -125,7 +131,7 @@ class HoverMixin:
         istruct_hover = self._hover_for_istruct_field(doc, line_num, params.position.character)
         if istruct_hover:
             return istruct_hover
-        opcode_or_keyword = self._hover_for_opcode_or_keyword(base_word, word)
+        opcode_or_keyword = self._hover_for_opcode_or_keyword(base_word, word, params.text_document.uri)
         if opcode_or_keyword:
             return opcode_or_keyword
         pool_hover = self._hover_for_pool_directive(doc, raw_word)
@@ -287,6 +293,7 @@ class HoverMixin:
             return None
         include_match = re.search(r'\.include\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
         import_match = re.search(r'\.import\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
+        embed_match = re.search(r'\.embed\s+[\'"]([^\'"]+)[\'"]', line, re.IGNORECASE)
         target_uri: str | None = None
         label: str | None = None
         if include_match:
@@ -294,11 +301,14 @@ class HoverMixin:
             if resolved:
                 target_uri = Path(resolved).as_uri()
                 label = include_match.group(1)
-        elif import_match:
-            resolved = self._resolve_module_path(import_match.group(1), current_uri)
+        elif import_match or embed_match:
+            match = import_match or embed_match
+            assert match is not None
+            module = match.group(1) + (".spc" if embed_match else "")
+            resolved = self._resolve_module_path(module, current_uri)
             if resolved:
                 target_uri = Path(resolved).as_uri()
-                label = import_match.group(1)
+                label = match.group(1)
         if not target_uri or label is None:
             return None
         docstring = workspace.module_docstrings.get(target_uri)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 from a816.cpu.mapping import Address, byte_distance
 from a816.error_codes import E_CODEGEN_BAD_PAD, E_CODEGEN_BAD_SIZE
@@ -152,6 +153,21 @@ class BinaryNode(NodeBase):
         self.resolver.current_scope.add_label(self.symbol_base, current_pc)
         self.resolver.current_scope.add_symbol(self.symbol_base + "__size", len(self.binary_content))
         return retval
+
+
+class EmbedNode(NodeBase):
+    """The ARAM image of an SPC700 program linked by the build (`.embed`)."""
+
+    def __init__(self, image_path: Path, resolver: Resolver) -> None:
+        self.image = image_path.read_bytes()
+        resolver.dependency_files.add(os.path.abspath(image_path))
+
+    def emit(self, current_addr: Address) -> bytes:
+        del current_addr
+        return self.image
+
+    def pc_after(self, current_pc: Address) -> Address:
+        return current_pc + len(self.image)
 
 
 class _SizedValueNode(NodeBase):

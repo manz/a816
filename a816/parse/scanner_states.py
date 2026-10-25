@@ -1,11 +1,13 @@
 import re
 from collections.abc import Callable
 
+from a816.cpu.arch import is_spc700
 from a816.cpu.cpu_65c816 import (
     AddressingMode,
     get_opcodes_with_addressing,
     snes_opcode_table,
 )
+from a816.cpu.spc700 import MNEMONICS as SPC700_MNEMONICS
 from a816.error_codes import (
     E_SCANNER_INVALID_INPUT,
     E_SCANNER_UNKNOWN_KEYWORD,
@@ -330,12 +332,90 @@ def lex_block_move_operands(s: "Scanner") -> None:
     lex_expression(s)
 
 
+def accept_spc_opcode(s: "Scanner") -> bool:
+    """An SPC700 mnemonic (`or`, `movw`, `tclr1`) followed by a blank or a statement end."""
+    end = s.pos
+    while end < len(s.input) and s.input[end] in IDENTIFIER_CHARS:
+        end += 1
+    if s.input[s.pos : end].lower() not in SPC700_MNEMONICS:
+        return False
+    if end < len(s.input) and s.input[end] not in " \t\n;}":
+        return False
+    s.pos = end
+    return True
+
+
+def lex_spc_opcode(s: "Scanner") -> None:
+    if _ends_statement(s):
+        s.emit(TokenType.OPCODE_NAKED)
+        return
+    s.emit(TokenType.OPCODE)
+    lex_spc_operands(s)
+
+
+_SPC_PUNCTUATION: dict[str, TokenType] = {
+    "#": TokenType.SHARP,
+    "!": TokenType.BANG,
+    ",": TokenType.COMMA,
+    "(": TokenType.LPAREN,
+    ")": TokenType.RPAREN,
+    "[": TokenType.LBRAKET,
+    "]": TokenType.RBRAKET,
+}
+
+
+def _lex_spc_index(s: "Scanner") -> bool:
+    """`+x` / `+y` closing an operand: one index token, not an addition."""
+    at = s.pos + 1
+    while at < len(s.input) and s.input[at] in " \t":
+        at += 1
+    if at >= len(s.input) or s.input[at] not in "xXyY":
+        return False
+    if at + 1 < len(s.input) and s.input[at + 1] in IDENTIFIER_CHARS:
+        return False
+    s.pos = at + 1
+    s.emit(TokenType.ADDRESSING_MODE_INDEX)
+    return True
+
+
+def _lex_spc_operand_token(s: "Scanner") -> bool:
+    ch = s.peek()
+    kind = _SPC_PUNCTUATION.get(ch) if ch is not None else None
+    if kind is not None:
+        s.next()
+        s.emit(kind)
+        return True
+    if ch == "." and s.peek(1) is not None and s.peek(1) in IDENTIFIER_CHARS:
+        s.next()
+        s.emit(TokenType.DOT)
+        return True
+    if ch == "+" and _lex_spc_index(s):
+        return True
+    return any(handler(s) for handler in _EXPRESSION_HANDLERS.get(ch, ()))
+
+
+def lex_spc_operands(s: "Scanner") -> None:
+    """Operand tokens up to the end of the statement."""
+    while True:
+        s.ignore_run(" \t")
+        if _ends_statement(s):
+            return
+        if not _lex_spc_operand_token(s):
+            s.next()
+            raise ScannerException(
+                f"invalid character `{s.input[s.start]}` in SPC700 operand",
+                s.get_position(),
+                code=str(E_SCANNER_INVALID_INPUT),
+            )
+
+
 DIRECTIVE_NAMES = {
     "scope",
     "table",
     "include",
     "include_ips",
     "incbin",
+    "embed",
     "pointer",
     "text",
     "ascii",
@@ -463,6 +543,12 @@ def _lex_identifier_or_opcode(s: Scanner) -> bool:
     if not s.accept(IDENTIFIER_START_CHARS):
         return False
     s.backup()
+    if is_spc700():
+        if accept_spc_opcode(s):
+            lex_spc_opcode(s)
+        else:
+            lex_identifier(s)
+        return True
     if accept_opcode(s):
         lex_opcode(s)
     else:

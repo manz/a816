@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING, BinaryIO
 from a816.bps import BpsError, metadata_xml
 from a816.cpu.cpu_65c816 import RomType
 from a816.error_codes import E_BPS_COPIER_HEADER, E_CONFIG_BAD_BPS
-from a816.exceptions import A816ConfigError, BlockOverlapLinkError
+from a816.exceptions import A816ConfigError, ArchMismatchLinkError, BlockOverlapLinkError
 from a816.mappers import map_on_bus
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.program.block_overlaps import emitted_blocks, overlapping_blocks
-from a816.writers import BPSWriter, IPSWriter, SFCWriter, Writer
+from a816.writers import AramWriter, BPSWriter, IPSWriter, SFCWriter, Writer
 
 if TYPE_CHECKING:
     from a816.config import BpsConfig
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 # What `-f` accepts for a linked build (`obj` is `-c`'s, not a link output).
-OUTPUT_FORMATS = ("ips", "sfc", "bps")
+OUTPUT_FORMATS = ("ips", "sfc", "bps", "aram")
 # Output extensions, for a build writing several outputs from one link.
 _FORMAT_SUFFIXES = ((".bps.unsealed", "bps"), (".bps", "bps"), (".ips", "ips"), (".sfc", "sfc"), (".smc", "sfc"))
 
@@ -162,6 +162,23 @@ class LinkMixin:
         self._prepare_link_output(linked_obj, mapping)
         return self._emit_linked(linked_obj, sfc_file, SFCWriter, "SFC file", pad_to=self._rom_size(linked_obj))
 
+    def aram_image(self, linked_obj: ObjectFile) -> tuple[int, bytes]:
+        """A linked SPC700 program's load address and ARAM image, for `.embed`."""
+        self._prepare_link_output(linked_obj, None)
+        self._check_block_overlaps(linked_obj)
+        buffer = io.BytesIO()
+        writer = AramWriter(buffer)
+        for section in linked_obj.sections:
+            if section.code:
+                writer.write_block(section.code, self._to_physical(section.placed_base))
+        writer.end()
+        return writer.base or 0, buffer.getvalue()
+
+    def link_as_aram(self, linked_obj: ObjectFile, aram_file: Path) -> int:
+        """Write a linked SPC700 program as the ARAM image the S-CPU uploads."""
+        self._prepare_link_output(linked_obj, None)
+        return self._emit_linked(linked_obj, aram_file, AramWriter, "ARAM image")
+
     def link_as_bps(
         self,
         linked_obj: ObjectFile,
@@ -210,6 +227,13 @@ class LinkMixin:
         defines: dict[str, str] | None = None,
     ) -> int:
         """Write `linked_obj` as one of `OUTPUT_FORMATS`: the one place `-f` is dispatched."""
+        if (output_format == "aram") != (linked_obj.arch == "spc700"):
+            raise ArchMismatchLinkError(
+                f"`-f {output_format}` does not fit {linked_obj.arch} code: "
+                "an SPC700 program links into an ARAM image (`-f aram`), 65c816 code into a ROM"
+            )
+        if output_format == "aram":
+            return self.link_as_aram(linked_obj, output_file)
         if output_format == "bps":
             if copier_header:
                 raise BpsError(

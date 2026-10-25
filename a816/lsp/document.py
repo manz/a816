@@ -16,6 +16,7 @@ from pathlib import Path
 
 from lsprotocol.types import Diagnostic, DiagnosticSeverity, Position, Range
 
+from a816.cpu.arch import arch_for_path
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AssignAstNode,
@@ -25,6 +26,7 @@ from a816.parse.ast.nodes import (
     CommentAstNode,
     CompoundAstNode,
     DocstringAstNode,
+    EmbedAstNode,
     ExpressionAstNode,
     ExternAstNode,
     ImportAstNode,
@@ -105,6 +107,8 @@ class A816Document:
         # one-shot description without having to chase the file.
         self.module_docstring: str | None = None
         self.imports: list[str] = []  # module names from .import directives
+        # `.embed "sound/driver"`: the prefix its symbols take (`driver`) -> the program.
+        self.embeds: dict[str, str] = {}
         self.diagnostics: list[Diagnostic] = []
         # LSP-shaped diagnostic → originating fluff hit (carries the fix).
         # CodeAction handler reads this to translate a hit inside a request
@@ -136,6 +140,7 @@ class A816Document:
         self.label_docstrings.clear()
         self.module_docstring = None
         self.imports.clear()
+        self.embeds.clear()
         self.diagnostics.clear()
         self.fluff_hits.clear()
         self.ast_nodes.clear()
@@ -260,8 +265,11 @@ class A816Document:
         return matches
 
     def _resolve_import_for_struct_lookup(self, module_name: str) -> Path | None:
-        stdlib_path = resolve_stdlib_module(module_name, ".s")
-        if stdlib_path is not None:
+        spc700 = arch_for_path(self.uri) == "spc700"
+        stdlib_path = (spc700 and resolve_stdlib_module(module_name + ".spc", ".s")) or resolve_stdlib_module(
+            module_name, ".s"
+        )
+        if stdlib_path:
             return stdlib_path
         file_name = module_name + ".s"
         candidates: list[Path] = []
@@ -405,6 +413,8 @@ class A816Document:
             self._record_import(node)
         elif isinstance(node, IncludeBinaryAstNode):
             self._record_incbin(node)
+        elif isinstance(node, EmbedAstNode):
+            self._record_embed(node)
 
         self._visit_children(node)
 
@@ -439,6 +449,19 @@ class A816Document:
         else:
             return False
         return True
+
+    def _record_embed(self, node: EmbedAstNode) -> None:
+        """`driver.__base` / `driver.__size` go to the `.embed` line; `driver.<label>`
+        resolves in the program's own source (`MemberDefinitionMixin`)."""
+        token = node.file_info
+        if not token.position:
+            return
+        prefix = node.module_name.rsplit("/", 1)[-1]
+        self.embeds[prefix] = node.module_name
+        pos = Position(line=token.position.line, character=token.position.column)
+        file_uri = self._get_file_uri_for_token(token)
+        for name in ("__base", "__size"):
+            self.symbols[f"{prefix}.{name}"] = (pos, file_uri)
 
     def _record_incbin(self, node: IncludeBinaryAstNode) -> None:
         """Index the auto-generated `<sanitized_path>` + `<...>__size` symbols

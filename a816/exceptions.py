@@ -108,6 +108,10 @@ class LinkerError(A816Error):
         return format_error_simple(LINKER_ERROR_LABEL, str(self))
 
 
+class ArchMismatchLinkError(LinkerError):
+    """Objects assembled for different CPUs (`--arch`) in one link."""
+
+
 class DuplicateSymbolError(LinkerError):
     """Raised when the same global symbol is defined in multiple object files."""
 

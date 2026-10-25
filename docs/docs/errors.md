@@ -144,7 +144,9 @@ separate blocks separated by a blank line.
   with `target` from another module): its value is unknown at compile time,
   so the form can't be chosen. Write the size; the hint lists the forms the
   opcode has (`jmp.w` in the same bank, `jmp.l` across). Register-sized
-  immediates and single-form opcodes (`pea`, `rep`) need none.
+  immediates and single-form opcodes (`pea`, `rep`) need none. In SPC700
+  code the choice is direct page or absolute: write `!label` for the
+  absolute form.
 - `E0315` branch target out of range: the displacement does not fit
   the branch's signed 8-bit (`bra`, `bne`, ...) or 16-bit (`brl`)
   offset. The caret sits on the target.

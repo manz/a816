@@ -304,6 +304,20 @@ class IncludeBinaryAstNode(AstNode):
         return f'.incbin "{self.file_path}"'
 
 
+class EmbedAstNode(AstNode):
+    """`.embed "sound/driver"`: the linked image of the SPC700 program `sound/driver.spc.s`."""
+
+    def __init__(self, module_name: str, file_info: Token):
+        super().__init__("embed", file_info)
+        self.module_name: Final[str] = module_name
+
+    def to_representation(self) -> tuple[Any, ...]:
+        return self.kind, self.module_name
+
+    def to_canonical(self) -> str:
+        return f'.embed "{self.module_name}"'
+
+
 class DebugAstNode(AstNode):
     def __init__(self, message: str, file_info: Token) -> None:
         super().__init__("debug", file_info)

@@ -6,6 +6,7 @@ initializer. Each lands on the field's own line in its `.struct`."""
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lsprotocol.types import Location, Position, Range
@@ -70,6 +71,9 @@ class MemberDefinitionMixin:
     def _istruct_field_at(self, type_name: str, init: StructInitAstNode, line: int, column: int) -> str | None:
         raise NotImplementedError
 
+    def _resolve_module_path(self, module_name: str, current_uri: str) -> str | None:
+        raise NotImplementedError
+
     def _member_definition(self, doc: A816Document, line_num: int, column: int) -> Location | None:
         """The field a member reference names, or None when the cursor is on
         no member (a plain name, a path whose head holds no struct)."""
@@ -120,16 +124,38 @@ class MemberDefinitionMixin:
         if entry is None:
             workspace = self._ensure_workspace_index()
             entry = workspace.symbols.get(key) if workspace else None
-        if entry is None:
-            return None
-        position, uri = entry
-        length = len(key.rsplit(".", 1)[-1])
-        end = Position(line=position.line, character=position.character + length)
-        return Location(uri=uri, range=Range(start=position, end=end))
+        return _entry_location(entry, key)
 
     def _dotted_definition(self, doc: A816Document, line_num: int, column: int) -> Location | None:
         """The whole dotted name (`sc.fd`, `Type.field.mask`) as one symbol."""
         text = DottedPath(doc.lines[line_num], column).text
         if "." not in text:
             return None
+        head, _, rest = text.partition(".")
+        if head in doc.embeds and not rest.startswith("__"):
+            return self._embedded_label_location(doc, doc.embeds[head], rest)
         return self._member_location(doc, text)
+
+    def _embedded_label_location(self, doc: A816Document, program: str, name: str) -> Location | None:
+        """`driver.start` after `.embed "driver"`: `start` in `driver.spc.s`."""
+        from a816.lsp.document import A816Document
+
+        resolved = self._resolve_module_path(f"{program}.spc", doc.uri)
+        if resolved is None:
+            return None
+        path = Path(resolved)
+        try:
+            source = A816Document(path.as_uri(), path.read_text(encoding="utf-8"), include_paths=doc.include_paths)
+        except OSError:
+            return None
+        return _entry_location(source.labels.get(name) or source.symbols.get(name), name)
+
+
+def _entry_location(entry: tuple[Position, str] | None, key: str) -> Location | None:
+    """The span of `key`'s last segment at its recorded definition."""
+    if entry is None:
+        return None
+    position, uri = entry
+    length = len(key.rsplit(".", 1)[-1])
+    end = Position(line=position.line, character=position.character + length)
+    return Location(uri=uri, range=Range(start=position, end=end))

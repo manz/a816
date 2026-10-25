@@ -232,6 +232,8 @@ class WireObject:
     bus_mappings: list[BusMapping]
     asserts: list[LinkAssert] = field(default_factory=list)
     path_names: PathNames = field(default_factory=PathNames)
+    arch: str = "65c816"
+    """CPU the object was assembled for: the linker refuses to mix them."""
 
 
 SCHEMA_DIGEST = hashlib.sha256(schema(WireObject).encode()).digest()[:16]
@@ -273,6 +275,7 @@ class ObjectFile:
         bus_mappings: list[BusMapping] | None = None,
         asserts: list[LinkAssert] | None = None,
         path_names: PathNames | None = None,
+        arch: str = "65c816",
     ) -> None:
         # `relocatable` is True iff the source contained no `*=` directive,
         # so the importer is free to place section 0 at the import site PC
@@ -300,6 +303,7 @@ class ObjectFile:
         self.bus_mappings: list[BusMapping] = bus_mappings or []
         self.asserts: list[LinkAssert] = asserts or []
         self.path_names: PathNames = path_names or PathNames()
+        self.arch = arch
         self.origin: str = ""
         """Path the object was read from (not serialized): names it in diagnostics."""
         self.module: str = ""
@@ -365,6 +369,7 @@ class ObjectFile:
             self.bus_mappings,
             self.asserts,
             self.path_names,
+            self.arch,
         )
 
     @staticmethod
@@ -427,6 +432,7 @@ class ObjectFile:
             bus_mappings=wire.bus_mappings,
             asserts=wire.asserts,
             path_names=wire.path_names,
+            arch=wire.arch,
         )
         obj.origin = filename
         return obj

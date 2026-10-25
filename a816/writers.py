@@ -3,6 +3,7 @@ import struct
 from typing import BinaryIO, Literal, Protocol
 
 from a816 import bps
+from a816.cpu.arch import current_arch
 from a816.object_file import (
     BusMapping,
     LinkAssert,
@@ -184,6 +185,39 @@ class SFCWriter(Writer):
         """SFC is contiguous it only needs to implement write_block."""
 
 
+class AramWriter(Writer):
+    """An SPC700 program image: the bytes from its lowest written address to its highest.
+
+    The S-CPU uploads it to ARAM in one transfer, so `base` is where it loads.
+    """
+
+    def __init__(self, file: BinaryIO) -> None:
+        self.file = file
+        self._aram = bytearray(0x10000)
+        self.base: int | None = None
+        self._end = 0
+
+    def begin(self) -> None:
+        """The image is written whole at `end`."""
+
+    def write_block_header(self, block: bytes, block_address: int) -> None:
+        """The image is contiguous: no block headers."""
+        del block, block_address
+
+    def write_block(self, block: bytes, block_address: int) -> None:
+        if not block:
+            return
+        if block_address + len(block) > len(self._aram):
+            raise ValueError(f"SPC700 code at ${block_address:04X} runs past the 64 KB of ARAM")
+        self._aram[block_address : block_address + len(block)] = block
+        self.base = block_address if self.base is None else min(self.base, block_address)
+        self._end = max(self._end, block_address + len(block))
+
+    def end(self) -> None:
+        if self.base is not None:
+            self.file.write(self._aram[self.base : self._end])
+
+
 class ObjectWriter(Writer):
     """Collects sections, symbols, relocations into a v6 ObjectFile.
 
@@ -336,6 +370,7 @@ class ObjectWriter(Writer):
             bus_mappings=list(self.bus_mappings),
             asserts=list(self.asserts),
             path_names=self.path_names,
+            arch=current_arch.get(),
         )
         obj_file.write(self.output_file)
 

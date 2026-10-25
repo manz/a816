@@ -50,6 +50,9 @@ class AssemblyContext:
     # name an included file the same way, cold or warm. None falls back to
     # `include_paths`.
     parse_include_paths: list[Path] | None = None
+    # SPC700 programs `.embed` names, linked by `ModuleBuilder` before any
+    # module compiles: name -> its ARAM image, its symbols in a `.json` beside it.
+    embedded_programs: dict[str, Path] = field(default_factory=dict)
 
     @property
     def is_object_mode(self) -> bool:

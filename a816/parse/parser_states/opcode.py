@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from typing import TypeGuard
 
+from a816.cpu.arch import is_spc700
 from a816.cpu.cpu_65c816 import AddressingMode, ValueSize
 from a816.error_codes import E_PARSER_MISSING_OPERAND
 from a816.parse.ast.nodes import CodeLookupAstNode, ExpressionAstNode, OpcodeAstNode, index_map
+from a816.parse.ast.nodes.spc700 import SpcOpcodeAstNode
 from a816.parse.errors import ParserSyntaxError
 from a816.parse.parser import Parser, accept_token, expect_token
 from a816.parse.parser_states.expr import parse_expression
+from a816.parse.parser_states.spc700 import parse_spc_opcode
 from a816.parse.tokens import Token, TokenType
 
 
@@ -33,7 +36,9 @@ def _parse_block_move(opcode: Token, p: Parser) -> OpcodeAstNode:
     )
 
 
-def parse_opcode(p: Parser) -> OpcodeAstNode:
+def parse_opcode(p: Parser) -> OpcodeAstNode | SpcOpcodeAstNode:
+    if is_spc700():
+        return parse_spc_opcode(p)
     opcode: Token = p.next()
     size: str | None = None
     index: str | None = None

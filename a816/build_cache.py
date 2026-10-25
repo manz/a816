@@ -53,6 +53,7 @@ class BuildSettings:
     module_paths: list[Path]
     # `BUILD_DATE` comes from it, so a new value must rebuild the objects.
     source_date_epoch: str | None = field(default_factory=lambda: os.environ.get("SOURCE_DATE_EPOCH"))
+    arch: str = "65c816"
 
     def digest(self) -> str:
         settings: dict[str, object] = {
@@ -65,6 +66,8 @@ class BuildSettings:
         # Only when set: caches built without it keep their keys.
         if self.source_date_epoch is not None:
             settings["source_date_epoch"] = self.source_date_epoch
+        if self.arch != "65c816":
+            settings["arch"] = self.arch
         return _sha(settings)
 
 
@@ -78,6 +81,8 @@ class ModuleInputs:
     imports: list[str]
     import_keys: dict[str, str]
     warnings: list[str] = field(default_factory=list)
+    embeds: list[str] = field(default_factory=list)
+    """SPC700 programs the module `.embed`s: a warm build links them before reusing it."""
 
 
 class BuildCache:
@@ -118,6 +123,10 @@ class BuildCache:
         data = self._load(obj_path)
         return None if data is None else list(data["imports"])
 
+    def embeds(self, obj_path: Path) -> list[str]:
+        data = self._load(obj_path)
+        return [] if data is None else [str(name) for name in data.get("embeds", [])]
+
     def key(self, obj_path: Path) -> str | None:
         data = self._load(obj_path)
         return None if data is None else str(data["key"])
@@ -151,6 +160,7 @@ class BuildCache:
             "key": key,
             "recorded_ns": time.time_ns(),
             "warnings": inputs.warnings,
+            "embeds": inputs.embeds,
         }
         self.sidecar_path(obj_path).write_text(json.dumps(data, indent=1), encoding="utf-8")
         return key

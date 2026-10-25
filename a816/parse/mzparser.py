@@ -5,6 +5,7 @@ from pathlib import Path
 from time import gmtime, strftime
 from typing import Any
 
+from a816.cpu.arch import arch_for_path, using_arch
 from a816.exceptions import A816Error
 from a816.parse.ast.nodes import AstNode
 from a816.parse.codegen import code_gen
@@ -93,9 +94,12 @@ class A816Parser:
         parser: Parser | None = None
 
         try:
-            tokens = scanner.scan(filename, program)
-            parser = Parser(tokens, parse_initial, include_paths=include_paths, missing_includes_ok=missing_includes_ok)
-            ast = parser.parse()
+            with using_arch(arch_for_path(filename)):
+                tokens = scanner.scan(filename, program)
+                parser = Parser(
+                    tokens, parse_initial, include_paths=include_paths, missing_includes_ok=missing_includes_ok
+                )
+                ast = parser.parse()
         except ScannerException as e:
             # Defensive: scanner now recovers per line, but a state hard
             # crash could still surface as a raised exception.

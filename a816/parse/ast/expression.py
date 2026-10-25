@@ -103,6 +103,10 @@ def _apply_unary(op: str, value: int | str, token: Token) -> int:
         return -value
     if op == "~":
         return _bitwise_not(value, token)
+    if op == "<":
+        return value & 0xFF
+    if op == ">":
+        return (value >> 8) & 0xFF
     raise RuntimeError(f"Unsupported unary Operator {op}")
 
 

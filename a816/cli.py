@@ -29,10 +29,11 @@ import sys
 from pathlib import Path
 
 from a816.config import DEFINE_NAME, A816Config, discover_a816_config, merge_build_settings
+from a816.cpu.arch import ARCHES, arch_for_path, using_arch
 from a816.exceptions import A816Error, LinkerError
 from a816.linker import Linker
 from a816.mappers import CLI_MAPPERS
-from a816.module_builder import apply_experimental_flags
+from a816.module_builder import ARAM_BUS, apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
 from a816.program import Program
@@ -182,6 +183,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="use_cache",
         help="Compile every module instead of reusing up-to-date objects from the obj dir.",
     )
+    parser.add_argument(
+        "--arch",
+        default=None,
+        choices=ARCHES,
+        help=(
+            "CPU to assemble for; by default the main source's (`*.spc.s` is spc700). "
+            "spc700 links an ARAM image (`-f aram`, the default for it)."
+        ),
+    )
     parser.set_defaults(bus_map=[])
     return parser
 
@@ -194,9 +204,10 @@ def _parse_build_args(argv: list[str]) -> argparse.Namespace:
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
+    args.arch = args.arch or arch_for_path(args.input_files[0])
     paths = args.output_files or [Path("a.out")]
     if len(paths) == 1:
-        args.outputs = [(args.format or "ips", paths[0])]
+        args.outputs = [(args.format or ("aram" if args.arch == "spc700" else "ips"), paths[0])]
     elif args.format is not None:
         parser.error("-f picks the format of a single -o; with several -o each takes its format from its extension")
     else:
@@ -271,6 +282,7 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         use_cache=args.use_cache,
         bps=args.bps,
         defines=args.define_values,
+        arch=args.arch,
     )
     return result.exit_code
 
@@ -393,6 +405,13 @@ def build_main(argv: list[str]) -> int:
 
 def _run_assemble(args: argparse.Namespace) -> int:
     _apply_a816_toml(args)
+    if args.arch == "spc700":
+        args.bus_map = [ARAM_BUS]
+    with using_arch(args.arch):
+        return _run_assemble_for_arch(args)
+
+
+def _run_assemble_for_arch(args: argparse.Namespace) -> int:
     use_auto_imports = (
         not args.no_auto_imports
         and not args.compile_only

@@ -5,6 +5,7 @@ modules referenced via .import directives.
 """
 
 import gc
+import json
 import logging
 import os
 from collections import defaultdict
@@ -15,24 +16,28 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from a816.object_file import BusMapping
     from a816.parse.codegen.modules import ParsedImport
     from a816.program import Program
 
 from a816.build_cache import BuildCache, BuildSettings, ModuleInputs, recording_errors, recording_warnings
 from a816.build_inputs import recording_misses
 from a816.config import BpsConfig, discover_a816_config, merge_build_settings
+from a816.cpu.arch import Arch, arch_for_path, using_arch
 from a816.exceptions import A816Error
 from a816.linker import Linker
 from a816.module_loader import resolve_module
-from a816.object_file import ObjectFile
+from a816.object_file import BusMapping, ObjectFile, SymbolType
 from a816.parse.ast.nodes import (
     AstNode,
+    EmbedAstNode,
     ImportAstNode,
 )
 from a816.parse.mzparser import A816Parser, ParserResult
 
 logger = logging.getLogger("a816.module_builder")
+
+# ARAM is one flat 64 KB space: an address is its own offset in the image.
+ARAM_BUS = BusMapping(identifier="1", bank_range=(0x00, 0x00), addr_range=(0x0000, 0xFFFF), mask=0x10000)
 
 
 def _failure_diagnostics(error: Exception, formatted: str) -> list[str]:
@@ -128,6 +133,7 @@ class ModuleBuilder:
         experimental: list[str] | None = None,
         bus_map: "list[BusMapping] | None" = None,
         use_cache: bool = True,
+        arch: Arch = "65c816",
     ) -> None:
         """Initialize the module builder.
 
@@ -138,6 +144,7 @@ class ModuleBuilder:
             include_paths: Directories to search for .include files.
             experimental: Experimental feature flags applied to every module compile.
             bus_map: Bus regions seeded onto every module's bus.
+            arch: CPU every module is assembled for (`--arch`).
             use_cache: Reuse up-to-date objects from `output_dir` (False compiles every module).
         use_a816_toml: Merge the nearest `a816.toml` above `main_source`
             under the arguments above (`merge_build_settings`), so an API
@@ -148,7 +155,10 @@ class ModuleBuilder:
         self.symbols: dict[str, int | str] = symbols or {}
         self.include_paths: list[Path] = include_paths or []
         self.experimental: list[str] = sorted(set(experimental or []))
-        self.bus_map: list[BusMapping] = list(bus_map or [])
+        self.arch: Arch = arch
+        # ARAM is one flat space: an SPC700 build needs no board.
+        # The cartridge (`a816.toml` board, `.map`) is the 65816's bus; SPC700 code sees ARAM only.
+        self.bus_map: list[BusMapping] = [ARAM_BUS] if arch == "spc700" else list(bus_map or [])
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
         # Discovery parses every module with the same inputs compile uses,
@@ -161,7 +171,12 @@ class ModuleBuilder:
         # Lookups that missed while parsing a module during discovery: the
         # compile reuses that AST, so they belong to the module's inputs.
         self._discovery_misses: dict[str, set[str]] = {}
-        settings = BuildSettings(self.symbols, self.experimental, self.bus_map, self.include_paths, self.module_paths)
+        # `.embed` names per module, and each SPC700 program's linked image.
+        self._embeds: dict[str, list[str]] = {}
+        self._embedded: dict[str, Path] = {}
+        settings = BuildSettings(
+            self.symbols, self.experimental, self.bus_map, self.include_paths, self.module_paths, arch=self.arch
+        )
         self.cache = BuildCache(self.output_dir, settings, enabled=use_cache)
 
     def discover_imports(self, source_file: Path, parsed_nodes: list[AstNode] | None = None) -> None:
@@ -186,6 +201,7 @@ class ModuleBuilder:
         try:
             imports = self._module_imports(source_path, module_name, parsed_nodes)
             self._imports[module_name] = imports
+            self._embeds[module_name] = self._module_embeds(module_name, parsed_nodes)
 
             for import_name in imports:
                 self.graph.add_dependency(module_name, import_name)
@@ -222,6 +238,47 @@ class ModuleBuilder:
             return list(parsed.imports)
         return self._collect_imports(parsed.nodes)
 
+    def _module_embeds(self, module_name: str, parsed_nodes: list[AstNode] | None) -> list[str]:
+        """The SPC700 programs the module `.embed`s: from its parse, else its sidecar."""
+        from a816.parse.ast.visitor import walk
+
+        if parsed_nodes is None and module_name in self._parsed:
+            parsed_nodes = self._parsed[module_name].nodes
+        if parsed_nodes is None:
+            return self.cache.embeds(self._get_obj_path(module_name))
+        return sorted({node.module_name for node in walk(parsed_nodes) if isinstance(node, EmbedAstNode)})
+
+    def _link_embedded_programs(self) -> None:
+        """Link every `.embed`ed SPC700 program before the modules that embed it compile.
+
+        Each is its own build (`<name>.spc.s` and its imports, for the SPC700)
+        under the object dir. Its image and symbols are rewritten only when
+        they change, so an embedding module's cached object stays fresh.
+        """
+        from a816.program import Program
+
+        for name in sorted({name for names in self._embeds.values() for name in names}):
+            source = resolve_module(f"{name}.spc", ".s", self.module_paths)
+            if source is None:
+                raise ModuleCompileError(f"`.embed`: no SPC700 program {name}.spc.s on the module paths", [])
+            program_dir = self.output_dir / "spc700" / name.replace("/", "_")
+            builder = ModuleBuilder(
+                module_paths=self.module_paths,
+                output_dir=program_dir,
+                symbols=self.symbols,
+                include_paths=self.include_paths,
+                experimental=self.experimental,
+                use_cache=self.cache.enabled,
+                arch="spc700",
+            )
+            linked = builder.build(source)
+            base, image = Program().aram_image(linked)
+            symbols = {symbol: value for symbol, value, kind, _section in linked.symbols if kind is SymbolType.GLOBAL}
+            image_path = program_dir / f"{name.rsplit('/', 1)[-1]}.aram"
+            _write_if_changed(image_path, image)
+            _write_if_changed(image_path.with_suffix(".json"), json.dumps({"base": base, "symbols": symbols}).encode())
+            self._embedded[name] = image_path
+
     def _cached_imports(self, module_name: str) -> list[str] | None:
         if self._needs_recompilation(module_name):
             return None
@@ -245,8 +302,11 @@ class ModuleBuilder:
         `src/items.s`, compiled the wrong file as that module, and
         surfaced as a missing symbol somewhere else entirely. A module
         under a subdirectory is addressed by its path, `ingame/items`.
+
+        An SPC700 build finds `.import "dsp"` as `dsp.spc.s` first.
         """
-        return resolve_module(module_name, ".s", self.module_paths)
+        with using_arch(self.arch):
+            return resolve_module(module_name, ".s", self.module_paths)
 
     def _needs_recompilation(self, module_name: str) -> bool:
         """Whether a module's own inputs changed since its `.o` was built:
@@ -285,6 +345,7 @@ class ModuleBuilder:
         program.resolver.context.bus_map = list(self.bus_map)
         program.resolver.context.import_asts = self._import_asts
         program.resolver.context.parse_include_paths = list(dict.fromkeys(self.include_paths))
+        program.resolver.context.embedded_programs = dict(self._embedded)
         program.add_module_path(self.output_dir)
         for path in self.module_paths:
             program.add_module_path(path)
@@ -348,7 +409,10 @@ class ModuleBuilder:
             *(os.path.abspath(f) for f in obj.files),
             *asset_files,
         }
-        keys[module_name] = self.cache.record(obj_path, ModuleInputs(files, misses, imports, import_keys, warnings))
+        embeds = self._embeds.get(module_name, [])
+        keys[module_name] = self.cache.record(
+            obj_path, ModuleInputs(files, misses, imports, import_keys, warnings, embeds)
+        )
         return obj
 
     @staticmethod
@@ -398,11 +462,12 @@ class ModuleBuilder:
 
     def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
         """Build all modules in topo order, then link."""
-        with _rare_collections():
+        with _rare_collections(), using_arch(self.arch):
             return self._build(main_source, parsed_main_nodes)
 
     def _build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None) -> ObjectFile:
         self.discover_imports(main_source, parsed_main_nodes)
+        self._link_embedded_programs()
         compilation_order = self.graph.topological_sort()
         logger.info(f"Compilation order: {compilation_order}")
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -421,6 +486,14 @@ class ModuleBuilder:
             return object_files[0]
         logger.info(f"Linking {len(object_files)} module(s)")
         return Linker(object_files).link(base_address=0x8000)
+
+
+def _write_if_changed(path: Path, content: bytes) -> None:
+    """Keep the file's mtime when its bytes are the same: the build cache stats it."""
+    if path.exists() and path.read_bytes() == content:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
 
 
 # A build allocates millions of short-lived nodes that die by refcount; the
@@ -514,6 +587,7 @@ def build_with_imports(
     bps: BpsConfig | None = None,
     defines: dict[str, str] | None = None,
     extra_outputs: list[tuple[str, str | Path]] | None = None,
+    arch: Arch | None = None,
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
@@ -537,12 +611,15 @@ def build_with_imports(
             metadata (`str()` of `symbols` when not given).
         extra_outputs: More (format, path) outputs written from the same
             link as `output_file`: `[("bps", "build/game.bps.unsealed")]`.
+        arch: CPU the project is assembled for, by default the main source's (`driver.spc.s` is
+            SPC700): `spc700` links an ARAM image (`output_format="aram"`).
 
     Returns:
         BuildResult with exit_code, symbol_map, diagnostics, and program.
     """
     main_source = Path(main_source)
     output_file = Path(output_file)
+    arch = arch or arch_for_path(main_source)
 
     if use_a816_toml:
         settings = merge_build_settings(
@@ -572,6 +649,7 @@ def build_with_imports(
             experimental=experimental,
             bus_map=bus_map,
             use_cache=use_cache,
+            arch=arch,
         )
 
         linked = builder.build(main_source)
