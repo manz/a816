@@ -29,6 +29,8 @@ init:
 | `@std/snes/header`   | `$FFB0`–`$FFFF` cartridge header + vectors        |
 | `@std/snes/sdd1`     | `$4800`–`$4807` S-DD1 decompression + ROM banks   |
 | `@std/snes/spc7110`  | `$4800`–`$4842` SPC7110 units + Epson RTC         |
+| `@std/snes/spc`      | SPC700 boot upload through the IPL ROM (macro)    |
+| `@std/spc700/dsp`    | SPC700 `$F0`–`$FF` I/O + S-DSP registers (SPC700 code) |
 
 Each module exports a single struct named after the block (`PPU`,
 `CPU_REGS`, `DMAChannel`, …) plus a base-address constant
@@ -125,6 +127,18 @@ The SPC7110 board maps `$D0`-`$FF` linearly over the data ROM, which
 is what the power-on banks 0, 1 and 2 at `$4831`-`$4833` show. A game
 that reprograms them (Far East of Eden Zero sets 1, 2, 3 at reset)
 describes its banks with `[map.N]` in its `a816.toml`.
+
+## Sound
+
+`@std/snes/spc` is S-CPU code: `spc_ipl_upload(src, size, aram, entry)`
+copies a program into ARAM through the IPL ROM and runs it (M8 / X16,
+right after reset). `@std/spc700/dsp` is imported from SPC700 code
+(`*.spc.s`): the `$F0`-`$FF` I/O registers (`DSPADDR`, `CPUIO0`,
+`T0TARGET`, ...), the S-DSP registers (`DSP_KON`, `DSP_FLG`, ...; voice
+`n`'s are `DSP_VOICE.<field> + n * DSP_VOICE_STRIDE`) and
+`dsp_write(reg, value)`, `dsp_write_a(reg)`, `dsp_read(reg)`. An SPC700
+file finds `@std/spc700/dsp` as `dsp.spc.s`; 65816 code does not see
+it. See [SPC700](spc700.md) for a driver that uses both.
 
 ## How resolution works
 
