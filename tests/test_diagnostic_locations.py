@@ -262,9 +262,14 @@ def test_link_pool_overflow_carries_hint(tmp_path: Path) -> None:
     assert "hint: split 'foo'" in _link_error(tmp_path, _OVERFLOW_SRC).format()
 
 
-def test_link_pool_overflow_points_at_alloc_body(tmp_path: Path) -> None:
+def test_link_pool_overflow_points_at_alloc(tmp_path: Path) -> None:
     src = ".pool p { range 0x008000 0x008003 }\n.alloc foo in p {\n    nop\n    .db 1, 2, 3, 4, 5, 6\n}\n"
-    assert f"alloc body: {tmp_path / 'main.s'}:3" in _link_error(tmp_path, src).format()
+    assert f"alloc: {tmp_path / 'main.s'}:2" in _link_error(tmp_path, src).format()
+
+
+def test_link_pool_overflow_points_at_data_only_alloc(tmp_path: Path) -> None:
+    src = ".pool p { range 0x008000 0x008003 }\n\n.alloc foo in p {\n    .db 1, 2, 3, 4, 5, 6\n}\n"
+    assert f"alloc: {tmp_path / 'main.s'}:3" in _link_error(tmp_path, src).format()
 
 
 def test_link_alloc_into_undeclared_pool_code() -> None:

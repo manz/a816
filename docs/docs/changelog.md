@@ -41,6 +41,8 @@
 - `.db` / `.dw` / `.dl`, `.istruct` and `.patch` bytes record their
   source line in objects and in the `.adbg`: an alloc holding only data
   used to carry none. One entry per directive line, not per value.
+- Link-time E0404 names the `.alloc` (or `.reserve`) that does not
+  fit, by `file:line`, even when its body is only data or bss.
 
 ## 1.2.0 (2026-10-25)
 

@@ -163,8 +163,9 @@ class Linker:
         try:
             pool.allocate()
         except PoolOverflowError as exc:
-            site = request_sites.get((exc.pool_name, exc.alloc_name))
-            raise PoolOverflowLinkError(exc, self._section_location(site)) from exc
+            key = (exc.pool_name, exc.alloc_name)
+            location = self._alloc_sources.get(key) or self._section_location(request_sites.get(key))
+            raise PoolOverflowLinkError(exc, location) from exc
 
     def _allocate_context_owners(
         self, merged: dict[str, Pool], request_sites: dict[tuple[str, str], tuple[int, int]]

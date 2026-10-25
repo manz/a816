@@ -241,7 +241,7 @@ class PoolOverflowLinkError(LinkerError):
 
         details = [("pool", self.overflow.pool_name)]
         if self.location is not None:
-            details.append(("alloc body", self.location))
+            details.append(("alloc", self.location))
         details.append(("hint", self.overflow.hint))
         return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_POOL_OVERFLOW}]", str(self), details=details)
 

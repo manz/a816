@@ -225,8 +225,8 @@ separate blocks separated by a blank line.
 - `E0403` relocation expression failed.
 - `E0404` alloc does not fit in its pool at link time (the pool is
   shared across modules, so the allocator only runs once every `.o`
-  is in). Same message and hint as `E0318`, plus the pool and, when
-  the body emitted code, the `file:line` of its first instruction.
+  is in). Same message and hint as `E0318`, plus the pool and the
+  `file:line` of the `.alloc` (or `.reserve`).
 - `E0405` an alloc request names a pool that no linked object
   declares.
 - `E0406` reservations from two different `bss` pools share memory.
