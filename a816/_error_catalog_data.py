@@ -48,7 +48,7 @@ ENTRIES: dict[str, str] = {
     "E0313": "an unsized operand names a symbol resolved at link (`jmp target` with `target` from another module): its value is unknown at compile time, so the form can't be chosen. Write the size; the hint lists the forms the opcode has (`jmp.w` in the same bank, `jmp.l` across). Register-sized immediates and single-form opcodes (`pea`, `rep`) need none. In SPC700 code the choice is direct page or absolute: write `!label` for the absolute form.",
     "E0315": "branch target out of range: the displacement does not fit the branch's signed 8-bit (`bra`, `bne`, ...) or 16-bit (`brl`) offset. The caret sits on the target.",
     "E0316": "branch target has no ROM address. Relative branches are computed in ROM space; a RAM target cannot be reached.",
-    "E0317": "address in a bank no `.map` region covers (and the configured ROM type doesn't back). The hint lists the mapped banks.",
+    "E0317": "address in a bank no `.map` region covers (and the configured ROM type doesn't back). The hint lists the mapped banks. In an SPC700 build it is a placement running past ARAM's `$FFFF`.",
     "E0318": "alloc does not fit in its pool. Says whether the alloc is larger than any range, the pool is fragmented or out of room, with a matching hint; the caret sits on the `.alloc` name.",
     "E0319": "operator applied to a string and a number.",
     "E0320": "`~` operand wider than 32 bits.",

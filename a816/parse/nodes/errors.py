@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from a816.cpu.arch import ARAM_END, is_spc700
 from a816.error_codes import E_CODEGEN_UNMAPPED_BANK
 from a816.errors import SourceLocation, format_error
 from a816.exceptions import A816Error, SymbolNotDefined, UnmappedBankError
@@ -82,6 +83,13 @@ def node_file_info(node: object) -> Token | None:
 def unmapped_bank_error(exc: UnmappedBankError, file_info: Token | None) -> NodeError:
     """Locate a bus-level unmapped-bank failure on the node that triggered it."""
     address = f" (address ${exc.logical_address:06X})" if exc.logical_address is not None else ""
+    if is_spc700():
+        return NodeError(
+            f"placement runs past the end of ARAM{address}",
+            file_info,
+            code=str(E_CODEGEN_UNMAPPED_BANK),
+            hint=f"ARAM ends at ${ARAM_END:04X}; move the placement or shrink it",
+        )
     return NodeError(
         f"bank ${exc.bank:02X} is not covered by any `.map` region{address}",
         file_info,

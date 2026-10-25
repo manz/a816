@@ -6,6 +6,7 @@ labels as `<name>.<label>` plus `<name>.__base` / `<name>.__size`.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -128,3 +129,35 @@ def test_the_cartridge_board_does_not_map_an_spc700_build(tmp_path: Path) -> Non
     output = tmp_path / "driver.bin"
     build_with_imports(tmp_path / "driver.spc.s", output, "aram", output_dir=tmp_path / "obj")
     assert output.read_bytes() == _DRIVER_IMAGE
+
+
+def _aram_build(root: Path, source: str) -> BuildResult:
+    (root / "over.spc.s").write_text(source, encoding="utf-8")
+    return build_with_imports(
+        root / "over.spc.s", root / "over.bin", "aram", output_dir=root / "obj", use_a816_toml=False
+    )
+
+
+def test_a_placement_past_ffff_names_the_aram_limit(tmp_path: Path) -> None:
+    result = _aram_build(tmp_path, ".alloc x at 0xFFFF {\n    .db 1, 2, 3\n}\n")
+    assert "past the end of ARAM" in "\n".join(result.diagnostics)
+
+
+def test_an_unbounded_spc700_alloc_ends_at_ffff(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("INFO"):
+        _aram_build(tmp_path, ".alloc x at 0x0400 {\n    .db 1\n}\n")
+    assert "leftover 0x000401..0x00ffff" in caplog.text
+
+
+def test_build_defines_stay_out_of_the_program_symbols(tmp_path: Path) -> None:
+    main = _project(tmp_path)
+    output = tmp_path / "game.sfc"
+    build_with_imports(main, output, "sfc", output_dir=tmp_path / "obj", symbols={"DEBUG": 1}, use_a816_toml=False)
+    symbols = json.loads((tmp_path / "obj" / "spc700" / "driver" / "driver.json").read_text(encoding="utf-8"))
+    assert "DEBUG" not in symbols["symbols"]
+
+
+def test_the_program_exports_its_labels_not_its_alloc_names(tmp_path: Path) -> None:
+    _build(tmp_path, _project(tmp_path), use_cache=False)
+    symbols = json.loads((tmp_path / "obj" / "spc700" / "driver" / "driver.json").read_text(encoding="utf-8"))
+    assert sorted(symbols["symbols"]) == ["dsp_write", "start"]

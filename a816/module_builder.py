@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 from a816.build_cache import BuildCache, BuildSettings, ModuleInputs, recording_errors, recording_warnings
 from a816.build_inputs import recording_misses
 from a816.config import BpsConfig, discover_a816_config, merge_build_settings
-from a816.cpu.arch import Arch, arch_for_path, using_arch
+from a816.cpu.arch import ARAM_END, Arch, arch_for_path, using_arch
 from a816.exceptions import A816Error
 from a816.linker import Linker
 from a816.module_loader import resolve_module
@@ -37,7 +37,7 @@ from a816.parse.mzparser import A816Parser, ParserResult
 logger = logging.getLogger("a816.module_builder")
 
 # ARAM is one flat 64 KB space: an address is its own offset in the image.
-ARAM_BUS = BusMapping(identifier="1", bank_range=(0x00, 0x00), addr_range=(0x0000, 0xFFFF), mask=0x10000)
+ARAM_BUS = BusMapping(identifier="1", bank_range=(0x00, 0x00), addr_range=(0x0000, ARAM_END), mask=0x10000)
 
 
 def _failure_diagnostics(error: Exception, formatted: str) -> list[str]:
@@ -273,11 +273,23 @@ class ModuleBuilder:
             )
             linked = builder.build(source)
             base, image = Program().aram_image(linked)
-            symbols = {symbol: value for symbol, value, kind, _section in linked.symbols if kind is SymbolType.GLOBAL}
+            symbols = self._program_symbols(linked)
             image_path = program_dir / f"{name.rsplit('/', 1)[-1]}.aram"
             _write_if_changed(image_path, image)
             _write_if_changed(image_path.with_suffix(".json"), json.dumps({"base": base, "symbols": symbols}).encode())
             self._embedded[name] = image_path
+
+    def _program_symbols(self, linked: ObjectFile) -> dict[str, int]:
+        """The labels an embedding build sees as `driver.<label>`.
+
+        `-D` defines reach the program but are the build's own, and an
+        alloc's name and `__size` would read `driver.driver.__size`.
+        """
+        globals_ = {symbol: value for symbol, value, kind, _section in linked.symbols if kind is SymbolType.GLOBAL}
+        sizes = {symbol for symbol in globals_ if symbol.endswith(".__size")}
+        allocs = {symbol.rsplit(".", 1)[0] for symbol in sizes}
+        hidden = sizes | allocs | self.symbols.keys()
+        return {symbol: value for symbol, value in globals_.items() if symbol not in hidden}
 
     def _cached_imports(self, module_name: str) -> list[str] | None:
         if self._needs_recompilation(module_name):

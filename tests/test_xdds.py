@@ -862,6 +862,30 @@ class TestDebugInfoIntegration:
         assert addr_to_name[0x008000] == "foo"
         assert name_to_addr["bar"] == 0x018400
 
+    def test_a_constant_does_not_name_an_address(self, tmp_path: Path) -> None:
+        from a816.debug_info import DebugInfo, SymbolEntry, SymbolKind, SymbolScope, write
+        from a816.xdds import load_debug_symbols
+
+        adbg = tmp_path / "test.adbg"
+        info = DebugInfo()
+        info.symbols.append(
+            SymbolEntry(name="driver.start", address=0x0400, scope=SymbolScope.GLOBAL, kind=SymbolKind.CONSTANT)
+        )
+        write(info, adbg)
+        addr_to_name, _ = load_debug_symbols(adbg)
+        assert 0x0400 not in addr_to_name
+
+    def test_a_constant_still_resolves_by_name(self, tmp_path: Path) -> None:
+        from a816.debug_info import DebugInfo, SymbolEntry, SymbolKind, SymbolScope, write
+        from a816.xdds import load_debug_symbols
+
+        adbg = tmp_path / "test.adbg"
+        info = DebugInfo()
+        info.symbols.append(SymbolEntry(name="size", address=9, scope=SymbolScope.GLOBAL, kind=SymbolKind.CONSTANT))
+        write(info, adbg)
+        _, name_to_addr = load_debug_symbols(adbg)
+        assert name_to_addr["size"] == 9
+
     def test_sym_resolves_to_address(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
