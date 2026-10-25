@@ -24,6 +24,10 @@
   `(x >> 8) & 0xFF`), in both CPUs' code and through the linker. Every
   unary operator now binds tightest: `-x * 2` was `-(x * 2)`, the same
   value.
+- `xdds --debug` names an address only after a label. Constants in the
+  `.adbg` (`boot.__size`, an embedded driver's `driver.start`) no longer
+  show up as labels at addresses that merely equal their value; `--sym`
+  still finds them by name.
 
 ## 1.2.0 (2026-10-25)
 

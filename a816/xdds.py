@@ -402,6 +402,7 @@ def load_debug_symbols(adbg_path: Path) -> tuple[dict[int, str], dict[str, int]]
     Address values are SNES logical addresses (matching what the
     disassembler computes).
     """
+    from a816.debug_info import SymbolKind
     from a816.debug_info import read as read_debug
 
     info = read_debug(adbg_path)
@@ -409,7 +410,10 @@ def load_debug_symbols(adbg_path: Path) -> tuple[dict[int, str], dict[str, int]]
     name_to_addr: dict[str, int] = {}
     for sym in info.symbols:
         # Earlier entries win on collision so the first definition order is preserved.
-        addr_to_name.setdefault(sym.address, sym.name)
+        # Only labels name an address: a constant (`x.__size`, an embedded
+        # program's ARAM label) is a number, not a place in this CPU's space.
+        if sym.kind is SymbolKind.LABEL:
+            addr_to_name.setdefault(sym.address, sym.name)
         name_to_addr.setdefault(sym.name, sym.address)
     return addr_to_name, name_to_addr
 
