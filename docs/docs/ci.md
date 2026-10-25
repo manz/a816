@@ -135,11 +135,17 @@ GITHUB_REF_NAME=v1.2rc1 a816 ci release --dry-run --assets='build/*.ips'
 
 ## Renovate
 
-The actions and the a816 package move together. Extend the preset so
-Renovate bumps both in one pull request:
+One preset is the whole Renovate config: every dependency, a816, katsuji
+and the actions included, goes in one pull request, and Renovate merges it
+once all its checks pass. A failing or pending check leaves the pull
+request open. Renovate merges it itself (`platformAutomerge` is off), so
+this holds on repositories without branch protection too.
 
 ```json
 {
   "extends": ["github>manz/a816//renovate/a816"]
 }
 ```
+
+Rules a project needs on top go in its own `packageRules`, after the
+preset.

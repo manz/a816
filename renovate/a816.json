@@ -1,10 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Bump the a816 package and the manz/a816 actions in one pull request.",
+  "description": "One Renovate config for a816 and the projects built with it: every dependency in one pull request, merged by Renovate once its checks pass.",
+  "extends": ["config:recommended"],
+  "separateMajorMinor": false,
+  "platformAutomerge": false,
   "packageRules": [
     {
-      "matchPackageNames": ["a816", "manz/a816", "manz/a816/**"],
-      "groupName": "a816"
+      "matchPackageNames": ["*"],
+      "groupName": "all dependencies",
+      "groupSlug": "all",
+      "automerge": true
     }
   ]
 }

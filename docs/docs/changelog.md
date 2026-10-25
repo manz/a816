@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The Renovate preset `github>manz/a816//renovate/a816` is a whole
+  config: every dependency in one pull request, which Renovate merges
+  once its checks pass. A project's `renovate.json` only extends it.
+
 ## 1.2.0 (2026-10-25)
 
 - `a816 format` keeps comments where the author put them in a block
