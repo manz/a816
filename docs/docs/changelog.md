@@ -8,6 +8,14 @@
   once their checks pass; majors wait for a human. A project's
   `renovate.json` only extends it. Presets are read from a816's default
   branch, so this applies as soon as it merges, not at release.
+- a816 assembles SPC700 code, the SNES sound CPU. A `*.spc.s` file is
+  SPC700; `.embed "driver"` in the 65816 build links `driver.spc.s` and
+  its imports as an ARAM program, places its image, and defines
+  `driver.__base`, `driver.__size` and `driver.LABEL`. A build whose
+  entry is `*.spc.s` (or `--arch spc700`) writes the ARAM image (`-f
+  aram`). Objects record their CPU and the linker refuses to mix them.
+  The LSP, `a816 check` and `a816 format` take SPC700 files. See
+  [SPC700](spc700.md).
 
 ## 1.2.0 (2026-10-25)
 

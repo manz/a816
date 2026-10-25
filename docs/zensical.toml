@@ -18,6 +18,7 @@ nav = [
     { "Placement" = "placement.md" },
     { "Freespace pools" = "freespace-pools.md" },
     { "BPS patches" = "bps.md" },
+    { "SPC700" = "spc700.md" },
     { "GitHub actions" = "ci.md" },
     { "Fluff (lint + format)" = "fluff.md" },
     { "Error codes" = "errors.md" },
