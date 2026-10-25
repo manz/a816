@@ -16,6 +16,7 @@ from pathlib import Path
 
 from lsprotocol.types import Diagnostic, DiagnosticSeverity, Position, Range
 
+from a816.cpu.arch import arch_for_path
 from a816.parse.ast.nodes import (
     AllocAstNode,
     AssignAstNode,
@@ -264,8 +265,11 @@ class A816Document:
         return matches
 
     def _resolve_import_for_struct_lookup(self, module_name: str) -> Path | None:
-        stdlib_path = resolve_stdlib_module(module_name, ".s")
-        if stdlib_path is not None:
+        spc700 = arch_for_path(self.uri) == "spc700"
+        stdlib_path = (spc700 and resolve_stdlib_module(module_name + ".spc", ".s")) or resolve_stdlib_module(
+            module_name, ".s"
+        )
+        if stdlib_path:
             return stdlib_path
         file_name = module_name + ".s"
         candidates: list[Path] = []

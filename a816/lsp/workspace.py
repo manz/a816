@@ -406,12 +406,15 @@ class WorkspaceIndex:
             module_name = match.group(1).strip()
             # Stdlib `@std/...` modules live inside the wheel — check there
             # first so the crawler indexes them like any user module.
-            stdlib_path = resolve_stdlib_module(module_name, ".s")
-            if stdlib_path is not None:
+            spc700 = file_path.name.lower().endswith(SPC700_SUFFIXES)
+            stdlib_path = (spc700 and resolve_stdlib_module(module_name + ".spc", ".s")) or resolve_stdlib_module(
+                module_name, ".s"
+            )
+            if stdlib_path:
                 found_paths.add(stdlib_path)
                 continue
             resolved = None
-            if file_path.name.lower().endswith(SPC700_SUFFIXES):
+            if spc700:
                 resolved = self._resolve_in_paths(module_name + ".spc.s", file_path.parent, self.module_paths)
             resolved = resolved or self._resolve_in_paths(module_name + ".s", file_path.parent, self.module_paths)
             if resolved:

@@ -55,6 +55,7 @@ from lsprotocol.types import (
 )
 from pygls.lsp.server import LanguageServer
 
+from a816.cpu.arch import arch_for_path, using_arch
 from a816.cpu.cpu_65c816 import AddressingMode, snes_opcode_table
 from a816.cpu.spc700 import SPC700_TABLE
 from a816.exceptions import FormattingError
@@ -1052,10 +1053,8 @@ class A816LanguageServer(CompletionsMixin, HoverMixin, TokensMixin, MemberDefini
             workspace = self.workspace_index
             if workspace:
                 search_paths.extend(workspace.module_paths)
-            resolved = None
-            if is_spc700_uri(current_uri):
-                resolved = resolve_module(f"{module_name}.spc", ".s", search_paths)
-            resolved = resolved or resolve_module(module_name, ".s", search_paths)
+            with using_arch(arch_for_path(current_uri)):
+                resolved = resolve_module(module_name, ".s", search_paths)
             return str(resolved.resolve()) if resolved is not None else None
         except (OSError, ValueError) as e:
             logger.debug(f"Error resolving module path '{module_name}' from '{current_uri}': {e}")

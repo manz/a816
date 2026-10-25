@@ -305,11 +305,8 @@ class ModuleBuilder:
 
         An SPC700 build finds `.import "dsp"` as `dsp.spc.s` first.
         """
-        if self.arch == "spc700":
-            found = resolve_module(f"{module_name}.spc", ".s", self.module_paths)
-            if found is not None:
-                return found
-        return resolve_module(module_name, ".s", self.module_paths)
+        with using_arch(self.arch):
+            return resolve_module(module_name, ".s", self.module_paths)
 
     def _needs_recompilation(self, module_name: str) -> bool:
         """Whether a module's own inputs changed since its `.o` was built:
