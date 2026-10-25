@@ -77,6 +77,9 @@ class TokenType(Enum):
 
     DOT = auto()
 
+    # SPC700 `!abs`: forces the absolute form of an operand.
+    BANG = auto()
+
 
 class Token:
     """A scanned token. Its location is stored flat; `position` builds a `Position` on demand.

@@ -12,8 +12,10 @@ from a816.parse.ast.nodes import (
     OpcodeAstNode,
     Term,
 )
+from a816.parse.ast.nodes.spc700 import SpcOpcodeAstNode
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, generators
 from a816.parse.nodes import ExpressionNode, NodeError, OpcodeNode
+from a816.parse.nodes.spc700 import SpcOpcodeNode, SpcOperandNode
 from a816.parse.tokens import Token, TokenType
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
@@ -113,3 +115,23 @@ def generate_opcode(
 
 
 generators["opcode"] = generate_opcode
+
+
+def generate_spc_opcode(
+    node: SpcOpcodeAstNode,
+    resolver: Resolver,
+    macro_definitions: MacroDefinitions,
+    file_info: Token,
+) -> GenNodes:
+    operands = tuple(
+        SpcOperandNode(
+            operand.shape,
+            ExpressionNode(operand.expression, resolver, file_info) if operand.expression is not None else None,
+            ExpressionNode(operand.bit, resolver, file_info) if operand.bit is not None else None,
+        )
+        for operand in node.operands
+    )
+    return [SpcOpcodeNode(node.opcode, operands, file_info=file_info, resolver=resolver)]
+
+
+generators["spc_opcode"] = generate_spc_opcode

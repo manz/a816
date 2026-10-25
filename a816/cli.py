@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 from a816.config import DEFINE_NAME, A816Config, discover_a816_config, merge_build_settings
+from a816.cpu.arch import ARCHES
 from a816.exceptions import A816Error, LinkerError
 from a816.linker import Linker
 from a816.mappers import CLI_MAPPERS
@@ -181,6 +182,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_false",
         dest="use_cache",
         help="Compile every module instead of reusing up-to-date objects from the obj dir.",
+    )
+    parser.add_argument(
+        "--arch",
+        default="65c816",
+        choices=ARCHES,
+        help="CPU to assemble for. `spc700` builds one source into an ARAM image (experimental).",
     )
     parser.set_defaults(bus_map=[])
     return parser
@@ -391,8 +398,25 @@ def build_main(argv: list[str]) -> int:
     return _run_assemble(_parse_build_args(argv))
 
 
+def _run_spc700(args: argparse.Namespace) -> int:
+    from a816.spc700_build import build_spc700
+
+    if len(args.input_files) != 1 or args.input_files[0].suffix not in _ASM_SUFFIXES:
+        logger.error("--arch spc700 builds one source file")
+        return -1
+    return build_spc700(
+        args.input_files[0],
+        args.output_file,
+        include_paths=[Path(p) for p in args.include_paths],
+        symbols=args.symbols,
+        dump_symbols=args.dump_symbols,
+    )
+
+
 def _run_assemble(args: argparse.Namespace) -> int:
     _apply_a816_toml(args)
+    if args.arch == "spc700":
+        return _run_spc700(args)
     use_auto_imports = (
         not args.no_auto_imports
         and not args.compile_only
