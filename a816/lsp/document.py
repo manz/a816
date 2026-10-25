@@ -31,7 +31,6 @@ from a816.parse.ast.nodes import (
     ExternAstNode,
     ImportAstNode,
     IncludeAstNode,
-    IncludeBinaryAstNode,
     LabelAstNode,
     MacroAstNode,
     PoolAstNode,
@@ -411,8 +410,6 @@ class A816Document:
             self._record_pool_directive(node)
         elif isinstance(node, ImportAstNode):
             self._record_import(node)
-        elif isinstance(node, IncludeBinaryAstNode):
-            self._record_incbin(node)
         elif isinstance(node, EmbedAstNode):
             self._record_embed(node)
 
@@ -462,19 +459,6 @@ class A816Document:
         file_uri = self._get_file_uri_for_token(token)
         for name in ("__base", "__size"):
             self.symbols[f"{prefix}.{name}"] = (pos, file_uri)
-
-    def _record_incbin(self, node: IncludeBinaryAstNode) -> None:
-        """Index the auto-generated `<sanitized_path>` + `<...>__size` symbols
-        so goto-def on either jumps to the `.incbin "..."` line."""
-        token = node.file_info
-        if not token.position:
-            return
-        symbol_base = node.file_path.replace("/", "_").replace(".", "_")
-        pos = Position(line=token.position.line, character=token.position.column)
-        file_uri = self._get_file_uri_for_token(token)
-        self.symbols[symbol_base] = (pos, file_uri)
-        self.labels[symbol_base] = (pos, file_uri)
-        self.symbols[f"{symbol_base}__size"] = (pos, file_uri)
 
     def _set_docstring(self, target: tuple[str, str], text: str) -> None:
         cleaned = inspect.cleandoc(text)

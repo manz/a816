@@ -130,43 +130,33 @@ def code_gen(ast_nodes: list[AstNode], resolver: Resolver) -> GenNodes:
     resolver.star_eq_cursor_active = False
     macro_definitions: MacroDefinitions = {}
     code = _code_gen(ast_nodes, resolver, macro_definitions)
-    _warn_path_names(ast_nodes, resolver)
+    _reject_path_names(ast_nodes, resolver)
     return code
 
 
-def _record_path_names(resolver: Resolver, own: dict[str, PathName], checked: dict[str, PathName]) -> None:
-    """Carry the unit's path names to the linker, which warns on a reference
-    that binds to one from a module whose compile never saw it."""
-    from a816.object_file import PathNameRecord, PathNames
+def _record_path_names(resolver: Resolver, own: dict[str, PathName]) -> None:
+    """Carry the unit's path names to the linker, so a reference that only
+    meets one there is told what the name used to be."""
+    from a816.object_file import PathNameRecord
 
     writer = resolver.context.object_writer
     if writer is None:
         return
-    bound = [
-        PathNameRecord(name, found.file_path, found.seen_from_importer().hint())
-        for name, found in own.items()
-        if not found.ambiguous
+    writer.path_names = [
+        PathNameRecord(name, found.file_path, found.seen_from_importer().hint()) for name, found in own.items()
     ]
-    writer.path_names = PathNames(bound, sorted(checked))
 
 
-def _warn_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
-    """W0001 on each reference to a path-derived `.incbin` name, this unit's
-    or an import's; run after codegen, once every import has been read."""
-    from a816.error_codes import E_CODEGEN_AMBIGUOUS_PATH_NAME, W_INCBIN_PATH_NAME
+def _reject_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
+    """A reference to a name `.incbin` used to derive from its path, this
+    unit's or an import's, is undefined since 1.3: say what it was. Runs
+    after codegen, once every import has been read."""
+    from a816.error_codes import E_SYMBOL_NOT_DEFINED
     from a816.incbin_names import path_names, references
-    from a816.parse.nodes.errors import format_node_warning
 
     own = path_names(ast_nodes)
-    names = {**resolver.imported_path_names, **own}
-    _record_path_names(resolver, own, names)
-    for token, name in references(ast_nodes, names):
-        if name.ambiguous:
-            raise NodeError(
-                f"`{name.name}` is bound by more than one `.incbin`, so it names whichever came first",
-                token,
-                code=str(E_CODEGEN_AMBIGUOUS_PATH_NAME),
-                hint="label each blob and use the labels",
-            )
-        message = f"`{name.name}` is named after the asset path {name.file_path!r}"
-        logger.warning(format_node_warning(message, token, code=str(W_INCBIN_PATH_NAME), hint=name.hint()))
+    _record_path_names(resolver, own)
+    for token, name in references(ast_nodes, {**resolver.imported_path_names, **own}):
+        raise NodeError(
+            f"`{name.name}` is not defined", token, code=str(E_SYMBOL_NOT_DEFINED), hint=name.removed_hint()
+        )

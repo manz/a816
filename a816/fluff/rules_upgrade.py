@@ -292,16 +292,17 @@ def _indent_block(text: str, spaces: int) -> str:
 
 
 class IncbinPathName(Rule):
-    """W0001, the build's warning, as a lint with the rewrite as its fix."""
+    """A reference to a name `.incbin` derived from its path until 1.3, with the
+    rewrite as its fix: the build reports it as undefined."""
 
     code = "W0001"
-    description = "reference to a name `.incbin` derived from its file path"
+    description = "reference to a name `.incbin` derived from its file path until 1.3"
     rationale = (
-        '`.incbin "assets/vwf.bin"` binds `assets_vwf_bin` and `assets_vwf_bin__size`, '
-        "named after the asset's path, so moving the file renames symbols in code that "
-        "never mentions it. Name the blob instead: alone in `.alloc vwf_font { ... }` it "
-        "is `vwf_font` and its size `sizeof(vwf_font)`, which the fix writes. A blob "
-        "sharing its block needs a label. The path names go in 1.2."
+        '`.incbin "assets/vwf.bin"` bound `assets_vwf_bin` and `assets_vwf_bin__size`, '
+        "named after the asset's path, so moving the file renamed symbols in code that "
+        "never mentions it. Since 1.3 they are not defined. Name the blob instead: alone "
+        "in `.alloc vwf_font { ... }` it is `vwf_font` and its size `sizeof(vwf_font)`, "
+        "which the fix writes. A blob sharing its block needs a label."
     )
     bad = '"""Module."""\n.alloc font at 0x008000 {\n    .incbin "f.bin"\n}\n.dl f_bin\n'
     good = '"""Module."""\n.alloc font at 0x008000 {\n    .incbin "f.bin"\n}\n.dl font\n'

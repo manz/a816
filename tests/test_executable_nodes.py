@@ -250,8 +250,8 @@ class BinaryNodeTestCase(unittest.TestCase):
         finally:
             temp_path.unlink()
 
-    def test_pc_after_creates_size_symbol(self) -> None:
-        """Test that pc_after creates __size symbol."""
+    def test_pc_after_binds_no_path_name(self) -> None:
+        """`.incbin` no longer names the blob after its path (1.3)."""
         with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as f:
             f.write(b"\x00" * 50)
             temp_path = Path(f.name)
@@ -260,11 +260,8 @@ class BinaryNodeTestCase(unittest.TestCase):
             resolver = Resolver()
             resolver.set_position(0x8000)
             node = BinaryNode(str(temp_path), resolver)
-            current_pc = get_address(resolver, 0x8000)
-            node.pc_after(current_pc)
-            # Check that size symbol was created
-            size_symbol = node.symbol_base + "__size"
-            self.assertEqual(resolver.current_scope[size_symbol], 50)
+            self.assertEqual(node.pc_after(get_address(resolver, 0x8000)).logical_value, 0x8000 + 50)
+            self.assertEqual(dict(resolver.current_scope.symbols), {})
         finally:
             temp_path.unlink()
 

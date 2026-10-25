@@ -688,11 +688,11 @@ it, or by a label placed before it:
     ldx #sizeof(intro_map)
 ```
 
-The directive also binds names derived from the path, `/` and `.`
-replaced by `_`: `assets_intro_map` and `assets_intro_map__size`. They
-are deprecated: a reference warns (`W0001`) and `a816 fix` rewrites it
-to the alloc's name when the blob is alone in a named alloc. They go in
-1.2.
+Until 1.3 the directive also bound names derived from the path, `/`
+and `.` replaced by `_` (`assets_intro_map`, `assets_intro_map__size`).
+A leftover reference is undefined, and the error says what it was;
+`a816 fix` rewrites it to the alloc's name when the blob is alone in a
+named alloc (`W0001`).
 
 ### `.include "file.s"`
 

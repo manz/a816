@@ -22,13 +22,11 @@ def test_semantic_tokens_fall_back_when_parse_fails() -> None:
     assert len(tokens) > 0
 
 
-def test_incbin_symbols_are_goto_definable() -> None:
-    """`.incbin "assets/intro.bin"` exposes `assets_intro_bin` and `..._bin__size`
-    for goto-def — both indexed to the directive's source line."""
+def test_incbin_indexes_no_path_names() -> None:
+    """`.incbin` no longer binds `assets_intro_bin` (1.3), so goto-def must not offer it."""
     import tempfile
     from pathlib import Path
 
-    server = A816LanguageServer()
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "assets").mkdir()
@@ -36,16 +34,7 @@ def test_incbin_symbols_are_goto_definable() -> None:
         src = root / "main.s"
         src.write_text('.incbin "assets/intro.bin"\n', encoding="utf-8")
         doc = A816Document(src.as_uri(), src.read_text(), include_paths=[root])
-        server.documents[doc.uri] = doc
-        # The recorded symbols come from `_record_incbin`; the sanitised
-        # base is `assets_intro_bin`.
-        symbols = doc.symbols
-        assert "assets_intro_bin" in symbols
-        assert "assets_intro_bin__size" in symbols
-        # Both should resolve to the directive line; off-by-one across LSP
-        # 0/1-based is normalised already, so check that lines match.
-        for sym in ("assets_intro_bin", "assets_intro_bin__size"):
-            assert symbols[sym][0].line == symbols["assets_intro_bin"][0].line
+        assert "assets_intro_bin" not in doc.symbols
 
 
 def test_typed_bind_instance_fields_goto_definable() -> None:
