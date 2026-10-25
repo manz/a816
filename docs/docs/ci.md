@@ -139,7 +139,9 @@ One preset is the whole Renovate config: every dependency, a816, katsuji
 and the actions included, goes in one pull request, and Renovate merges it
 once all its checks pass. A failing or pending check leaves the pull
 request open. Renovate merges it itself (`platformAutomerge` is off), so
-this holds on repositories without branch protection too.
+this holds on repositories without branch protection too. Majors are in
+the same pull request, and one dependency that breaks the build holds the
+others back until it is fixed or pinned.
 
 ```json
 {
