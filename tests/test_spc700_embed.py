@@ -133,7 +133,9 @@ def test_the_cartridge_board_does_not_map_an_spc700_build(tmp_path: Path) -> Non
 
 def _aram_build(root: Path, source: str) -> BuildResult:
     (root / "over.spc.s").write_text(source, encoding="utf-8")
-    return build_with_imports(root / "over.spc.s", root / "over.bin", "aram", output_dir=root / "obj", use_a816_toml=False)
+    return build_with_imports(
+        root / "over.spc.s", root / "over.bin", "aram", output_dir=root / "obj", use_a816_toml=False
+    )
 
 
 def test_a_placement_past_ffff_names_the_aram_limit(tmp_path: Path) -> None:
@@ -153,3 +155,9 @@ def test_build_defines_stay_out_of_the_program_symbols(tmp_path: Path) -> None:
     build_with_imports(main, output, "sfc", output_dir=tmp_path / "obj", symbols={"DEBUG": 1}, use_a816_toml=False)
     symbols = json.loads((tmp_path / "obj" / "spc700" / "driver" / "driver.json").read_text(encoding="utf-8"))
     assert "DEBUG" not in symbols["symbols"]
+
+
+def test_the_program_exports_its_labels_not_its_alloc_names(tmp_path: Path) -> None:
+    _build(tmp_path, _project(tmp_path), use_cache=False)
+    symbols = json.loads((tmp_path / "obj" / "spc700" / "driver" / "driver.json").read_text(encoding="utf-8"))
+    assert sorted(symbols["symbols"]) == ["dsp_write", "start"]

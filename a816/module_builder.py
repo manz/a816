@@ -273,16 +273,25 @@ class ModuleBuilder:
             )
             linked = builder.build(source)
             base, image = Program().aram_image(linked)
-            # `-D` defines reach the program but are the build's, not its symbols.
-            symbols = {
-                symbol: value
-                for symbol, value, kind, _section in linked.symbols
-                if kind is SymbolType.GLOBAL and symbol not in self.symbols
-            }
+            symbols = self._program_symbols(linked)
             image_path = program_dir / f"{name.rsplit('/', 1)[-1]}.aram"
             _write_if_changed(image_path, image)
             _write_if_changed(image_path.with_suffix(".json"), json.dumps({"base": base, "symbols": symbols}).encode())
             self._embedded[name] = image_path
+
+    def _program_symbols(self, linked: ObjectFile) -> dict[str, int]:
+        """The labels an embedding build sees as `driver.<label>`.
+
+        `-D` defines reach the program but are the build's own, and an
+        alloc's name and `__size` would read `driver.driver.__size`.
+        """
+        globals_ = {symbol: value for symbol, value, kind, _section in linked.symbols if kind is SymbolType.GLOBAL}
+        allocs = {symbol.removesuffix(".__size") for symbol in globals_ if symbol.endswith(".__size")}
+        return {
+            symbol: value
+            for symbol, value in globals_.items()
+            if symbol not in self.symbols and symbol not in allocs and not symbol.endswith(".__size")
+        }
 
     def _cached_imports(self, module_name: str) -> list[str] | None:
         if self._needs_recompilation(module_name):
