@@ -1,5 +1,4 @@
-.map identifier=1 bank_range=0x00, 0x00 addr_range=0x0000, 0xffff mask=0x10000
-*= 0x0400
+.alloc all_opcodes at 0x0400 {
     or a, 0x12
     or a, !0x1234
     or a, (x)
@@ -285,3 +284,4 @@ back29:
     xcn a
     mul ya
     div ya, x
+}

@@ -1,7 +1,7 @@
 """SPC700 assembly with `--arch spc700`: encodings, operand forms, ARAM images.
 
 `samples/spc700/all_opcodes.bin` is wla-spc700's output for `all_opcodes.s`
-(`$` for `0x`, `.ORG $0400`, linked with `wlalink -b -bS 0x400`): every one
+(`$` for `0x`, `.ORG $0400` for the `.alloc ... at 0x0400`, linked with `wlalink -b -bS 0x400`): every one
 of the 256 opcodes, assembled by another assembler.
 """
 
@@ -15,27 +15,33 @@ import pytest
 from a816.cpu.arch import using_arch
 from a816.cpu.spc700 import SPC700_TABLE
 from a816.exceptions import AssemblyError
+from a816.module_builder import ARAM_BUS
 from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import NodeError
 from a816.program import Program
 from a816.writers import AramWriter
 
 SAMPLES = Path(__file__).parent / "samples" / "spc700"
-_ARAM_MAP = ".map identifier=1 bank_range=0x00, 0x00 addr_range=0x0000, 0xffff mask=0x10000\n"
 
 
-def _image(source: str) -> bytes:
+def _assemble(source: str) -> bytes:
     writer_output = io.BytesIO()
     writer = AramWriter(writer_output)
+    program = Program()
+    program.resolver.context.bus_map = [ARAM_BUS]
     with using_arch("spc700"):
-        Program().assemble_string_with_emitter(_ARAM_MAP + "*= 0x0400\n" + source, "t.s", writer)
+        program.assemble_string_with_emitter(source, "t.s", writer)
     writer.end()
     return writer_output.getvalue()
 
 
+def _image(source: str) -> bytes:
+    return _assemble(".alloc main at 0x0400 {\n" + source + "}\n")
+
+
 def test_every_opcode_matches_wla_spc700() -> None:
     source = (SAMPLES / "all_opcodes.s").read_text(encoding="utf-8")
-    assert _image(source.split("*= 0x0400\n", 1)[1]) == (SAMPLES / "all_opcodes.bin").read_bytes()
+    assert _assemble(source) == (SAMPLES / "all_opcodes.bin").read_bytes()
 
 
 def test_the_table_covers_all_256_opcodes() -> None:
@@ -112,12 +118,15 @@ def test_an_unknown_character_in_an_operand_is_an_error() -> None:
 
 def test_spc700_mnemonics_are_identifiers_on_the_65c816() -> None:
     program = Program()
-    program.assemble_string_with_emitter("or = 3\n*= 0x8000\n    lda #or\n", "t.s", AramWriter(io.BytesIO()))
+    program.assemble_string_with_emitter(
+        "or = 3\n.alloc main at 0x8000 {\n    lda #or\n}\n", "t.s", AramWriter(io.BytesIO())
+    )
     assert program.resolver.current_scope.value_for("or") == 3
 
 
 def test_the_image_starts_at_its_lowest_address() -> None:
-    assert _image("    nop\n*= 0x0410\n    ret\n") == b"\x00" + bytes(15) + b"\x6f"
+    source = ".alloc low at 0x0400 {\n    nop\n}\n.alloc high at 0x0410 {\n    ret\n}\n"
+    assert _assemble(source) == b"\x00" + bytes(15) + b"\x6f"
 
 
 def test_an_empty_program_writes_an_empty_image() -> None:
