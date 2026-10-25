@@ -6,6 +6,7 @@ from pathlib import Path
 from re import Match
 
 from a816.exceptions import (
+    ArchMismatchLinkError,
     DuplicateSymbolError,
     ExpressionEvaluationError,
     LinkAssertError,
@@ -91,6 +92,7 @@ class Linker:
     def link(self, base_address: int | None = None) -> ObjectFile:
         if base_address is not None:
             self.base_address = base_address
+        arch = self._common_arch()
         # Pool allocation must happen before symbol ingestion so the
         # section.placed_base values we ingest reflect allocator choices.
         self._allocate_pools_across_modules()
@@ -110,7 +112,16 @@ class Linker:
             relocatable=False,
             pool_decls=self._merged_pool_decls,
             bus_mappings=self._merged_bus_mappings,
+            arch=arch,
         )
+
+    def _common_arch(self) -> str:
+        """The CPU every object was assembled for: code for two CPUs never links into one image."""
+        arches = {obj.arch for obj in self.object_files}
+        if len(arches) > 1:
+            listing = ", ".join(f"{obj.describe()} ({obj.arch})" for obj in self.object_files)
+            raise ArchMismatchLinkError(f"objects built for different CPUs: {listing}")
+        return arches.pop() if arches else "65c816"
 
     def _allocate_pools_across_modules(self) -> None:
         """Union pool decls, run allocator over merged view, patch sections.

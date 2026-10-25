@@ -3,6 +3,7 @@ import struct
 from typing import BinaryIO, Literal, Protocol
 
 from a816 import bps
+from a816.cpu.arch import current_arch
 from a816.object_file import (
     BusMapping,
     LinkAssert,
@@ -369,6 +370,7 @@ class ObjectWriter(Writer):
             bus_mappings=list(self.bus_mappings),
             asserts=list(self.asserts),
             path_names=self.path_names,
+            arch=current_arch.get(),
         )
         obj_file.write(self.output_file)
 

@@ -15,17 +15,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from a816.object_file import BusMapping
     from a816.parse.codegen.modules import ParsedImport
     from a816.program import Program
 
 from a816.build_cache import BuildCache, BuildSettings, ModuleInputs, recording_errors, recording_warnings
 from a816.build_inputs import recording_misses
 from a816.config import BpsConfig, discover_a816_config, merge_build_settings
+from a816.cpu.arch import Arch, using_arch
 from a816.exceptions import A816Error
 from a816.linker import Linker
 from a816.module_loader import resolve_module
-from a816.object_file import ObjectFile
+from a816.object_file import BusMapping, ObjectFile
 from a816.parse.ast.nodes import (
     AstNode,
     ImportAstNode,
@@ -33,6 +33,9 @@ from a816.parse.ast.nodes import (
 from a816.parse.mzparser import A816Parser, ParserResult
 
 logger = logging.getLogger("a816.module_builder")
+
+# ARAM is one flat 64 KB space: an address is its own offset in the image.
+ARAM_BUS = BusMapping(identifier="1", bank_range=(0x00, 0x00), addr_range=(0x0000, 0xFFFF), mask=0x10000)
 
 
 def _failure_diagnostics(error: Exception, formatted: str) -> list[str]:
@@ -128,6 +131,7 @@ class ModuleBuilder:
         experimental: list[str] | None = None,
         bus_map: "list[BusMapping] | None" = None,
         use_cache: bool = True,
+        arch: Arch = "65c816",
     ) -> None:
         """Initialize the module builder.
 
@@ -138,6 +142,7 @@ class ModuleBuilder:
             include_paths: Directories to search for .include files.
             experimental: Experimental feature flags applied to every module compile.
             bus_map: Bus regions seeded onto every module's bus.
+            arch: CPU every module is assembled for (`--arch`).
             use_cache: Reuse up-to-date objects from `output_dir` (False compiles every module).
         use_a816_toml: Merge the nearest `a816.toml` above `main_source`
             under the arguments above (`merge_build_settings`), so an API
@@ -148,7 +153,9 @@ class ModuleBuilder:
         self.symbols: dict[str, int | str] = symbols or {}
         self.include_paths: list[Path] = include_paths or []
         self.experimental: list[str] = sorted(set(experimental or []))
-        self.bus_map: list[BusMapping] = list(bus_map or [])
+        self.arch: Arch = arch
+        # ARAM is one flat space: an SPC700 build needs no board.
+        self.bus_map: list[BusMapping] = list(bus_map or ([ARAM_BUS] if arch == "spc700" else []))
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
         # Discovery parses every module with the same inputs compile uses,
@@ -161,7 +168,9 @@ class ModuleBuilder:
         # Lookups that missed while parsing a module during discovery: the
         # compile reuses that AST, so they belong to the module's inputs.
         self._discovery_misses: dict[str, set[str]] = {}
-        settings = BuildSettings(self.symbols, self.experimental, self.bus_map, self.include_paths, self.module_paths)
+        settings = BuildSettings(
+            self.symbols, self.experimental, self.bus_map, self.include_paths, self.module_paths, arch=self.arch
+        )
         self.cache = BuildCache(self.output_dir, settings, enabled=use_cache)
 
     def discover_imports(self, source_file: Path, parsed_nodes: list[AstNode] | None = None) -> None:
@@ -398,7 +407,7 @@ class ModuleBuilder:
 
     def build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None = None) -> ObjectFile:
         """Build all modules in topo order, then link."""
-        with _rare_collections():
+        with _rare_collections(), using_arch(self.arch):
             return self._build(main_source, parsed_main_nodes)
 
     def _build(self, main_source: Path, parsed_main_nodes: list[AstNode] | None) -> ObjectFile:
@@ -514,6 +523,7 @@ def build_with_imports(
     bps: BpsConfig | None = None,
     defines: dict[str, str] | None = None,
     extra_outputs: list[tuple[str, str | Path]] | None = None,
+    arch: Arch = "65c816",
 ) -> BuildResult:
     """Build a project: compile every `.import`ed module to `.o`, link.
 
@@ -537,6 +547,7 @@ def build_with_imports(
             metadata (`str()` of `symbols` when not given).
         extra_outputs: More (format, path) outputs written from the same
             link as `output_file`: `[("bps", "build/game.bps.unsealed")]`.
+        arch: CPU the project is assembled for: `spc700` links an ARAM image (`output_format="aram"`).
 
     Returns:
         BuildResult with exit_code, symbol_map, diagnostics, and program.
@@ -572,6 +583,7 @@ def build_with_imports(
             experimental=experimental,
             bus_map=bus_map,
             use_cache=use_cache,
+            arch=arch,
         )
 
         linked = builder.build(main_source)

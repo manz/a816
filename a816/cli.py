@@ -29,11 +29,11 @@ import sys
 from pathlib import Path
 
 from a816.config import DEFINE_NAME, A816Config, discover_a816_config, merge_build_settings
-from a816.cpu.arch import ARCHES
+from a816.cpu.arch import ARCHES, using_arch
 from a816.exceptions import A816Error, LinkerError
 from a816.linker import Linker
 from a816.mappers import CLI_MAPPERS
-from a816.module_builder import apply_experimental_flags
+from a816.module_builder import ARAM_BUS, apply_experimental_flags
 from a816.object_file import ObjectFile
 from a816.parse.nodes import NodeError
 from a816.program import Program
@@ -187,7 +187,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--arch",
         default="65c816",
         choices=ARCHES,
-        help="CPU to assemble for. `spc700` builds one source into an ARAM image (experimental).",
+        help="CPU to assemble for. `spc700` links an ARAM image (`-f aram`, the default for it).",
     )
     parser.set_defaults(bus_map=[])
     return parser
@@ -203,7 +203,7 @@ def _parse_build_args(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     paths = args.output_files or [Path("a.out")]
     if len(paths) == 1:
-        args.outputs = [(args.format or "ips", paths[0])]
+        args.outputs = [(args.format or ("aram" if args.arch == "spc700" else "ips"), paths[0])]
     elif args.format is not None:
         parser.error("-f picks the format of a single -o; with several -o each takes its format from its extension")
     else:
@@ -278,6 +278,7 @@ def _run_auto_imports(args: argparse.Namespace) -> int:
         use_cache=args.use_cache,
         bps=args.bps,
         defines=args.define_values,
+        arch=args.arch,
     )
     return result.exit_code
 
@@ -398,25 +399,15 @@ def build_main(argv: list[str]) -> int:
     return _run_assemble(_parse_build_args(argv))
 
 
-def _run_spc700(args: argparse.Namespace) -> int:
-    from a816.spc700_build import build_spc700
-
-    if len(args.input_files) != 1 or args.input_files[0].suffix not in _ASM_SUFFIXES:
-        logger.error("--arch spc700 builds one source file")
-        return -1
-    return build_spc700(
-        args.input_files[0],
-        args.output_file,
-        include_paths=[Path(p) for p in args.include_paths],
-        symbols=args.symbols,
-        dump_symbols=args.dump_symbols,
-    )
-
-
 def _run_assemble(args: argparse.Namespace) -> int:
     _apply_a816_toml(args)
-    if args.arch == "spc700":
-        return _run_spc700(args)
+    if args.arch == "spc700" and not args.bus_map:
+        args.bus_map = [ARAM_BUS]
+    with using_arch(args.arch):
+        return _run_assemble_for_arch(args)
+
+
+def _run_assemble_for_arch(args: argparse.Namespace) -> int:
     use_auto_imports = (
         not args.no_auto_imports
         and not args.compile_only

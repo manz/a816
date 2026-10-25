@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from a816.cpu.mapping import Address
-from a816.cpu.spc700 import Encoding, candidates, choose, encode_operand, opcode_byte
+from a816.cpu.spc700 import Encoding, candidates, choose, encode_operand, opcode_byte, pattern_width
 from a816.error_codes import (
     E_CODEGEN_BAD_ADDRESSING_MODE,
     E_CODEGEN_BRANCH_RANGE,
@@ -13,6 +13,7 @@ from a816.error_codes import (
     E_SYMBOL_NOT_A_VALUE,
 )
 from a816.exceptions import SymbolNotDefined
+from a816.object_file import PC_RELATIVE_PREFIX
 from a816.parse.nodes.errors import NodeError, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
@@ -65,9 +66,24 @@ class SpcOpcodeNode(NodeBase):
         return values, bits
 
     def _encoding(self, values: tuple[int | None, ...]) -> Encoding:
+        if len(self._found) > 1:
+            self._check_size_is_known()
         encoding = choose(self._found, values)
         assert encoding is not None
         return encoding
+
+    def _check_size_is_known(self) -> None:
+        """An extern reads as 0 until link: whether it fits the direct page is the source's to say."""
+        for operand in self.operands:
+            if operand.value is not None and operand.value.external_symbols:
+                raise NodeError(
+                    f"`{self.opcode}`: the size of {', '.join(sorted(operand.value.external_symbols))} "
+                    "is only known at link",
+                    self.file_info,
+                    code=str(E_CODEGEN_UNDECIDABLE_SIZE),
+                    hint="write `!` before the operand for the absolute form, or define the "
+                    "direct page address as a constant in a shared include",
+                )
 
     def pc_after(self, current_pc: Address) -> Address:
         resolver = self.resolver
@@ -92,21 +108,58 @@ class SpcOpcodeNode(NodeBase):
                 code=str(E_CODEGEN_UNDECIDABLE_SIZE),
                 hint="write `!` before the operand to force the absolute form",
             )
+        self._check_bits_are_constant()
         pc_after = current_pc.logical_value + encoding.length
         emitted = bytearray([opcode_byte(encoding, bits, values)])
         for index in encoding.byte_order():
             value = values[index]
             assert value is not None
             pattern = encoding.patterns[index]
-            if pattern == "rel" and not -0x80 <= value - pc_after <= 0x7F:
+            operand = self.operands[index]
+            external = operand.value is not None and bool(operand.value.external_symbols)
+            if pattern == "rel" and not external and not -0x80 <= value - pc_after <= 0x7F:
                 raise NodeError(
                     f"branch target is {value - pc_after} bytes away (-128..127)",
                     self.file_info,
                     code=str(E_CODEGEN_BRANCH_RANGE),
                     hint="branch over a `jmp` to reach a distant target",
                 )
-            emitted += encode_operand(pattern, value, bits[index], pc_after)
+            self._relocate_at_link(len(emitted), pattern, operand, bits[index])
+            emitted += encode_operand(
+                pattern, pc_after if external and pattern == "rel" else value, bits[index], pc_after
+            )
         return bytes(emitted)
+
+    def _check_bits_are_constant(self) -> None:
+        for operand in self.operands:
+            if operand.bit is not None and operand.bit.external_symbols:
+                raise NodeError(
+                    f"`{self.opcode}`: a bit number must be known when assembling, not at link",
+                    self.file_info,
+                    code=str(E_SYMBOL_NOT_A_VALUE),
+                )
+
+    def _relocate_at_link(self, position: int, pattern: str, operand: SpcOperandNode, bit: int | None) -> None:
+        """Have the linker write an operand that names a label or an extern.
+
+        A branch offset counts from the end of the instruction, and every
+        SPC700 branch offset is its last byte: the linker's pc-relative
+        relocation (target minus the operand's end) is that. A `mem.bit`
+        operand packs the address in 13 bits under the bit number.
+        """
+        resolver = self.resolver
+        writer = resolver.context.object_writer if resolver.context.is_object_mode else None
+        deferred = getattr(operand.value, "_deferred_expression", None)
+        if deferred is None or writer is None or resolver.reloc:
+            return
+        offset = writer.relocation_offset(pending_block_bytes=position)
+        if pattern == "rel":
+            writer.add_expression_relocation(offset, PC_RELATIVE_PREFIX + deferred, 1)
+        elif pattern in ("mem.bit", "/mem.bit"):
+            assert bit is not None
+            writer.add_expression_relocation(offset, f"(({deferred}) & 0x1FFF) | {(bit & 7) << 13}", 2)
+        else:
+            writer.add_expression_relocation(offset, deferred, pattern_width(pattern))
 
     def __str__(self) -> str:
         return f"SpcOpcodeNode({self._source()})"

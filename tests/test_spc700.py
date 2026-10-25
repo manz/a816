@@ -18,7 +18,6 @@ from a816.exceptions import AssemblyError
 from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import NodeError
 from a816.program import Program
-from a816.spc700_build import build_spc700
 from a816.writers import AramWriter
 
 SAMPLES = Path(__file__).parent / "samples" / "spc700"
@@ -130,14 +129,6 @@ def test_an_empty_program_writes_an_empty_image() -> None:
 def test_code_past_64k_is_an_error() -> None:
     with pytest.raises(ValueError, match="64 KB"):
         AramWriter(io.BytesIO()).write_block(b"\x00\x00", 0xFFFF)
-
-
-def test_build_spc700_writes_the_aram_image(tmp_path: Path) -> None:
-    source = tmp_path / "driver.s"
-    source.write_text("*= 0x0400\nentry:\n    mov a, #VALUE\n    ret\n", encoding="utf-8")
-    output = tmp_path / "driver.bin"
-    assert build_spc700(source, output, include_paths=[], symbols={"VALUE": 7}) == 0
-    assert output.read_bytes() == b"\xe8\x07\x6f"
 
 
 @pytest.mark.parametrize(

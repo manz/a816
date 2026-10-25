@@ -53,6 +53,7 @@ class BuildSettings:
     module_paths: list[Path]
     # `BUILD_DATE` comes from it, so a new value must rebuild the objects.
     source_date_epoch: str | None = field(default_factory=lambda: os.environ.get("SOURCE_DATE_EPOCH"))
+    arch: str = "65c816"
 
     def digest(self) -> str:
         settings: dict[str, object] = {
@@ -65,6 +66,8 @@ class BuildSettings:
         # Only when set: caches built without it keep their keys.
         if self.source_date_epoch is not None:
             settings["source_date_epoch"] = self.source_date_epoch
+        if self.arch != "65c816":
+            settings["arch"] = self.arch
         return _sha(settings)
 
 
