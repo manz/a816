@@ -20,6 +20,7 @@ $ a816 format src/             # rewrite in place
 $ a816 format --check src/     # exit non-zero if any file would change
 $ a816 format --diff src/      # print unified diffs without writing
 $ a816 format -                # read stdin, write formatted text to stdout
+$ a816 format --arch spc700 -  # same, for SPC700 code
 ```
 
 The formatter is a fixed-point pass: `format(format(x)) == format(x)`.

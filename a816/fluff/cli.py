@@ -279,6 +279,8 @@ def _run_format(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
         if len(paths) != 1:
             parser.error("`-` (stdin) cannot be combined with other paths")
         return _run_format_stdin(args)
+    if args.arch:
+        parser.error("--arch applies to stdin (`-`); files take their CPU from the suffix (`*.spc.s`)")
 
     sources, missing_err = _collect_sources(paths)
     if not sources:
