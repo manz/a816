@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 from a816.build_cache import BuildCache, BuildSettings, ModuleInputs, recording_errors, recording_warnings
 from a816.build_inputs import recording_misses
 from a816.config import BpsConfig, discover_a816_config, merge_build_settings
-from a816.cpu.arch import Arch, arch_for_path, using_arch
+from a816.cpu.arch import ARAM_END, Arch, arch_for_path, using_arch
 from a816.exceptions import A816Error
 from a816.linker import Linker
 from a816.module_loader import resolve_module
@@ -37,7 +37,7 @@ from a816.parse.mzparser import A816Parser, ParserResult
 logger = logging.getLogger("a816.module_builder")
 
 # ARAM is one flat 64 KB space: an address is its own offset in the image.
-ARAM_BUS = BusMapping(identifier="1", bank_range=(0x00, 0x00), addr_range=(0x0000, 0xFFFF), mask=0x10000)
+ARAM_BUS = BusMapping(identifier="1", bank_range=(0x00, 0x00), addr_range=(0x0000, ARAM_END), mask=0x10000)
 
 
 def _failure_diagnostics(error: Exception, formatted: str) -> list[str]:

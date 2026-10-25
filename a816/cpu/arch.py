@@ -11,6 +11,9 @@ from typing import Literal
 Arch = Literal["65c816", "spc700"]
 ARCHES: tuple[Arch, ...] = ("65c816", "spc700")
 
+ARAM_END = 0xFFFF
+"""Last ARAM address: the SPC700 sees one flat 64 KB bank."""
+
 current_arch: ContextVar[Arch] = ContextVar("current_arch", default="65c816")
 
 

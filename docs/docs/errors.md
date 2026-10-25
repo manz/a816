@@ -153,7 +153,8 @@ separate blocks separated by a blank line.
 - `E0316` branch target has no ROM address. Relative branches are
   computed in ROM space; a RAM target cannot be reached.
 - `E0317` address in a bank no `.map` region covers (and the
-  configured ROM type doesn't back). The hint lists the mapped banks.
+  configured ROM type doesn't back). The hint lists the mapped banks. In an SPC700 build it
+  is a placement running past ARAM's `$FFFF`.
 - `E0318` alloc does not fit in its pool. Says whether the alloc is
   larger than any range, the pool is fragmented or out of room, with
   a matching hint; the caret sits on the `.alloc` name.

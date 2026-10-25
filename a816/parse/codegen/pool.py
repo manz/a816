@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from a816.cpu.arch import ARAM_END, is_spc700
 from a816.error_codes import (
     E_CODEGEN_BAD_ALIGN,
     E_CODEGEN_BAD_POOL,
@@ -544,7 +545,10 @@ def _synthesize_pinned_pool(
     # Unbounded form opts out of the per-range bank-boundary guard so
     # `.incbin` payloads that span multiple banks place contiguously.
     # Bounded `at ADDR size N` keeps the strict bank-local check.
-    if node.at_size is None:
+    if node.at_size is None and is_spc700():
+        # ARAM is one 64 KB bank: nothing follows $FFFF.
+        ranges = [PoolRange(start=addr, end=ARAM_END)]
+    elif node.at_size is None:
         ranges = [PoolRange(start=addr, end=0xFFFFFF, allow_bank_cross=True)]
     else:
         ranges = [PoolRange(start=addr, end=end)]
