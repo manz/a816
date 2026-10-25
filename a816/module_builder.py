@@ -286,12 +286,10 @@ class ModuleBuilder:
         alloc's name and `__size` would read `driver.driver.__size`.
         """
         globals_ = {symbol: value for symbol, value, kind, _section in linked.symbols if kind is SymbolType.GLOBAL}
-        allocs = {symbol.removesuffix(".__size") for symbol in globals_ if symbol.endswith(".__size")}
-        return {
-            symbol: value
-            for symbol, value in globals_.items()
-            if symbol not in self.symbols and symbol not in allocs and not symbol.endswith(".__size")
-        }
+        sizes = {symbol for symbol in globals_ if symbol.endswith(".__size")}
+        allocs = {symbol.rsplit(".", 1)[0] for symbol in sizes}
+        hidden = sizes | allocs | self.symbols.keys()
+        return {symbol: value for symbol, value in globals_.items() if symbol not in hidden}
 
     def _cached_imports(self, module_name: str) -> list[str] | None:
         if self._needs_recompilation(module_name):
