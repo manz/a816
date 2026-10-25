@@ -136,9 +136,9 @@ GITHUB_REF_NAME=v1.2rc1 a816 ci release --dry-run --assets='build/*.ips'
 ## Renovate
 
 One preset is the whole Renovate config. a816, katsuji and the actions
-share one pull request, every other dependency shares another, and a
-major update gets a pull request of its own. Renovate merges the first
-two once every check on them has passed (`platformAutomerge` is off, so
+share one pull request, every other dependency shares another, and each
+group's majors come in a pull request of their own. Renovate merges the
+first two once every check on them has passed (`platformAutomerge` is off, so
 this holds without branch protection). A failing or pending check leaves
 the pull request open, and so does a repository with no checks at all:
 do not set `ignoreTests` to unstick one, add a check. Majors always wait
