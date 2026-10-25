@@ -38,6 +38,9 @@
   file paths is an error.
 - E0003 names an unknown uppercase directive (`.MEMORYMAP`, `.DB`)
   with the caret on it; it used to read "unknown directive `.`".
+- `.db` / `.dw` / `.dl`, `.istruct` and `.patch` bytes record their
+  source line in objects and in the `.adbg`: an alloc holding only data
+  used to carry none. One entry per directive line, not per value.
 
 ## 1.2.0 (2026-10-25)
 
