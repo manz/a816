@@ -120,3 +120,11 @@ def test_an_spc700_module_cannot_be_imported_into_65816_code(tmp_path: Path) -> 
     main.write_text('.import "dsp.spc"\n' + _MAIN, encoding="utf-8")
     result, _ = _build(tmp_path, main, use_cache=False)
     assert "with `.embed" in "\n".join(result.diagnostics)
+
+
+def test_the_cartridge_board_does_not_map_an_spc700_build(tmp_path: Path) -> None:
+    _project(tmp_path)
+    (tmp_path / "a816.toml").write_text('board = "SHVC-1J3M-20"\nrom_size = 0x100000\n', encoding="utf-8")
+    output = tmp_path / "driver.bin"
+    build_with_imports(tmp_path / "driver.spc.s", output, "aram", output_dir=tmp_path / "obj")
+    assert output.read_bytes() == _DRIVER_IMAGE

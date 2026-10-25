@@ -405,7 +405,7 @@ def build_main(argv: list[str]) -> int:
 
 def _run_assemble(args: argparse.Namespace) -> int:
     _apply_a816_toml(args)
-    if args.arch == "spc700" and not args.bus_map:
+    if args.arch == "spc700":
         args.bus_map = [ARAM_BUS]
     with using_arch(args.arch):
         return _run_assemble_for_arch(args)

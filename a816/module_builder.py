@@ -157,7 +157,8 @@ class ModuleBuilder:
         self.experimental: list[str] = sorted(set(experimental or []))
         self.arch: Arch = arch
         # ARAM is one flat space: an SPC700 build needs no board.
-        self.bus_map: list[BusMapping] = list(bus_map or ([ARAM_BUS] if arch == "spc700" else []))
+        # The cartridge (`a816.toml` board, `.map`) is the 65816's bus; SPC700 code sees ARAM only.
+        self.bus_map: list[BusMapping] = [ARAM_BUS] if arch == "spc700" else list(bus_map or [])
         self.graph = ModuleGraph()
         self._discovered: set[str] = set()
         # Discovery parses every module with the same inputs compile uses,
