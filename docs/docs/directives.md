@@ -154,7 +154,7 @@ Tightest first. Binary operators of the same level are left-associative.
 
 | Level | Operators              | Meaning |
 |-------|------------------------|---------|
-| 1     | `-x` `~x`              | negate, bitwise not |
+| 1     | `-x` `~x` `<x` `>x`    | negate, bitwise not, low byte, high byte |
 | 2     | `*` `/` `%`            | multiply, divide, remainder |
 | 3     | `+` `-`                | add, subtract |
 | 4     | `<<` `>>`              | shift left, shift right |
@@ -168,6 +168,11 @@ As in C, comparisons bind tighter than `&` / `^` / `|`: write
 `(flags & MASK) == MASK`, not `flags & MASK == MASK`. And `+` binds
 tighter than `<<`: `1 << 2 + 3` is `1 << 5`, and `var_1 << 8 + var_2`
 shifts by `8 + var_2`; parenthesise, `(var_1 << 8) + var_2`.
+
+`<x` is `x & 0xFF` and `>x` is `(x >> 8) & 0xFF`. Like every unary
+operator they take the term right after them: `<table + 1` is
+`(<table) + 1`; write `<(table + 1)` for the low byte of the sum. After
+a term, `<` and `>` compare (`a < b`).
 
 ### Integer semantics
 

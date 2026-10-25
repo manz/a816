@@ -16,6 +16,10 @@
   aram`). Objects record their CPU and the linker refuses to mix them.
   The LSP, `a816 check` and `a816 format` take SPC700 files. See
   [SPC700](spc700.md).
+- Unary `<x` and `>x` take the low and high byte of a word (`x & 0xFF`,
+  `(x >> 8) & 0xFF`), in both CPUs' code and through the linker. Every
+  unary operator now binds tightest: `-x * 2` was `-(x * 2)`, the same
+  value.
 
 ## 1.2.0 (2026-10-25)
 

@@ -185,6 +185,15 @@ OPERATOR_PRECEDENCE = {
 }
 
 
+# Prefix operators bind tightest: `<x + 1` is `(<x) + 1`, `-x * 2` is `(-x) * 2`.
+UNARY_PRECEDENCE = 2
+
+
+def _precedence(node: ExprNode) -> int:
+    """A unary operator by its own rank, not that of the binary operator spelled the same (`-`, `<`)."""
+    return UNARY_PRECEDENCE if isinstance(node, UnaryOp) else OPERATOR_PRECEDENCE[node.token.value]
+
+
 def reverse_find_token(items: Sequence[ExprNode], value: str) -> int:
     for pos in range(len(items) - 1, -1, -1):
         if items[pos].token.value == value:
@@ -197,7 +206,7 @@ def _pop_higher_precedence(
 ) -> None:
     while (
         operator_stack
-        and OPERATOR_PRECEDENCE[operator_stack[-1].token.value] <= current_precedence
+        and _precedence(operator_stack[-1]) <= current_precedence
         and operator_stack[-1].token.value != "("
     ):
         output_queue.append(operator_stack.pop())
@@ -220,8 +229,7 @@ def shunting_yard(expr_nodes: Sequence[ExprNode]) -> list[ExprNode]:
         if isinstance(expr, Term | CastAccessExprNode | CastValueExprNode | SizeofExprNode):
             output_queue.append(expr)
         elif isinstance(expr, BinOp | UnaryOp):
-            current_precedence = OPERATOR_PRECEDENCE[expr.token.value] if isinstance(expr, BinOp) else 2
-            _pop_higher_precedence(operator_stack, output_queue, current_precedence)
+            _pop_higher_precedence(operator_stack, output_queue, _precedence(expr))
             operator_stack.append(expr)
         elif expr.token.type == TokenType.LPAREN:
             operator_stack.append(expr)

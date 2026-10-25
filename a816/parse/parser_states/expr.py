@@ -94,6 +94,10 @@ def _parse_lparen_expression(p: Parser, lparen: Token) -> list[ExprNode]:
     return [Parenthesis(lparen), *inner, Parenthesis(rparen)]
 
 
+# `-x`, `~x`, and the low / high byte of a word: `<x` is `x & 0xFF`, `>x` is `(x >> 8) & 0xFF`.
+UNARY_OPERATORS = ("-", "~", "<", ">")
+
+
 def _is_size_operator(token: Token, p: Parser) -> bool:
     """`sizeof(` / `countof(`: only the keyword right before `(` is the operator,
     so a label named `sizeof` still reads as a label."""
@@ -121,7 +125,7 @@ def _parse_expression(p: Parser) -> list[ExprNode]:
         current_token, [TokenType.NUMBER, TokenType.BOOLEAN, TokenType.QUOTED_STRING, TokenType.IDENTIFIER]
     ):
         tokens.append(Term(current_token))
-    elif accept_token(current_token, TokenType.OPERATOR) and current_token.value in ["-", "~"]:
+    elif accept_token(current_token, TokenType.OPERATOR) and current_token.value in UNARY_OPERATORS:
         tokens.append(UnaryOp(current_token))
         tokens += _parse_expression(p)
     else:
@@ -129,7 +133,7 @@ def _parse_expression(p: Parser) -> list[ExprNode]:
             f"invalid expression at {_token_label(current_token.type)}",
             current_token,
             code=str(E_PARSER_INVALID_EXPRESSION),
-            hint="expressions accept numbers, identifiers, `(...)`, unary `-`/`~`, and binary operators",
+            hint="expressions accept numbers, identifiers, `(...)`, unary `-` / `~` / `<` / `>`, and binary operators",
         )
 
     if tokens:
