@@ -3,7 +3,7 @@
 ENTRIES: dict[str, str] = {
     "E0001": "invalid input character: the scanner met a character it doesn't know how to start a token with.",
     "E0002": "unterminated string literal: close the string with the matching quote character.",
-    "E0003": "unknown directive keyword: `.directive` not in the supported set; see [directives.md](directives.md).",
+    "E0003": "unknown directive keyword: `.directive` not in the supported set; see [directives.md](directives.md). Directives are lowercase: `.DB` is unknown.",
     "E0004": "unterminated block comment: a `/*` with no closing `*/`. The caret sits on the opening `/*`.",
     "E0100": "unexpected token: generic structural failure.",
     "E0101": "missing expected token: the parser knew what it wanted next but found something else.",

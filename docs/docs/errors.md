@@ -47,7 +47,8 @@ separate blocks separated by a blank line.
 - `E0002` unterminated string literal: close the string with the
   matching quote character.
 - `E0003` unknown directive keyword: `.directive` not in the
-  supported set; see [directives.md](directives.md).
+  supported set; see [directives.md](directives.md). Directives are
+  lowercase: `.DB` is unknown.
 - `E0004` unterminated block comment: a `/*` with no closing `*/`. The
   caret sits on the opening `/*`.
 

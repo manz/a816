@@ -36,6 +36,8 @@
 - `a816 format --arch spc700 -` formats SPC700 code read from stdin.
   Files still take their CPU from the `.spc.s` suffix; `--arch` with
   file paths is an error.
+- E0003 names an unknown uppercase directive (`.MEMORYMAP`, `.DB`)
+  with the caret on it; it used to read "unknown directive `.`".
 
 ## 1.2.0 (2026-10-25)
 
