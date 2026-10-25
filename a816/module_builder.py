@@ -273,7 +273,12 @@ class ModuleBuilder:
             )
             linked = builder.build(source)
             base, image = Program().aram_image(linked)
-            symbols = {symbol: value for symbol, value, kind, _section in linked.symbols if kind is SymbolType.GLOBAL}
+            # `-D` defines reach the program but are the build's, not its symbols.
+            symbols = {
+                symbol: value
+                for symbol, value, kind, _section in linked.symbols
+                if kind is SymbolType.GLOBAL and symbol not in self.symbols
+            }
             image_path = program_dir / f"{name.rsplit('/', 1)[-1]}.aram"
             _write_if_changed(image_path, image)
             _write_if_changed(image_path.with_suffix(".json"), json.dumps({"base": base, "symbols": symbols}).encode())

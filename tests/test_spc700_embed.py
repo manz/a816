@@ -6,6 +6,7 @@ labels as `<name>.<label>` plus `<name>.__base` / `<name>.__size`.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -144,3 +145,11 @@ def test_an_unbounded_spc700_alloc_ends_at_ffff(tmp_path: Path, caplog: pytest.L
     with caplog.at_level("INFO"):
         _aram_build(tmp_path, ".alloc x at 0x0400 {\n    .db 1\n}\n")
     assert "leftover 0x000401..0x00ffff" in caplog.text
+
+
+def test_build_defines_stay_out_of_the_program_symbols(tmp_path: Path) -> None:
+    main = _project(tmp_path)
+    output = tmp_path / "game.sfc"
+    build_with_imports(main, output, "sfc", output_dir=tmp_path / "obj", symbols={"DEBUG": 1}, use_a816_toml=False)
+    symbols = json.loads((tmp_path / "obj" / "spc700" / "driver" / "driver.json").read_text(encoding="utf-8"))
+    assert "DEBUG" not in symbols["symbols"]
