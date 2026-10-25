@@ -135,11 +135,31 @@ GITHUB_REF_NAME=v1.2rc1 a816 ci release --dry-run --assets='build/*.ips'
 
 ## Renovate
 
-The actions and the a816 package move together. Extend the preset so
-Renovate bumps both in one pull request:
+One preset is the whole Renovate config. a816, katsuji and the actions
+share one pull request, every other dependency shares another, and each
+group's majors come in a pull request of their own. Renovate merges the
+first two once every check on them has passed (`platformAutomerge` is off, so
+this holds without branch protection). A failing or pending check leaves
+the pull request open, and so does a repository with no checks at all:
+do not set `ignoreTests` to unstick one, add a check. Majors always wait
+for a human. A check is only as good as what it runs: a job that skips
+the build when the ROM secret is missing still reports success, so make
+sure Renovate's branches get the secret (they do when Renovate pushes
+them to the repository, not a fork).
+
+A toolchain bump that changes `a816 format` output or adds lint hits, as
+1.2.0 did, comes in red: run `a816 format` / `a816 fix` on Renovate's
+branch, push, and merge it yourself once green (Renovate leaves a branch
+someone else committed to alone, automerge included). Keeping it apart from the other dependencies means their
+bumps still merge meanwhile.
+
+The preset is read from a816's default branch, so a change to it reaches
+every project at once, not with the next release.
 
 ```json
 {
   "extends": ["github>manz/a816//renovate/a816"]
 }
 ```
+
+Rules a project needs on top go in its own `packageRules`.

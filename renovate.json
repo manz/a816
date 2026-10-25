@@ -1,15 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ],
-  "separateMajorMinor": false,
-  "packageRules": [
-    {
-      "matchPackageNames": ["*"],
-      "groupName": "all dependencies",
-      "groupSlug": "all",
-      "automerge": true
-    }
-  ]
+  "extends": ["github>manz/a816//renovate/a816"]
 }
