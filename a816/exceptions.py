@@ -228,10 +228,11 @@ class ExpressionEvaluationError(LinkerError):
 class ByteOperandError(LinkerError):
     """Raised when a one-byte operand filled at link cannot hold its value."""
 
-    def __init__(self, expression: str, value: int, problem: str, location: str | None = None) -> None:
+    def __init__(self, expression: str, value: int, problem: str, hint: str, location: str | None = None) -> None:
         self.expression = expression
         self.value = value
         self.problem = problem
+        self.hint = hint
         self.location = location
         shown = f"${value:06X}" if value >= 0 else str(value)
         super().__init__(f"`{expression}` = {shown} {problem}")
@@ -244,11 +245,7 @@ class ByteOperandError(LinkerError):
         details = []
         if self.location is not None:
             details.append(("at", self.location))
-        if "byte" in self.problem:
-            hint = "take a byte of it (`<x`, `>x`, `^x`), or write the opcode `.w` if the register is 16-bit"
-        else:
-            hint = "the operand is one byte: write the opcode with `.w` or `.l` to address it in full"
-        details.append(("hint", hint))
+        details.append(("hint", self.hint))
         return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_RELOCATION_RANGE}]", str(self), details=details)
 
 

@@ -223,9 +223,10 @@ separate blocks separated by a blank line.
   -0x100..0xFF (`lda #far` with an 8-bit A), or a direct-page operand
   naming an address the direct page cannot reach (`lda.b far` with
   `far` in ROM). The direct page sits in bank 0, so the address must be
-  in $0000-$7FFF of banks $00-$3F / $80-$BF or in $7E:0000-$1FFF. Gives
-  the value and the `file:line`; take a byte of the value (`<x`, `>x`)
-  or write the opcode `.w` / `.l`.
+  in $0000-$7FFF of banks $00-$3F / $80-$BF or in $7E:0000-$1FFF. A
+  stack-relative operand (`lda x,s`, `(x,s),y`) must be an offset
+  0..0xFF. Gives the value and the `file:line`; take a byte of the value
+  (`<x`, `>x`) or write the opcode `.w` / `.l`.
 - `E0403` relocation expression failed.
 - `E0404` alloc does not fit in its pool at link time (the pool is
   shared across modules, so the allocator only runs once every `.o`

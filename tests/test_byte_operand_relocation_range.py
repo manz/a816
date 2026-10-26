@@ -17,7 +17,14 @@ import pytest
 from a816.exceptions import ByteOperandError
 from a816.linker import Linker, byte_operand_problem
 from a816.module_builder import build_with_imports
-from a816.object_file import BYTE_IMMEDIATE_PREFIX, DIRECT_PAGE_PREFIX, ObjectFile, SymbolSection, SymbolType
+from a816.object_file import (
+    BYTE_IMMEDIATE_PREFIX,
+    DIRECT_PAGE_PREFIX,
+    STACK_OFFSET_PREFIX,
+    ObjectFile,
+    SymbolSection,
+    SymbolType,
+)
 
 POOLS = """\
 .pool rom {
@@ -84,6 +91,28 @@ def test_a_direct_page_operand_in_low_ram_builds(tmp_path: Path, caplog: pytest.
     assert _build(tmp_path, caplog, "    lda.b low\n    sta.b low + 1")[0] == 0
 
 
+@pytest.mark.parametrize("operand", ["(far,x)", "(far),y", "[far]", "far,x"])
+def test_every_direct_page_form_is_checked(tmp_path: Path, caplog: pytest.LogCaptureFixture, operand: str) -> None:
+    _, text = _build(tmp_path, caplog, f"    lda.b {operand}")
+
+    assert "is not reachable through the direct page" in text
+
+
+@pytest.mark.parametrize("operand", ["far,s", "(far,s),y"])
+def test_a_stack_offset_that_does_not_fit_is_refused(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, operand: str
+) -> None:
+    _, text = _build(tmp_path, caplog, f"    lda {operand}")
+
+    assert "error[E0402]: `far` = $018000 is not a stack offset (0..0xFF)" in text
+
+
+def test_a_stack_offset_refusal_says_it_is_an_offset(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _, text = _build(tmp_path, caplog, "    lda far,s")
+
+    assert "one-byte offset from S" in text
+
+
 def test_a_byte_immediate_that_does_not_fit_is_refused(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     _, text = _build(tmp_path, caplog, "    sep #0x20\n    .a8\n    lda.b #far")
 
@@ -139,3 +168,8 @@ def test_an_object_without_lines_is_refused_without_a_location() -> None:
 
 def test_a_line_past_the_file_table_gives_no_location() -> None:
     assert _link([(0, 3, 0, 0, 0)], []).location is None
+
+
+@pytest.mark.parametrize(("value", "fits"), [(0, True), (0xFF, True), (0x100, False), (-1, False)])
+def test_stack_offsets(value: int, fits: bool) -> None:
+    assert (byte_operand_problem(STACK_OFFSET_PREFIX, value) is None) is fits

@@ -59,7 +59,8 @@
   `lda #$00`, when `far` came from another module; a local one was
   already refused at compile time. A direct-page operand must name an
   address the direct page reaches: $0000-$7FFF of banks $00-$3F /
-  $80-$BF, or $7E:0000-$1FFF. Objects are rebuilt.
+  $80-$BF, or $7E:0000-$1FFF; a stack-relative one an offset 0..0xFF.
+  Objects are rebuilt.
 
 ## 1.2.0 (2026-10-25)
 

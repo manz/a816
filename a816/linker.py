@@ -21,7 +21,9 @@ from a816.exceptions import (
 )
 from a816.object_file import (
     BYTE_IMMEDIATE_PREFIX,
+    DIRECT_PAGE_PREFIX,
     PC_RELATIVE_PREFIX,
+    STACK_OFFSET_PREFIX,
     ObjectFile,
     PoolAlloc,
     PoolDecl,
@@ -799,9 +801,13 @@ class Linker:
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
             problem = byte_operand_problem(check, evaluated_value) if check else None
-            if problem is not None:
+            if check is not None and problem is not None:
                 raise ByteOperandError(
-                    _as_written(expression), evaluated_value, problem, self._line_at(section, offset)
+                    _as_written(expression),
+                    evaluated_value,
+                    problem,
+                    _BYTE_OPERAND_HINTS[check],
+                    self._line_at(section, offset),
                 )
             if size_bytes == 1:
                 struct.pack_into("<B", code, offset, evaluated_value & 0xFF)
@@ -1026,6 +1032,13 @@ def _linked_file_name(name: str) -> str:
     return resolved
 
 
+_BYTE_OPERAND_HINTS = {
+    BYTE_IMMEDIATE_PREFIX: "take a byte of it (`<x`, `>x`, `^x`), or write the opcode `.w` if the register is 16-bit",
+    DIRECT_PAGE_PREFIX: "the operand is one byte: write the opcode with `.w` or `.l` to address it in full",
+    STACK_OFFSET_PREFIX: "a stack-relative operand is a one-byte offset from S, not an address",
+}
+
+
 def byte_operand_problem(check: str, value: int) -> str | None:
     """Why `value` cannot fill a one-byte operand carrying `check`, if it can't.
 
@@ -1038,6 +1051,8 @@ def byte_operand_problem(check: str, value: int) -> str | None:
         if value >> 8 in (0, -1):
             return None
         return "does not fit in a byte (-0x100..0xFF)"
+    if check == STACK_OFFSET_PREFIX:
+        return None if 0 <= value <= 0xFF else "is not a stack offset (0..0xFF)"
     bank, offset = value >> 16, value & 0xFFFF
     if value >= 0 and ((bank <= 0x3F or 0x80 <= bank <= 0xBF) and offset < 0x8000 or bank == 0x7E and offset < 0x2000):
         return None
