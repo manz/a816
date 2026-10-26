@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.nodes import (
@@ -26,9 +26,6 @@ from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
-
-if TYPE_CHECKING:
-    from a816.incbin_names import PathName
 
 logger = logging.getLogger("a816.codegen")
 
@@ -98,9 +95,9 @@ def _located_missing_symbol(missing: SymbolNotDefined, file_info: Token, resolve
     from a816.parse.nodes.errors import undefined_symbol_error
 
     name = str(missing)
-    if name.endswith("__size"):
-        # `blob.__size` is what `sizeof(blob)` reads; `path_bin__size` is an
-        # `.incbin` path-name size. Both are bound when the bytes are laid out.
+    if name.endswith("__size") and resolver.path_name(name) is None:
+        # `blob.__size` is what `sizeof(blob)` reads, bound when the bytes
+        # are laid out.
         spelled = f"sizeof({name.removesuffix('.__size')})" if name.endswith(".__size") else name
         return NodeError(
             f"`{spelled}` is only known after layout, and this needs it while expanding",
@@ -129,34 +126,22 @@ def code_gen(ast_nodes: list[AstNode], resolver: Resolver) -> GenNodes:
     # assembled on the same resolver must not reject this unit's imports.
     resolver.star_eq_cursor_active = False
     macro_definitions: MacroDefinitions = {}
-    code = _code_gen(ast_nodes, resolver, macro_definitions)
-    _reject_path_names(ast_nodes, resolver)
-    return code
+    _record_path_names(ast_nodes, resolver)
+    return _code_gen(ast_nodes, resolver, macro_definitions)
 
 
-def _record_path_names(resolver: Resolver, own: dict[str, PathName]) -> None:
-    """Carry the unit's path names to the linker, so a reference that only
-    meets one there is told what the name used to be."""
+def _record_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
+    """Note the names `.incbin` derived from this unit's paths until 1.3,
+    so an undefined one is told what it used to be: here, and through the
+    object file at link time for a name only the linker meets."""
+    from a816.incbin_names import path_names
     from a816.object_file import PathNameRecord
 
+    resolver.own_path_names = path_names(ast_nodes)
     writer = resolver.context.object_writer
     if writer is None:
         return
     writer.path_names = [
-        PathNameRecord(name, found.file_path, found.seen_from_importer().hint()) for name, found in own.items()
+        PathNameRecord(name, found.file_path, found.seen_from_importer().hint())
+        for name, found in resolver.own_path_names.items()
     ]
-
-
-def _reject_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
-    """A reference to a name `.incbin` used to derive from its path, this
-    unit's or an import's, is undefined since 1.3: say what it was. Runs
-    after codegen, once every import has been read."""
-    from a816.error_codes import E_SYMBOL_NOT_DEFINED
-    from a816.incbin_names import path_names, references
-
-    own = path_names(ast_nodes)
-    _record_path_names(resolver, own)
-    for token, name in references(ast_nodes, {**resolver.imported_path_names, **own}):
-        raise NodeError(
-            f"`{name.name}` is not defined", token, code=str(E_SYMBOL_NOT_DEFINED), hint=name.removed_hint()
-        )

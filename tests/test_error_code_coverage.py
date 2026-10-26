@@ -78,10 +78,10 @@ ESCAPING = {
         "E0321",
     ),
     "undefined-for-bound": (".alloc a at 0x008000 {\n    .for i := 0, nowhere {\n        .db 0\n    }\n}\n", "E0200"),
-    "incbin-size-in-for-bound": (
+    "alloc-size-in-for-bound": (
         (
             '.alloc m at 0x008000 {\n    .incbin "m.bin"\n}\n.alloc pad at 0x008100 {\n'
-            "    .for i := 0, 0x20 - m_bin__size {\n        .db 0\n    }\n}\n"
+            "    .for i := 0, 0x20 - sizeof(m) {\n        .db 0\n    }\n}\n"
         ),
         "E0321",
     ),

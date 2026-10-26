@@ -459,9 +459,15 @@ class Resolver:
         # rebuild re-stats them: editing an asset must invalidate the
         # cached object the same way editing the `.s` does.
         self.dependency_files: set[str] = set()
-        # Path-derived `.incbin` names the imported modules bind (W0001).
+        # Names `.incbin` derived from its path until 1.3, this unit's and
+        # its imports': an undefined one is told what it used to be.
+        self.own_path_names: dict[str, PathName] = {}
         self.imported_path_names: dict[str, PathName] = {}
         self.set_position(pc)
+
+    def path_name(self, name: str) -> "PathName | None":
+        """The `.incbin` path name `name` used to be, if any."""
+        return self.own_path_names.get(name) or self.imported_path_names.get(name)
 
     def allocate_pools(self) -> None:
         """Run the allocator on every declared pool.

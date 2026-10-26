@@ -111,6 +111,31 @@ def test_a_name_an_alloc_also_binds_builds(tmp_path: Path, caplog: pytest.LogCap
     assert _build(tmp_path, caplog, main)[0] == 0
 
 
+def test_a_constant_of_the_old_name_builds(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    main = ALONE + "f_bin = 0x1234\n.alloc code at 0x009000 {\n    lda #f_bin\n}\n"
+
+    assert _build(tmp_path, caplog, main)[0] == 0
+
+
+def test_a_bind_of_the_old_name_builds(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    main = ALONE + "f_bin := 0x1234\n.alloc code at 0x009000 {\n    lda #f_bin\n}\n"
+
+    assert _build(tmp_path, caplog, main)[0] == 0
+
+
+def test_a_macro_parameter_of_the_old_name_builds(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    main = ALONE + ".macro m(f_bin) {\n    lda #f_bin\n}\n.alloc code at 0x009000 {\n    m(1)\n}\n"
+
+    assert _build(tmp_path, caplog, main)[0] == 0
+
+
+def test_the_old_name_defined_in_another_module_links(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    (tmp_path / "c.s").write_text(".alloc f_bin at 0x00A000 {\n    .db 1\n}\n", encoding="utf-8")
+    main = '.import "m"\n.import "c"\n.extern f_bin\n.alloc code at 0x009000 {\n    lda.l f_bin\n}\n'
+
+    assert _build(tmp_path, caplog, main, ALONE)[0] == 0
+
+
 ASSETS = '.alloc blobs at 0x018000 {\n    .incbin "data/x.bin"\n    .db 0\n}\n'
 
 
