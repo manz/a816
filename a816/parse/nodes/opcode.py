@@ -24,7 +24,12 @@ from a816.exceptions import (
     SymbolNotDefined,
     UndecidableOperandSizeError,
 )
-from a816.object_file import BYTE_IMMEDIATE_PREFIX, DIRECT_PAGE_PREFIX, STACK_OFFSET_PREFIX
+from a816.object_file import (
+    BYTE_IMMEDIATE_PREFIX,
+    DIRECT_PAGE_PREFIX,
+    DIRECT_POINTER_PREFIX,
+    STACK_OFFSET_PREFIX,
+)
 from a816.parse.nodes.errors import NodeError, format_node_warning, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
@@ -362,10 +367,8 @@ class OpcodeNode(NodeBase):
         return f"OpcodeNode({self.opcode}, {self.addressing_mode}, {self.index}, {self.value_node})"
 
 
-_DIRECT_PAGE_MODES = frozenset(
+_DIRECT_POINTER_MODES = frozenset(
     {
-        AddressingMode.direct,
-        AddressingMode.direct_indexed,
         AddressingMode.indirect,
         AddressingMode.indirect_indexed,
         AddressingMode.indirect_long,
@@ -381,6 +384,8 @@ def _byte_operand_check(mode: AddressingMode, index: str | None) -> str:
         return STACK_OFFSET_PREFIX
     if mode is AddressingMode.immediate:
         return BYTE_IMMEDIATE_PREFIX
-    if mode in _DIRECT_PAGE_MODES:
+    if mode in (AddressingMode.direct, AddressingMode.direct_indexed):
         return DIRECT_PAGE_PREFIX
+    if mode in _DIRECT_POINTER_MODES:
+        return DIRECT_POINTER_PREFIX
     return ""

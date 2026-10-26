@@ -22,6 +22,7 @@ from a816.exceptions import (
 from a816.object_file import (
     BYTE_IMMEDIATE_PREFIX,
     DIRECT_PAGE_PREFIX,
+    DIRECT_POINTER_PREFIX,
     PC_RELATIVE_PREFIX,
     STACK_OFFSET_PREFIX,
     ObjectFile,
@@ -1035,6 +1036,7 @@ def _linked_file_name(name: str) -> str:
 _BYTE_OPERAND_HINTS = {
     BYTE_IMMEDIATE_PREFIX: "take a byte of it (`<x`, `>x`, `^x`), or write the opcode `.w` if the register is 16-bit",
     DIRECT_PAGE_PREFIX: "the operand is one byte: write the opcode with `.w` or `.l` to address it in full",
+    DIRECT_POINTER_PREFIX: "an indirect operand names a pointer in the direct page: keep the pointer in bank 0 RAM",
     STACK_OFFSET_PREFIX: "a stack-relative operand is a one-byte offset from S, not an address",
 }
 

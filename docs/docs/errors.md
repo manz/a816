@@ -226,7 +226,8 @@ separate blocks separated by a blank line.
   in $0000-$7FFF of banks $00-$3F / $80-$BF or in $7E:0000-$1FFF. A
   stack-relative operand (`lda x,s`, `(x,s),y`) must be an offset
   0..0xFF. Gives the value and the `file:line`; take a byte of the value
-  (`<x`, `>x`) or write the opcode `.w` / `.l`.
+  (`<x`, `>x`), write the opcode `.w` / `.l`, or, for an indirect operand
+  (`(x)`, `(x),y`, `[x]`), keep the pointer in bank 0 RAM.
 - `E0403` relocation expression failed.
 - `E0404` alloc does not fit in its pool at link time (the pool is
   shared across modules, so the allocator only runs once every `.o`

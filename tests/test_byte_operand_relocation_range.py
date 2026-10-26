@@ -20,6 +20,7 @@ from a816.module_builder import build_with_imports
 from a816.object_file import (
     BYTE_IMMEDIATE_PREFIX,
     DIRECT_PAGE_PREFIX,
+    DIRECT_POINTER_PREFIX,
     STACK_OFFSET_PREFIX,
     ObjectFile,
     SymbolSection,
@@ -91,11 +92,20 @@ def test_a_direct_page_operand_in_low_ram_builds(tmp_path: Path, caplog: pytest.
     assert _build(tmp_path, caplog, "    lda.b low\n    sta.b low + 1")[0] == 0
 
 
-@pytest.mark.parametrize("operand", ["(far,x)", "(far),y", "[far]", "far,x"])
+@pytest.mark.parametrize("operand", ["(far)", "(far,x)", "(far),y", "[far]", "[far],y", "far,x"])
 def test_every_direct_page_form_is_checked(tmp_path: Path, caplog: pytest.LogCaptureFixture, operand: str) -> None:
     _, text = _build(tmp_path, caplog, f"    lda.b {operand}")
 
     assert "is not reachable through the direct page" in text
+
+
+@pytest.mark.parametrize("operand", ["(far)", "(far,x)", "(far),y", "[far]", "[far],y"])
+def test_an_indirect_operand_is_told_to_move_its_pointer(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, operand: str
+) -> None:
+    _, text = _build(tmp_path, caplog, f"    lda.b {operand}")
+
+    assert "keep the pointer in bank 0 RAM" in text
 
 
 @pytest.mark.parametrize("operand", ["far,s", "(far,s),y"])
@@ -173,3 +183,8 @@ def test_a_line_past_the_file_table_gives_no_location() -> None:
 @pytest.mark.parametrize(("value", "fits"), [(0, True), (0xFF, True), (0x100, False), (-1, False)])
 def test_stack_offsets(value: int, fits: bool) -> None:
     assert (byte_operand_problem(STACK_OFFSET_PREFIX, value) is None) is fits
+
+
+@pytest.mark.parametrize("value", [0x7E0010, 0x018000])
+def test_a_pointer_follows_the_direct_page_rule(value: int) -> None:
+    assert byte_operand_problem(DIRECT_POINTER_PREFIX, value) == byte_operand_problem(DIRECT_PAGE_PREFIX, value)
