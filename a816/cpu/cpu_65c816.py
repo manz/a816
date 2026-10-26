@@ -12,7 +12,7 @@ from a816.exceptions import (
     UndecidableOperandSizeError,
     UnmappedBankError,
 )
-from a816.object_file import PC_RELATIVE_PREFIX
+from a816.link_expr import RelocKind
 from a816.protocols import OpcodeBase, OpcodeProtocol, ValueNodeProtocol
 
 if typing.TYPE_CHECKING:  # pragma: nocover
@@ -132,7 +132,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         if deferred is None or writer is None or resolver.reloc:
             return
         offset = writer.relocation_offset(pending_block_bytes=1)
-        writer.add_expression_relocation(offset, PC_RELATIVE_PREFIX + deferred, self.OFFSET_BYTES)
+        writer.add_expression_relocation(offset, deferred, self.OFFSET_BYTES, RelocKind.PC_RELATIVE)
 
     def supposed_length(
         self,
@@ -220,10 +220,8 @@ class Opcode(OpcodeBase):
                 writer = resolver.context.object_writer
                 if writer is not None:
                     current_offset = writer.relocation_offset(pending_block_bytes=1)
-                    check = resolver.byte_operand_check if size_bytes == 1 else ""
-                    writer.add_expression_relocation(
-                        current_offset, check + value_node._deferred_expression, size_bytes
-                    )
+                    kind = resolver.byte_operand_check if size_bytes == 1 else RelocKind.VALUE
+                    writer.add_expression_relocation(current_offset, value_node._deferred_expression, size_bytes, kind)
 
         # Operands mask to the chosen width: `jsr.w label` drops the bank
         # byte (PB supplies it) and `lda.w #symbol` loads the low word of

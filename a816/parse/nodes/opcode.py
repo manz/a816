@@ -24,12 +24,7 @@ from a816.exceptions import (
     SymbolNotDefined,
     UndecidableOperandSizeError,
 )
-from a816.object_file import (
-    BYTE_IMMEDIATE_PREFIX,
-    DIRECT_PAGE_PREFIX,
-    DIRECT_POINTER_PREFIX,
-    STACK_OFFSET_PREFIX,
-)
+from a816.link_expr import RelocKind
 from a816.parse.nodes.errors import NodeError, format_node_warning, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
@@ -148,7 +143,7 @@ class OpcodeNode(NodeBase):
             raise NodeError(str(unmapped), self._operand_token(), code=str(E_CODEGEN_BRANCH_UNMAPPED)) from unmapped
         finally:
             self.resolver.opcode_pc = None
-            self.resolver.byte_operand_check = ""
+            self.resolver.byte_operand_check = RelocKind.VALUE
         self._check_provisional_length(emitted)
         self._check_byte_immediate_overflow(opcode_emitter)
         self._warn_on_immediate_width_mismatch(opcode_emitter)
@@ -378,14 +373,14 @@ _DIRECT_POINTER_MODES = frozenset(
 )
 
 
-def _byte_operand_check(mode: AddressingMode, index: str | None) -> str:
+def _byte_operand_check(mode: AddressingMode, index: str | None) -> RelocKind:
     """The link-time range check a one-byte operand in `mode` carries."""
     if index == "s" or mode is AddressingMode.stack_indexed_indirect_indexed:
-        return STACK_OFFSET_PREFIX
+        return RelocKind.STACK_OFFSET
     if mode is AddressingMode.immediate:
-        return BYTE_IMMEDIATE_PREFIX
+        return RelocKind.BYTE_IMMEDIATE
     if mode in (AddressingMode.direct, AddressingMode.direct_indexed):
-        return DIRECT_PAGE_PREFIX
+        return RelocKind.DIRECT_PAGE
     if mode in _DIRECT_POINTER_MODES:
-        return DIRECT_POINTER_PREFIX
-    return ""
+        return RelocKind.DIRECT_POINTER
+    return RelocKind.VALUE

@@ -45,16 +45,19 @@ annotations by `a816/object_codec.py`:
 class WireObject:
     sections: list[WireSection]
     symbols: list[tuple[str, int, SymbolType, SymbolSection]]
-    aliases: list[tuple[str, str]]
+    aliases: list[WireAlias]
     files: list[str]
     pool_decls: list[PoolDecl]
     pool_allocs: list[PoolAlloc]
     bus_mappings: list[BusMapping]
-    asserts: list[LinkAssert] = []
+    asserts: list[WireAssert] = []
+    path_names: list[PathNameRecord] = []
+    arch: str = "65c816"
+    expr_ops: list[ExprOp] = []
 ```
 
-The record types (`WireSection`, `PoolDecl`, `PoolAlloc`,
-`BusMapping`, `LinkAssert`) are dataclasses in `a816/object_file.py`; their
+The record types (`WireSection`, `WireAlias`, `WireAssert`, `PoolDecl`,
+`PoolAlloc`, `BusMapping`) are dataclasses in `a816/object_file.py`; their
 annotations are the format. Encoding rules:
 
 | Type | Bytes |
@@ -75,6 +78,26 @@ Offsets in a section's `relocations`, `expression_relocations` and
 `lines` are byte offsets into that section's `code`. The reader builds
 an anonymous pinned `Section` from each `WireSection`; pooled sections
 get their final address from the matching `PoolAlloc` at link time.
+
+## Link expressions
+
+An operand, alias or `.assert` the linker evaluates is stored as an
+expression in reverse Polish order: a list of `ExprOp(op, value, name)`
+records (`a816/link_expr.py`). `CONST` pushes `value`, `STRING` pushes
+`name`, `SYMBOL` pushes the value of `name`, and the operators pop
+their operands and push the result, with the assembler's semantics.
+
+A `SYMBOL`'s `value` is its binding: `GLOBAL` (0) reads the linked
+symbol map, `LOCAL` (1) the symbols of the object that wrote it, so two
+modules' `_loop` never meet.
+
+The ops live in one column per owner, and each user names its slice:
+`WireExprRelocation(offset, size, kind, start, count)` in the section's
+`expr_ops`, `WireAlias(name, start, count)` and `WireAssert(start,
+count, ...)` in the object's. `kind` says what the linker checks before
+it writes the value: `VALUE` (masked to the field), `PC_RELATIVE` (a
+branch offset), or a one-byte operand's range (`BYTE_IMMEDIATE`,
+`DIRECT_PAGE`, `DIRECT_POINTER`, `STACK_OFFSET`, E0402).
 
 To add data to the format, add an annotated field (with a default, for
 in-memory callers) to the right record: it is written, read and

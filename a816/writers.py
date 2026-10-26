@@ -4,9 +4,11 @@ from typing import BinaryIO, Literal, Protocol
 
 from a816 import bps
 from a816.cpu.arch import current_arch
+from a816.link_expr import ExprRelocation, LinkExpr, RelocKind
 from a816.object_file import (
     BusMapping,
     LinkAssert,
+    ObjectAssert,
     ObjectFile,
     PathNameRecord,
     PoolAlloc,
@@ -352,8 +354,13 @@ class ObjectWriter(Writer):
     def add_relocation(self, offset: int, symbol_name: str, relocation_type: RelocationType) -> None:
         self._ensure_section().relocations.append((offset, symbol_name, relocation_type))
 
-    def add_expression_relocation(self, offset: int, expression: str, size_bytes: int) -> None:
-        self._ensure_section().expression_relocations.append((offset, expression, size_bytes))
+    def add_expression_relocation(
+        self, offset: int, expression: LinkExpr | str, size_bytes: int, kind: RelocKind = RelocKind.VALUE
+    ) -> None:
+        """Have the linker fill `size_bytes` at `offset` with `expression`;
+        a string is parsed as the assembler's expression syntax."""
+        expr = LinkExpr.parse(expression) if isinstance(expression, str) else expression
+        self._ensure_section().expression_relocations.append(ExprRelocation(offset, size_bytes, kind, expr))
 
     def add_alias(self, name: str, expression: str) -> None:
         """Record a link-time alias once: codegen may register one early and
@@ -370,13 +377,15 @@ class ObjectWriter(Writer):
         obj_file = ObjectFile(
             self.sections,
             self.symbols,
-            aliases=self.aliases,
+            aliases=[(name, LinkExpr.parse(expression)) for name, expression in self.aliases],
             files=self.files,
             relocatable=relocatable,
             pool_decls=list(self.pool_decls),
             pool_allocs=list(self.pool_allocs),
             bus_mappings=list(self.bus_mappings),
-            asserts=list(self.asserts),
+            asserts=[
+                ObjectAssert(LinkExpr.parse(c.expression), c.message, c.source, c.expression) for c in self.asserts
+            ],
             path_names=self.path_names,
             arch=current_arch.get(),
         )

@@ -84,6 +84,6 @@ start:
         return_addrs = [(name, addr) for name, addr, _t, _s in loaded.symbols if name.endswith("_return_addr")]
         assert len(return_addrs) == 3, return_addrs
         # Each invocation should produce its own mangled relocation expression.
-        return_relocs = [expr for _offset, expr, _size in loaded.expression_relocations if "_return_addr" in expr]
+        return_relocs = [str(r.expr) for r in loaded.expression_relocations if "_return_addr" in str(r.expr)]
         assert len(return_relocs) == 3
         assert len(set(return_relocs)) == 3, return_relocs

@@ -273,7 +273,7 @@ main:
             assert program_b.assemble_as_object(str(tmp / "consumer.s"), tmp / "consumer.o") == 0
 
             obj_consumer = ObjectFile.from_file(str(tmp / "consumer.o"))
-            assert ("font_ptr", "target + 0x10") in obj_consumer.aliases
+            assert ("font_ptr", "target + 0x10") in [(n, str(e)) for n, e in obj_consumer.aliases]
             assert any(name == "font_high" for name, _ in obj_consumer.aliases)
 
             obj_producer = ObjectFile.from_file(str(tmp / "producer.o"))
@@ -336,7 +336,7 @@ internal_label:
             assert Program().assemble_as_object(str(asm), obj) == 0
 
             o = ObjectFile.from_file(str(obj))
-            assert any("internal_label" in expr for _, expr, _ in o.expression_relocations), (
+            assert any("internal_label" in r.expr.names() for r in o.expression_relocations), (
                 "expected an expression relocation referencing the internal label"
             )
 
@@ -864,7 +864,9 @@ target:
             asm.write_text(source)
             assert Program().assemble_as_object(str(asm), obj) == 0
             o = ObjectFile.from_file(str(obj))
-            offsets = sorted(off for r in o.sections for off, expr, _ in r.expression_relocations if expr == "target")
+            offsets = sorted(
+                reloc.offset for r in o.sections for reloc in r.expression_relocations if str(reloc.expr) == "target"
+            )
             assert len(offsets) == 3, f"expected 3 expression relocations, got {len(offsets)}: {offsets}"
             assert len(set(offsets)) == 3, f"expected 3 distinct offsets, got {offsets}"
             # Each jsr.w is 3 bytes (opcode + 2-byte operand). Reloc points

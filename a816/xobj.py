@@ -105,8 +105,9 @@ def _print_section_relocs(idx: int, section: Section, out: TextIO) -> None:
     print(f"# section [{idx}] base={_fmt_addr(section.base_address)}", file=out)
     for offset, name, reloc_type in section.relocations:
         print(f"  +0x{offset:04x}  {reloc_type.name:<12} {name}", file=out)
-    for offset, expression, size_bytes in section.expression_relocations:
-        print(f"  +0x{offset:04x}  EXPR(size={size_bytes})  {expression}", file=out)
+    for reloc in section.expression_relocations:
+        kind = "" if reloc.kind.name == "VALUE" else f" {reloc.kind.name}"
+        print(f"  +0x{reloc.offset:04x}  EXPR(size={reloc.size}{kind})  {reloc.expr}", file=out)
 
 
 def print_relocs(obj: ObjectFile, out: TextIO) -> None:
@@ -156,7 +157,8 @@ def _section_to_dict(section: Section) -> dict[str, Any]:
         "code": section.code.hex(),
         "relocations": [{"offset": off, "name": name, "type": rt.name} for off, name, rt in section.relocations],
         "expression_relocations": [
-            {"offset": off, "expression": expr, "size_bytes": sz} for off, expr, sz in section.expression_relocations
+            {"offset": r.offset, "expression": str(r.expr), "size_bytes": r.size, "kind": r.kind.name}
+            for r in section.expression_relocations
         ],
         "lines": [
             {"offset": off, "file_idx": fi, "line": ln, "column": col, "flags": fl}
@@ -180,7 +182,7 @@ def to_json_dict(path: Path, obj: ObjectFile) -> dict[str, Any]:
             }
             for name, addr, st, sec in obj.symbols
         ],
-        "aliases": [{"name": n, "expression": e} for n, e in obj.aliases],
+        "aliases": [{"name": n, "expression": str(e)} for n, e in obj.aliases],
         "files": list(obj.files),
     }
 

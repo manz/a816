@@ -68,7 +68,7 @@ def test_an_assert_round_trips_through_the_object(tmp_path: Path) -> None:
     (tmp_path / "m.s").write_text(_SRC + '.assert a > 0, "positive"\n')
     assert Program().assemble_as_object(str(tmp_path / "m.s"), tmp_path / "m.o") == 0
     (check,) = ObjectFile.from_file(str(tmp_path / "m.o")).asserts
-    assert (check.expression, check.message) == ("a > 0", "positive")
+    assert (str(check.expression), check.text, check.message) == ("a > 0", "a > 0", "positive")
     assert check.source.endswith("m.s:6")
 
 
