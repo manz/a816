@@ -10,8 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from a816.build_cache import _recording, recording_warnings
 from a816.module_builder import build_with_imports
 
+FAILS = ".alloc code at 0x008000 {\n    lda.l nowhere\n}\n"
 WARNS = ".alloc code at 0x008000 {\n    sep #0x20\n    .a8\n    lda.w #0x1234\n}\n"
 
 
@@ -29,8 +31,8 @@ def _unconfigured(monkeypatch: pytest.MonkeyPatch, *handlers: logging.Handler) -
     return stream
 
 
-def _build(tmp_path: Path) -> int:
-    (tmp_path / "main.s").write_text(WARNS, encoding="utf-8")
+def _build(tmp_path: Path, source: str = WARNS) -> int:
+    (tmp_path / "main.s").write_text(source, encoding="utf-8")
     result = build_with_imports(
         tmp_path / "main.s", tmp_path / "out.ips", module_paths=[tmp_path], output_dir=tmp_path / "obj"
     )
@@ -58,3 +60,26 @@ def test_a_configured_handler_shows_the_warning_once(tmp_path: Path, monkeypatch
     _build(tmp_path)
 
     assert configured.getvalue().count("immediate width mismatch") == 1
+
+
+def test_an_unconfigured_failing_build_shows_its_error_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    last_resort = _unconfigured(monkeypatch)
+    _build(tmp_path, FAILS)
+
+    assert last_resort.getvalue().count("`nowhere` is not defined") == 1
+
+
+def test_an_info_recorder_keeps_the_last_resort_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    last_resort = _unconfigured(monkeypatch)
+    with _recording(logging.INFO):
+        logging.getLogger("a816").info("progress")
+
+    assert last_resort.getvalue() == ""
+
+
+def test_two_recorders_at_one_level_print_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    last_resort = _unconfigured(monkeypatch)
+    with recording_warnings(), recording_warnings():
+        logging.getLogger("a816").warning("twice recorded")
+
+    assert last_resort.getvalue().count("twice recorded") == 1
