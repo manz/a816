@@ -197,16 +197,42 @@ def recording_errors() -> Iterator[list[str]]:
         yield captured
 
 
+class _Recorder(logging.Handler):
+    """Collects the messages logged at exactly `level`.
+
+    Any attached handler turns off Python's last-resort stderr output, so
+    with no logging configured (an API caller that never ran `basicConfig`)
+    the recorders would be the only ones to see a warning. The recorder then
+    passes the record on to that last resort itself.
+    """
+
+    def __init__(self, level: int, captured: list[str]) -> None:
+        super().__init__(level)
+        self.captured = captured
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno != self.level:
+            return
+        self.captured.append(record.getMessage())
+        if logging.lastResort is not None and _only_recorders_see(record):
+            logging.lastResort.handle(record)
+
+
+def _only_recorders_see(record: logging.LogRecord) -> bool:
+    """Whether every handler `record` reaches is a recorder, walking the
+    logger chain the way `Logger.callHandlers` does."""
+    logger: logging.Logger | None = logging.getLogger(record.name)
+    while logger is not None:
+        if any(not isinstance(handler, _Recorder) for handler in logger.handlers):
+            return False
+        logger = logger.parent if logger.propagate else None
+    return True
+
+
 @contextmanager
 def _recording(level: int) -> Iterator[list[str]]:
     captured: list[str] = []
-
-    class _Capture(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            if record.levelno == level:
-                captured.append(record.getMessage())
-
-    handler = _Capture(level)
+    handler = _Recorder(level, captured)
     root = logging.getLogger()
     root.addHandler(handler)
     try:

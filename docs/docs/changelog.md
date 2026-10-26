@@ -49,6 +49,10 @@
   unresolved symbol), and the error names the `.incbin` it came from and
   what to write: the alloc's `NAME` / `sizeof(NAME)`, or a label.
   `a816 fix` still rewrites them. `E0347` is retired.
+- A build driven through `build_with_imports()` with no logging
+  configured prints its warnings again. The build's warning recorder
+  counted as a handler, which turns off Python's default stderr output,
+  so a project that never called `logging.basicConfig()` saw none.
 
 ## 1.2.0 (2026-10-25)
 
