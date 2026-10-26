@@ -11,7 +11,7 @@ merged symbol map. Operators share their semantics with codegen
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from enum import Enum
 
@@ -91,43 +91,64 @@ class UnresolvedLinkName(Exception):
 Lookup = Callable[[str, Binding], int | str]
 
 
+_INT64 = range(-(1 << 63), 1 << 63)
+
+
 @dataclass(frozen=True)
 class LinkExpr:
     ops: tuple[ExprOp, ...]
+
+    def __post_init__(self) -> None:
+        """Refuse an op list that is not one expression: an operator short of
+        operands, values left over, a constant the object format cannot hold."""
+        depth = 0
+        for op in self.ops:
+            if op.op is ExprOpCode.CONST and op.value not in _INT64:
+                raise ValueError(f"constant {op.value:#x} does not fit a link expression")
+            arity = 1 if op.op in _UNARY_TEXT else 2 if op.op in _BINARY_TEXT else 0
+            if depth < arity:
+                raise ValueError(f"malformed link expression: `{op.op.name}` lacks an operand")
+            depth += 1 - arity
+        if depth != 1:
+            raise ValueError(f"malformed link expression: {len(self.ops)} ops leave {depth} values")
 
     @classmethod
     def parse(cls, text: str) -> LinkExpr:
         """The expression `text` writes: numbers, names, strings and the
         assembler's operators. Every name is `GLOBAL`."""
         from a816.parse.ast.expression import _ordered, eval_number, expr_to_ast
-        from a816.parse.ast.nodes import BinOp, UnaryOp
+        from a816.parse.ast.nodes import BinOp, Term, UnaryOp
         from a816.parse.tokens import TokenType
 
         ops: list[ExprOp] = []
         for node in _ordered(expr_to_ast(text)):
             token = node.token
-            if isinstance(node, UnaryOp):
+            if type(node) is UnaryOp:
                 ops.append(ExprOp(_UNARY[token.value]))
-            elif isinstance(node, BinOp):
+            elif type(node) is BinOp:
                 ops.append(ExprOp(_BINARY[token.value]))
+            elif type(node) is not Term:
+                raise ValueError(f"`{node.to_canonical()}` cannot appear in a link-time expression")
             elif token.type == TokenType.NUMBER:
                 ops.append(ExprOp(ExprOpCode.CONST, eval_number(token.value)))
             elif token.type == TokenType.QUOTED_STRING:
                 ops.append(ExprOp(ExprOpCode.STRING, name=token.value[1:-1]))
-            elif token.type == TokenType.IDENTIFIER:
-                ops.append(ExprOp(ExprOpCode.SYMBOL, Binding.GLOBAL.value, token.value))
             else:
-                raise ValueError(f"`{token.value}` cannot appear in a link-time expression")
+                ops.append(ExprOp(ExprOpCode.SYMBOL, Binding.GLOBAL.value, token.value))
         return cls(tuple(ops))
 
     def names(self) -> set[str]:
         return {op.name for op in self.ops if op.op is ExprOpCode.SYMBOL}
 
-    def bind(self, binding: Callable[[str], Binding]) -> LinkExpr:
-        """The same expression with each name's binding set by `binding`."""
+    def localize(self, local_names: Collection[str]) -> LinkExpr:
+        """The same expression with each name in `local_names` bound `LOCAL`;
+        other names keep their binding."""
         return LinkExpr(
             tuple(
-                ExprOp(op.op, binding(op.name).value, op.name) if op.op is ExprOpCode.SYMBOL else op for op in self.ops
+                ExprOp(op.op, Binding.LOCAL.value, op.name)
+                if op.op is ExprOpCode.SYMBOL and op.name in local_names
+                else op
+                for op in self.ops
             )
         )
 
@@ -158,8 +179,6 @@ class LinkExpr:
             else:
                 right = stack.pop()
                 stack.append(binary_value(_BINARY_TEXT[op.op], stack.pop(), right))
-        if len(stack) != 1:
-            raise ValueError(f"malformed link expression: {self}")
         return stack[0]
 
     def evaluate(self, lookup: Lookup) -> int:

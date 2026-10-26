@@ -31,7 +31,7 @@ class SymbolSection(Enum):
     ABS_LABEL = 0x03
 
 
-from a816.link_expr import Binding, ExprOp, ExprRelocation, LinkExpr, RelocKind
+from a816.link_expr import ExprOp, ExprRelocation, LinkExpr, RelocKind
 from a816.object_codec import decode, encode, schema
 from a816.section import Placement, Section
 
@@ -346,16 +346,12 @@ class ObjectFile:
         """Mark every name in a link expression that is one of this object's
         LOCAL symbols `LOCAL`, so the linker reads it from this object."""
         own = {name for name, _address, symbol_type, _section in self.symbols if symbol_type == SymbolType.LOCAL}
-
-        def binding(name: str) -> Binding:
-            return Binding.LOCAL if name in own else Binding.GLOBAL
-
         for section in self.sections:
             section.expression_relocations = [
-                ExprRelocation(r.offset, r.size, r.kind, r.expr.bind(binding)) for r in section.expression_relocations
+                ExprRelocation(r.offset, r.size, r.kind, r.expr.localize(own)) for r in section.expression_relocations
             ]
-        self.aliases = [(name, expr.bind(binding)) for name, expr in self.aliases]
-        self.asserts = [ObjectAssert(a.expression.bind(binding), a.message, a.source, a.text) for a in self.asserts]
+        self.aliases = [(name, expr.localize(own)) for name, expr in self.aliases]
+        self.asserts = [ObjectAssert(a.expression.localize(own), a.message, a.source, a.text) for a in self.asserts]
 
     # ----- legacy single-section accessors (tests / older callers) -----
     def _ensure_first_section(self) -> Section:

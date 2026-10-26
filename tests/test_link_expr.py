@@ -97,9 +97,50 @@ def test_substitute_replaces_a_name_with_its_expression() -> None:
     assert str(expression) == "(base * 2) + 1"
 
 
-def test_a_malformed_stack_is_refused() -> None:
+def test_values_left_over_are_refused() -> None:
+    ops = LinkExpr.parse("a").ops + LinkExpr.parse("b").ops
+
+    with pytest.raises(ValueError, match="leave 2 values"):
+        LinkExpr(ops)
+
+
+def test_an_operator_short_of_operands_is_refused() -> None:
+    from a816.link_expr import ExprOp, ExprOpCode
+
+    with pytest.raises(ValueError, match="`ADD` lacks an operand"):
+        LinkExpr((ExprOp(ExprOpCode.ADD),))
+
+
+def test_an_empty_expression_is_refused() -> None:
+    with pytest.raises(ValueError, match="leave 0 values"):
+        LinkExpr(())
+
+
+def test_text_the_assembler_rejects_does_not_parse() -> None:
     with pytest.raises(ValueError, match="malformed"):
-        LinkExpr(LinkExpr.parse("a").ops + LinkExpr.parse("b").ops).evaluate(_lookup)
+        LinkExpr.parse("< <x")
+
+
+def test_a_constant_past_64_bits_is_refused() -> None:
+    from a816.link_expr import ExprOp, ExprOpCode
+
+    with pytest.raises(ValueError, match="does not fit"):
+        LinkExpr((ExprOp(ExprOpCode.CONST, 1 << 64),))
+
+
+def test_an_object_keeps_a_local_binding_its_producer_set() -> None:
+    """A name a producer bound LOCAL stays LOCAL though the object's symbol
+    table does not list it."""
+    from a816.link_expr import symbol
+
+    obj = ObjectFile(
+        b"\xa9\x00\x00",
+        [],
+        expression_relocations=[ExprRelocation(1, 2, RelocKind.VALUE, symbol("_mine", Binding.LOCAL))],
+        relocatable=False,
+    )
+
+    assert obj.expression_relocations[0].expr == symbol("_mine", Binding.LOCAL)
 
 
 def test_a_negative_constant_renders_as_negation() -> None:
@@ -168,3 +209,15 @@ def test_an_alias_of_a_missing_name_is_unresolved() -> None:
         linker.link()
 
     assert "lonely" in str(caught.value)
+
+
+@pytest.mark.parametrize("text", ["sizeof(x)", "(x as Y).f"])
+def test_a_compile_time_form_does_not_parse(text: str) -> None:
+    with pytest.raises(ValueError, match="cannot appear in a link-time expression"):
+        LinkExpr.parse(text)
+
+
+def test_a_parenthesis_inside_a_string_keeps_the_outer_ones() -> None:
+    expression = LinkExpr.parse('"a)b" == s')
+
+    assert LinkExpr.parse(str(expression)) == expression

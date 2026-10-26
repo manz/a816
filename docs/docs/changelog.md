@@ -65,7 +65,8 @@
   as operator lists instead of source text, and the linker evaluates
   them without re-parsing. A branch inside a precompiled `.o`
   imported by a direct build lands on its label again; it was off by
-  the operand's address. Objects from earlier a816 are rebuilt.
+  the operand's address. `xobj` prints them back fully parenthesised,
+  numbers from 10 up in hex. Objects from earlier a816 are rebuilt.
 
 ## 1.2.0 (2026-10-25)
 
