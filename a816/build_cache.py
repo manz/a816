@@ -197,16 +197,50 @@ def recording_errors() -> Iterator[list[str]]:
         yield captured
 
 
+class _Recorder(logging.Handler):
+    """Collects the messages logged at exactly `level`.
+
+    Any attached handler turns off Python's last-resort stderr output, so
+    with no logging configured (an API caller that never ran `basicConfig`)
+    the recorders would be the only ones to see a warning. The recorder then
+    passes the record on to that last resort itself.
+    """
+
+    def __init__(self, level: int, captured: list[str]) -> None:
+        super().__init__(level)
+        self.captured = captured
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno != self.level:
+            return
+        self.captured.append(record.getMessage())
+        resort = logging.lastResort
+        if resort is not None and record.levelno >= resort.level and _forwarder(record) is self:
+            resort.handle(record)
+
+
+def _forwarder(record: logging.LogRecord) -> _Recorder | None:
+    """The one recorder that passes `record` on to the last resort: the
+    first at its level, when every handler it reaches is a recorder. The
+    chain is walked the way `Logger.callHandlers` does; a second build's
+    recorder at the same level (a build run from another thread) stays
+    quiet so the message prints once."""
+    first: _Recorder | None = None
+    logger: logging.Logger | None = logging.getLogger(record.name)
+    while logger is not None:
+        for handler in logger.handlers:
+            if not isinstance(handler, _Recorder):
+                return None
+            if first is None and handler.level == record.levelno:
+                first = handler
+        logger = logger.parent if logger.propagate else None
+    return first
+
+
 @contextmanager
 def _recording(level: int) -> Iterator[list[str]]:
     captured: list[str] = []
-
-    class _Capture(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            if record.levelno == level:
-                captured.append(record.getMessage())
-
-    handler = _Capture(level)
+    handler = _Recorder(level, captured)
     root = logging.getLogger()
     root.addHandler(handler)
     try:
