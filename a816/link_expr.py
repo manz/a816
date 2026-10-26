@@ -14,6 +14,10 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from a816.parse.tokens import Token
 
 
 class ExprOpCode(Enum):
@@ -116,9 +120,8 @@ class LinkExpr:
     def parse(cls, text: str) -> LinkExpr:
         """The expression `text` writes: numbers, names, strings and the
         assembler's operators. Every name is `GLOBAL`."""
-        from a816.parse.ast.expression import _ordered, eval_number, expr_to_ast
+        from a816.parse.ast.expression import _ordered, expr_to_ast
         from a816.parse.ast.nodes import BinOp, Term, UnaryOp
-        from a816.parse.tokens import TokenType
 
         ops: list[ExprOp] = []
         for node in _ordered(expr_to_ast(text)):
@@ -127,14 +130,10 @@ class LinkExpr:
                 ops.append(ExprOp(_UNARY[token.value]))
             elif type(node) is BinOp:
                 ops.append(ExprOp(_BINARY[token.value]))
-            elif type(node) is not Term:
-                raise ValueError(f"`{node.to_canonical()}` cannot appear in a link-time expression")
-            elif token.type == TokenType.NUMBER:
-                ops.append(ExprOp(ExprOpCode.CONST, eval_number(token.value)))
-            elif token.type == TokenType.QUOTED_STRING:
-                ops.append(ExprOp(ExprOpCode.STRING, name=token.value[1:-1]))
+            elif type(node) is Term:
+                ops.append(_term_op(token))
             else:
-                ops.append(ExprOp(ExprOpCode.SYMBOL, Binding.GLOBAL.value, token.value))
+                raise ValueError(f"`{node.to_canonical()}` cannot appear in a link-time expression")
         return cls(tuple(ops))
 
     def names(self) -> set[str]:
@@ -208,6 +207,20 @@ class LinkExpr:
                 stack.append(f"({stack.pop()} {_BINARY_TEXT[op.op]} {right})")
         text = stack[-1] if stack else ""
         return text[1:-1] if _wrapped(text) else text
+
+
+def _term_op(token: Token) -> ExprOp:
+    """The op of a number, a string or a name; any other token is refused."""
+    from a816.parse.ast.expression import eval_number
+    from a816.parse.tokens import TokenType
+
+    if token.type == TokenType.NUMBER:
+        return ExprOp(ExprOpCode.CONST, eval_number(token.value))
+    if token.type == TokenType.QUOTED_STRING:
+        return ExprOp(ExprOpCode.STRING, name=token.value[1:-1])
+    if token.type == TokenType.IDENTIFIER:
+        return ExprOp(ExprOpCode.SYMBOL, Binding.GLOBAL.value, token.value)
+    raise ValueError(f"`{token.value}` cannot appear in a link-time expression")
 
 
 def _number(value: int) -> str:

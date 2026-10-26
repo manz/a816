@@ -221,3 +221,11 @@ def test_a_parenthesis_inside_a_string_keeps_the_outer_ones() -> None:
     expression = LinkExpr.parse('"a)b" == s')
 
     assert LinkExpr.parse(str(expression)) == expression
+
+
+def test_a_token_that_is_not_a_term_does_not_become_a_name() -> None:
+    from a816.link_expr import _term_op
+    from a816.parse.tokens import Token, TokenType
+
+    with pytest.raises(ValueError, match="cannot appear in a link-time expression"):
+        _term_op(Token(TokenType.LABEL, "x"))
