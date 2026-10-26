@@ -7,6 +7,7 @@ from re import Match
 
 from a816.exceptions import (
     ArchMismatchLinkError,
+    ByteOperandError,
     DuplicateSymbolError,
     ExpressionEvaluationError,
     LinkAssertError,
@@ -19,7 +20,11 @@ from a816.exceptions import (
     UnresolvedSymbolError,
 )
 from a816.object_file import (
+    BYTE_IMMEDIATE_PREFIX,
+    DIRECT_PAGE_PREFIX,
+    DIRECT_POINTER_PREFIX,
     PC_RELATIVE_PREFIX,
+    STACK_OFFSET_PREFIX,
     ObjectFile,
     PoolAlloc,
     PoolDecl,
@@ -27,6 +32,7 @@ from a816.object_file import (
     Section,
     SymbolSection,
     SymbolType,
+    split_byte_operand,
 )
 from a816.parse.ast.expression import eval_constant_expression
 from a816.parse.errors import ParserSyntaxError, ScannerException
@@ -788,12 +794,22 @@ class Linker:
         self._section_buffers = {}
         for final_address, section_idx, expression, size_bytes in self._linked_expression_relocations:
             local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1))
+            check, expression = split_byte_operand(expression)
             if expression.startswith(PC_RELATIVE_PREFIX):
                 evaluated_value = self._branch_offset(expression, final_address, size_bytes, local_overlay)
             else:
                 evaluated_value = self._evaluate_expression(expression, local_overlay)
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
+            problem = byte_operand_problem(check, evaluated_value) if check else None
+            if check is not None and problem is not None:
+                raise ByteOperandError(
+                    _as_written(expression),
+                    evaluated_value,
+                    problem,
+                    _BYTE_OPERAND_HINTS[check],
+                    self._line_at(section, offset),
+                )
             if size_bytes == 1:
                 struct.pack_into("<B", code, offset, evaluated_value & 0xFF)
             elif size_bytes == 2:
@@ -808,6 +824,16 @@ class Linker:
                 raise ExpressionEvaluationError(expression, f"unsupported operand size: {size_bytes} bytes")
 
         self._flush_section_buffers()
+
+    def _line_at(self, section: Section, offset: int) -> str | None:
+        """`file:line` of the source line that emitted the byte at `offset`."""
+        entries = [entry for entry in section.lines if entry[0] <= offset]
+        if not entries:
+            return None
+        _offset, file_idx, line, _column, _flags = max(entries, key=lambda entry: entry[0])
+        if file_idx >= len(self.linked_files):
+            return None
+        return f"{self.linked_files[file_idx]}:{line + 1}"
 
     def _branch_offset(
         self, expression: str, operand_address: int, size_bytes: int, local_overlay: dict[str, int] | None
@@ -1005,3 +1031,31 @@ def _linked_file_name(name: str) -> str:
     if resolved == cwd or resolved.startswith(cwd + os.sep):
         return os.path.relpath(resolved, cwd)
     return resolved
+
+
+_BYTE_OPERAND_HINTS = {
+    BYTE_IMMEDIATE_PREFIX: "take a byte of it (`<x`, `>x`, `^x`), or write the opcode `.w` if the register is 16-bit",
+    DIRECT_PAGE_PREFIX: "the operand is one byte: write the opcode with `.w` or `.l` to address it in full",
+    DIRECT_POINTER_PREFIX: "an indirect operand names a pointer in the direct page: keep the pointer in bank 0 RAM",
+    STACK_OFFSET_PREFIX: "a stack-relative operand is a one-byte offset from S, not an address",
+}
+
+
+def byte_operand_problem(check: str, value: int) -> str | None:
+    """Why `value` cannot fill a one-byte operand carrying `check`, if it can't.
+
+    A `.b` immediate takes -0x100..0xFF, as at compile time. A direct-page
+    operand addresses bank 0 through D, which a816 does not track, so the
+    check is what holds whatever D is: the address is in bank 0's RAM and
+    I/O half ($0000-$7FFF, mirrored in banks $00-$3F and $80-$BF) or in the
+    low 8K of WRAM at $7E:0000-$1FFF."""
+    if check == BYTE_IMMEDIATE_PREFIX:
+        if value >> 8 in (0, -1):
+            return None
+        return "does not fit in a byte (-0x100..0xFF)"
+    if check == STACK_OFFSET_PREFIX:
+        return None if 0 <= value <= 0xFF else "is not a stack offset (0..0xFF)"
+    bank, offset = value >> 16, value & 0xFFFF
+    if value >= 0 and ((bank <= 0x3F or 0x80 <= bank <= 0xBF) and offset < 0x8000 or bank == 0x7E and offset < 0x2000):
+        return None
+    return "is not reachable through the direct page"

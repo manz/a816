@@ -53,6 +53,14 @@
   configured prints its warnings again. The build's warning recorder
   counted as a handler, which turns off Python's default stderr output,
   so a project that never called `logging.basicConfig()` saw none.
+- The linker refuses a one-byte operand that cannot hold its value
+  (E0402) instead of keeping its low byte. `lda.b far` with `far` at
+  $01:8000 assembled to `lda.b $00`, and `lda #far` with an 8-bit A to
+  `lda #$00`, when `far` came from another module; a local one was
+  already refused at compile time. A direct-page operand must name an
+  address the direct page reaches: $0000-$7FFF of banks $00-$3F /
+  $80-$BF, or $7E:0000-$1FFF; a stack-relative one an offset 0..0xFF.
+  Objects are rebuilt.
 
 ## 1.2.0 (2026-10-25)
 

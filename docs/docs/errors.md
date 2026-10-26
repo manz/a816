@@ -218,7 +218,16 @@ separate blocks separated by a blank line.
 - `E0400` duplicate global symbol. Names each definition: the defining
   module (its source, or its object for a constant-only module) and value.
 - `E0401` unresolved external symbol.
-- `E0402` relocation out of range.
+- `E0402` relocation out of range. Also a one-byte operand the linker
+  fills that cannot hold its value: a `.b` immediate outside
+  -0x100..0xFF (`lda #far` with an 8-bit A), or a direct-page operand
+  naming an address the direct page cannot reach (`lda.b far` with
+  `far` in ROM). The direct page sits in bank 0, so the address must be
+  in $0000-$7FFF of banks $00-$3F / $80-$BF or in $7E:0000-$1FFF. A
+  stack-relative operand (`lda x,s`, `(x,s),y`) must be an offset
+  0..0xFF. Gives the value and the `file:line`; take a byte of the value
+  (`<x`, `>x`), write the opcode `.w` / `.l`, or, for an indirect operand
+  (`(x)`, `(x),y`, `[x]`), keep the pointer in bank 0 RAM.
 - `E0403` relocation expression failed.
 - `E0404` alloc does not fit in its pool at link time (the pool is
   shared across modules, so the allocator only runs once every `.o`

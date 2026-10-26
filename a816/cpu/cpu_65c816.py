@@ -220,7 +220,10 @@ class Opcode(OpcodeBase):
                 writer = resolver.context.object_writer
                 if writer is not None:
                     current_offset = writer.relocation_offset(pending_block_bytes=1)
-                    writer.add_expression_relocation(current_offset, value_node._deferred_expression, size_bytes)
+                    check = resolver.byte_operand_check if size_bytes == 1 else ""
+                    writer.add_expression_relocation(
+                        current_offset, check + value_node._deferred_expression, size_bytes
+                    )
 
         # Operands mask to the chosen width: `jsr.w label` drops the bank
         # byte (PB supplies it) and `lda.w #symbol` loads the low word of

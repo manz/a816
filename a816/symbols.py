@@ -443,6 +443,9 @@ class Resolver:
         # The address of the opcode being sized or emitted: a bare `jsr` /
         # `jmp` picks its form from the target's bank against this one.
         self.opcode_pc: int | None = None
+        # The range check a one-byte operand of that opcode carries to the
+        # linker (`BYTE_IMMEDIATE_PREFIX` / `DIRECT_PAGE_PREFIX`), if any.
+        self.byte_operand_check: str = ""
         # `.assert`s of a direct build, checked once labels are final
         # (object mode hands them to the linker instead).
         self.direct_asserts: list[tuple[LinkAssert, Scope]] = []

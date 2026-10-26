@@ -50,7 +50,7 @@ def test_an_unsized_extern_operand_asks_for_its_size(
         ("jmp.l target", "5c 00 81 40"),
         ("jsr.w target", "20 00 81"),
         ("pea target", "f4 00 81"),
-        ("lda #target", "a9 00"),
+        ("lda #<target", "a9 00"),
     ],
 )
 def test_sized_or_single_form_extern_operands_build(

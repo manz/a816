@@ -204,9 +204,11 @@ class LinkedModuleNode(NodeBase):
             code_array[offset + i] = (value >> (8 * i)) & 0xFF
 
     def _eval_one_relocation(self, expr: str, offset: int, size: int, code_array: bytearray, section: Section) -> None:
+        from a816.object_file import split_byte_operand
         from a816.parse.ast.expression import eval_expression_str
 
         ctx = self._reloc_context(offset, section)
+        _check, expr = split_byte_operand(expr)
         try:
             value = eval_expression_str(expr, self.resolver)
         except (SymbolNotDefined, NodeError, ValueError) as e:
