@@ -6,9 +6,6 @@ that the handler returns non-None. Coverage is a side-effect.
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 from lsprotocol.types import (
     DocumentSymbolParams,
     HoverParams,
@@ -166,28 +163,6 @@ hdma_ch6 := (0x4360 as DMAChannel)
     # `DMAChannel.A1TL` from stdlib must produce `hdma_ch6.A1TL`.
     assert "hdma_ch6.A1TL" in doc.symbols
     assert "hdma_ch6.DMAP" in doc.symbols
-
-
-def test_incbin_auto_symbol_points_at_directive_line() -> None:
-    """`assets_intro_bin` resolves to the `.incbin` line, not line 0."""
-    server = A816LanguageServer()
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        (root / "assets").mkdir()
-        (root / "assets" / "intro.bin").write_bytes(b"\x00" * 8)
-        src = root / "main.s"
-        src.write_text(
-            '; comment\n; another\n.incbin "assets/intro.bin"\n',
-            encoding="utf-8",
-        )
-        doc = A816Document(src.as_uri(), src.read_text(), include_paths=[root])
-        server.documents[doc.uri] = doc
-        pos, _uri = doc.symbols["assets_intro_bin"]
-        # Lines are 0-based; index 2 is the third line, the `.incbin` directive.
-        # (Previously this resolved to the token *after* the path string, which
-        # spilled onto the next line, the same off-by-one that made the
-        # formatter fold a trailing comment onto the directive.)
-        assert pos.line == 2
 
 
 def test_dotted_word_span_extracts_full_path_around_cursor() -> None:

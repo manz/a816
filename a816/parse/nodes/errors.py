@@ -103,7 +103,11 @@ def undefined_symbol_error(error: SymbolNotDefined, fallback: Token | None, scop
     from a816.diagnostics.suggest import did_you_mean_hint
     from a816.error_codes import E_SYMBOL_NOT_DEFINED
 
-    hints = [hint for hint in (error.note, did_you_mean_hint(str(error), scope)) if hint]
+    removed = scope.resolver.path_name(error.name)
+    if removed is not None:
+        hints = [removed.removed_hint()]
+    else:
+        hints = [hint for hint in (error.note, did_you_mean_hint(str(error), scope)) if hint]
     return NodeError(
         f"`{error}` is not defined in the current scope",
         error.token or fallback,

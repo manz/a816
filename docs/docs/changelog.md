@@ -43,6 +43,12 @@
   used to carry none. One entry per directive line, not per value.
 - Link-time E0404 names the `.alloc` (or `.reserve`) that does not
   fit, by `file:line`, even when its body is only data or bss.
+- `.incbin` no longer binds names derived from its path
+  (`assets_vwf_bin`, `assets_vwf_bin__size`), deprecated since 1.1 under
+  `W0001`. A leftover reference is undefined (`E0200`, or the linker's
+  unresolved symbol), and the error names the `.incbin` it came from and
+  what to write: the alloc's `NAME` / `sizeof(NAME)`, or a label.
+  `a816 fix` still rewrites them. `E0347` is retired.
 
 ## 1.2.0 (2026-10-25)
 

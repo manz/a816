@@ -101,7 +101,6 @@ class Linker:
         self._resolve_aliases()
         self._check_unresolved()
         self._check_asserts()
-        self._warn_path_names()
         self._apply_relocations()
         self._apply_expression_relocations()
         return ObjectFile(
@@ -657,7 +656,14 @@ class Linker:
             }
             unresolved_symbols -= satisfied_by_scope
         if unresolved_symbols:
-            raise UnresolvedSymbolError(unresolved_symbols)
+            raise UnresolvedSymbolError(unresolved_symbols, self._path_name_hints(unresolved_symbols))
+
+    def _path_name_hints(self, names: set[str]) -> dict[str, str]:
+        """What each unresolved name was, if `.incbin` used to derive it from a path."""
+        from a816.incbin_names import removed_hint
+
+        records = {record.name: record for obj in self.object_files for record in obj.path_names}
+        return {name: removed_hint(records[name].file_path, records[name].hint) for name in names if name in records}
 
     def _check_asserts(self) -> None:
         """Evaluate every module's `.assert` with final addresses, the
@@ -713,26 +719,6 @@ class Linker:
         if remaining:
             raise UnresolvedSymbolError({name for name, _ in remaining})
 
-    def _warn_path_names(self) -> None:
-        """W0001 on references that meet a path-derived `.incbin` name only here."""
-        from a816.link_path_names import RelocationSite, path_name_warnings
-
-        sites = [
-            RelocationSite(
-                self._section_obj.get(section_idx, -1),
-                self.linked_sections[section_idx],
-                address - self.linked_sections[section_idx].placed_base,
-                operand,
-            )
-            for address, section_idx, operand, _kind in [
-                *self._linked_relocations,
-                *self._linked_expression_relocations,
-            ]
-            if section_idx in self._section_obj
-        ]
-        for message in path_name_warnings(self.object_files, sites, self.linked_files, self._local_by_obj):
-            logger.warning(message)
-
     def _section_view(self, section_idx: int) -> tuple[Section, bytearray]:
         section = self.linked_sections[section_idx]
         buf = self._section_buffers.get(section_idx)
@@ -755,7 +741,7 @@ class Linker:
             return local_overlay[symbol_name]
         if symbol_name in self.symbol_map:
             return self.symbol_map[symbol_name]
-        raise UnresolvedSymbolError({symbol_name})
+        raise UnresolvedSymbolError({symbol_name}, self._path_name_hints({symbol_name}))
 
     @staticmethod
     def _check_range(symbol_name: str, kind: str, value: int, low: int, high: int) -> None:

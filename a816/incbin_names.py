@@ -1,13 +1,13 @@
-"""The names `.incbin` derives from its file path, and the references to them.
+"""The names `.incbin` derived from its file path until 1.3, and the
+references to them.
 
-`.incbin "assets/vwf.bin"` binds `assets_vwf_bin` (where the bytes start)
-and `assets_vwf_bin__size`. Those names follow the asset's path, so moving
-or renaming a file renames symbols in code that never mentions the file.
-They are deprecated (W0001): the blob's alloc names it, `NAME` and
-`sizeof(NAME)`, or a label does.
+`.incbin "assets/vwf.bin"` bound `assets_vwf_bin` (where the bytes start)
+and `assets_vwf_bin__size`. Those names followed the asset's path, so moving
+or renaming a file renamed symbols in code that never mentioned the file.
+The blob's alloc names it now, `NAME` and `sizeof(NAME)`, or a label does.
 
-The build (`code_gen`) and `a816 check` share this walk, so both warn on
-the same references.
+The build (`code_gen`) reports a leftover reference as undefined with what
+the name used to be; `a816 check` / `a816 fix` (W0001) rewrite it.
 """
 
 from __future__ import annotations
@@ -36,6 +36,11 @@ def incbin_symbol_base(file_path: str) -> str:
     return file_path.replace("/", "_").replace(".", "_")
 
 
+def removed_hint(file_path: str, hint: str) -> str:
+    """The hint on a reference to a path name, which no longer binds."""
+    return f'`.incbin "{file_path}"` named its blob after its path until a816 1.3; {hint}'
+
+
 @dataclass(frozen=True)
 class PathName:
     """One path-derived name and what to write instead, when there is one."""
@@ -43,8 +48,7 @@ class PathName:
     name: str
     file_path: str
     replacement: str | None
-    # Bound by more than one `.incbin` in the unit: a reference would read
-    # whichever came first, so it's E0347 rather than a warning.
+    # Bound by more than one `.incbin` in the unit: no single rewrite.
     ambiguous: bool = False
     # The alloc holding the blob is module-private (`_name`): importers
     # can't name it, so they get no rewrite (ff4's `_items_unleashed`).
@@ -59,6 +63,10 @@ class PathName:
         if self.private_alloc is None:
             return self
         return PathName(self.name, self.file_path, None, self.ambiguous, self.private_alloc)
+
+    def removed_hint(self) -> str:
+        """Why the name is undefined since 1.3, and what to write instead."""
+        return removed_hint(self.file_path, self.hint())
 
     def hint(self) -> str:
         if self.ambiguous:

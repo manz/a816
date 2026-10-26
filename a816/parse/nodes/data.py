@@ -142,17 +142,12 @@ class BinaryNode(NodeBase):
             self.binary_content = binary_file.read()
         resolver.dependency_files.add(os.path.abspath(resolved))
         self.file_path = path
-        self.symbol_base = path.replace("/", "_").replace(".", "_")
-        self.resolver = resolver
 
     def emit(self, current_addr: Address) -> bytes:
         return self.binary_content
 
     def pc_after(self, current_pc: Address) -> Address:
-        retval = current_pc + len(self.binary_content)
-        self.resolver.current_scope.add_label(self.symbol_base, current_pc)
-        self.resolver.current_scope.add_symbol(self.symbol_base + "__size", len(self.binary_content))
-        return retval
+        return current_pc + len(self.binary_content)
 
 
 class EmbedNode(NodeBase):

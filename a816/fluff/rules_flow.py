@@ -77,10 +77,7 @@ def _children(node: AstNode) -> Iterator[AstNode]:
 
 def _names_in(nodes: Iterable[AstNode]) -> set[str]:
     """Every name `nodes` bind: constants, labels, allocs, reservations, pools,
-    structs, scopes, macros and their parameters, `.for` variables, externs,
-    and the names `.incbin` derives from its path."""
-    from a816.incbin_names import path_names
-
+    structs, scopes, macros and their parameters, `.for` variables and externs."""
     names: set[str] = set()
     stack = list(nodes)
     while stack:
@@ -91,7 +88,6 @@ def _names_in(nodes: Iterable[AstNode]) -> set[str]:
                 names.add(value)
         names.update(getattr(node, "args", None) or ())
         stack.extend(_children(node))
-    names.update(path_names(list(nodes)))
     return names
 
 

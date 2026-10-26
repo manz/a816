@@ -205,10 +205,7 @@ separate blocks separated by a blank line.
   is always an address there); into another bank, write `jsl` / `jml` (a
   `jsl` callee returns with `rtl`), or `jsr.w` / `jmp.w` when that bank
   mirrors this one.
-- `E0347` a reference to a path-derived `.incbin` name that two blobs in
-  the module bind: the same file included twice, or two paths that
-  collapse to one name (`f.bin` and `f_bin`). It would read whichever
-  came first. Label each blob and use the labels (see `W0001`).
+- `E0347` retired in 1.3 with the `.incbin` path names (see `W0001`).
 - `E0348` a `.patch` gives some fields of a bit-field byte but not
   all: a816 never sees the ROM's byte, so give every field that
   shares it.
@@ -292,15 +289,15 @@ separate blocks separated by a blank line.
 
 ### Warnings
 
-- `W0001` a reference to a name `.incbin` derived from its file path:
-  `.incbin "assets/vwf.bin"` binds `assets_vwf_bin` and
-  `assets_vwf_bin__size`, which change when the file moves. Name the
-  blob instead: alone in `.alloc vwf_font { ... }` it is `vwf_font`,
-  and its size `sizeof(vwf_font)`; `a816 fix` rewrites those
-  references. Where the blob shares its block, put a label before it.
-  The path names go in 1.2. Reported by the build (by the linker for a
-  module that names the blob without importing its module, and again
-  when a module comes from the build cache) and by `a816 check`.
+- `W0001` a reference to a name `.incbin` derived from its file path
+  until 1.3: `.incbin "assets/vwf.bin"` bound `assets_vwf_bin` and
+  `assets_vwf_bin__size`, which changed when the file moved. The build
+  now reports the reference as undefined (`E0200`, or the linker's
+  unresolved symbol) with what the name was; `a816 check` names it
+  `W0001`. Name the blob instead: alone in `.alloc vwf_font { ... }` it
+  is `vwf_font`, and its size `sizeof(vwf_font)`; `a816 fix` rewrites
+  those references. Where the blob shares its block, put a label before
+  it.
 - `W0002` an `.if` names something the project defines nowhere (in no
   `.s` / `.i` file under its `a816.toml`). An undefined name reads as
   false, which is how `.if DEBUG` works without `-D DEBUG`, so a deleted

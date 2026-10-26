@@ -72,7 +72,7 @@ struct casts, `OP***` for opcodes, `ST***` for program structure and
 | `ST002` | `.import` outside the file prelude (after a placement or inside a block); the build rejects it with `E0311`. |
 | `UP001` | Legacy `*= ADDR` placement should be `.alloc at ADDR { ... }`. |
 | `W0002` | `.if` on a name the project defines nowhere: it reads as false, so a deleted or misspelt flag drops code silently. Declare a `-D`-only name under `[defines]` in `a816.toml`. |
-| `W0001` | Reference to a name `.incbin` derived from its path (`assets_vwf_bin`, `assets_vwf_bin__size`); the build warns on it too. A warning: `a816 check` prints it but still exits 0. |
+| `W0001` | Reference to a name `.incbin` derived from its path until 1.3 (`assets_vwf_bin`, `assets_vwf_bin__size`); the build reports it as undefined. `a816 fix` rewrites it to the alloc's name. |
 
 Per-node rules (`OP001`, `N801`, `N802`, `DOC007`, ...) look inside
 `.alloc`, `.relocate`, `.scope`, macro, `.if` and `.for` bodies, so

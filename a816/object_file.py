@@ -160,7 +160,7 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 9  # 9: data directives and `.istruct` bytes record line entries
+CODEGEN_REVISION = 10  # 10: `.incbin` binds no path-derived names
 
 PC_RELATIVE_PREFIX = "pc-relative:"
 """Marks an expression relocation whose value is the expression minus the
@@ -186,22 +186,13 @@ class LinkAssert:
 
 @dataclass
 class PathNameRecord:
-    """A name `.incbin` derived from its file path (W0001), as an importer sees
-    it: the linker warns on a reference that binds to it from an object whose
-    compile never saw it."""
+    """A name `.incbin` derived from its file path until 1.3, as an importer
+    sees it: the linker names it in the hint when a reference stays
+    unresolved."""
 
     name: str
     file_path: str
     hint: str
-
-
-@dataclass
-class PathNames:
-    """An object's path-derived `.incbin` names: the ones it binds, and the
-    ones its compile already warned on (its own and its imports')."""
-
-    bound: list[PathNameRecord] = field(default_factory=list)
-    checked: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -231,7 +222,7 @@ class WireObject:
     pool_allocs: list[PoolAlloc]
     bus_mappings: list[BusMapping]
     asserts: list[LinkAssert] = field(default_factory=list)
-    path_names: PathNames = field(default_factory=PathNames)
+    path_names: list[PathNameRecord] = field(default_factory=list)
     arch: str = "65c816"
     """CPU the object was assembled for: the linker refuses to mix them."""
 
@@ -274,7 +265,7 @@ class ObjectFile:
         pool_allocs: list[PoolAlloc] | None = None,
         bus_mappings: list[BusMapping] | None = None,
         asserts: list[LinkAssert] | None = None,
-        path_names: PathNames | None = None,
+        path_names: list[PathNameRecord] | None = None,
         arch: str = "65c816",
     ) -> None:
         # `relocatable` is True iff the source contained no `*=` directive,
@@ -302,7 +293,7 @@ class ObjectFile:
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
         self.bus_mappings: list[BusMapping] = bus_mappings or []
         self.asserts: list[LinkAssert] = asserts or []
-        self.path_names: PathNames = path_names or PathNames()
+        self.path_names: list[PathNameRecord] = path_names or []
         self.arch = arch
         self.origin: str = ""
         """Path the object was read from (not serialized): names it in diagnostics."""

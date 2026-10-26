@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from a816.exceptions import SymbolNotDefined
 from a816.parse.ast.nodes import (
@@ -26,9 +26,6 @@ from a816.parse.nodes import NodeError
 from a816.parse.tokens import Token
 from a816.protocols import NodeProtocol
 from a816.symbols import Resolver
-
-if TYPE_CHECKING:
-    from a816.incbin_names import PathName
 
 logger = logging.getLogger("a816.codegen")
 
@@ -98,9 +95,9 @@ def _located_missing_symbol(missing: SymbolNotDefined, file_info: Token, resolve
     from a816.parse.nodes.errors import undefined_symbol_error
 
     name = str(missing)
-    if name.endswith("__size"):
-        # `blob.__size` is what `sizeof(blob)` reads; `path_bin__size` is an
-        # `.incbin` path-name size. Both are bound when the bytes are laid out.
+    if name.endswith("__size") and resolver.path_name(name) is None:
+        # `blob.__size` is what `sizeof(blob)` reads, bound when the bytes
+        # are laid out.
         spelled = f"sizeof({name.removesuffix('.__size')})" if name.endswith(".__size") else name
         return NodeError(
             f"`{spelled}` is only known after layout, and this needs it while expanding",
@@ -129,44 +126,22 @@ def code_gen(ast_nodes: list[AstNode], resolver: Resolver) -> GenNodes:
     # assembled on the same resolver must not reject this unit's imports.
     resolver.star_eq_cursor_active = False
     macro_definitions: MacroDefinitions = {}
-    code = _code_gen(ast_nodes, resolver, macro_definitions)
-    _warn_path_names(ast_nodes, resolver)
-    return code
+    _record_path_names(ast_nodes, resolver)
+    return _code_gen(ast_nodes, resolver, macro_definitions)
 
 
-def _record_path_names(resolver: Resolver, own: dict[str, PathName], checked: dict[str, PathName]) -> None:
-    """Carry the unit's path names to the linker, which warns on a reference
-    that binds to one from a module whose compile never saw it."""
-    from a816.object_file import PathNameRecord, PathNames
+def _record_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
+    """Note the names `.incbin` derived from this unit's paths until 1.3,
+    so an undefined one is told what it used to be: here, and through the
+    object file at link time for a name only the linker meets."""
+    from a816.incbin_names import path_names
+    from a816.object_file import PathNameRecord
 
+    resolver.own_path_names = path_names(ast_nodes)
     writer = resolver.context.object_writer
     if writer is None:
         return
-    bound = [
+    writer.path_names = [
         PathNameRecord(name, found.file_path, found.seen_from_importer().hint())
-        for name, found in own.items()
-        if not found.ambiguous
+        for name, found in resolver.own_path_names.items()
     ]
-    writer.path_names = PathNames(bound, sorted(checked))
-
-
-def _warn_path_names(ast_nodes: Sequence[AstNode], resolver: Resolver) -> None:
-    """W0001 on each reference to a path-derived `.incbin` name, this unit's
-    or an import's; run after codegen, once every import has been read."""
-    from a816.error_codes import E_CODEGEN_AMBIGUOUS_PATH_NAME, W_INCBIN_PATH_NAME
-    from a816.incbin_names import path_names, references
-    from a816.parse.nodes.errors import format_node_warning
-
-    own = path_names(ast_nodes)
-    names = {**resolver.imported_path_names, **own}
-    _record_path_names(resolver, own, names)
-    for token, name in references(ast_nodes, names):
-        if name.ambiguous:
-            raise NodeError(
-                f"`{name.name}` is bound by more than one `.incbin`, so it names whichever came first",
-                token,
-                code=str(E_CODEGEN_AMBIGUOUS_PATH_NAME),
-                hint="label each blob and use the labels",
-            )
-        message = f"`{name.name}` is named after the asset path {name.file_path!r}"
-        logger.warning(format_node_warning(message, token, code=str(W_INCBIN_PATH_NAME), hint=name.hint()))

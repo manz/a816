@@ -145,8 +145,10 @@ class DuplicateSymbolError(LinkerError):
 class UnresolvedSymbolError(LinkerError):
     """Raised when external symbols cannot be resolved during linking."""
 
-    def __init__(self, symbols: set[str]) -> None:
+    def __init__(self, symbols: set[str], hints: dict[str, str] | None = None) -> None:
         self.symbols = symbols
+        # Per-symbol hints replacing the generic one (a removed `.incbin` path name).
+        self.hints = hints or {}
         if len(symbols) == 1:
             symbol = next(iter(symbols))
             message = f"unresolved symbol '{symbol}'"
@@ -163,14 +165,11 @@ class UnresolvedSymbolError(LinkerError):
             return format_linker_error(
                 f"symbol '{symbol}' is not defined",
                 symbol=symbol,
-                hint="add the object file that defines this symbol, or check for typos",
+                hint=self.hints.get(symbol, "add the object file that defines this symbol, or check for typos"),
             )
-        else:
-            return format_linker_error(
-                f"{len(self.symbols)} symbols are not defined",
-                symbols=self.symbols,
-                hint="add object files that define these symbols, or check for typos",
-            )
+        hint = "add object files that define these symbols, or check for typos"
+        hint += "".join(f"; `{name}`: {self.hints[name]}" for name in sorted(self.hints))
+        return format_linker_error(f"{len(self.symbols)} symbols are not defined", symbols=self.symbols, hint=hint)
 
 
 class RelocationError(LinkerError):
