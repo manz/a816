@@ -225,6 +225,33 @@ class ExpressionEvaluationError(LinkerError):
         )
 
 
+class ByteOperandError(LinkerError):
+    """Raised when a one-byte operand filled at link cannot hold its value."""
+
+    def __init__(self, expression: str, value: int, problem: str, location: str | None = None) -> None:
+        self.expression = expression
+        self.value = value
+        self.problem = problem
+        self.location = location
+        shown = f"${value:06X}" if value >= 0 else str(value)
+        super().__init__(f"`{expression}` = {shown} {problem}")
+
+    def format(self) -> str:
+        # Late import: intentional to avoid circular dependency with errors module
+        from a816.error_codes import E_LINKER_RELOCATION_RANGE
+        from a816.errors import format_error_simple
+
+        details = []
+        if self.location is not None:
+            details.append(("at", self.location))
+        if "byte" in self.problem:
+            hint = "take a byte of it (`<x`, `>x`, `^x`), or write the opcode `.w` if the register is 16-bit"
+        else:
+            hint = "the operand is one byte: write the opcode with `.w` or `.l` to address it in full"
+        details.append(("hint", hint))
+        return format_error_simple(f"{LINKER_ERROR_LABEL}[{E_LINKER_RELOCATION_RANGE}]", str(self), details=details)
+
+
 class PoolOverflowLinkError(LinkerError):
     """Raised when the link-time allocator cannot fit an alloc in its pool."""
 

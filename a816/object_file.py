@@ -160,17 +160,37 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 10  # 10: `.incbin` binds no path-derived names
+CODEGEN_REVISION = 11  # 11: one-byte operand relocations carry their range check
 
 PC_RELATIVE_PREFIX = "pc-relative:"
 """Marks an expression relocation whose value is the expression minus the
 operand's final end address (a branch offset), range-checked to its width."""
+
 """Bumped whenever a816 emits different object bytes for unchanged source (a
 codegen fix such as #159's end-marker labels). With the format's schema digest
 it forms the object identity the build cache keys on, so a release that changes
 codegen rebuilds every cached object and one that doesn't keeps them.
 `tests/test_codegen_revision.py` fails when the output changes without a bump,
 or the revision moves with no output change."""
+
+BYTE_IMMEDIATE_PREFIX = "byte-immediate:"
+"""Marks a one-byte immediate operand (`lda.b #ext`): the value must fit a
+byte, -0x100..0xFF, as at compile time."""
+
+DIRECT_PAGE_PREFIX = "direct-page:"
+"""Marks a one-byte direct-page operand (`lda.b ext`): the value must be an
+address the direct page reaches."""
+
+BYTE_OPERAND_PREFIXES = (BYTE_IMMEDIATE_PREFIX, DIRECT_PAGE_PREFIX)
+
+
+def split_byte_operand(expression: str) -> tuple[str | None, str]:
+    """`(prefix, expression)`: the one-byte operand check an expression
+    relocation carries, if any, and the expression without it."""
+    for prefix in BYTE_OPERAND_PREFIXES:
+        if expression.startswith(prefix):
+            return prefix, expression.removeprefix(prefix)
+    return None, expression
 
 
 @dataclass

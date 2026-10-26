@@ -24,6 +24,7 @@ from a816.exceptions import (
     SymbolNotDefined,
     UndecidableOperandSizeError,
 )
+from a816.object_file import BYTE_IMMEDIATE_PREFIX, DIRECT_PAGE_PREFIX
 from a816.parse.nodes.errors import NodeError, format_node_warning, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
@@ -114,6 +115,7 @@ class OpcodeNode(NodeBase):
                 self.value_node, self.value_node2, self.resolver
             )
         self.resolver.opcode_pc = current_pc.logical_value
+        self.resolver.byte_operand_check = _byte_operand_check(self.addressing_mode)
         try:
             emitted = opcode_emitter.emit(self.value_node, self.resolver, self.size)
         except UndecidableOperandSizeError as undecidable:
@@ -141,6 +143,7 @@ class OpcodeNode(NodeBase):
             raise NodeError(str(unmapped), self._operand_token(), code=str(E_CODEGEN_BRANCH_UNMAPPED)) from unmapped
         finally:
             self.resolver.opcode_pc = None
+            self.resolver.byte_operand_check = ""
         self._check_provisional_length(emitted)
         self._check_byte_immediate_overflow(opcode_emitter)
         self._warn_on_immediate_width_mismatch(opcode_emitter)
@@ -357,3 +360,24 @@ class OpcodeNode(NodeBase):
 
     def __str__(self) -> str:
         return f"OpcodeNode({self.opcode}, {self.addressing_mode}, {self.index}, {self.value_node})"
+
+
+_DIRECT_PAGE_MODES = frozenset(
+    {
+        AddressingMode.direct,
+        AddressingMode.direct_indexed,
+        AddressingMode.indirect,
+        AddressingMode.indirect_indexed,
+        AddressingMode.indirect_long,
+        AddressingMode.indirect_indexed_long,
+    }
+)
+
+
+def _byte_operand_check(mode: AddressingMode) -> str:
+    """The link-time range check a one-byte operand in `mode` carries."""
+    if mode is AddressingMode.immediate:
+        return BYTE_IMMEDIATE_PREFIX
+    if mode in _DIRECT_PAGE_MODES:
+        return DIRECT_PAGE_PREFIX
+    return ""
