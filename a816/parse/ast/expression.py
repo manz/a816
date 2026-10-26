@@ -87,22 +87,36 @@ def _expression_error(message: str, token: Token, code: ErrorCode, hint: str | N
     return NodeError(message, token, code=str(code), hint=hint)
 
 
-def _bitwise_not(value: int, token: Token) -> int:
+class ExprEvalError(Exception):
+    """An evaluation mistake with no source site: codegen locates it on its
+    token, the linker on the relocation's line."""
+
+    def __init__(self, message: str, code: ErrorCode, hint: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.hint = hint
+
+
+def bitwise_not(value: int) -> int:
+    """`~value` masked to the narrowest of 8, 16 or 32 bits that holds it."""
     if value.bit_length() <= 8:
         return ctypes.c_uint8(~value).value
     if value.bit_length() <= 16:
         return ctypes.c_uint16(~value).value
     if value.bit_length() <= 32:
         return ctypes.c_uint32(~value).value
-    raise _expression_error(f"`~` operand {value:#x} is wider than 32 bits", token, E_CODEGEN_NOT_TOO_WIDE)
+    raise ExprEvalError(f"`~` operand {value:#x} is wider than 32 bits", E_CODEGEN_NOT_TOO_WIDE)
 
 
-def _apply_unary(op: str, value: int | str, token: Token) -> int:
-    assert isinstance(value, int)
+def unary_value(op: str, value: int | str) -> int:
+    """The assembler's unary `op` applied to `value`."""
+    if not isinstance(value, int):
+        raise ExprEvalError(f"`{op}` cannot apply to a string", E_CODEGEN_MISMATCHED_TYPES)
     if op == "-":
         return -value
     if op == "~":
-        return _bitwise_not(value, token)
+        return bitwise_not(value)
     if op == "<":
         return value & 0xFF
     if op == ">":
@@ -110,34 +124,43 @@ def _apply_unary(op: str, value: int | str, token: Token) -> int:
     raise RuntimeError(f"Unsupported unary Operator {op}")
 
 
-def _division_by_zero(operator: Token) -> A816Error:
-    return _expression_error(
-        "division by zero",
-        operator,
-        E_CODEGEN_DIVISION_BY_ZERO,
-        hint=f"the right-hand side of `{operator.value}` evaluates to 0",
-    )
-
-
-def _apply_binary(operator: BinOp, v1: int | str, v2: int | str) -> int:
-    op = operator.token.value
+def binary_value(op: str, v1: int | str, v2: int | str) -> int:
+    """The assembler's binary `op` applied to `v1` and `v2`; a comparison is 0 or 1."""
     if isinstance(v1, int) and isinstance(v2, int):
         if v2 == 0 and op in _DIVISION_OPERATORS:
-            raise _division_by_zero(operator.token)
+            raise ExprEvalError(
+                "division by zero", E_CODEGEN_DIVISION_BY_ZERO, hint=f"the right-hand side of `{op}` evaluates to 0"
+            )
         try:
-            return _INT_BINOPS[op](v1, v2)
+            return int(_INT_BINOPS[op](v1, v2))
         except KeyError as e:
             raise RuntimeError("operator unknown") from e
     if isinstance(v1, str) and isinstance(v2, str):
         try:
-            return _STR_BINOPS[op](v1, v2)
+            return int(_STR_BINOPS[op](v1, v2))
         except KeyError as e:
             raise RuntimeError("operator unknown") from e
-    raise _expression_error(
-        f"`{op}` cannot combine {type(v1).__name__} and {type(v2).__name__}",
-        operator.token,
-        E_CODEGEN_MISMATCHED_TYPES,
+    raise ExprEvalError(
+        f"`{op}` cannot combine {type(v1).__name__} and {type(v2).__name__}", E_CODEGEN_MISMATCHED_TYPES
     )
+
+
+def _located(error: ExprEvalError, token: Token) -> A816Error:
+    return _expression_error(error.message, token, error.code, error.hint)
+
+
+def _apply_unary(op: str, value: int | str, token: Token) -> int:
+    try:
+        return unary_value(op, value)
+    except ExprEvalError as error:
+        raise _located(error, token) from None
+
+
+def _apply_binary(operator: BinOp, v1: int | str, v2: int | str) -> int:
+    try:
+        return binary_value(operator.token.value, v1, v2)
+    except ExprEvalError as error:
+        raise _located(error, operator.token) from None
 
 
 def _collect_external_symbols(ordered: Sequence[ExprNode], resolver: Resolver) -> set[str]:
