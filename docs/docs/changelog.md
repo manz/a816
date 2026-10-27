@@ -75,6 +75,9 @@
   local `loop`), and a quoted string in an `.assert` that matched a label
   name. An alias defined through itself is an error (E0202) instead of
   an unresolved name at link.
+- The linker no longer reads a name no module exports from another
+  module's private label of the same name (`_loop`): it is unresolved,
+  as written.
 
 ## 1.2.0 (2026-10-25)
 

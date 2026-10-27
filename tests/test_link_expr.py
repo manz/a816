@@ -229,3 +229,20 @@ def test_a_token_that_is_not_a_term_does_not_become_a_name() -> None:
 
     with pytest.raises(ValueError, match="cannot appear in a link-time expression"):
         term_op(Token(TokenType.LABEL, "x"))
+
+
+def test_another_module_private_name_is_unresolved() -> None:
+    """A name no module exports does not bind to some module's private
+    label of that name."""
+    stranger = ObjectFile(
+        b"\xa9\x00\x00",
+        [],
+        expression_relocations=[ExprRelocation(1, 2, RelocKind.VALUE, LinkExpr.parse("_here"))],
+        relocatable=False,
+    )
+    linker = Linker([_object(b"\xa9\x00\x00", 0x1111, "_here"), stranger])
+
+    with pytest.raises(ExpressionEvaluationError) as caught:
+        linker.link()
+
+    assert caught.value.reason == "cannot resolve `_here` at link time"
