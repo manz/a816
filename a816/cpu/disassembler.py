@@ -19,7 +19,7 @@ from a816.cpu.cpu_65c816 import (
 )
 from a816.cpu.types import AddressingMode as _AsmMode
 from a816.cpu.types import ValueSize
-from a816.protocols import ValueNodeProtocol
+from a816.protocols import NO_OPERAND_CONTEXT, OperandContext, ValueNodeProtocol
 
 
 class AddrMode(Enum):
@@ -358,10 +358,10 @@ class _Literal(ValueNodeProtocol):
     def __init__(self, value: int) -> None:
         self.value = value
 
-    def get_value(self) -> int:
+    def get_value(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
         return self.value
 
-    def get_value_string_len(self) -> int:
+    def get_value_string_len(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
         return len(hex(self.value)) - 2
 
 

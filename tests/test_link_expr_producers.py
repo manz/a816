@@ -98,7 +98,7 @@ def test_an_operand_meeting_a_bare_extern_relocates_it(monkeypatch: pytest.Monke
     from a816.context import AssemblyMode
     from a816.parse.nodes import expr as expr_module
 
-    def meets_extern(_expression: object, _resolver: object) -> int:
+    def meets_extern(_expression: object, _resolver: object, _stand_in: object = None) -> int:
         raise ExternalSymbolReference("ext")
 
     monkeypatch.setattr(expr_module, "eval_expression", meets_extern)
