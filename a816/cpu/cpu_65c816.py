@@ -58,7 +58,7 @@ class OpcodeWithoutOperand(OpcodeBase):
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         return 1
@@ -73,7 +73,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
     _PACK = "b"
     _RANGE = "signed 8-bit range (-128 to 127)"
 
-    def _relative_delta(self, value_node: "ValueNodeProtocol", resolver: "Resolver", operand: OperandContext) -> int:
+    def _relative_delta(self, value_node: ValueNodeProtocol, resolver: Resolver, operand: OperandContext) -> int:
         value = value_node.get_value()
         # Use duck typing: ExpressionNode has 'expression' attribute, ValueNode does not
         if hasattr(value_node, "expression"):
@@ -108,7 +108,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         extern = bool(getattr(value_node, "external_symbols", None))
         try:
             delta = self._relative_delta(value_node, resolver, operand)
-        except (BranchTargetUnmappedError, UnmappedBankError):
+        except BranchTargetUnmappedError, UnmappedBankError:
             if not extern:
                 raise
             delta = 0
@@ -141,7 +141,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         return 1 + self.OFFSET_BYTES
@@ -194,6 +194,23 @@ def guess_value_size(
 _SIZE_ORDER: dict[str, int] = {"b": 0, "w": 1, "l": 2}
 
 
+_OPERAND_BYTES: dict[str, int] = {"b": 1, "w": 2, "l": 3}
+
+
+def _relocate_operand(value_node: ValueNodeProtocol, size_bytes: int, operand: OperandContext) -> None:
+    """In object mode, have the linker write an operand whose expression waits
+    on a label or an extern. It lands one byte past the opcode."""
+    deferred = getattr(value_node, "_deferred_expression", None)
+    resolver = getattr(value_node, "resolver", None)
+    if deferred is None or resolver is None or not resolver.context.is_object_mode:
+        return
+    writer = resolver.context.object_writer
+    if writer is None:
+        return
+    kind = operand.byte_check if size_bytes == 1 else RelocKind.VALUE
+    writer.add_expression_relocation(writer.relocation_offset(pending_block_bytes=1), deferred, size_bytes, kind)
+
+
 class Opcode(OpcodeBase):
     def __init__(self, opcode_def: list[int | None], is_a: bool = False, is_x: bool = False, alias: bool = False):
         self.opcode_def = opcode_def
@@ -206,29 +223,10 @@ class Opcode(OpcodeBase):
         self.size_opcode_map: dict[str, int] = {"b": 0, "w": 1, "l": 2}
 
     def emit_value(
-        self, value_node: "ValueNodeProtocol", size: ValueSize, operand: OperandContext = NO_OPERAND_CONTEXT
+        self, value_node: ValueNodeProtocol, size: ValueSize, operand: OperandContext = NO_OPERAND_CONTEXT
     ) -> bytes:
         value = value_node.get_value(operand)
-
-        # Check if this is an ExpressionNode with a deferred expression from external symbols
-        # Use duck typing: check for resolver attribute (ExpressionNode has it, ValueNode doesn't)
-        if hasattr(value_node, "resolver") and hasattr(value_node, "_deferred_expression"):
-            # Generate expression relocation instead of regular relocation
-            resolver = value_node.resolver
-            if resolver.context.is_object_mode:
-                # Determine size in bytes
-                if size == "b":
-                    size_bytes = 1
-                elif size == "w":
-                    size_bytes = 2
-                else:
-                    size_bytes = 3
-                # Operand lands one byte past the opcode in the current section.
-                writer = resolver.context.object_writer
-                if writer is not None:
-                    current_offset = writer.relocation_offset(pending_block_bytes=1)
-                    kind = operand.byte_check if size_bytes == 1 else RelocKind.VALUE
-                    writer.add_expression_relocation(current_offset, value_node._deferred_expression, size_bytes, kind)
+        _relocate_operand(value_node, _OPERAND_BYTES.get(size, 3), operand)
 
         # Operands mask to the chosen width: `jsr.w label` drops the bank
         # byte (PB supplies it) and `lda.w #symbol` loads the low word of
@@ -246,7 +244,7 @@ class Opcode(OpcodeBase):
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         if value_node is None:
@@ -266,9 +264,9 @@ class Opcode(OpcodeBase):
 
     def value_size(
         self,
-        value_node: "ValueNodeProtocol",
+        value_node: ValueNodeProtocol,
         size: ValueSize | None,
-        resolver: "Resolver | None",
+        resolver: Resolver | None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> ValueSize:
         """`guess_value_size`, except where an opcode has a single form.
@@ -336,9 +334,9 @@ class TransferOpcode(Opcode):
 
     def value_size(
         self,
-        value_node: "ValueNodeProtocol",
+        value_node: ValueNodeProtocol,
         size: ValueSize | None,
-        resolver: "Resolver | None",
+        resolver: Resolver | None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> ValueSize:
         inferred = super().value_size(value_node, size, resolver, operand)
@@ -378,7 +376,7 @@ class LongOpcode(Opcode):
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         return super().supposed_length(value_node, "l", resolver, operand)
@@ -438,7 +436,7 @@ class BlockMoveOpcode(OpcodeBase):
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         return 3
