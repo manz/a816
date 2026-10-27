@@ -52,13 +52,13 @@ NO_OPERAND_CONTEXT = OperandContext()
 class ValueNodeProtocol(Protocol):
     """Protocol for nodes that represent values (numbers, expressions)."""
 
-    def get_value(self, operand: "OperandContext" = NO_OPERAND_CONTEXT) -> int:
+    def get_value(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
         """Returns the value of the node as an int."""
 
-    def get_value_string_len(self, operand: "OperandContext" = NO_OPERAND_CONTEXT) -> int:
+    def get_value_string_len(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
         """Returns the length in bytes of the value."""
 
-    def get_operand_size(self, operand: "OperandContext" = NO_OPERAND_CONTEXT) -> Literal["b", "w", "l"]:
+    def get_operand_size(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> Literal["b", "w", "l"]:
         """Returns the operand size as b w l.
 
         Default implementation based on value string length:
@@ -105,7 +105,7 @@ class OpcodeProtocol(Protocol):
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         """Return the expected byte length of this opcode."""
@@ -142,7 +142,7 @@ class OpcodeBase:
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
         operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         raise NotImplementedError
