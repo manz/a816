@@ -74,7 +74,9 @@
   name beside a local label of the same last part (`Foo.loop` beside a
   local `loop`), and a quoted string in an `.assert` that matched a label
   name. An alias defined through itself is an error (E0202) instead of
-  an unresolved name at link.
+  an unresolved name at link. A macro argument passed on to an inner
+  macro is written to the object once; it used to appear twice in the
+  `.adbg` symbols.
 - The linker no longer reads a name no module exports from another
   module's private label of the same name (`_loop`): it is unresolved,
   as written.

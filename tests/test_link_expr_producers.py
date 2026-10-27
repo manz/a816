@@ -132,3 +132,16 @@ def test_a_macro_argument_naming_a_known_label_is_an_alias(tmp_path: Path) -> No
     program.assemble_as_object(str(source_file), tmp_path / "m.o")
 
     assert [str(e) for e in _relocations(ObjectFile.from_file(str(tmp_path / "m.o")))] == ["here + 1"]
+
+
+def test_a_nested_macro_argument_is_published_once(tmp_path: Path) -> None:
+    """The inner call registers its argument on two passes; the object
+    carries the alias once."""
+    source = (
+        ".pool st { range 0x7e2000 0x7e2fff bss }\n.reserve buf 0x40 in st\n"
+        ".macro m(a) {\n    lda.w #(a & 0xFFFF)\n}\n.macro o(a) {\n    m(a)\n}\n"
+        ".pool code { range 0x8000 0x8fff }\n.alloc f in code {\n    o(buf)\n}\n"
+    )
+    names = [name for name, _expression in _object(tmp_path, source).aliases]
+
+    assert len(names) == len(set(names))
