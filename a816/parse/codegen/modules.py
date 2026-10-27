@@ -118,7 +118,6 @@ def _decode_import_view(path: str, _mtime_ns: int, _size: int) -> _ImportView:
 
 
 def _import_from_object(
-    module_name: str,
     obj_path: Path,
     resolver: Resolver,
     file_info: Token,
@@ -651,7 +650,7 @@ def _resolve_import(
         return _paired_object_and_source_import(module_name, obj_path, src_path, resolver, macro_definitions, file_info)
 
     if obj_path:
-        nodes = _import_from_object(module_name, obj_path, resolver, file_info)
+        nodes = _import_from_object(obj_path, resolver, file_info)
         if nodes is not None:
             return nodes
 
@@ -679,7 +678,7 @@ def _paired_object_and_source_import(
     if _is_imported(src_path, resolver, module_name):
         return []
     _mark_imported(src_path, resolver)
-    extern_nodes = _import_from_object(module_name, obj_path, resolver, file_info) or []
+    extern_nodes = _import_from_object(obj_path, resolver, file_info) or []
     inline_nodes = _import_from_source(src_path, resolver, macro_definitions, module_name) or []
     return extern_nodes + inline_nodes
 

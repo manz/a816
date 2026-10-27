@@ -155,7 +155,7 @@ class AssembleMixin:
             text = "" if parsed is not None else Path(asm_file).read_text(encoding="utf-8")
             self.compile_text(text, asm_file, object_writer, parsed)
         except AssemblyError as e:
-            self.logger.error(str(e))
+            self.logger.error(str(e))  # NOSONAR python:S8572 - a parse error is a diagnostic, not a crash
             return -1
         except NodeError as e:
             logger.error(str(e))  # NOSONAR python:S8572

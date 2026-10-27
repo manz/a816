@@ -20,13 +20,15 @@ def test_compile_source_builds_an_object_in_memory() -> None:
 
 
 def test_compile_source_raises_on_a_parse_error() -> None:
+    program = Program()
     with pytest.raises(AssemblyError):
-        Program().compile_source("*=0x038000\n.db (\n")
+        program.compile_source("*=0x038000\n.db (\n")
 
 
 def test_compile_source_raises_located_codegen_errors() -> None:
+    program = Program()
     with pytest.raises(NodeError):
-        Program().compile_source("*=0x038000\nlda.l missing\n")
+        program.compile_source("*=0x038000\nlda.l missing\n")
 
 
 def test_a_build_entry_can_be_a_string(tmp_path: Path) -> None:
