@@ -1,28 +1,23 @@
 """AssembleMixin: parse + resolve + emit pipeline entry points.
 
-Top-level methods invoked by the CLI (`a816 ...`) and the build pipeline
-(`module_builder.build_with_imports*`). Each method opens a temporary
-assembly mode (DIRECT / OBJECT) on the resolver context, invokes the
-parser + resolver passes, and routes byte output through the right
-writer.
+Compiles a translation unit to an object file: the only way source becomes
+bytes. Invoked by the CLI (`a816 ...`) and the build pipeline
+(`module_builder.build_with_imports*`), which link the objects.
 """
 
 from __future__ import annotations
 
 import logging
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from a816.context import AssemblyMode
 from a816.cpu.arch import arch_for_path, using_arch
-from a816.cpu.cpu_65c816 import RomType
-from a816.exceptions import AssemblyError, LinkAssertError, SymbolNotDefined
 from a816.object_file import SymbolSection, SymbolType
 from a816.parse.mzparser import A816Parser, ParserResult
 from a816.parse.nodes import NodeError
 from a816.protocols import NodeProtocol
-from a816.writers import IPSWriter, ObjectWriter, OverlapError, SFCWriter, WriteAuditor, Writer
+from a816.writers import ObjectWriter
 
 if TYPE_CHECKING:
     from a816.symbols import Resolver
@@ -51,145 +46,9 @@ class AssembleMixin:
         logger: logging.Logger
         parser: A816Parser
         dump_symbols: bool
-        _program_nodes: list[NodeProtocol]
 
-        def _mark_import_winners(self, program_nodes: list[NodeProtocol]) -> None: ...
         def resolve_labels(self, program_nodes: list[NodeProtocol]) -> None: ...
-        def emit(self, program: list[NodeProtocol], writer: Writer) -> None: ...
         def emit_with_relocations(self, program: list[NodeProtocol], object_writer: ObjectWriter) -> None: ...
-        def _flush_emit_trace(self, output_path: Path) -> None: ...
-
-    def assemble_string_with_emitter(self, input_program: str, filename: str, emitter: Writer) -> None:
-        """Assemble `input_program` to `emitter`.
-
-        Raises:
-          AssemblyError: parser-level failure (wraps the formatted location
-            string the parser produces).
-          NodeError: codegen-level failure (location-aware; subclass of
-            A816Error so a single `except A816Error` catches both).
-        """
-        error, nodes = self.parser.parse(input_program, filename)
-
-        if error is not None:
-            raise AssemblyError(error)
-
-        self._mark_import_winners(nodes)
-        self.logger.debug("Resolving labels")
-        self.resolve_labels(nodes)
-        self._check_direct_asserts()
-
-        if self.dump_symbols:
-            self.resolver.dump_symbol_map()
-
-        # Stash the resolved node list so the .adbg producer can introspect
-        # LinkedModuleNode placements after emission.
-        self._program_nodes = list(nodes)
-        self.emit(nodes, self._wrap_emitter_for_overlap_audit(emitter))
-
-    def _check_direct_asserts(self) -> None:
-        """Evaluate a direct build's `.assert`s once labels are final; report
-        every failure at once, as the linker does (E0407)."""
-        from a816.parse.ast.expression import eval_expression_str
-
-        failures: list[tuple[str, str, str]] = []
-        resolver = self.resolver
-        restore = resolver.current_scope
-        for check, scope in resolver.direct_asserts:
-            resolver.current_scope = scope
-            try:
-                holds = bool(eval_expression_str(str(check.expression), resolver))
-            except SymbolNotDefined as e:
-                failures.append((f"{check.message} (`{e}` is not defined)", check.text, check.source))
-                continue
-            if not holds:
-                failures.append((check.message, check.text, check.source))
-        resolver.current_scope = restore
-        if failures:
-            raise LinkAssertError(failures)
-
-    def _wrap_emitter_for_overlap_audit(self, emitter: Writer) -> Writer:
-        """Auto-wrap SFC / IPS emitters so overlapping writes get reported.
-
-        `ObjectWriter` is left untouched — it tracks sections in a richer
-        structure and the linker has its own overlap pass.
-        """
-        mode = self.resolver.context.overlap_mode
-        if mode == "off" or isinstance(emitter, ObjectWriter):
-            return emitter
-        return WriteAuditor(emitter, mode=mode)  # type: ignore[arg-type]
-
-    def assemble_with_emitter(self, asm_file: str, emitter: Writer) -> int:
-        """CLI-facing wrapper around `assemble_string_with_emitter`.
-
-        Always returns an exit code; never calls `sys.exit`. Embedders that
-        want structured failures should call `assemble_string_with_emitter`
-        directly and catch `A816Error`.
-
-        Returns:
-          0   on success
-          128 on `A816Error` (covers both `AssemblyError` and `NodeError`)
-          -1  on `RuntimeError` (an internal assembler invariant broke)
-        """
-        warnings.warn(
-            "Direct assembly mode is deprecated; the build path is object "
-            "compilation + linking (`assemble_as_object` / `build_with_imports`). "
-            "New features land in object mode only.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        previous_mode = self.resolver.context.mode
-        try:
-            self.resolver.context.mode = AssemblyMode.DIRECT
-
-            with open(asm_file, encoding="utf-8") as f:
-                input_program = f.read()
-                try:
-                    self.assemble_string_with_emitter(input_program, asm_file, emitter)
-                except AssemblyError as e:
-                    # Parser failure: the message already carries source
-                    # location + caret + hint. A Python traceback would
-                    # bury that under irrelevant frames for a CLI user, so
-                    # `logger.error` (not `logger.exception`) is intentional.
-                    logger.error(str(e))  # NOSONAR python:S8572
-                    return 128
-                except NodeError as e:
-                    # NodeError already carries source location + hint;
-                    # surface that as the user-facing line, keep the
-                    # traceback at debug for postmortem.
-                    logger.error(str(e))  # NOSONAR python:S8572
-                    logger.debug("Codegen failure traceback", exc_info=True)
-                    return 128
-                except LinkAssertError as e:
-                    logger.error(e.format())  # NOSONAR python:S8572
-                    return 128
-                except OverlapError as e:
-                    # Section-overlap = hard error since the default flip
-                    # to `overlap_mode="error"`. Message names both
-                    # sections + bytes; no traceback needed.
-                    logger.error(str(e))  # NOSONAR python:S8572
-                    return 128
-
-        except RuntimeError as e:
-            _log_internal_failure(e)
-            return -1
-        finally:
-            self.resolver.context.mode = previous_mode
-
-        self.logger.debug("Success !")
-        return 0
-
-    def assemble(self, asm_file: str, sfc_file: Path) -> int:
-        """
-        Compile asmfile to a SFC ROM.
-        :param asm_file:
-        :param sfc_file:
-        :return: error code
-        """
-        with open(sfc_file, "wb") as f:
-            sfc_emitter = SFCWriter(f)
-            exit_code = self.assemble_with_emitter(asm_file, sfc_emitter)
-        self._flush_emit_trace(sfc_file)
-        return exit_code
 
     def assemble_as_object(self, asm_file: str, output_file: Path, parsed: ParserResult | None = None) -> int:
         """
@@ -301,7 +160,6 @@ class AssembleMixin:
                     self.logger.error(error)
                     return -1
 
-                self._mark_import_winners(nodes)
                 self.logger.debug("Resolving labels")
                 self.resolve_labels(nodes)
                 self._export_object_symbols(object_writer)
@@ -323,28 +181,3 @@ class AssembleMixin:
 
         self.logger.debug("Success !")
         return 0
-
-    def assemble_as_patch(
-        self,
-        asm_file: str,
-        ips_file: Path,
-        mapping: str | None = None,
-        copier_header: bool = False,
-    ) -> int:
-        if mapping is not None:
-            address_mapping = {
-                "low": RomType.low_rom,
-                "low2": RomType.low_rom_2,
-                "high": RomType.high_rom,
-            }
-            self.resolver.rom_type = address_mapping[mapping]
-
-        if self.dump_symbols:
-            self.resolver.dump_symbol_map()
-        with open(ips_file, "wb") as f:
-            ips_emitter = IPSWriter(f, copier_header)
-            ips_emitter.begin()
-            exit_code = self.assemble_with_emitter(asm_file, ips_emitter)
-            ips_emitter.end()
-        self._flush_emit_trace(ips_file)
-        return exit_code

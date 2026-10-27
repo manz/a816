@@ -705,7 +705,6 @@ def build_with_imports(
 
         program = Program(overlap_mode=overlap_mode)
         apply_experimental_flags(program, experimental)
-        program.enable_debug_capture()
 
         outputs = [(output_format, output_file)] + [(fmt, Path(path)) for fmt, path in extra_outputs or []]
         unknown = [fmt for fmt, _ in outputs if fmt not in OUTPUT_FORMATS]

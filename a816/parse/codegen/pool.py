@@ -617,9 +617,9 @@ def generate_assert(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    """Queue a `.assert` until every address is final: for the linker in
-    object mode, for the end of label resolution in a direct build. It may
-    name pooled labels, which only have their address after placement.
+    """Queue a `.assert` for the linker, which checks it once every address
+    is final. It may name pooled labels, which only have their address
+    after placement.
     Parse-only runs (LSP) skip it. Its names resolve in the scope it is
     written in, so an `.alloc` body's `.assert` sees the body's `_` labels."""
     from a816.object_file import LinkAssert
@@ -634,8 +634,6 @@ def generate_assert(
     if resolver.context.is_object_mode and resolver.context.object_writer is not None:
         resolver.context.object_writer.asserts.append(check)
         return [AssertNode(check, resolver)]
-    if resolver.context.is_direct_mode:
-        resolver.direct_asserts.append((check, resolver.current_scope))
     return []
 
 

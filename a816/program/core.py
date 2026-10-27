@@ -10,24 +10,19 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
 
 from a816.error_codes import E_CODEGEN_POOL_OVERFLOW
 from a816.exceptions import UnmappedBankError
 from a816.object_file import ObjectFile
 from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import (
-    AllocNode,
     BinaryNode,
     LabelNode,
-    LinkedModuleNode,
     SymbolNode,
 )
 from a816.parse.nodes.errors import NodeError, node_file_info, unmapped_bank_error
 from a816.pool import PoolOverflowError
 from a816.program.assemble import AssembleMixin
-from a816.program.debug import DebugMixin
-from a816.program.emit import EmitMixin
 from a816.program.link import LinkMixin
 from a816.program.object_emit import ObjectEmitMixin
 from a816.protocols import NodeProtocol
@@ -39,7 +34,7 @@ logger = logging.getLogger("a816")
 _UNKNOWN_SRC = "<unknown>"
 
 
-class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
+class Program(ObjectEmitMixin, AssembleMixin, LinkMixin):
     """Main assembler program orchestrating parsing, symbol resolution, and code emission.
 
     The Program class is the central entry point for assembling 65c816 code. It manages:
@@ -50,9 +45,9 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
 
     Example:
         >>> program = Program()
-        >>> result = program.assemble_as_patch("source.s", Path("output.ips"))
+        >>> result = program.assemble_as_object("source.s", Path("source.o"))
         >>> if result == 0:
-        ...     print("Assembly successful")
+        ...     print("Compiled")
     """
 
     def __init__(
@@ -66,7 +61,7 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         Args:
             parser: Optional custom parser instance. If None, creates a default A816Parser.
             dump_symbols: If True, prints the symbol table after assembly.
-            overlap_mode: How the WriteAuditor reacts to overlapping byte
+            overlap_mode: How the link reacts to overlapping byte
                 writes. `None` (default) keeps the context default
                 (`error` since 2026-05). Pass `"warn"` or `"off"` to
                 override for legacy ROMs mid-migration.
@@ -77,11 +72,6 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         self.logger = logging.getLogger("a816")
         self.dump_symbols = dump_symbols
         self.parser = parser or A816Parser(self.resolver)
-        self._debug_capture: bool = False
-        # (address, filename, line, column) recorded during emit() when capture is on.
-        self._debug_lines: list[tuple[int, str, int, int]] = []
-        self._linked_modules: list[Any] = []  # list[LinkedModuleNode]; typed loosely to avoid cycle
-        self._program_nodes: list[NodeProtocol] = []
         # (snes_logical, physical, size, src) appended when A816_EMIT_TRACE=1.
         self._emit_trace: list[tuple[int, int, int, str]] = []
 
@@ -132,42 +122,6 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
         self.resolver.pc = 0x000000
         self.resolver.last_used_scope = 0
         self.resolver.current_scope = self.resolver.scopes[0]
-
-    @staticmethod
-    def _mark_import_winners(program_nodes: list[NodeProtocol]) -> None:
-        """Tag every duplicate `.import "foo"` LinkedModuleNode except the
-        last as `is_loser=True`.
-
-        `.import` is idempotent across the program: a module may appear
-        in an `.include`'d patch file as well as the main source for
-        symbol-visibility reasons. Only the last occurrence emits bytes
-        and consumes PC space; earlier ones still bind symbols (for
-        scope visibility in the surrounding source) but otherwise are
-        no-ops in both `pc_after` and `emit`. Marking happens before
-        `resolve_labels` so the winner/loser distinction is consistent
-        across the address-resolution and emission passes.
-
-        Walks into `AllocNode.body` so a `.import` nested inside a
-        `.alloc` block participates in the same dedup as top-level
-        imports — otherwise the same module emits twice (once at the
-        surrounding org pointer, once at the allocator-chosen address).
-        """
-        winners: dict[str, LinkedModuleNode] = {}
-        all_nodes: list[LinkedModuleNode] = []
-        Program._collect_linked_modules(program_nodes, all_nodes)
-        # Last-occurrence wins, matching the historical top-level rule.
-        for node in all_nodes:
-            winners[node.module_name] = node
-        for node in all_nodes:
-            node.is_loser = winners[node.module_name] is not node
-
-    @staticmethod
-    def _collect_linked_modules(nodes: list[NodeProtocol], out: list[LinkedModuleNode]) -> None:
-        for node in nodes:
-            if isinstance(node, LinkedModuleNode):
-                out.append(node)
-            elif isinstance(node, AllocNode):
-                Program._collect_linked_modules(node.body, out)
 
     def resolve_labels(self, program_nodes: list[NodeProtocol]) -> None:
         """Resolve all labels and symbols through multi-pass processing.
@@ -244,10 +198,6 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
     def _emit_trace_enabled() -> bool:
         return os.environ.get("A816_EMIT_TRACE") == "1"
 
-    def _trace_block(self, snes: int, phys: int, size: int, src: str = _UNKNOWN_SRC) -> None:
-        if self._emit_trace_enabled():
-            self._emit_trace.append((snes, phys, size, src))
-
     def _flush_emit_trace(self, output_path: Path) -> None:
         """Write any accumulated emit-trace records next to output_path."""
         if not self._emit_trace_enabled():
@@ -293,21 +243,6 @@ class Program(EmitMixin, ObjectEmitMixin, AssembleMixin, DebugMixin, LinkMixin):
             position.column,
             coalesce=getattr(node, "coalesce_lines", False),
         )
-
-    def _record_debug_line(self, node: NodeProtocol, address: int) -> None:
-        """If debug capture is on, record one line entry for the node."""
-        if not getattr(self, "_debug_capture", False):
-            return
-        info = getattr(node, "file_info", None)
-        if info is None:
-            return
-        position = getattr(info, "position", None)
-        if position is None or position.file is None:
-            return
-        entry = (address, position.file.filename, position.line, position.column)
-        if getattr(node, "coalesce_lines", False) and self._debug_lines and self._debug_lines[-1][1:] == entry[1:]:
-            return
-        self._debug_lines.append(entry)
 
     def exports_symbol_file(self, filename: str) -> None:
         """

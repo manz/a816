@@ -62,9 +62,9 @@ class AllocNode(NodeBase):
         self._alloc: Allocation | None = None
         self._size: int = 0
         # Only set in object mode (`_request_slot`). Stays `None` in
-        # direct mode where the alloc body emits at the allocator's
-        # chosen address directly. Object-emit reads it; reading in
-        # any other path is a bug, so keep the optional shape loud.
+        # PARSE mode, where the allocator picks the address locally.
+        # Object-emit reads it; reading in any other path is a bug, so
+        # keep the optional shape loud.
         self._sandbox_base: int | None = None
 
     def _sandbox_pc(self) -> Address:
@@ -290,9 +290,6 @@ class AllocNode(NodeBase):
         alloc = self._alloc
         if alloc is None or not alloc.placed:
             return []
-        # Lazy import to avoid the import cycle through codegen.
-        from a816.parse.nodes.module import LinkedModuleNode
-
         attributed: list[tuple[NodeProtocol, int, bytes]] = []
         saved_pc = self.resolver.pc
         saved_reloc = self.resolver.reloc_address
@@ -303,14 +300,6 @@ class AllocNode(NodeBase):
             self.resolver.set_position(alloc.addr)
             cur = self.resolver.reloc_address
             for node in self.body:
-                # Skip loser `.import` duplicates inside the body - their
-                # pc_after returned unchanged so subsequent siblings are
-                # already laid out at the right offsets, and emitting the
-                # loser bytes would both double-emit and overlap the
-                # winner's placement. Mirrors the top-level
-                # `_emit_linked_module` is_loser guard.
-                if isinstance(node, LinkedModuleNode) and node.is_loser:
-                    continue
                 pre_emit_addr = cur.logical_value
                 emitted = node.emit(cur)
                 if emitted:
