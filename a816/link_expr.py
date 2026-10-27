@@ -127,11 +127,11 @@ class LinkExpr:
         for node in _ordered(expr_to_ast(text)):
             token = node.token
             if type(node) is UnaryOp:
-                ops.append(ExprOp(_UNARY[token.value]))
+                ops.append(unary_op(token.value))
             elif type(node) is BinOp:
-                ops.append(ExprOp(_BINARY[token.value]))
+                ops.append(binary_op(token.value))
             elif type(node) is Term:
-                ops.append(_term_op(token))
+                ops.append(term_op(token))
             else:
                 raise ValueError(f"`{node.to_canonical()}` cannot appear in a link-time expression")
         return cls(tuple(ops))
@@ -209,7 +209,19 @@ class LinkExpr:
         return text[1:-1] if _wrapped(text) else text
 
 
-def _term_op(token: Token) -> ExprOp:
+def unary_op(operator: str) -> ExprOp:
+    return ExprOp(_UNARY[operator])
+
+
+def binary_op(operator: str) -> ExprOp:
+    return ExprOp(_BINARY[operator])
+
+
+def constant(value: int) -> LinkExpr:
+    return LinkExpr((ExprOp(ExprOpCode.CONST, value),))
+
+
+def term_op(token: Token) -> ExprOp:
     """The op of a number, a string or a name; any other token is refused."""
     from a816.parse.ast.expression import eval_number
     from a816.parse.tokens import TokenType

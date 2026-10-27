@@ -1,5 +1,4 @@
 import ctypes
-import re
 from collections.abc import Callable, Sequence
 
 from a816.error_codes import (
@@ -8,9 +7,11 @@ from a816.error_codes import (
     E_CODEGEN_NOT_TOO_WIDE,
     E_CODEGEN_TYPED_BIND_NON_INT,
     E_SYMBOL_NOT_A_VALUE,
+    E_SYMBOL_UNRESOLVABLE_EXPRESSION,
     ErrorCode,
 )
 from a816.exceptions import A816Error, ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
+from a816.link_expr import ExprOp, LinkExpr, binary_op, constant, symbol, term_op, unary_op
 from a816.parse.ast.nodes import (
     BinOp,
     BlockAstNode,
@@ -306,15 +307,10 @@ def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | 
     if resolver.context.is_object_mode:
         external_symbols = _collect_external_symbols(ordered, resolver)
         if external_symbols:
-            # Reconstruct + inline aliases so the relocation references real
-            # externs (macro-arg bindings otherwise leak into the object file).
-            # Inlining an alias like `OFF = lbl - base` surfaces the bare local
-            # labels; canonicalize them to their exported `__sc<idx>__` form so
-            # the relocation matches the linker's symbol map instead of folding
-            # to 0 against unknown bare names.
-            expression_str = _inline_aliases(reconstruct_expression(expression, resolver), resolver)
-            expression_str = canonicalize_local_label_refs(expression_str, resolver)
-            raise ExternalExpressionReference(expression_str, external_symbols)
+            # Aliases inline (a macro argument's name means nothing outside
+            # the call) and labels take their exported names, so the linker
+            # finds every name the relocation reads.
+            raise ExternalExpressionReference(link_expression(expression, resolver), external_symbols)
 
     return _fold_rpn(ordered, lambda current, stack: _push_term(current, resolver, stack))
 
@@ -355,40 +351,99 @@ def eval_constant_expression(expr_str: str) -> int:
     return int(_fold_rpn(ordered, _push_number))
 
 
-_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+def link_expression(expression: ExpressionAstNode, resolver: Resolver) -> LinkExpr:
+    """The expression as the linker evaluates it: casts lowered to
+    arithmetic, sizes folded, aliases inlined, and every other name in the
+    form the object exports it (see `link_name`)."""
+    try:
+        return resolve_link_names(lower_expression(expression, resolver), resolver)
+    except ExprEvalError as error:
+        raise _located(error, expression.tokens[0].token) from error
 
 
-def canonicalize_local_label_refs(expression_str: str, resolver: Resolver) -> str:
-    """Rewrite local-label identifiers in `expression_str` to their
-    EXPORTED form so an alias written into an `.o` (or a relocation
-    expression) survives the linker's symbol-map lookup. Mirrors
-    `ExpressionNode._compute_local_label_renames`: NamedScope members
-    become `Name.label`; anon nested scopes get `__sc<idx>__name`.
-
-    Use this anywhere an alias RHS is constructed from source text -
-    `_register_alias`, macro-arg extern bindings, etc. - so the bare
-    label name (`jt_label`) never reaches the object file with no
-    matching export. A constant of a nested scope (an `.alloc` body's
-    `_CELLS := 15`) folds to its value: it never reaches the linker."""
-
-    def replace(match: re.Match[str]) -> str:
-        name = match.group(0)
-        constant = _nested_constant(name, resolver)
-        return str(constant) if constant is not None else resolver.exported_label_name(name)
-
-    return _IDENT_RE.sub(replace, expression_str)
+def lower_expression(expression: ExpressionAstNode, resolver: Resolver) -> LinkExpr:
+    """The expression's ops with its names as written. A cast becomes its
+    base plus the field offset; `sizeof` / `countof` a constant, or the
+    `NAME.__size` symbol of an imported reservation."""
+    return LinkExpr(tuple(_lowered_ops(_ordered(expression), resolver)))
 
 
-def fold_nested_constants(expression_str: str, resolver: Resolver) -> str:
-    """Replace each constant of a scope below the module root (an `.alloc`
-    body's `_CELLS`, a `.for` variable) with its value, so an expression
-    sent to the linker names no symbol only this scope knows."""
+def _lowered_ops(ordered: Sequence[ExprNode], resolver: Resolver) -> list[ExprOp]:
+    ops: list[ExprOp] = []
+    for node in ordered:
+        if isinstance(node, UnaryOp):
+            ops.append(unary_op(node.token.value))
+        elif isinstance(node, BinOp):
+            ops.append(binary_op(node.token.value))
+        elif isinstance(node, SizeofExprNode):
+            ops.extend(_lowered_size(node, resolver).ops)
+        elif isinstance(node, CastAccessExprNode | CastValueExprNode):
+            ops.extend(_lowered_ops(_ordered(ExpressionAstNode(list(node.inner))), resolver))
+            if isinstance(node, CastAccessExprNode):
+                ops.extend((*constant(_field_offset(node, resolver)).ops, binary_op("+")))
+        else:
+            ops.append(term_op(node.token))
+    return ops
 
-    def replace(match: re.Match[str]) -> str:
-        constant = _nested_constant(match.group(0), resolver)
-        return str(constant) if constant is not None else match.group(0)
 
-    return _IDENT_RE.sub(replace, expression_str)
+def _lowered_size(node: SizeofExprNode, resolver: Resolver) -> LinkExpr:
+    from a816.parse.ast.size_of import size_of
+
+    size = size_of(node, resolver)
+    if isinstance(size, str):
+        size = _known_size(size, resolver)
+    return constant(size) if isinstance(size, int) else symbol(size)
+
+
+def resolve_link_names(expression: LinkExpr, resolver: Resolver) -> LinkExpr:
+    """`expression` with each name replaced by what the linker should read
+    for it, in the current scope (see `link_name`)."""
+    return expression.substitute({name: link_name(name, resolver) for name in expression.names()})
+
+
+def link_name(name: str, resolver: Resolver) -> LinkExpr:
+    """What the linker reads for `name` written in the current scope: an
+    alias's expression; a constant of a scope below the module root (an
+    `.alloc` body's `_CELLS`, a `.for` variable) as its value, since no
+    object exports it; a label under the name its object exports it
+    (`Resolver.exported_label_name`); any other name as written."""
+    alias = _alias(name, resolver)
+    if alias is not None:
+        return _inlined_alias(name, alias, resolver, ())
+    value = _nested_constant(name, resolver)
+    if value is not None:
+        return constant(value)
+    return symbol(resolver.exported_label_name(name))
+
+
+def _alias(name: str, resolver: Resolver) -> LinkExpr | None:
+    alias = resolver.current_scope.lookup_alias(name)
+    return None if alias is None or alias == symbol(name) else alias
+
+
+def _inlined_alias(name: str, alias: LinkExpr, resolver: Resolver, inlining: tuple[str, ...]) -> LinkExpr:
+    """An alias's expression with the aliases it names inlined. Its other
+    names were resolved where the alias was defined, so they stay."""
+    if name in inlining:
+        cycle = " -> ".join((*inlining, name))
+        raise ExprEvalError(f"alias `{name}` is defined through itself: {cycle}", E_SYMBOL_UNRESOLVABLE_EXPRESSION)
+    nested = {inner: _alias(inner, resolver) for inner in alias.names()}
+    return alias.substitute(
+        {
+            inner: _inlined_alias(inner, expression, resolver, (*inlining, name))
+            for inner, expression in nested.items()
+            if expression is not None
+        }
+    )
+
+
+def deferred_link_expression(
+    error: ExternalExpressionReference | ExternalSymbolReference, resolver: Resolver
+) -> LinkExpr:
+    """The link-time expression an evaluation that met an extern defers to."""
+    if isinstance(error, ExternalExpressionReference):
+        return error.expression
+    return resolve_link_names(symbol(error.symbol_name), resolver)
 
 
 def _nested_constant(name: str, resolver: Resolver) -> int | None:
@@ -403,26 +458,6 @@ def _nested_constant(name: str, resolver: Resolver) -> int | None:
             return value if isinstance(value, int) else None
         scope = scope.parent
     return None
-
-
-def _inline_aliases(expression_str: str, resolver: Resolver, depth: int = 0) -> str:
-    """Replace alias names in ``expression_str`` with their underlying expressions.
-
-    Macro-arg aliases bind a name to an expression that references real
-    externs; inlining keeps the relocation expression independent of the
-    transient scope where the alias lived.
-    """
-    if depth > 16:
-        return expression_str  # bail on suspected cycle
-
-    def replace(match: re.Match[str]) -> str:
-        token = match.group(0)
-        alias_expr = resolver.current_scope.lookup_alias(token)
-        if alias_expr is None or alias_expr == token:
-            return token
-        return "(" + _inline_aliases(alias_expr, resolver, depth + 1) + ")"
-
-    return _IDENT_RE.sub(replace, expression_str)
 
 
 def identifier_tokens(terms: Sequence[ExprNode]) -> list[Token]:
@@ -447,14 +482,14 @@ def reconstruct_expression(expression: ExpressionAstNode, resolver: Resolver | N
     return " ".join(_render_term(node, resolver) for node in expression.tokens)
 
 
-def _known_size(symbol: str, resolver: Resolver) -> int | str:
+def _known_size(name: str, resolver: Resolver) -> int | str:
     """A `NAME.__size` already measured in this module renders as its number;
     an imported one stays a symbol for the linker."""
     try:
-        value = resolver.current_scope.value_for(symbol)
+        value = resolver.current_scope.value_for(name)
     except (SymbolNotDefined, ExternalSymbolReference):
-        return symbol
-    return value if isinstance(value, int) else symbol
+        return name
+    return value if isinstance(value, int) else name
 
 
 def _render_term(node: ExprNode, resolver: Resolver | None) -> str:

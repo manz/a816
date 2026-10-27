@@ -8,7 +8,6 @@ from a816.link_expr import ExprRelocation, LinkExpr, RelocKind
 from a816.object_file import (
     BusMapping,
     LinkAssert,
-    ObjectAssert,
     ObjectFile,
     PathNameRecord,
     PoolAlloc,
@@ -238,7 +237,7 @@ class ObjectWriter(Writer):
         self.output_file = output_file
         self.sections: list[Section] = []
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
-        self.aliases: list[tuple[str, str]] = []
+        self.aliases: list[tuple[str, LinkExpr]] = []
         self.files: list[str] = []
         self._file_index: dict[str, int] = {}
         self.pool_decls: list[PoolDecl] = []  # populated by generate_pool
@@ -362,11 +361,13 @@ class ObjectWriter(Writer):
         expr = LinkExpr.parse(expression) if isinstance(expression, str) else expression
         self._ensure_section().expression_relocations.append(ExprRelocation(offset, size_bytes, kind, expr))
 
-    def add_alias(self, name: str, expression: str) -> None:
+    def add_alias(self, name: str, expression: LinkExpr | str) -> None:
         """Record a link-time alias once: codegen may register one early and
-        its symbol node registers it again while resolving."""
-        if (name, expression) not in self.aliases:
-            self.aliases.append((name, expression))
+        its symbol node registers it again while resolving. A string is
+        parsed as the assembler's expression syntax."""
+        expr = LinkExpr.parse(expression) if isinstance(expression, str) else expression
+        if (name, expr) not in self.aliases:
+            self.aliases.append((name, expr))
 
     def end(self) -> None:
         # Strip a trailing empty section (e.g. trailing `*=` with no code),
@@ -377,15 +378,13 @@ class ObjectWriter(Writer):
         obj_file = ObjectFile(
             self.sections,
             self.symbols,
-            aliases=[(name, LinkExpr.parse(expression)) for name, expression in self.aliases],
+            aliases=list(self.aliases),
             files=self.files,
             relocatable=relocatable,
             pool_decls=list(self.pool_decls),
             pool_allocs=list(self.pool_allocs),
             bus_mappings=list(self.bus_mappings),
-            asserts=[
-                ObjectAssert(LinkExpr.parse(c.expression), c.message, c.source, c.expression) for c in self.asserts
-            ],
+            asserts=list(self.asserts),
             path_names=self.path_names,
             arch=current_arch.get(),
         )

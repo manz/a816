@@ -5,8 +5,9 @@ from __future__ import annotations
 from a816.cpu.mapping import Address
 from a816.error_codes import E_CODEGEN_BAD_LABEL_ADDRESS, E_SYMBOL_EXTERNAL_NOT_ALLOWED
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference
+from a816.link_expr import LinkExpr
 from a816.object_file import LinkAssert
-from a816.parse.ast.expression import canonicalize_local_label_refs, eval_expression
+from a816.parse.ast.expression import deferred_link_expression, eval_expression, link_expression, resolve_link_names
 from a816.parse.ast.nodes import BlockAstNode, ExpressionAstNode
 from a816.parse.nodes.errors import NodeError
 from a816.parse.tokens import Token
@@ -19,7 +20,7 @@ class AssertNode(NodeBase):
     scope is current again, it renames the labels it reads to their exported
     form, so an `.alloc` body's `_end` reaches the linker as the
     `__sc<idx>___end` the object exports. Labels defined after the assert
-    get their name on a later walk; emit settles the final text."""
+    get their name on a later walk; emit settles the final expression."""
 
     def __init__(self, check: LinkAssert, resolver: Resolver) -> None:
         self.check = check
@@ -27,7 +28,7 @@ class AssertNode(NodeBase):
         self.source_expression = check.expression
 
     def _rename(self) -> None:
-        self.check.expression = canonicalize_local_label_refs(self.source_expression, self.resolver)
+        self.check.expression = resolve_link_names(self.source_expression, self.resolver)
 
     def emit(self, current_addr: Address) -> bytes:
         self._rename()
@@ -128,18 +129,8 @@ class SymbolNode(NodeBase):
     def emit(self, current_addr: Address) -> bytes:
         return b""
 
-    def _register_alias(self, expr_str: str) -> None:
-        # Rewrite any local-label refs in `expr_str` to their EXPORTED
-        # names before the alias hits the `.o`. Without this, the
-        # linker's symbol_map (which holds exported names) can't resolve
-        # the alias RHS — e.g. `jump_table = jt_label` where `jt_label`
-        # lives inside an anon `{ }` block exports only as
-        # `__sc<N>__jt_label`. The alias would then surface as
-        # `UnresolvedSymbolError` at link time.
-        from a816.parse.ast.expression import canonicalize_local_label_refs
-
-        canonical = canonicalize_local_label_refs(expr_str, self.resolver)
-        self.resolver.register_external_alias(self.symbol_name, canonical)
+    def _register_alias(self, expression: LinkExpr) -> None:
+        self.resolver.register_external_alias(self.symbol_name, expression)
 
     def pc_after(self, current_pc: Address) -> Address:
         # SymbolNode emits no bytes; current_pc is returned unchanged. The
@@ -156,17 +147,13 @@ class SymbolNode(NodeBase):
                     getattr(self.expression, "file_info", None),
                     code=str(E_SYMBOL_EXTERNAL_NOT_ALLOWED),
                 ) from e
-            self._register_alias(e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str)
+            self._register_alias(deferred_link_expression(e, self.resolver))
         else:
             if self.resolver.context.is_object_mode and self._references_local_label():
                 # RHS hits a module-local CODE label. Register an alias so refs
                 # go through the relocation pipeline; baked value is
                 # module-base-relative.
-                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
-
-                self._register_alias(
-                    _inline_aliases(reconstruct_expression(self.expression, self.resolver), self.resolver)
-                )
+                self._register_alias(link_expression(self.expression, self.resolver))
             else:
                 self.resolver.current_scope.add_symbol(self.symbol_name, value)
         return current_pc

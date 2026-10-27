@@ -201,18 +201,12 @@ def generate_macro_application(
                 resolver.current_scope.add_symbol(arg, value)
             elif isinstance(value, ExpressionAstNode) and _expression_touches_local_label(value, resolver):
                 # The macro arg expression references a module-local CODE label.
-                # Bake it as an alias (text expression) so eval at emit time goes
+                # Bake it as an alias (link expression) so eval at emit time goes
                 # through the relocation pipeline and the value reflects the
                 # module's final placement, not the compile-time base.
-                from a816.parse.ast.expression import (
-                    _inline_aliases,
-                    canonicalize_local_label_refs,
-                    reconstruct_expression,
-                )
+                from a816.parse.ast.expression import link_expression
 
-                expr_str = _inline_aliases(reconstruct_expression(value, resolver), resolver)
-                expr_str = canonicalize_local_label_refs(expr_str, resolver)
-                resolver.current_scope.add_external_alias(arg, expr_str)
+                resolver.current_scope.add_external_alias(arg, link_expression(value, resolver))
             else:
                 resolver.current_scope.add_symbol(arg, eval_expression(value, resolver))
         except SymbolNotDefined:
@@ -225,8 +219,9 @@ def generate_macro_application(
             # name as an alias locally. Do NOT publish to the object writer:
             # the binding is invocation-local, and any extern relocations
             # generated inside the macro body inline the alias on the way out.
-            expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
-            resolver.current_scope.add_external_alias(arg, expr_str)
+            from a816.parse.ast.expression import deferred_link_expression
+
+            resolver.current_scope.add_external_alias(arg, deferred_link_expression(e, resolver))
     code += _code_gen(macro_code.body, resolver, macro_definitions)
     code.append(PopScopeNode(resolver))
     resolver.restore_scope()

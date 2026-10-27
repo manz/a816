@@ -9,7 +9,8 @@ from a816.error_codes import (
     E_SYMBOL_EXTERNAL_NOT_ALLOWED,
 )
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
-from a816.parse.ast.expression import canonicalize_local_label_refs, eval_expression, expr_to_ast
+from a816.link_expr import LinkExpr, binary_op, constant
+from a816.parse.ast.expression import deferred_link_expression, eval_expression, expr_to_ast
 from a816.parse.ast.nodes import (
     AssignAstNode,
     CastValueExprNode,
@@ -66,9 +67,7 @@ def _try_eager_register_alias(node: SymbolAffectationAstNode, resolver: Resolver
     try:
         eval_expression(node.value, resolver)
     except (ExternalExpressionReference, ExternalSymbolReference) as e:
-        expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
-        canonical = canonicalize_local_label_refs(expr_str, resolver)
-        resolver.register_external_alias(node.symbol, canonical)
+        resolver.register_external_alias(node.symbol, deferred_link_expression(e, resolver))
 
 
 def _try_eager_constant_bind(node: SymbolAffectationAstNode, resolver: Resolver) -> bool:
@@ -202,7 +201,7 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
     except (ExternalExpressionReference, ExternalSymbolReference) as e:
         if not resolver.context.is_object_mode:
             raise
-        _bind_extern_view(node.symbol, type_name, _external_expression(e, resolver), resolver)
+        _bind_extern_view(node.symbol, type_name, deferred_link_expression(e, resolver), resolver)
         return True
     if not isinstance(base, int):
         raise NodeError(
@@ -218,17 +217,13 @@ def _try_typed_bind(node: AssignAstNode, resolver: Resolver, file_info: Token) -
     return True
 
 
-def _external_expression(e: ExternalExpressionReference | ExternalSymbolReference, resolver: Resolver) -> str:
-    expr_str = e.symbol_name if isinstance(e, ExternalSymbolReference) else e.expression_str
-    return canonicalize_local_label_refs(expr_str, resolver)
-
-
-def _bind_extern_view(symbol: str, type_name: str, base: str, resolver: Resolver) -> None:
+def _bind_extern_view(symbol: str, type_name: str, base: LinkExpr, resolver: Resolver) -> None:
     """`view := (extern as T)`: alias the view and every field to link-time
     expressions over the extern base."""
     resolver.register_external_alias(symbol, base)
     for field_path, offset, _width in resolver.struct_layouts[type_name]:
-        resolver.register_external_alias(f"{symbol}.{field_path}", f"( {base} ) + {offset:#x}")
+        field = LinkExpr((*base.ops, *constant(offset).ops, binary_op("+")))
+        resolver.register_external_alias(f"{symbol}.{field_path}", field)
 
 
 def _address_width_for(value: int) -> str:
@@ -265,7 +260,7 @@ def generate_assign(
                 file_info,
                 code=str(E_SYMBOL_EXTERNAL_NOT_ALLOWED),
             ) from e
-        resolver.register_external_alias(node.symbol, _external_expression(e, resolver))
+        resolver.register_external_alias(node.symbol, deferred_link_expression(e, resolver))
 
     return []
 
