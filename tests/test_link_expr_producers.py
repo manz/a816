@@ -6,15 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from a816.exceptions import A816Error, ExternalSymbolReference
+from a816.exceptions import ExternalSymbolReference
 from a816.link_expr import ExprOpCode, LinkExpr, symbol
 from a816.object_file import ObjectFile
 from a816.parse.ast.expression import (
-    ExprEvalError,
     deferred_link_expression,
     expr_to_ast,
-    link_expression,
-    link_name,
 )
 from a816.parse.tokens import Token, TokenType
 from a816.program import Program
@@ -66,24 +63,15 @@ def test_a_macro_argument_reads_the_alias_it_shadows(tmp_path: Path) -> None:
     assert [str(e) for e in _relocations(obj)] == ["(ext + 1) + 1"]
 
 
-def _cyclic_resolver() -> Resolver:
-    resolver = Resolver()
-    resolver.current_scope.add_external_alias("a", LinkExpr.parse("b + 1"))
-    resolver.current_scope.add_external_alias("b", LinkExpr.parse("a + 1"))
-    return resolver
+def test_a_macro_parameter_does_not_capture_a_name_inside_an_alias(tmp_path: Path) -> None:
+    """`ptr` was defined over the module's `base`; a macro parameter named
+    `base` at the use does not change what `ptr` reads."""
+    source = (
+        ".extern ext\n.extern base\n.extern other\nptr = base + ext\n"
+        ".macro m(base) {\n    lda.l ptr\n}\n*=0x8000\n    m(other)\n"
+    )
 
-
-def test_an_alias_defined_through_itself_is_refused() -> None:
-    with pytest.raises(ExprEvalError, match=r"alias `a` is defined through itself: a -> b -> a"):
-        link_name("a", _cyclic_resolver())
-
-
-def test_a_cyclic_alias_in_an_operand_points_at_it() -> None:
-    expression = expr_to_ast("a + 2", "m.s")
-    resolver = _cyclic_resolver()
-
-    with pytest.raises(A816Error, match="defined through itself"):
-        link_expression(expression, resolver)
+    assert [str(e) for e in _relocations(_object(tmp_path, source))] == ["base + ext"]
 
 
 def test_a_macro_argument_naming_a_local_label_relocates(tmp_path: Path) -> None:

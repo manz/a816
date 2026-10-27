@@ -7,7 +7,6 @@ from a816.error_codes import (
     E_CODEGEN_NOT_TOO_WIDE,
     E_CODEGEN_TYPED_BIND_NON_INT,
     E_SYMBOL_NOT_A_VALUE,
-    E_SYMBOL_UNRESOLVABLE_EXPRESSION,
     ErrorCode,
 )
 from a816.exceptions import A816Error, ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
@@ -355,10 +354,7 @@ def link_expression(expression: ExpressionAstNode, resolver: Resolver) -> LinkEx
     """The expression as the linker evaluates it: casts lowered to
     arithmetic, sizes folded, aliases inlined, and every other name in the
     form the object exports it (see `link_name`)."""
-    try:
-        return resolve_link_names(lower_expression(expression, resolver), resolver)
-    except ExprEvalError as error:
-        raise _located(error, expression.tokens[0].token) from error
+    return resolve_link_names(lower_expression(expression, resolver), resolver)
 
 
 def lower_expression(expression: ExpressionAstNode, resolver: Resolver) -> LinkExpr:
@@ -403,38 +399,18 @@ def resolve_link_names(expression: LinkExpr, resolver: Resolver) -> LinkExpr:
 
 def link_name(name: str, resolver: Resolver) -> LinkExpr:
     """What the linker reads for `name` written in the current scope: an
-    alias's expression; a constant of a scope below the module root (an
-    `.alloc` body's `_CELLS`, a `.for` variable) as its value, since no
-    object exports it; a label under the name its object exports it
-    (`Resolver.exported_label_name`); any other name as written."""
-    alias = _alias(name, resolver)
-    if alias is not None:
-        return _inlined_alias(name, alias, resolver, ())
+    alias's expression, resolved where the alias was defined; a constant of
+    a scope below the module root (an `.alloc` body's `_CELLS`, a `.for`
+    variable) as its value, since no object exports it; a label under the
+    name its object exports it (`Resolver.exported_label_name`); any other
+    name as written."""
+    alias = resolver.current_scope.lookup_alias(name)
+    if alias is not None and alias != symbol(name):
+        return alias
     value = _nested_constant(name, resolver)
     if value is not None:
         return constant(value)
     return symbol(resolver.exported_label_name(name))
-
-
-def _alias(name: str, resolver: Resolver) -> LinkExpr | None:
-    alias = resolver.current_scope.lookup_alias(name)
-    return None if alias is None or alias == symbol(name) else alias
-
-
-def _inlined_alias(name: str, alias: LinkExpr, resolver: Resolver, inlining: tuple[str, ...]) -> LinkExpr:
-    """An alias's expression with the aliases it names inlined. Its other
-    names were resolved where the alias was defined, so they stay."""
-    if name in inlining:
-        cycle = " -> ".join((*inlining, name))
-        raise ExprEvalError(f"alias `{name}` is defined through itself: {cycle}", E_SYMBOL_UNRESOLVABLE_EXPRESSION)
-    nested = {inner: _alias(inner, resolver) for inner in alias.names()}
-    return alias.substitute(
-        {
-            inner: _inlined_alias(inner, expression, resolver, (*inlining, name))
-            for inner, expression in nested.items()
-            if expression is not None
-        }
-    )
 
 
 def deferred_link_expression(

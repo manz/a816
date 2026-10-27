@@ -73,13 +73,16 @@
   local label (`0x1FFF` beside a label `x1FFF` linked as 0), a scoped
   name beside a local label of the same last part (`Foo.loop` beside a
   local `loop`), and a quoted string in an `.assert` that matched a label
-  name. An alias defined through itself is an error (E0202) instead of
-  an unresolved name at link. A macro argument passed on to an inner
+  name, and a macro parameter that shares a name with one an alias reads
+  (`ptr = base + ext` used in `.macro m(base)`) no longer replaces it.
+  A macro argument passed on to an inner
   macro is written to the object once; it used to appear twice in the
   `.adbg` symbols.
 - The linker no longer reads a name no module exports from another
   module's private label of the same name (`_loop`): it is unresolved,
-  as written.
+  as written. A module that `.extern`s another's `_name` gets an
+  unresolved symbol: drop the underscore where it is defined to export
+  it.
 
 ## 1.2.0 (2026-10-25)
 
