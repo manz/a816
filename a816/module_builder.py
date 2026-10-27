@@ -477,15 +477,30 @@ class ModuleBuilder:
         main_source: Path,
         parsed_main_nodes: list[AstNode] | None = None,
         objects: Mapping[str, ObjectFile] | None = None,
+        main_text: str | None = None,
     ) -> ObjectFile:
         """Build all modules in topo order, then link them with `objects`.
 
         `objects` are generated in memory (by a Python asset generator),
         keyed by the module name diagnostics call them; source reaches
-        their labels with `.extern`.
+        their labels with `.extern`. `main_text` is the entry's source when
+        it is not on disk: `main_source` then only names it, for
+        diagnostics and the directory its includes resolve from.
         """
         with _rare_collections(), using_arch(self.arch):
+            if main_text is not None:
+                parsed_main_nodes = self._parse_main_text(main_source, main_text)
             return self._build(main_source, parsed_main_nodes, objects or {})
+
+    def _parse_main_text(self, main_source: Path, text: str) -> list[AstNode]:
+        """Parse an in-memory entry as discovery parses a file, so its compile reuses the AST."""
+        with recording_misses() as misses:
+            parsed = A816Parser.parse_as_ast(
+                text, str(main_source), include_paths=list(dict.fromkeys(self.include_paths)), verbose_errors=True
+            )
+        self._parsed["__main__"] = parsed
+        self._discovery_misses["__main__"] = misses
+        return parsed.nodes
 
     def _build(
         self, main_source: Path, parsed_main_nodes: list[AstNode] | None, objects: Mapping[str, ObjectFile]
@@ -705,7 +720,6 @@ def build_with_imports(
 
         program = Program(overlap_mode=overlap_mode)
         apply_experimental_flags(program, experimental)
-        program.enable_debug_capture()
 
         outputs = [(output_format, output_file)] + [(fmt, Path(path)) for fmt, path in extra_outputs or []]
         unknown = [fmt for fmt, _ in outputs if fmt not in OUTPUT_FORMATS]

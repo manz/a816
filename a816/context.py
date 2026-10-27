@@ -15,7 +15,6 @@ class AssemblyMode(Enum):
     """Assembly compilation mode."""
 
     PARSE = auto()  # Parsing only (tests, LSP, etc.)
-    DIRECT = auto()  # Direct assembly (position-dependent code)
     OBJECT = auto()  # Compiling to object file
 
 
@@ -27,7 +26,7 @@ class AssemblyContext:
     object_writer: "ObjectWriter | None" = None
     module_paths: list[Path] = field(default_factory=list)
     include_paths: list[Path] = field(default_factory=list)
-    # How the WriteAuditor reacts to overlapping byte writes from
+    # How the link reacts to overlapping byte writes from
     # different `*=` / `.alloc` / `.relocate` sections. Default is
     # `"error"` since 2026-05: silent last-write-wins on `*=` overlap
     # was the #1 footgun in user code (cross-repo feedback). Flip to
@@ -57,7 +56,3 @@ class AssemblyContext:
     @property
     def is_object_mode(self) -> bool:
         return self.mode == AssemblyMode.OBJECT and self.object_writer is not None
-
-    @property
-    def is_direct_mode(self) -> bool:
-        return self.mode == AssemblyMode.DIRECT

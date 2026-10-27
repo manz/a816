@@ -174,6 +174,16 @@ class LinkMixin:
         writer.end()
         return writer.base or 0, buffer.getvalue()
 
+    def placed_blocks(self, linked_obj: ObjectFile) -> list[tuple[int, bytes]]:
+        """A linked program's bytes by the address each run is placed at, in address order.
+
+        Raises:
+            BlockOverlapLinkError: two runs share bytes (`overlap_mode="error"`).
+        """
+        self._prepare_link_output(linked_obj, None)
+        self._check_block_overlaps(linked_obj)
+        return sorted((section.placed_base, section.code) for section in linked_obj.sections if section.code)
+
     def link_as_aram(self, linked_obj: ObjectFile, aram_file: Path) -> int:
         """Write a linked SPC700 program as the ARAM image the S-CPU uploads."""
         self._prepare_link_output(linked_obj, None)

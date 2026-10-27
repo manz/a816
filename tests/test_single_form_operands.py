@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import pytest
 
-from a816.parse.nodes import NodeError
-from a816.program import Program
-from tests import StubWriter
+from tests import Linked, link_source
+
+
+def _link(line: str) -> Linked:
+    return link_source(f"*= 0x008000\n    {line}\n")
 
 
 def _bytes(line: str) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(f"*= 0x008000\n    {line}\n", "single.s", writer)
-    return b"".join(writer.data)
+    linked = _link(line)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 @pytest.mark.parametrize(
@@ -35,5 +37,4 @@ def test_a_narrower_operand_widens_to_the_only_form(line: str, expected: bytes) 
 
 @pytest.mark.parametrize("line", ["lda (0x1234)", "rep #0x1234"])
 def test_a_wider_operand_is_not_narrowed(line: str) -> None:
-    with pytest.raises(NodeError):
-        _bytes(line)
+    assert _link(line).exit_code != 0

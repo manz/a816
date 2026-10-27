@@ -14,15 +14,13 @@ references still resolve.
 
 from __future__ import annotations
 
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _assemble_bytes(src: str) -> bytes:
-    program = Program()
-    writer = StubWriter()
-    program.assemble_string_with_emitter(src, "t.s", writer)
-    return b"".join(writer.data)
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 _POOL = """

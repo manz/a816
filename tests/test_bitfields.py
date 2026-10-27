@@ -8,15 +8,27 @@ Each bit field publishes three symbols:
 
 from __future__ import annotations
 
+import logging
+import tempfile
+from pathlib import Path
+
 import pytest
 
-from a816.parse.nodes import NodeError
 from a816.program import Program
 
 
-def _resolve(source: str) -> Program:
+def _compile(source: str) -> tuple[int, Program]:
+    """Compile `source` to an object; the exit code and the program that compiled it."""
     program = Program()
-    program.assemble_string_with_emitter(source, "memory.s", _NoopEmitter())
+    with tempfile.TemporaryDirectory() as tmpdir:
+        (Path(tmpdir) / "memory.s").write_text(source)
+        exit_code = program.assemble_as_object(str(Path(tmpdir) / "memory.s"), Path(tmpdir) / "memory.o")
+    return exit_code, program
+
+
+def _resolve(source: str) -> Program:
+    exit_code, program = _compile(source)
+    assert exit_code == 0
     return program
 
 
@@ -144,8 +156,7 @@ def test_idempotent_redef_of_bitfield_struct() -> None:
     assert s["INIDISP.force_blank.mask"] == 0x80
 
 
-def test_mismatched_bitfield_redef_raises() -> None:
-    program = Program()
+def test_mismatched_bitfield_redef_raises(caplog: pytest.LogCaptureFixture) -> None:
     src = """
         .struct INIDISP {
             u4 brightness
@@ -158,15 +169,6 @@ def test_mismatched_bitfield_redef_raises() -> None:
             u1 force_blank
         }
     """
-    with pytest.raises(NodeError, match="different field layout"):
-        program.assemble_string_with_emitter(src, "memory.s", _NoopEmitter())
-
-
-class _NoopEmitter:
-    def begin(self) -> None: ...
-
-    def end(self) -> None: ...
-
-    def write_block_header(self, *_: object, **__: object) -> None: ...
-
-    def write_block(self, *_: object, **__: object) -> None: ...
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        exit_code, _ = _compile(src)
+    assert (exit_code != 0, "different field layout" in caplog.text) == (True, True)

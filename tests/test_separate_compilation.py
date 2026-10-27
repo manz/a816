@@ -7,7 +7,7 @@ from a816.exceptions import UnmappedBankError, UnresolvedSymbolError
 from a816.linker import Linker
 from a816.object_file import ObjectFile, SymbolType
 from a816.program import Program
-from tests.ips_helpers import parse_ips_records
+from tests import link_source
 
 
 class TestSeparateCompilation:
@@ -544,15 +544,14 @@ helper:
             asm_file = Path(tmpdir) / "test.s"
             asm_file.write_text(asm_code)
 
-            # Assemble to set up the symbol table
-            ips_file = Path(tmpdir) / "test.ips"
-            program = Program()
-            result = program.assemble_as_patch(str(asm_file), ips_file)
-            assert result == 0
+            # Build to set up the symbol table
+            linked = link_source(asm_code)
+            assert linked.exit_code == 0
+            assert linked.program is not None
 
             # Export symbols
             sym_file = Path(tmpdir) / "test.sym"
-            program.exports_symbol_file(str(sym_file))
+            linked.program.exports_symbol_file(str(sym_file))
             assert sym_file.exists()
 
             # Verify symbol file format
@@ -737,34 +736,23 @@ far_label:
             assert sym_addr["section_b"] == 0x228000
             assert sym_addr["region_c"] == 0x308000
 
-            main = tmp / "main.s"
-            main.write_text('.import "tri"\n*=0x008000\nbefore_import:\n.db 0xEE\nafter_import:\n.db 0xFF\n')
-            ips = tmp / "out.ips"
-            program = Program()
-            program.add_module_path(tmp)
-            assert program.assemble_as_patch(str(main), ips) == 0
+            linked = link_source(
+                '.import "tri"\n*=0x008000\nbefore_import:\n.db 0xEE\nafter_import:\n.db 0xFF\n',
+                {"tri.s": mod.read_text()},
+            )
+            assert linked.exit_code == 0
 
-            scope = program.resolver.current_scope
-            label = scope.labels
-            symbols = scope.symbols
-
-            def _logical(value: object) -> int:
-                inner = getattr(value, "logical_value", value)
-                assert isinstance(inner, int)
-                return inner
-
-            assert _logical(symbols["region_a"]) == 0x208000
-            assert _logical(symbols["section_b"]) == 0x228000
-            assert _logical(symbols["region_c"]) == 0x308000
+            assert linked.symbols["region_a"] == 0x208000
+            assert linked.symbols["section_b"] == 0x228000
+            assert linked.symbols["region_c"] == 0x308000
 
             # Importer's inline run is untouched by the pinned module.
-            assert _logical(label["after_import"]) - _logical(label["before_import"]) == 1
+            assert linked.symbols["after_import"] - linked.symbols["before_import"] == 1
 
             # Verify each section's bytes land at exactly the right LoROM
             # physical offset and only there.
-            content = ips.read_bytes()
-            records = parse_ips_records(content)
-            placements: dict[int, bytes] = {phys: data for phys, data in records}
+            content = b"".join(linked.data)
+            placements: dict[int, bytes] = dict(linked.blocks)
 
             # LoROM physical for SNES bank N $8000-$FFFF = N * 0x8000 + (addr - $8000).
             phys_a = 0x20 * 0x8000 + 0x0000  # 0x100000
@@ -798,15 +786,11 @@ far_label:
             )
             assert Program().assemble_as_object(str(mod), tmp / "xref.o") == 0
 
-            main = tmp / "main.s"
-            main.write_text('.import "xref"\n*=0x008000\n')
-            ips = tmp / "out.ips"
-            program = Program()
-            program.add_module_path(tmp)
-            assert program.assemble_as_patch(str(main), ips) == 0
+            linked = link_source('.import "xref"\n*=0x008000\n', {"xref.s": mod.read_text()})
+            assert linked.exit_code == 0
 
             phys_a = 0x20 * 0x8000  # 0x100000
-            placements = {phys: data for phys, data in parse_ips_records(ips.read_bytes())}
+            placements = dict(linked.blocks)
             patched = placements.get(phys_a)
             assert patched is not None and len(patched) >= 2
             operand = patched[0] | (patched[1] << 8)
@@ -828,15 +812,9 @@ far_label:
             mod.write_text("*=0x009000\npayload:\n    .db 0x42, 0x42, 0x42, 0x42\n")
             assert Program().assemble_as_object(str(mod), tmp / "mod.o") == 0
 
-            main = tmp / "main.s"
-            main.write_text('.import "mod"\n.import "mod"\n*=0x008000\n    .db 0xAA\n')
-            ips = tmp / "out.ips"
-            program = Program()
-            program.add_module_path(tmp)
-            assert program.assemble_as_patch(str(main), ips) == 0
-
-            content = ips.read_bytes()
-            assert content.count(b"\x42\x42\x42\x42") == 1
+            linked = link_source('.import "mod"\n.import "mod"\n*=0x008000\n    .db 0xAA\n', {"mod.s": mod.read_text()})
+            assert linked.exit_code == 0
+            assert b"".join(linked.data).count(b"\x42\x42\x42\x42") == 1
 
     def test_multiple_intra_section_expression_relocations_get_distinct_offsets(self) -> None:
         """Three references to the same forward label must record three offsets.

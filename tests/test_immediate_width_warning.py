@@ -23,18 +23,17 @@ from a816.parse.tokens import File, Position, Token, TokenType
 from a816.program import Program
 from a816.protocols import ValueNodeProtocol
 from a816.symbols import Resolver
-from tests import StubWriter
+from tests import link_source
 
 _WARNING_FRAGMENT = "immediate width"
 
 
 def _assemble(src: str, caplog: pytest.LogCaptureFixture, *, track: bool = False) -> bytes:
-    program = Program()
-    program.resolver.track_register_size = track
-    writer = StubWriter()
+    """Build `src` through compile + link; `track` turns on the `track_register_size` experiment."""
     with caplog.at_level(logging.WARNING, logger="a816"):
-        program.assemble_string_with_emitter(src, "width.s", writer)
-    return b"".join(writer.data)
+        linked = link_source(src, experimental=["track_register_size"] if track else None)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 def _width_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -57,7 +56,7 @@ class TestMismatchWarns:
     def test_warning_carries_location_and_register(self, caplog: pytest.LogCaptureFixture) -> None:
         _assemble("*=0x008000\n.a16\nlda.b #1\n", caplog)
         message = _width_warnings(caplog)[0]
-        assert "width.s:3" in message
+        assert "main.s:3" in message
         assert "A is 16-bit" in message
 
     def test_tracked_rep_makes_state_known(self, caplog: pytest.LogCaptureFixture) -> None:

@@ -7,6 +7,7 @@ labels as `<name>.<label>` plus `<name>.__base` / `<name>.__size`.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -14,9 +15,7 @@ import pytest
 from a816.cli import build_main
 from a816.module_builder import BuildResult, build_with_imports
 from a816.object_file import ObjectFile
-from a816.parse.nodes import NodeError
 from a816.program import Program
-from a816.writers import IPSWriter
 
 _DRIVER = """.import "dsp"
 .alloc driver at 0x0400 {
@@ -94,9 +93,11 @@ def test_a_missing_program_fails_the_build(tmp_path: Path) -> None:
     assert "no SPC700 program driver.spc.s" in "\n".join(result.diagnostics)
 
 
-def test_an_embed_outside_a_module_build_is_an_error(tmp_path: Path) -> None:
-    with pytest.raises(NodeError, match="driver"):
-        Program().assemble_string_with_emitter(_MAIN, str(tmp_path / "main.s"), IPSWriter(None))  # type: ignore[arg-type]
+def test_an_embed_outside_a_module_build_is_an_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    (tmp_path / "main.s").write_text(_MAIN, encoding="utf-8")
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        exit_code = Program().assemble_as_object(str(tmp_path / "main.s"), tmp_path / "main.o")
+    assert (exit_code != 0, "no SPC700 program 'driver' was linked" in caplog.text) == (True, True)
 
 
 def test_an_spc_source_builds_for_the_spc700_by_its_name(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
@@ -9,10 +10,8 @@ import pytest
 from a816.diagnostics.suggest import closest_matches, did_you_mean_hint
 from a816.error_codes import all_codes, lookup
 from a816.parse.mzparser import A816Parser
-from a816.parse.nodes import NodeError
-from a816.program import Program
 from a816.symbols import Resolver
-from tests import StubWriter
+from tests import link_source
 
 
 @pytest.fixture(autouse=True)
@@ -74,16 +73,16 @@ def test_did_you_mean_returns_none_when_far_away() -> None:
     assert did_you_mean_hint("xyz", resolver.current_scope) is None
 
 
-def test_undefined_symbol_error_includes_suggestion() -> None:
-    program = Program()
+def test_undefined_symbol_error_includes_suggestion(caplog: pytest.LogCaptureFixture) -> None:
     src = """
+*=0x008000
 my_routine:
     rts
     jsr.l my_routime
 """
-    with pytest.raises(NodeError) as exc_info:
-        program.assemble_string_with_emitter(src, "dym.s", StubWriter())
-    rendered = str(exc_info.value)
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        assert link_source(src).exit_code != 0
+    rendered = caplog.text
     assert "[E0200]" in rendered
     assert "`my_routime`" in rendered
     assert "did you mean `my_routine`?" in rendered

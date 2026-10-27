@@ -10,6 +10,7 @@ Division truncates toward zero and `%` takes the sign of the dividend
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
@@ -22,10 +23,9 @@ from a816.linker import Linker
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.parse.ast.expression import eval_expression_str
 from a816.parse.errors import ScannerException
-from a816.parse.nodes import NodeError
 from a816.program import Program
 from a816.symbols import Resolver
-from tests import StubWriter
+from tests import link_source
 
 OPERATOR_CASES = [
     ("7 + 2", 9),
@@ -48,20 +48,21 @@ OPERATOR_CASES = [
 
 
 def _emit(src: str) -> bytes:
-    program = Program()
-    writer = StubWriter()
-    program.assemble_string_with_emitter("*=0x008000\n" + src, "ops.s", writer)
-    return b"".join(writer.data)
+    linked = link_source("*=0x008000\n" + src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 def _word(value: int) -> bytes:
     return value.to_bytes(2, "little")
 
 
-def _division_error(src: str) -> NodeError:
-    with pytest.raises(NodeError) as exc:
-        _emit(src)
-    return exc.value
+def _division_error(src: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The rendered diagnostic of a build that fails on `src`."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        linked = link_source("*=0x008000\n" + src)
+    assert linked.exit_code != 0
+    return caplog.text
 
 
 class TestOperatorInEveryContext:
@@ -140,17 +141,14 @@ class TestDivisionByZero:
         "src",
         ["X = 1 / 0\n", "lda.w #1 % 0\n", ".dw 4 / (2 - 2)\n", "X := 1 % 0\n"],
     )
-    def test_is_a_located_node_error(self, src: str) -> None:
-        assert _division_error(src).code == str(E_CODEGEN_DIVISION_BY_ZERO)
+    def test_is_a_located_node_error(self, src: str, caplog: pytest.LogCaptureFixture) -> None:
+        assert f"error[{E_CODEGEN_DIVISION_BY_ZERO}]" in _division_error(src, caplog)
 
-    def test_points_at_the_operator(self) -> None:
-        error = _division_error("X = 10 / 0\n")
-        assert error.file_info is not None
-        assert error.file_info.value == "/"
+    def test_points_at_the_operator(self, caplog: pytest.LogCaptureFixture) -> None:
+        assert "main.s:2:8" in _division_error("X = 10 / 0\n", caplog)
 
-    def test_rendered_location(self) -> None:
-        rendered = _division_error("nop\nX = 10 % 0\n").format()
-        assert "ops.s:3" in rendered
+    def test_rendered_location(self, caplog: pytest.LogCaptureFixture) -> None:
+        assert "main.s:3" in _division_error("nop\nX = 10 % 0\n", caplog)
 
 
 class TestLexerAmbiguities:

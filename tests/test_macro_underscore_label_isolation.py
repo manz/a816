@@ -10,6 +10,7 @@ from pathlib import Path
 
 from a816.object_file import ObjectFile
 from a816.program import Program
+from tests import link_source
 
 
 def _pea_operands(data: bytes) -> list[int]:
@@ -42,16 +43,12 @@ start:
     callee_with_return(0x2222)
     callee_with_return(0x3333)
 """
-    with tempfile.TemporaryDirectory() as tmp:
-        asm = Path(tmp) / "main.s"
-        asm.write_text(src)
-        ips = Path(tmp) / "out.ips"
-        rc = Program().assemble_as_patch(str(asm), ips)
-        assert rc == 0
-        operands = _pea_operands(ips.read_bytes())
-        # Three return-address PEAs and three arg PEAs; return addresses differ.
-        return_pea_values = [v for i, v in enumerate(operands) if i % 2 == 0]
-        assert len(set(return_pea_values)) == 3, return_pea_values
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    operands = _pea_operands(b"".join(linked.data))
+    # Three return-address PEAs and three arg PEAs; return addresses differ.
+    return_pea_values = [v for i, v in enumerate(operands) if i % 2 == 0]
+    assert len(set(return_pea_values)) == 3, return_pea_values
 
 
 def test_underscore_label_distinct_per_macro_invocation_in_object_file() -> None:

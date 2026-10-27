@@ -10,14 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from a816.module_builder import build_with_imports
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _bytes(source: str) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(source, "for.s", writer)
-    return b"".join(writer.data)
+    linked = link_source(source)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 def test_a_loop_variable_feeds_an_assign() -> None:

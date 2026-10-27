@@ -1,6 +1,5 @@
-import logging
 import struct
-from typing import BinaryIO, Literal, Protocol
+from typing import BinaryIO, Protocol
 
 from a816 import bps
 from a816.cpu.arch import current_arch
@@ -18,8 +17,6 @@ from a816.object_file import (
     SymbolType,
 )
 
-logger = logging.getLogger("a816.writers")
-
 
 class Writer(Protocol):
     def begin(self) -> None:
@@ -33,65 +30,6 @@ class Writer(Protocol):
 
     def end(self) -> None:
         """Writes the footer."""
-
-
-OverlapMode = Literal["error", "warn", "off"]
-
-
-class WriteAuditor:
-    """Wraps a `Writer` to detect overlapping byte writes.
-
-    Every `write_block` records the `[addr, addr + len)` byte range it
-    served. Subsequent writes that touch any already-recorded byte are
-    reported per the configured `mode`:
-
-      - `error`: raise `OverlapError`
-      - `warn` (default): log a WARNING and continue
-      - `off`: silent passthrough
-
-    Non-overlapping adjacent blocks are silent. The implementation is
-    naive O(n) per write — fine for typical ROM patches that emit a
-    handful of sections; if that ever becomes hot, switch the inner
-    structure to an interval tree.
-    """
-
-    def __init__(self, inner: Writer, mode: OverlapMode = "warn") -> None:
-        self._inner = inner
-        self._mode: OverlapMode = mode
-        self._ranges: list[tuple[int, int]] = []  # sorted by start; non-overlapping when no conflicts
-
-    def begin(self) -> None:
-        self._inner.begin()
-
-    def write_block_header(self, block: bytes, block_address: int) -> None:
-        self._inner.write_block_header(block, block_address)
-
-    def write_block(self, block: bytes, block_address: int) -> None:
-        if self._mode != "off" and block:
-            self._check_overlap(block_address, block_address + len(block))
-        self._inner.write_block(block, block_address)
-
-    def end(self) -> None:
-        self._inner.end()
-
-    def _check_overlap(self, start: int, end: int) -> None:
-        for existing_start, existing_end in self._ranges:
-            if start < existing_end and existing_start < end:
-                overlap_start = max(start, existing_start)
-                overlap_end = min(end, existing_end)
-                message = (
-                    f"write at ${start:06x}..${end - 1:06x} overlaps previous "
-                    f"write at ${existing_start:06x}..${existing_end - 1:06x} "
-                    f"(${overlap_start:06x}..${overlap_end - 1:06x} would be silently overwritten)"
-                )
-                if self._mode == "error":
-                    raise OverlapError(message)
-                logger.warning(message)
-        self._ranges.append((start, end))
-
-
-class OverlapError(Exception):
-    """Raised by `WriteAuditor` in `error` mode when two writes share bytes."""
 
 
 class IPSWriter(Writer):
@@ -233,8 +171,9 @@ class ObjectWriter(Writer):
     `start_section(initial_base)` before emission begins.
     """
 
-    def __init__(self, output_file: str) -> None:
+    def __init__(self, output_file: str = "") -> None:
         self.output_file = output_file
+        """Where `end` writes the object; `object_file` alone needs none."""
         self.sections: list[Section] = []
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
         self.aliases: list[tuple[str, LinkExpr]] = []
@@ -370,13 +309,20 @@ class ObjectWriter(Writer):
             self.aliases.append((name, expr))
 
     def end(self) -> None:
-        # Strip a trailing empty section (e.g. trailing `*=` with no code),
+        self.object_file().write(self.output_file)
+
+    def object_file(self) -> ObjectFile:
+        """The object collected so far, in memory: a view, not a snapshot.
+        It shares the writer's sections and symbols, so later writes show
+        through; the writer itself is left as it was."""
+        # Leave out a trailing empty section (e.g. trailing `*=` with no code),
         # but keep a bss section: it is byte-less by design.
-        if self.sections and not self.sections[-1].code and not self.sections[-1].bss:
-            self.sections.pop()
+        sections = list(self.sections)
+        if sections and not sections[-1].code and not sections[-1].bss:
+            sections.pop()
         relocatable = not self._has_explicit_position
-        obj_file = ObjectFile(
-            self.sections,
+        return ObjectFile(
+            sections,
             self.symbols,
             aliases=list(self.aliases),
             files=self.files,
@@ -388,7 +334,6 @@ class ObjectWriter(Writer):
             path_names=self.path_names,
             arch=current_arch.get(),
         )
-        obj_file.write(self.output_file)
 
     def _ensure_section(self) -> Section:
         if self._current_section is None:

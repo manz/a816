@@ -156,7 +156,7 @@ def generate_extern(
     file_info: Token,
 ) -> GenNodes:
     # In object mode, register the extern eagerly so subsequent code-gen
-    # (e.g. `font_ptr = extern_sym + N`) sees it as external. In direct mode
+    # (e.g. `font_ptr = extern_sym + N`) sees it as external. In PARSE mode
     # we leave it to ExternNode.pc_after to avoid shadowing real definitions
     # provided by included files.
     if resolver.context.is_object_mode:

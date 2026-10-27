@@ -1,8 +1,8 @@
 """An `.alloc` body is its own scope for `_` names.
 
-A `.assert` written inside the body sees the body's `_` labels, in an
-object build (where they export under the `__sc<idx>__` mangle) and in a
-direct one. Outside the body they stay private, and the failure says so.
+A `.assert` written inside the body sees the body's `_` labels, which an
+object build exports under the `__sc<idx>__` mangle. Outside the body they
+stay private, and the failure says so.
 """
 
 from __future__ import annotations
@@ -29,11 +29,6 @@ def _link(tmp_path: Path, source: str) -> None:
     (tmp_path / "m.s").write_text(BANK_40_MAP + _POOL + source)
     assert Program().assemble_as_object(str(tmp_path / "m.s"), tmp_path / "m.o") == 0
     Linker([ObjectFile.from_file(str(tmp_path / "m.o"))]).link(base_address=0x8000)
-
-
-def _direct(tmp_path: Path, source: str) -> int:
-    (tmp_path / "m.s").write_text(BANK_40_MAP + _POOL + source)
-    return Program().assemble(str(tmp_path / "m.s"), tmp_path / "m.sfc")
 
 
 def test_an_assert_in_the_body_sees_its_private_label(tmp_path: Path) -> None:
@@ -80,14 +75,6 @@ def test_outside_the_body_the_label_stays_private(tmp_path: Path) -> None:
         _link(tmp_path, _OUTSIDE)
 
     assert "private to its `.alloc` body" in excinfo.value.format()
-
-
-def test_a_direct_build_sees_the_private_label(tmp_path: Path) -> None:
-    assert _direct(tmp_path, _INSIDE) == 0
-
-
-def test_a_direct_build_keeps_it_private_outside(tmp_path: Path) -> None:
-    assert _direct(tmp_path, _OUTSIDE) == 128
 
 
 _STATE = ".pool st { range 0x7e2000 0x7e2fff bss }\n.reserve text 0x40 in st\n"

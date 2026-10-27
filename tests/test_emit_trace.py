@@ -66,25 +66,6 @@ def test_emit_trace_unknown_src_when_no_lines(monkeypatch: pytest.MonkeyPatch, t
     assert "src=<unknown>" in content
 
 
-def test_emit_trace_direct_assemble_as_patch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("A816_EMIT_TRACE", "1")
-    source = """*=0x008000
-.db 0x11, 0x22
-*=0x028000
-.db 0x33
-"""
-    asm = tmp_path / "two.s"
-    asm.write_text(source)
-    ips_path = tmp_path / "out.ips"
-    assert Program().assemble_as_patch(str(asm), ips_path) == 0
-    log_path = tmp_path / "out.ips.emit.log"
-    assert log_path.exists()
-    lines = log_path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) >= 2
-    assert any("phys=0x000000" in line and "size=2" in line for line in lines)
-    assert any("phys=0x010000" in line and "size=1" in line for line in lines)
-
-
 def test_emit_trace_sfc_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("A816_EMIT_TRACE", "1")
     tmpdir, linked, _ = _build_two_section_linked()

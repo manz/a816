@@ -4,23 +4,24 @@ produce the expected SNES register offsets.
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from a816.context import AssemblyMode
 from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _resolve_symbols(src: str) -> dict[str, int]:
+    """The integer symbols `src` defines once compiled to an object: its
+    compile-time `.import`s inline their structs and constants."""
     program = Program()
-    # `.import` only inlines source under DIRECT mode; the default
-    # (parse-only) path produces ExternNodes which intentionally don't
-    # publish the struct symbols.
-    program.resolver.context.mode = AssemblyMode.DIRECT
-    program.assemble_string_with_emitter(src, "main.s", _NoopEmitter())
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        (tmp / "main.s").write_text(src)
+        assert program.assemble_as_object(str(tmp / "main.s"), tmp / "main.o") == 0
     return {
         name: value
         for scope in program.resolver.scopes
@@ -90,16 +91,10 @@ def test_typed_bind_against_ppu_emits_lda_w() -> None:
 ppu := (PPU_BASE as PPU)
     lda ppu.OAMDATA
 """
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        asm = root / "main.s"
-        asm.write_text(src, encoding="utf-8")
-        ips = root / "out.ips"
-        program = Program()
-        assert program.assemble_as_patch(str(asm), ips) == 0
-        data = ips.read_bytes()
-        # Base 0x2100 + OAMDATA offset 0x04 = $2104 → LDA $2104 → AD 04 21
-        assert b"\xad\x04\x21" in data
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    # Base 0x2100 + OAMDATA offset 0x04 = $2104 → LDA $2104 → AD 04 21
+    assert linked.data == [b"\xad\x04\x21"]
 
 
 def test_ppu_inidisp_bitfield_struct() -> None:
@@ -136,26 +131,13 @@ def test_byte_and_bitfield_structs_coexist() -> None:
     assert symbols["INIDISP.force_blank.mask"] == 0x80  # bit-field absolute mask
 
 
-def test_unknown_stdlib_module_falls_through_to_user_paths() -> None:
+def test_unknown_stdlib_module_falls_through_to_user_paths(caplog: pytest.LogCaptureFixture) -> None:
     """`@std/...` that doesn't exist in the bundle should error like any
     other missing module rather than silently dropping the import."""
-    import pytest
-
-    from a816.parse.nodes import NodeError
-
-    program = Program()
-    with pytest.raises(NodeError, match="Module not found"):
-        program.assemble_string_with_emitter('.import "@std/snes/nonexistent"\n', "x.s", _NoopEmitter())
-
-
-class _NoopEmitter:
-    def begin(self) -> None: ...
-
-    def end(self) -> None: ...
-
-    def write_block_header(self, *_: object, **__: object) -> None: ...
-
-    def write_block(self, *_: object, **__: object) -> None: ...
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        linked = link_source('.import "@std/snes/nonexistent"\n')
+    assert linked.exit_code != 0
+    assert "Module not found" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -218,11 +200,9 @@ def test_snes_header_istruct_emits_48_bytes() -> None:
         '.import "@std/snes/header"\n*=0x008000\n'
         '.istruct SnesHeader { title = "A816", map_mode = 0x20, old_maker_code = 0x33 }\n'
     )
-    writer = StubWriter()
-    program = Program()
-    program.resolver.context.mode = AssemblyMode.DIRECT
-    program.assemble_string_with_emitter(src, "main.s", writer)
-    data = b"".join(writer.data)
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    data = b"".join(linked.data)
     assert data == bytes(16) + b"A816" + bytes(17) + b"\x20" + bytes(4) + b"\x33" + bytes(5)
 
 
@@ -268,11 +248,9 @@ def test_spc7110_registers(expr: str, address: int) -> None:
 
 
 def _emit(module: str, body: str) -> str:
-    writer = StubWriter()
-    program = Program()
-    program.resolver.context.mode = AssemblyMode.DIRECT
-    program.assemble_string_with_emitter(f'.import "@std/snes/{module}"\n*=0x008000\n{body}', "main.s", writer)
-    return b"".join(writer.data).hex(" ")
+    linked = link_source(f'.import "@std/snes/{module}"\n*=0x008000\n{body}')
+    assert linked.exit_code == 0
+    return b"".join(linked.data).hex(" ")
 
 
 @pytest.mark.parametrize(

@@ -9,8 +9,7 @@ from a816.parse.mzparser import A816Parser
 from a816.parse.scanner import Scanner
 from a816.parse.scanner_states import lex_initial
 from a816.parse.tokens import TokenType
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 @pytest.fixture(autouse=True)
@@ -26,9 +25,9 @@ def _token_types(src: str) -> list[TokenType]:
 
 
 def _emitted(src: str) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(src, "t.s", writer)
-    return b"".join(writer.data)
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 @pytest.mark.parametrize(

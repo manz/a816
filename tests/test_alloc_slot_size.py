@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from a816.parse.nodes import NodeError
 from a816.parse.nodes.alloc import AllocNode
 from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 from tests.test_reserve import _PREAMBLE
 
 _SRC = _PREAMBLE + ".alloc body in code {\n    nop\n    nop\n}\n"
@@ -31,13 +31,13 @@ def test_an_object_build_rejects_a_body_longer_than_its_slot(undercounting: None
         assert program.assemble_as_object(str(source), Path(tmp) / "m.o") != 0
 
 
-def test_a_direct_build_rejects_a_body_longer_than_its_slot(undercounting: None) -> None:
-    program, writer = Program(), StubWriter()
-    with pytest.raises(NodeError, match=r"alloc 'body' emitted 2 bytes into a 1-byte slot"):
-        program.assemble_string_with_emitter(_SRC, "m.s", writer)
+def test_the_overrun_names_the_alloc_and_its_slot(undercounting: None, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        assert link_source(_SRC).exit_code != 0
+    assert "alloc 'body' emitted 2 bytes into a 1-byte slot" in caplog.text
 
 
 def test_a_body_that_fills_its_slot_builds() -> None:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(_SRC, "m.s", writer)
-    assert b"".join(writer.data) == b"\xea\xea"
+    linked = link_source(_SRC)
+    assert linked.exit_code == 0
+    assert b"".join(linked.data) == b"\xea\xea"

@@ -46,16 +46,13 @@ them with the compiled modules, and source reads their labels with
 from pathlib import Path
 
 from a816.module_builder import build_with_imports
-from a816.object_file import ObjectFile
 from a816.program import Program
 
 pool = ".pool rom {\n    range 0x018000 0x01ffff\n}\n"
 Path("main.s").write_text(pool + ".extern message\n.alloc boot at 0x008000 {\n    lda.l message\n}\n")
 
-# The generator's output, compiled to an object.
-Path("text.s").write_text(pool + ".alloc text in rom {\nmessage:\n    .db 0x11, 0x22\n}\n")
-Program().assemble_as_object("text.s", Path("text.o"))
-text_object = ObjectFile.from_file("text.o")
+# The generator's output, compiled to an object in memory.
+text_object = Program().compile_source(pool + ".alloc text in rom {\nmessage:\n    .db 0x11, 0x22\n}\n", "text.s")
 
 result = build_with_imports("main.s", "game.sfc", "sfc", objects={"assets/text": text_object})
 assert result.exit_code == 0, result.diagnostics
@@ -68,5 +65,31 @@ They join at link, never at `.import`, and link afresh on every build:
 no module's cached object depends on them. A name that a source module
 already has is refused.
 
-`Program` and its `assemble*` methods are the single-pass direct mode;
-it is deprecated and new features land in the build path only.
+## A source string to bytes
+
+For a few lines of assembly with no project on disk (a stub to drop in an
+emulator's RAM, a fragment to compare), `assemble_source` compiles and
+links the string as a build would. The source places its own code
+(`.alloc at`, as any module does):
+
+```python
+from a816.snippet import assemble_source
+
+stub = assemble_source(
+    ".alloc at 0x7E0000 {\n    jsr.l kerning_func\n    stp\n}\n",
+    symbols={"kerning_func": 0x208000},  # like -D
+)
+stub.code     # b"\x22\x00\x80\x20\xdb"
+stub.blocks   # ((0x7E0000, b"..."),): each placed run at its SNES address
+stub.symbols  # linked labels
+```
+
+`files` serves its `.include`s and `.import`s (path -> text),
+`include_paths` and `experimental` mirror the CLI. A failed build, or two
+blocks sharing bytes, raises `AssemblyError` carrying the diagnostics.
+
+One translation unit to an object, without linking, is
+`Program().compile_source(text)`: it returns the `ObjectFile` in memory
+(a `*.spc.s` `filename` compiles SPC700), for `objects=` above.
+`ModuleBuilder.build(path, main_text=text)` builds a project whose entry
+is a string: `path` only names it and anchors its imports.

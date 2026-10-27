@@ -17,6 +17,17 @@ from a816.debug_info import (
     serialize,
     write,
 )
+from a816.module_builder import build_with_imports
+
+
+def _built_debug_info(tmp_path: Path, main: Path) -> DebugInfo:
+    """The `.adbg` of `main` built through compile + link."""
+    result = build_with_imports(
+        main, tmp_path / "out.ips", output_dir=tmp_path / "obj", use_a816_toml=False, use_cache=False
+    )
+    assert result.exit_code == 0
+    assert result.debug_info_path is not None
+    return read(result.debug_info_path)
 
 
 def _sample_info() -> DebugInfo:
@@ -86,17 +97,12 @@ def test_deserialize_rejects_bad_magic() -> None:
 
 def test_include_lines_attribute_to_included_file(tmp_path: Path) -> None:
     """`.include`d code should report lines against the included file, not the parent."""
-    from a816.program import Program
-
     inc = tmp_path / "inc.s"
     inc.write_text("; comment line 1\n; comment line 2\nlda.b #0x10\nsta.b 0x20\n", encoding="utf-8")
     main = tmp_path / "main.s"
     main.write_text('*=0x008000\n.include "inc.s"\nlda.b #0x55\n', encoding="utf-8")
 
-    program = Program()
-    program.enable_debug_capture()
-    program.assemble_as_patch(str(main), tmp_path / "out.ips")
-    info = program.build_debug_info(str(main))
+    info = _built_debug_info(tmp_path, main)
 
     by_addr = {entry.address: entry for entry in info.lines}
     files = info.files
@@ -115,16 +121,11 @@ def test_include_lines_attribute_to_included_file(tmp_path: Path) -> None:
 
 def test_multiline_docstring_does_not_skew_following_line_numbers(tmp_path: Path) -> None:
     """A multi-line docstring at the top must not push the next instruction's reported line."""
-    from a816.program import Program
-
     src = tmp_path / "main.s"
     # `"""..."""` spans 3 source lines; opcode sits on line 4 (0-indexed: 3).
     src.write_text('"""\nmodule docstring\n"""\n*=0x008000\nlda.b #0x42\n', encoding="utf-8")
 
-    program = Program()
-    program.enable_debug_capture()
-    program.assemble_as_patch(str(src), tmp_path / "out.ips")
-    info = program.build_debug_info(str(src))
+    info = _built_debug_info(tmp_path, src)
 
     lda = next(e for e in info.lines if e.address == 0x008000)
     assert lda.line == 4  # editor line 5 → 0-indexed 4
@@ -134,18 +135,13 @@ def test_multiline_docstring_does_not_skew_following_line_numbers(tmp_path: Path
 def test_label_decl_emits_adbg_label_record(tmp_path: Path) -> None:
     """`.label NAME = ADDR` must land in `.adbg` as a SymbolKind.LABEL so
     `lookup_label(addr)` can resolve the name in crash traces / disassembly."""
-    from a816.program import Program
-
     src = tmp_path / "main.s"
     src.write_text(
         "*=0x008000\n.label mult8_far = 0x02855C\nlda.b #0x42\n",
         encoding="utf-8",
     )
 
-    program = Program()
-    program.enable_debug_capture()
-    program.assemble_as_patch(str(src), tmp_path / "out.ips")
-    info = program.build_debug_info(str(src))
+    info = _built_debug_info(tmp_path, src)
 
     by_name = {sym.name: sym for sym in info.symbols}
     assert "mult8_far" in by_name, [sym.name for sym in info.symbols]

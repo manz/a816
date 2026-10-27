@@ -40,7 +40,7 @@ from a816.parse.ast.nodes import (
 )
 from a816.parse.codegen.base import GenNodes, MacroDefinitions, _code_gen, declared_name, generators, logger
 from a816.parse.codegen.structs import declare_bus_mapping
-from a816.parse.nodes import ExternNode, LinkedModuleNode, NodeError
+from a816.parse.nodes import ExternNode, NodeError
 from a816.parse.tokens import Token
 from a816.symbols import Resolver, _is_exportable
 
@@ -93,7 +93,6 @@ class _ImportView:
     provided_names: tuple[str, ...]
     pool_decls: tuple[PoolDecl, ...]
     bus_mappings: tuple[BusMapping, ...]
-    has_pool_allocs: bool
 
 
 def _import_view(obj_path: Path) -> _ImportView:
@@ -115,28 +114,14 @@ def _decode_import_view(path: str, _mtime_ns: int, _size: int) -> _ImportView:
         provided_names=tuple(_object_provided_names(obj_file)),
         pool_decls=tuple(obj_file.pool_decls),
         bus_mappings=tuple(obj_file.bus_mappings),
-        has_pool_allocs=bool(obj_file.pool_allocs),
     )
 
 
-def _object_has_pool_allocs(obj_path: Path) -> bool:
-    """Cheap check: does the .o carry any `.alloc` requests? Used to
-    gate the direct-mode `.o` shortcut."""
-    try:
-        return _import_view(obj_path).has_pool_allocs
-    except (FileNotFoundError, ValueError):
-        return False
-
-
 def _import_from_object(
-    module_name: str,
     obj_path: Path,
     resolver: Resolver,
-    direct_mode: bool,
     file_info: Token,
 ) -> GenNodes | None:
-    if direct_mode:
-        return _import_linked_module(module_name, obj_path, resolver, file_info)
     try:
         view = _import_view(obj_path)
     except (FileNotFoundError, ValueError):
@@ -160,24 +145,6 @@ def _import_from_object(
     # (`imported_module_paths`) handles the diamond.
     resolver.imported_runtime_names.update(view.provided_names)
     return [ExternNode(name, resolver) for name in view.provided_names]
-
-
-def _import_linked_module(module_name: str, obj_path: Path, resolver: Resolver, file_info: Token) -> GenNodes | None:
-    """Direct mode collapses object compilation + link into a single
-    resolver pass: the whole `.o` comes in, and its pool decls surface so
-    top-level `.alloc` sites (and subsequent imports) can find the pools."""
-    try:
-        obj_file = ObjectFile.from_file(str(obj_path))
-    except (FileNotFoundError, ValueError):
-        return None
-    for mapping in obj_file.bus_mappings:
-        declare_bus_mapping(resolver, mapping, file_info)
-    symbols_data = [
-        (name, address, sym_type.value, section.value) for name, address, sym_type, section in obj_file.symbols
-    ]
-    node = LinkedModuleNode(module_name, obj_file.sections, symbols_data, resolver, obj_file.relocatable)
-    node.imported_pool_decls = list(obj_file.pool_decls)
-    return [node]
 
 
 def _object_provided_names(obj_file: ObjectFile) -> list[str]:
@@ -213,18 +180,13 @@ def _import_from_source(
     src_path: Path,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
-    direct_mode: bool,
     module_name: str,
 ) -> GenNodes | None:
     """Bring an `.import`ed source module into the importer.
 
-    Direct mode = importer building the final ROM in one resolver
-    pass. Every node from the imported module runs inline so its
-    bytes land in the right place.
-
-    Object mode = importer being compiled to its own `.o`. The
-    imported module's `.o` owns its emitted bytes + runtime symbols;
-    the importer only needs:
+    The importer is being compiled to its own `.o`. The imported
+    module's `.o` owns its emitted bytes + runtime symbols; the
+    importer only needs:
       * compile-time-only nodes (structs, macros, constants, typed
         binds, sub-imports) inlined so codegen of THIS module can
         resolve them, and
@@ -240,8 +202,6 @@ def _import_from_source(
     if not nodes:
         return []
     resolver.imported_path_names.update(parsed.path_names())
-    if direct_mode:
-        return _code_gen(nodes, resolver, macro_definitions)
     _register_private_names(parsed.private_names(src_path), module_name, resolver)
     return _import_object_mode(parsed.object_mode_plan(), resolver, macro_definitions)
 
@@ -641,14 +601,8 @@ def generate_import(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    """Resolve an .import to ExternNode (object/parse mode) or LinkedModuleNode/inline source (direct).
-
-    Source-inlined imports (direct mode, no `.o` available) are deduped by
-    canonical path so transitive cascades don't re-execute the same module
-    and trip idempotency checks (struct redef, etc). Object-mode imports
-    keep the existing winner/loser mechanism intact — `LinkedModuleNode`
-    already handles duplicates by marking earlier placements as losers.
-    """
+    """Resolve an `.import` to extern stubs for the module's runtime
+    symbols plus its compile-time declarations inlined."""
     _reject_import_in_placement(resolver, file_info)
     importer_cursor = resolver.star_eq_cursor_active
     resolver.star_eq_cursor_active = False
@@ -686,23 +640,22 @@ def _resolve_import(
     macro_definitions: MacroDefinitions,
     file_info: Token,
 ) -> GenNodes:
-    """Locate the module and bring it in as `.o` stubs, a linked module or inlined source."""
-    direct_mode = resolver.context.is_direct_mode and not resolver.context.is_object_mode
+    """Locate the module and bring it in as `.o` stubs and inlined declarations."""
     search_paths = _import_search_paths(resolver)
 
     obj_path = resolve_module(module_name, ".o", search_paths)
     src_path = resolve_module(module_name, ".s", search_paths)
 
-    if obj_path and not direct_mode and src_path:
+    if obj_path and src_path:
         return _paired_object_and_source_import(module_name, obj_path, src_path, resolver, macro_definitions, file_info)
 
-    if obj_path and not (direct_mode and _object_has_pool_allocs(obj_path)):
-        nodes = _import_from_object(module_name, obj_path, resolver, direct_mode, file_info)
+    if obj_path:
+        nodes = _import_from_object(obj_path, resolver, file_info)
         if nodes is not None:
             return nodes
 
     if src_path:
-        return _source_import(module_name, src_path, resolver, macro_definitions, direct_mode, file_info)
+        return _source_import(module_name, src_path, resolver, macro_definitions, file_info)
 
     raise NodeError(f'Module not found: "{module_name}"', file_info, code=str(E_SYMBOL_MODULE_NOT_FOUND))
 
@@ -725,10 +678,8 @@ def _paired_object_and_source_import(
     if _is_imported(src_path, resolver, module_name):
         return []
     _mark_imported(src_path, resolver)
-    extern_nodes = _import_from_object(module_name, obj_path, resolver, direct_mode=False, file_info=file_info) or []
-    inline_nodes = (
-        _import_from_source(src_path, resolver, macro_definitions, direct_mode=False, module_name=module_name) or []
-    )
+    extern_nodes = _import_from_object(obj_path, resolver, file_info) or []
+    inline_nodes = _import_from_source(src_path, resolver, macro_definitions, module_name) or []
     return extern_nodes + inline_nodes
 
 
@@ -737,14 +688,9 @@ def _source_import(
     src_path: Path,
     resolver: Resolver,
     macro_definitions: MacroDefinitions,
-    direct_mode: bool,
     file_info: Token,
 ) -> GenNodes:
-    if direct_mode:
-        if _is_imported(src_path, resolver, module_name):
-            return []
-        _mark_imported(src_path, resolver)
-    nodes = _import_from_source(src_path, resolver, macro_definitions, direct_mode, module_name)
+    nodes = _import_from_source(src_path, resolver, macro_definitions, module_name)
     if nodes is None:
         raise NodeError(f'Module not found: "{module_name}"', file_info, code=str(E_SYMBOL_MODULE_NOT_FOUND))
     return nodes

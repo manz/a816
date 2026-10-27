@@ -2,30 +2,39 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from a816.parse.nodes import NodeError
 from a816.program import Program
+from tests import link_source
+
+
+def _compile(source: str) -> tuple[Program, int]:
+    """Compile `source` to an object so resolver scopes are populated; the program and its exit code."""
+    program = Program()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        asm = root / "memory.s"
+        asm.write_text(source, encoding="utf-8")
+        exit_code = program.assemble_as_object(str(asm), root / "memory.o")
+    return program, exit_code
 
 
 def _resolve(source: str) -> Program:
-    """Run a program through resolve so resolver scopes are populated."""
-    program = Program()
-    program.assemble_string_with_emitter(source, "memory.s", _NoopEmitter())
+    program, exit_code = _compile(source)
+    assert exit_code == 0
     return program
 
 
-class _NoopEmitter:
-    def begin(self) -> None: ...
-
-    def end(self) -> None: ...
-
-    def write_block_header(self, *_: object, **__: object) -> None: ...
-
-    def write_block(self, *_: object, **__: object) -> None: ...
+def _rejects(source: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The error a failed compile of `source` logs."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        _, exit_code = _compile(source)
+    assert exit_code != 0
+    return caplog.text
 
 
 def test_struct_emits_field_offsets_and_size() -> None:
@@ -70,17 +79,8 @@ def test_struct_offsets_resolve_in_expressions() -> None:
             lda.w 0x2100 + PPU.OAMADDR
     """
 
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        asm = root / "main.s"
-        asm.write_text(src, encoding="utf-8")
-        ips = root / "out.ips"
-        program = Program()
-        assert program.assemble_as_patch(str(asm), ips) == 0
-        assert ips.exists()
-        # IPS contents must contain `AD 02 21` (LDA $2102) — operand = 0x2100 + 2.
-        data = ips.read_bytes()
-        assert b"\xad\x02\x21" in data
+    # The code must contain `AD 02 21` (LDA $2102): the operand is 0x2100 + 2.
+    assert b"\xad\x02\x21" in _assemble_ips(src)
 
 
 def test_struct_duplicate_field_raises() -> None:
@@ -96,16 +96,14 @@ def test_struct_duplicate_field_raises() -> None:
     assert "Duplicate struct field" in str(error)
 
 
-def test_struct_unknown_type_raises() -> None:
+def test_struct_unknown_type_raises(caplog: pytest.LogCaptureFixture) -> None:
     """Unknown type is now validated at codegen so nested struct types compose."""
-    program = Program()
     src = """
         .struct Bad {
             qword x
         }
     """
-    with pytest.raises(NodeError, match="Unknown struct field type"):
-        program.assemble_string_with_emitter(src, "memory.s", _NoopEmitter())
+    assert "Unknown struct field type" in _rejects(src, caplog)
 
 
 def test_struct_supports_dword() -> None:
@@ -138,14 +136,10 @@ def _collect_symbols(program: Program) -> dict[str, int]:
 
 
 def _assemble_ips(src: str) -> bytes:
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        asm = root / "main.s"
-        asm.write_text(src, encoding="utf-8")
-        ips = root / "out.ips"
-        program = Program()
-        assert program.assemble_as_patch(str(asm), ips) == 0
-        return ips.read_bytes()
+    """The bytes `src` links to, every record joined."""
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 _OAM_DEF = """
@@ -247,8 +241,7 @@ def test_nested_typed_bind_registers_deep_field_symbols() -> None:
     assert symbols["o.flags"] == 0x7E0015
 
 
-def test_forward_ref_nested_type_raises() -> None:
-    program = Program()
+def test_forward_ref_nested_type_raises(caplog: pytest.LogCaptureFixture) -> None:
     src = """
         .struct Outer {
             Inner i
@@ -257,19 +250,16 @@ def test_forward_ref_nested_type_raises() -> None:
             word x
         }
     """
-    with pytest.raises(NodeError, match="Unknown struct field type 'Inner'"):
-        program.assemble_string_with_emitter(src, "memory.s", _NoopEmitter())
+    assert "Unknown struct field type 'Inner'" in _rejects(src, caplog)
 
 
-def test_self_reference_nested_type_raises() -> None:
-    program = Program()
+def test_self_reference_nested_type_raises(caplog: pytest.LogCaptureFixture) -> None:
     src = """
         .struct Node {
             Node next
         }
     """
-    with pytest.raises(NodeError, match="cannot reference its own type"):
-        program.assemble_string_with_emitter(src, "memory.s", _NoopEmitter())
+    assert "cannot reference its own type" in _rejects(src, caplog)
 
 
 def test_cast_preserves_inner_expression() -> None:

@@ -14,7 +14,6 @@ from a816.pool import Pool
 
 if TYPE_CHECKING:
     from a816.incbin_names import PathName
-    from a816.object_file import LinkAssert
 from katsuji.script import Table
 
 
@@ -447,9 +446,6 @@ class Resolver:
         # The range check a one-byte operand of that opcode carries to the
         # linker (`RelocKind.BYTE_IMMEDIATE`, `DIRECT_PAGE`, ...).
         self.byte_operand_check: RelocKind = RelocKind.VALUE
-        # `.assert`s of a direct build, checked once labels are final
-        # (object mode hands them to the linker instead).
-        self.direct_asserts: list[tuple[LinkAssert, Scope]] = []
         # Placement context seen by `.import` at codegen. A `*=` cursor
         # stays active until the end of the source unit that opened it
         # (`.import` restores the importer's flag); the depth counts the

@@ -8,13 +8,13 @@ Every opcode byte, both M/X widths, edge operand values. xdds printed
 from __future__ import annotations
 
 from collections.abc import Iterator
+from functools import cache
 from itertools import product
 
 import pytest
 
 from a816.cpu.disassembler import OPCODE_TABLE, Disassembler, format_disassembly_block
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 ORG = 0x008000
 EDGES = {
@@ -32,17 +32,22 @@ def _cases() -> Iterator[tuple[bytes, bool, bool]]:
                 yield bytes([opcode]) + value.to_bytes(size, "little"), m8, x8
 
 
+@cache
+def _rebuilt(line: str) -> bytes | None:
+    """The bytes `line` assembles to at ORG, None when the build fails. Most
+    opcodes print the same line at every M/X width: each builds once."""
+    linked = link_source(f"*= 0x{ORG:06x}\n    {line}\n")
+    return b"".join(linked.data) if linked.exit_code == 0 else None
+
+
 def _round_trip(raw: bytes, m8: bool, x8: bool) -> str | None:
     """The a816 line xdds printed, when it reassembles differently; else None."""
     inst = Disassembler(m8, x8).decode_instruction(raw, ORG)
     assert inst is not None
     line = inst.format_a816()
-    writer = StubWriter()
-    try:
-        Program().assemble_string_with_emitter(f"*= 0x{ORG:06x}\n    {line}\n", "rt.s", writer)
-    except Exception as exc:  # noqa: BLE001  (any failure is a broken round trip)
-        return f"{raw.hex()} -> {line!r}: {type(exc).__name__}"
-    rebuilt = b"".join(writer.data)
+    rebuilt = _rebuilt(line)
+    if rebuilt is None:
+        return f"{raw.hex()} -> {line!r}: does not assemble"
     return None if rebuilt == raw else f"{raw.hex()} -> {line!r} -> {rebuilt.hex()}"
 
 
@@ -81,8 +86,7 @@ def test_a_labelled_block_outside_bank_zero_reassembles_to_its_bytes() -> None:
     org = 0x018000
     raw = bytes.fromhex("2006804c06806060")  # jsr $8006 / jmp $8006 / rts / target: rts
     lines = format_disassembly_block(Disassembler().disassemble(raw, org), show_bytes=False, a816_syntax=True)
-    writer = StubWriter()
 
-    Program().assemble_string_with_emitter(f"*= 0x{org:06x}\n" + "\n".join(lines) + "\n", "rt.s", writer)
+    linked = link_source(f"*= 0x{org:06x}\n" + "\n".join(lines) + "\n")
 
-    assert b"".join(writer.data) == raw
+    assert b"".join(linked.data) == raw

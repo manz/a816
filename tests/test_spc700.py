@@ -8,31 +8,46 @@ of the 256 opcodes, assembled by another assembler.
 from __future__ import annotations
 
 import io
+import logging
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from a816.cpu.arch import using_arch
 from a816.cpu.spc700 import SPC700_TABLE
-from a816.exceptions import AssemblyError
-from a816.module_builder import ARAM_BUS
+from a816.module_builder import BuildResult, build_with_imports
 from a816.parse.mzparser import A816Parser
-from a816.parse.nodes import NodeError
-from a816.program import Program
 from a816.writers import AramWriter
+from tests import link_source
 
 SAMPLES = Path(__file__).parent / "samples" / "spc700"
 
 
+def _build(source: str) -> tuple[BuildResult, bytes]:
+    """Build `source` as an SPC700 program (`t.spc.s`) to its ARAM image."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        (tmp / "t.spc.s").write_text(source, encoding="utf-8")
+        out = tmp / "t.aram"
+        result = build_with_imports(
+            tmp / "t.spc.s", out, output_format="aram", output_dir=tmp / "obj", use_a816_toml=False, use_cache=False
+        )
+        return result, out.read_bytes() if out.exists() else b""
+
+
 def _assemble(source: str) -> bytes:
-    writer_output = io.BytesIO()
-    writer = AramWriter(writer_output)
-    program = Program()
-    program.resolver.context.bus_map = [ARAM_BUS]
-    with using_arch("spc700"):
-        program.assemble_string_with_emitter(source, "t.s", writer)
-    writer.end()
-    return writer_output.getvalue()
+    result, image = _build(source)
+    assert result.exit_code == 0
+    return image
+
+
+def _error(source: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The diagnostics of an SPC700 build that fails on `source`."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        result, _ = _build(source)
+    assert result.exit_code != 0
+    return caplog.text + "\n".join(result.diagnostics)
 
 
 def _image(source: str) -> bytes:
@@ -96,32 +111,29 @@ def test_macro_arguments_reach_the_operands() -> None:
     assert _image(source).hex(" ") == "e8 20 c4 f2"
 
 
-def test_a_branch_out_of_range_is_an_error() -> None:
-    with pytest.raises(NodeError, match="bytes away"):
-        _image("    bra far\n    .db " + ", ".join(["0"] * 200) + "\nfar:\n")
+def _image_error(source: str, caplog: pytest.LogCaptureFixture) -> str:
+    return _error(".alloc main at 0x0400 {\n" + source + "}\n", caplog)
 
 
-def test_an_operand_form_the_cpu_lacks_is_an_error() -> None:
-    with pytest.raises(NodeError, match="no SPC700 encoding"):
-        _image("    mov a, (y)\n")
+def test_a_branch_out_of_range_is_an_error(caplog: pytest.LogCaptureFixture) -> None:
+    assert "bytes away" in _image_error("    bra far\n    .db " + ", ".join(["0"] * 200) + "\nfar:\n", caplog)
 
 
-def test_a_bad_indirect_is_an_error() -> None:
-    with pytest.raises(Exception, match=r"\[dp\+x\]"):
-        _image("    mov a, [0x20]\n")
+def test_an_operand_form_the_cpu_lacks_is_an_error(caplog: pytest.LogCaptureFixture) -> None:
+    assert "no SPC700 encoding" in _image_error("    mov a, (y)\n", caplog)
 
 
-def test_an_unknown_character_in_an_operand_is_an_error() -> None:
-    with pytest.raises(AssemblyError, match="SPC700 operand"):
-        _image("    mov a, @0x20\n")
+def test_a_bad_indirect_is_an_error(caplog: pytest.LogCaptureFixture) -> None:
+    assert "[dp+x]" in _image_error("    mov a, [0x20]\n", caplog)
+
+
+def test_an_unknown_character_in_an_operand_is_an_error(caplog: pytest.LogCaptureFixture) -> None:
+    assert "SPC700 operand" in _image_error("    mov a, @0x20\n", caplog)
 
 
 def test_spc700_mnemonics_are_identifiers_on_the_65c816() -> None:
-    program = Program()
-    program.assemble_string_with_emitter(
-        "or = 3\n.alloc main at 0x8000 {\n    lda #or\n}\n", "t.s", AramWriter(io.BytesIO())
-    )
-    assert program.resolver.current_scope.value_for("or") == 3
+    linked = link_source("or = 3\n.alloc main at 0x8000 {\n    lda #or\n}\n")
+    assert (linked.exit_code, linked.data) == (0, [b"\xa9\x03"])
 
 
 def test_the_image_starts_at_its_lowest_address() -> None:

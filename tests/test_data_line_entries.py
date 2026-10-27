@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from a816.debug_info import read
+from a816.module_builder import build_with_imports
 from a816.object_file import ObjectFile
 from a816.program import Program
 
@@ -48,9 +50,10 @@ def test_patch_string_records_its_field(tmp_path: Path) -> None:
 def test_debug_info_names_data_lines(tmp_path: Path) -> None:
     src = tmp_path / "main.s"
     src.write_text("*=0x008000\n.db 1, 2\nnop\n.dw 3\n", encoding="utf-8")
-    program = Program()
-    program.enable_debug_capture()
-    program.assemble_as_patch(str(src), tmp_path / "out.ips")
-    info = program.build_debug_info(str(src))
+    result = build_with_imports(
+        src, tmp_path / "out.ips", output_dir=tmp_path / "obj", use_a816_toml=False, use_cache=False
+    )
+    assert result.debug_info_path is not None
+    info = read(result.debug_info_path)
 
     assert [(e.address, e.line) for e in info.lines] == [(0x008000, 1), (0x008002, 2), (0x008003, 3)]

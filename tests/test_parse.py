@@ -10,7 +10,7 @@ from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import OpcodeNode
 from a816.parse.tokens import Token, TokenType
 from a816.program import Program
-from a816.writers import Writer
+from tests import link_source
 
 logger = logging.getLogger("a816")
 
@@ -22,23 +22,6 @@ logger.addHandler(stream_handler)
 
 
 # logger.setLevel(logging.WARNING)
-
-
-class StubWriter(Writer):
-    def __init__(self) -> None:
-        self.data: list[tuple[int, bytes]] = []
-
-    def begin(self) -> None:
-        """StubWriter only implements write_block."""
-
-    def write_block(self, block: bytes, block_address: int) -> None:
-        self.data.append((block_address, block))
-
-    def write_block_header(self, block: bytes, block_address: int) -> None:
-        return None
-
-    def end(self) -> None:
-        """StubWriter only implements write_block."""
 
 
 class ParseTest(unittest.TestCase):
@@ -145,15 +128,9 @@ class ParseTest(unittest.TestCase):
         }
         """
 
-        program = Program()
-        _, nodes = program.parser.parse(input_program)
+        linked = link_source("*=0x008000\n" + input_program)
 
-        program.resolve_labels(nodes)
-
-        writer = StubWriter()
-        program.emit(nodes, writer)
-
-        machine_code = writer.data[0][1]
+        machine_code = linked.data[0]
 
         unpacked = struct.unpack("<BHBHBH", machine_code)
 
@@ -301,13 +278,8 @@ class ParseTest(unittest.TestCase):
             rts
         """
 
-        program = Program()
-        result = program.parser.parse_as_ast(input_program)
-        nodes = code_gen(result.nodes, program.resolver)
-        program.resolve_labels(nodes)
-
-        program.emit(nodes, StubWriter())
-        print(nodes[-2])
+        linked = link_source("*=0x008000\n" + input_program)
+        self.assertEqual(linked.exit_code, 0)
 
     def test_macro_definition_should_parse(self) -> None:
         input_program = """
@@ -375,15 +347,8 @@ class ParseTest(unittest.TestCase):
 
                 .dw newgame.empty"""
 
-        program = Program()
-        ast = program.parser.parse_as_ast(input_program)
-        print(ast)
-        nodes = code_gen(ast.nodes, program.resolver)
-        program.resolve_labels(nodes)
-        program.resolver.dump_symbol_map()
-        writer = StubWriter()
-        program.emit(nodes, writer)
-        self.assertEqual(writer.data[0][1], b"\x00\x00\x02\x80")
+        linked = link_source("*=0x008000\n" + input_program)
+        self.assertEqual(linked.data[0], b"\x00\x00\x02\x80")
 
     def test_include_ips(self) -> None:
         input_program = """.include_ips 'whee.ips', -0x200"""
@@ -521,16 +486,11 @@ lda #1
         .a8
         lda #0x42
         """
-        program = Program()
-        _, nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
-
-        writer = StubWriter()
-        program.emit(nodes, writer)
+        linked = link_source("*=0x008000\n" + input_program)
 
         # lda immediate 8-bit: opcode (0xA9) + 1 byte = 2 bytes
-        self.assertEqual(len(writer.data[0][1]), 2)
-        self.assertEqual(writer.data[0][1], b"\xa9\x42")
+        self.assertEqual(len(linked.data[0]), 2)
+        self.assertEqual(linked.data[0], b"\xa9\x42")
 
     def test_a16_directive_sets_16bit_accumulator(self) -> None:
         """Test that .a16 followed by lda #immediate emits 3 bytes (16-bit immediate)"""
@@ -538,16 +498,11 @@ lda #1
         .a16
         lda #0x1234
         """
-        program = Program()
-        _, nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
-
-        writer = StubWriter()
-        program.emit(nodes, writer)
+        linked = link_source("*=0x008000\n" + input_program)
 
         # lda immediate 16-bit: opcode (0xA9) + 2 bytes = 3 bytes
-        self.assertEqual(len(writer.data[0][1]), 3)
-        self.assertEqual(writer.data[0][1], b"\xa9\x34\x12")
+        self.assertEqual(len(linked.data[0]), 3)
+        self.assertEqual(linked.data[0], b"\xa9\x34\x12")
 
     def test_i8_directive_sets_8bit_index(self) -> None:
         """Test that .i8 followed by ldx #immediate emits 2 bytes (8-bit immediate)"""
@@ -555,16 +510,11 @@ lda #1
         .i8
         ldx #0x42
         """
-        program = Program()
-        _, nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
-
-        writer = StubWriter()
-        program.emit(nodes, writer)
+        linked = link_source("*=0x008000\n" + input_program)
 
         # ldx immediate 8-bit: opcode (0xA2) + 1 byte = 2 bytes
-        self.assertEqual(len(writer.data[0][1]), 2)
-        self.assertEqual(writer.data[0][1], b"\xa2\x42")
+        self.assertEqual(len(linked.data[0]), 2)
+        self.assertEqual(linked.data[0], b"\xa2\x42")
 
     def test_i16_directive_sets_16bit_index(self) -> None:
         """Test that .i16 followed by ldx #immediate emits 3 bytes (16-bit immediate)"""
@@ -572,16 +522,11 @@ lda #1
         .i16
         ldx #0x1234
         """
-        program = Program()
-        _, nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
-
-        writer = StubWriter()
-        program.emit(nodes, writer)
+        linked = link_source("*=0x008000\n" + input_program)
 
         # ldx immediate 16-bit: opcode (0xA2) + 2 bytes = 3 bytes
-        self.assertEqual(len(writer.data[0][1]), 3)
-        self.assertEqual(writer.data[0][1], b"\xa2\x34\x12")
+        self.assertEqual(len(linked.data[0]), 3)
+        self.assertEqual(linked.data[0], b"\xa2\x34\x12")
 
     def test_explicit_size_overrides_directive(self) -> None:
         """Test that explicit .w suffix overrides .a8 state"""
@@ -589,16 +534,11 @@ lda #1
         .a8
         lda.w #0x0000
         """
-        program = Program()
-        _, nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
-
-        writer = StubWriter()
-        program.emit(nodes, writer)
+        linked = link_source("*=0x008000\n" + input_program)
 
         # Explicit .w should force 16-bit even in .a8 mode
-        self.assertEqual(len(writer.data[0][1]), 3)
-        self.assertEqual(writer.data[0][1], b"\xa9\x00\x00")
+        self.assertEqual(len(linked.data[0]), 3)
+        self.assertEqual(linked.data[0], b"\xa9\x00\x00")
 
     def test_register_size_persists_across_instructions(self) -> None:
         """Test that register size state persists across multiple instructions"""
@@ -607,16 +547,11 @@ lda #1
         lda #0x1234
         lda #0x5678
         """
-        program = Program()
-        _, nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
-
-        writer = StubWriter()
-        program.emit(nodes, writer)
+        linked = link_source("*=0x008000\n" + input_program)
 
         # Both should be 16-bit (3 bytes each)
-        self.assertEqual(len(writer.data[0][1]), 6)
-        self.assertEqual(writer.data[0][1], b"\xa9\x34\x12\xa9\x78\x56")
+        self.assertEqual(len(linked.data[0]), 6)
+        self.assertEqual(linked.data[0], b"\xa9\x34\x12\xa9\x78\x56")
 
     def test_register_size_can_be_changed(self) -> None:
         """Test that register size can be changed mid-program"""
@@ -626,13 +561,8 @@ lda #1
         .a8
         lda #0x42
         """
-        program = Program()
-        _, nodes = program.parser.parse(input_program)
-        program.resolve_labels(nodes)
-
-        writer = StubWriter()
-        program.emit(nodes, writer)
+        linked = link_source("*=0x008000\n" + input_program)
 
         # First lda is 16-bit (3 bytes), second is 8-bit (2 bytes)
-        self.assertEqual(len(writer.data[0][1]), 5)
-        self.assertEqual(writer.data[0][1], b"\xa9\x34\x12\xa9\x42")
+        self.assertEqual(len(linked.data[0]), 5)
+        self.assertEqual(linked.data[0], b"\xa9\x34\x12\xa9\x42")

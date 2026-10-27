@@ -17,12 +17,11 @@ class A816Error(Exception):
 
 
 class AssemblyError(A816Error):
-    """Raised by `Program.assemble_string_with_emitter` when parsing fails.
+    """Raised by `a816.snippet.assemble_source` when the build fails.
 
-    Carries a pre-formatted message (already including source location when
-    the parser attached one). Codegen failures keep raising `NodeError`
-    directly; both share `A816Error` as a base so embedders can catch the
-    entire family with one `except A816Error`.
+    Carries the build's pre-formatted diagnostics (source location, caret,
+    hint). Shares `A816Error` as a base with `NodeError`, so embedders can
+    catch the whole family with one `except A816Error`.
     """
 
     def __init__(self, message: str) -> None:

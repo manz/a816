@@ -25,7 +25,6 @@ from a816.parse.nodes.data import (
 )
 from a816.parse.nodes.errors import NodeError, UnknownOpcodeError
 from a816.parse.nodes.expr import ExpressionNode, ValueNode
-from a816.parse.nodes.module import LinkedModuleNode, logger
 from a816.parse.nodes.opcode import OpcodeNode
 from a816.parse.nodes.position import (
     CodePositionNode,
@@ -60,7 +59,6 @@ __all__ = [
     "IncludeIpsNode",
     "LabelDeclNode",
     "LabelNode",
-    "LinkedModuleNode",
     "LongNode",
     "NodeError",
     "OpcodeNode",
@@ -79,6 +77,5 @@ __all__ = [
     "ValueNode",
     "WordNode",
     "_SizedValueNode",
-    "logger",
     "variable_expansion",
 ]
