@@ -124,7 +124,7 @@ def _import_from_object(
 ) -> GenNodes | None:
     try:
         view = _import_view(obj_path)
-    except (FileNotFoundError, ValueError):
+    except FileNotFoundError, ValueError:
         return None
 
     for mapping in view.bus_mappings:

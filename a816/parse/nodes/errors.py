@@ -48,7 +48,7 @@ def node_source_location(file_info: Token | None) -> SourceLocation | None:
     pos = file_info.position
     try:
         source_line = pos.get_line()
-    except (IndexError, AttributeError):
+    except IndexError, AttributeError:
         source_line = ""
     file = getattr(pos, "file", None)
     lines = getattr(file, "lines", None)

@@ -23,7 +23,7 @@ class AssemblyContext:
     """Holds compilation state that was previously scattered across hasattr checks."""
 
     mode: AssemblyMode = AssemblyMode.PARSE
-    object_writer: "ObjectWriter | None" = None
+    object_writer: ObjectWriter | None = None
     module_paths: list[Path] = field(default_factory=list)
     include_paths: list[Path] = field(default_factory=list)
     # How the link reacts to overlapping byte writes from
@@ -40,10 +40,10 @@ class AssemblyContext:
     require_placement: bool = False
     # `mapper` or `[map.N]` regions from `a816.toml`, declared on the bus
     # of every translation unit before its own `.map` lines.
-    bus_map: list["BusMapping"] = field(default_factory=list)
+    bus_map: list[BusMapping] = field(default_factory=list)
     # Object-mode `.import` parses shared by every module of one build, keyed
     # by source path. `ModuleBuilder` owns it; None parses every import afresh.
-    import_asts: "dict[str, ParsedImport] | None" = None
+    import_asts: dict[str, ParsedImport] | None = None
     # The include paths as `ModuleBuilder` gives them (unresolved), for every
     # parse of a build: discovery, a module's own compile and its imports' all
     # name an included file the same way, cold or warm. None falls back to

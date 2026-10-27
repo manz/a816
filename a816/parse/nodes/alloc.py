@@ -202,7 +202,7 @@ class AllocNode(NodeBase):
                 for node in self.body:
                     try:
                         pc = node.pc_after(pc)
-                    except (NodeError, SymbolNotDefined):
+                    except NodeError, SymbolNotDefined:
                         # Forward refs inside the alloc body (e.g. an `=`
                         # RHS that uses an `.incbin` auto-symbol bound by a
                         # later sibling) raise on the first bind walk. The

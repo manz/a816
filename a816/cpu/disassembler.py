@@ -238,7 +238,7 @@ class Instruction:
 # 0x5C -> `jmp.l`).
 
 # (asm AddressingMode, index) -> per-size-slot (AddrMode, base_size) | None.
-_SLOT_MODES: dict[tuple["_AsmMode", str | None], list[tuple[AddrMode, int] | None]] = {
+_SLOT_MODES: dict[tuple[_AsmMode, str | None], list[tuple[AddrMode, int] | None]] = {
     (_AsmMode.direct, None): [(AddrMode.DIRECT, 1), (AddrMode.ABSOLUTE, 2), (AddrMode.ABSOLUTE_LONG, 3)],
     (_AsmMode.direct_indexed, "x"): [(AddrMode.DIRECT_X, 1), (AddrMode.ABSOLUTE_X, 2), (AddrMode.ABSOLUTE_LONG_X, 3)],
     (_AsmMode.direct_indexed, "y"): [(AddrMode.DIRECT_Y, 1), (AddrMode.ABSOLUTE_Y, 2), None],
@@ -261,9 +261,7 @@ def _immediate_record(op: Opcode) -> tuple[AddrMode, int]:
     return AddrMode.IMMEDIATE_8, 1
 
 
-def _slot_records(
-    mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Opcode
-) -> list[tuple[int, AddrMode, int]]:
+def _slot_records(mnemonic: str, asm_mode: _AsmMode, index: str | None, op: Opcode) -> list[tuple[int, AddrMode, int]]:
     """(byte, AddrMode, size) per filled size slot of a memory-mode `Opcode`."""
     records: list[tuple[int, AddrMode, int]] = []
     for i, slot in enumerate(_SLOT_MODES[(asm_mode, index)]):
@@ -278,7 +276,7 @@ def _slot_records(
 
 
 def _opcode_records(
-    mnemonic: str, asm_mode: "_AsmMode", index: str | None, op: Opcode
+    mnemonic: str, asm_mode: _AsmMode, index: str | None, op: Opcode
 ) -> list[tuple[int, AddrMode, int]]:
     """(byte, AddrMode, size) records for an operand-bearing `Opcode`."""
     if op.alias:
@@ -292,7 +290,7 @@ def _opcode_records(
 
 
 def _emitter_records(
-    mnemonic: str, asm_mode: "_AsmMode", index: str | None, em: object
+    mnemonic: str, asm_mode: _AsmMode, index: str | None, em: object
 ) -> list[tuple[int, AddrMode, int]]:
     """(byte, AddrMode, size) records for one emitter. Empty for encode-only aliases.
 
@@ -311,7 +309,7 @@ def _emitter_records(
     return []
 
 
-def _table_emitters() -> Iterator[tuple[str, "_AsmMode", str | None, object]]:
+def _table_emitters() -> Iterator[tuple[str, _AsmMode, str | None, object]]:
     """Every (mnemonic, mode, index, emitter) in `snes_opcode_table`, index
     dicts flattened (index None for a single emitter)."""
     for mnemonic, modes in snes_opcode_table.items():

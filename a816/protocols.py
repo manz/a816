@@ -59,17 +59,17 @@ class OpcodeProtocol(Protocol):
 
     def emit(
         self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
+        value_node: ValueNodeProtocol | None,
+        resolver: Resolver,
         size: ValueSize | None = None,
     ) -> bytes:
         """Emit machine code bytes for this opcode."""
 
     def supposed_length(
         self,
-        value_node: "ValueNodeProtocol | None",
+        value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
     ) -> int:
         """Return the expected byte length of this opcode."""
 
@@ -94,16 +94,16 @@ class OpcodeBase:
 
     def emit(
         self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
+        value_node: ValueNodeProtocol | None,
+        resolver: Resolver,
         size: ValueSize | None = None,
     ) -> bytes:
         raise NotImplementedError
 
     def supposed_length(
         self,
-        value_node: "ValueNodeProtocol | None",
+        value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
     ) -> int:
         raise NotImplementedError

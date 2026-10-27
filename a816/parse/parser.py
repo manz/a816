@@ -64,7 +64,7 @@ class Parser:
     def __init__(
         self,
         tokens: list[Token],
-        initial_state: "StateFunc",
+        initial_state: StateFunc,
         include_paths: list[Path] | None = None,
         *,
         missing_includes_ok: bool = False,

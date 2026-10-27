@@ -113,7 +113,7 @@ class BusMapping:
     @classmethod
     def bml(
         cls, identifier: str, address: str, mask: int = 0, base: int = 0, rom_size: int = 0, writeable: bool = False
-    ) -> "BusMapping":
+    ) -> BusMapping:
         """A bsnes-semantics region, as written in `boards.bml` / `a816.toml`."""
         return cls(identifier, (0, 0), (0, 0), mask, writeable, None, address, base, rom_size)
 
@@ -435,7 +435,7 @@ class ObjectFile:
         return ObjectHeader(*_HEADER.unpack(raw))
 
     @staticmethod
-    def from_file(filename: str) -> "ObjectFile":
+    def from_file(filename: str) -> ObjectFile:
         header = ObjectFile.read_header(filename)
         if header is None:
             raise ValueError(INVALID_FILE_FORMAT)

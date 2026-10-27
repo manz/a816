@@ -2,7 +2,6 @@ import re
 from bisect import bisect_right
 from collections.abc import Callable
 from functools import cache
-from typing import Optional
 
 from a816.parse.errors import ScannerException
 from a816.parse.tokens import EOF, File, Position, Token, TokenType
@@ -16,7 +15,7 @@ def _run_pattern(candidates: str, negate: bool) -> re.Pattern[str]:
 
 
 class Scanner:
-    state: Optional["ScannerStateFunc"] = None
+    state: ScannerStateFunc | None = None
     start = 0
     pos = 0
     end = 0  # len(input), read by every primitive
@@ -27,7 +26,7 @@ class Scanner:
     file: File
     input: str
 
-    def __init__(self, initial_state: "ScannerStateFunc") -> None:
+    def __init__(self, initial_state: ScannerStateFunc) -> None:
         self.initial_state = initial_state
         self.tokens: list[Token] = []
         self._line_starts: list[int] = [0]

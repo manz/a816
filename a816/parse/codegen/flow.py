@@ -72,7 +72,7 @@ def generate_if(
 
     try:
         condition = eval_expression(node.expression, resolver)
-    except (KeyError, SymbolNotDefined):
+    except KeyError, SymbolNotDefined:
         # Symbol not yet defined - this can happen with forward label references
         # like `.if END_OF_FREE_SPACE > 0x1ffff`. Labels are resolved in a later
         # pass, so we treat unresolved symbols as false during code generation.

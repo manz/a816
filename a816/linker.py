@@ -219,7 +219,7 @@ class Linker:
         return spans
 
     @staticmethod
-    def _check_cross_pool_overlaps(merged: "dict[str, Pool]", sources: dict[tuple[str, str], str]) -> None:
+    def _check_cross_pool_overlaps(merged: dict[str, Pool], sources: dict[tuple[str, str], str]) -> None:
         """Reject bss reservations from different pools that share bytes.
 
         Each pool overlap-checks its own allocations, and emitted bytes meet
@@ -353,7 +353,7 @@ class Linker:
         return None
 
     @staticmethod
-    def _pool_from_decl(decl: "PoolDecl") -> "Pool":
+    def _pool_from_decl(decl: PoolDecl) -> Pool:
         from a816.pool import Pool
 
         return Pool.from_decl(decl)
@@ -428,7 +428,7 @@ class Linker:
                 raise ValueError(f"pool {decl.name!r} declared with conflicting contexts: {previous} vs {contexts}")
 
     @staticmethod
-    def _merge_one_pool_decl(merged: "dict[str, Pool]", decl: PoolDecl) -> None:
+    def _merge_one_pool_decl(merged: dict[str, Pool], decl: PoolDecl) -> None:
         from a816.pool import PoolRange
 
         if decl.name not in merged:
@@ -917,7 +917,7 @@ def _is_alloc_private(key: str, name: str) -> bool:
     return key.startswith("__sc") and key.endswith(f"__{name}")
 
 
-def _may_share(first: "Pool", second: "Pool") -> bool:
+def _may_share(first: Pool, second: Pool) -> bool:
     """Two contexts of the same pool (`POOL.A`, `POOL.B`) never live at the
     same time, so their reservations may hold the same memory. Nothing else may."""
     if first.context is None or second.context is None or first.context == second.context:
@@ -925,11 +925,11 @@ def _may_share(first: "Pool", second: "Pool") -> bool:
     return _context_owner(first) == _context_owner(second)
 
 
-def _context_owner(pool: "Pool") -> str:
+def _context_owner(pool: Pool) -> str:
     return pool.name.removesuffix(f".{pool.context}")
 
 
-def _occupy_reservations(owner: "Pool", contexts: "list[Pool]") -> None:
+def _occupy_reservations(owner: Pool, contexts: list[Pool]) -> None:
     """Mark every placed reservation of `owner` as taken in each of its contexts."""
     spans = [(alloc.addr, alloc.addr + alloc.size - 1) for alloc in owner.allocations if alloc.size]
     for context in contexts:

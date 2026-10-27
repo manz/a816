@@ -42,7 +42,7 @@ class Linked:
     exit_code: int
     blocks: list[tuple[int, bytes]] = field(default_factory=list)
     symbols: dict[str, int] = field(default_factory=dict)
-    program: "Program | None" = None
+    program: Program | None = None
     """The program that linked, for what the symbol map leaves out (the `.sym` export)."""
 
     @property
