@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from a816.exceptions import AssemblyError
+from a816.exceptions import A816Error, AssemblyError
 
 
 @dataclass(frozen=True)
@@ -21,10 +21,8 @@ class Assembled:
     """What `assemble_source` built."""
 
     blocks: tuple[tuple[int, bytes], ...] = ()
-    """The output's IPS records: each run of bytes at the address the
-    patch writes it to (the ROM file offset for mapped ROM, the address
-    itself where no `.map` covers it, e.g. a `*= 0x7E0000` WRAM stub).
-    A run longer than 0xFFFF bytes spans several records."""
+    """Each placed run of bytes at its SNES address (`*= 0x7E0000` puts
+    one at 0x7E0000), in address order."""
     symbols: dict[str, int] = field(default_factory=dict)
     """Every linked label's address."""
 
@@ -46,7 +44,7 @@ def assemble_source(
     own code (`*=`, `.alloc`), as any module of a build does.
 
     Args:
-        source: the main translation unit's text.
+        source: the main translation unit's text, named `main.s` in diagnostics.
         files: other sources by path relative to the main one, for its
             `.import` and `.include`.
         symbols: names bound before the source compiles, as `-D` binds them.
@@ -56,29 +54,30 @@ def assemble_source(
     Raises:
         AssemblyError: the build failed; its message holds the diagnostics.
     """
-    from a816 import ips
-    from a816.module_builder import build_with_imports
+    from a816.module_builder import ModuleBuilder, ModuleCompileError
+    from a816.program import Program
 
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        main = root / "main.s"
-        main.write_text(source, encoding="utf-8")
         for name, content in (files or {}).items():
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
-        out = root / "out.ips"
-        result = build_with_imports(
-            main,
-            out,
+        builder = ModuleBuilder(
+            module_paths=[root],
             output_dir=root / "obj",
-            include_paths=include_paths,
             symbols=dict(symbols) if symbols is not None else None,
+            include_paths=include_paths,
             experimental=experimental,
-            use_a816_toml=False,
             use_cache=False,
         )
-        if result.exit_code != 0:
-            raise AssemblyError("\n".join(result.diagnostics) or f"build failed with exit code {result.exit_code}")
-        records = ips.parse(out.read_bytes()).records
-    return Assembled(tuple((record.offset, record.data) for record in records), dict(result.symbol_map))
+        program = Program()
+        try:
+            blocks = program.placed_blocks(builder.build(root / "main.s", main_text=source))
+        except ModuleCompileError as e:
+            raise AssemblyError("\n".join(e.diagnostics) or str(e)) from e
+        except A816Error as e:
+            raise AssemblyError(e.format() if hasattr(e, "format") else str(e)) from e
+    labels = dict(program.resolver.get_all_labels())
+    labels.update(program.resolver.get_all_absolute_labels())
+    return Assembled(tuple(blocks), labels)

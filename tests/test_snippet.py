@@ -19,8 +19,18 @@ def test_labels_carry_their_linked_address() -> None:
     assert assembled.symbols["here"] == 0x008001
 
 
-def test_blocks_carry_their_rom_offset() -> None:
-    assert assemble_source("*=0x038000\n.db 1\n").blocks == ((0x018000, b"\x01"),)
+def test_blocks_carry_their_snes_address() -> None:
+    assert assemble_source("*=0x038000\n.db 1\n").blocks == ((0x038000, b"\x01"),)
+
+
+def test_blocks_come_in_address_order() -> None:
+    blocks = assemble_source("*=0x039000\n.db 2\n*=0x038000\n.db 1\n").blocks
+    assert [address for address, _ in blocks] == [0x038000, 0x039000]
+
+
+def test_overlapping_blocks_are_refused() -> None:
+    with pytest.raises(AssemblyError, match="E0408"):
+        assemble_source("*=0x038000\n.db 1, 2\n*=0x038001\n.db 3\n")
 
 
 def test_unplaced_code_is_refused() -> None:
