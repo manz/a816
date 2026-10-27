@@ -7,9 +7,8 @@ from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import AssignAstNode
 from a816.parse.codegen import code_gen
 from a816.parse.mzparser import A816Parser, ParserResult
-from a816.program import Program
 from a816.symbols import Resolver
-from tests import StubWriter, link_source
+from tests import link_source
 
 
 class TestParse(TestCase):
@@ -312,19 +311,9 @@ DEBUG := 1
         generate_power_of_twos_table(0, 8)
         """
 
-        result = self._get_result_for(program)
-        #      self.assertEqual(result.ast, [
-        #          ('for', 'k', '0', '5', ('compound', [('db', ['k'])]))
-        #      ])
-        p = Program()
+        linked = link_source("*=0x008000\n" + program)
 
-        nodes = code_gen(result.nodes, p.resolver)
-        #   self.assertEqual(nodes, [])
-        writer = StubWriter()
-        p.resolve_labels(nodes)
-        p.emit(nodes, writer)
-
-        self.assertEqual(struct.unpack("<8H", writer.data[0]), (1, 2, 4, 8, 16, 32, 64, 128))
+        self.assertEqual(struct.unpack("<8H", linked.data[0]), (1, 2, 4, 8, 16, 32, 64, 128))
 
     def test_eq_ne(self) -> None:
         program = """

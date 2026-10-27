@@ -3,10 +3,9 @@ import unittest
 from unittest import skip
 
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.codegen import code_gen
 from a816.parse.nodes import NodeError
 from a816.program import Program
-from tests import StubWriter, link_source
+from tests import link_source
 
 
 class EmitTest(unittest.TestCase):
@@ -84,14 +83,8 @@ class EmitTest(unittest.TestCase):
         result = program.parser.parse_as_ast(input_program)
         self.assertEqual(result.ast, [("dl", ["0xf01ac5"])])
 
-        writer = StubWriter()
-
-        nodes = code_gen(result.nodes, program.resolver)
-        program.resolve_labels(nodes)
-
-        program.emit(nodes, writer)
-
-        self.assertEqual(writer.data[0], b"\xc5\x1a\xf0")
+        linked = link_source("*=0x008000\n" + input_program)
+        self.assertEqual(linked.data[0], b"\xc5\x1a\xf0")
 
     def test_ateq_using_map(self) -> None:
         input_program = """
@@ -176,14 +169,8 @@ class EmitTest(unittest.TestCase):
             result.ast,
         )
 
-        writer = StubWriter()
-
-        nodes = code_gen(result.nodes, program.resolver)
-        program.resolve_labels(nodes)
-
-        program.emit(nodes, writer)
-
-        self.assertEqual(writer.data[0], b"\x41\x12")
+        linked = link_source("*=0x008000\n" + input_program)
+        self.assertEqual(linked.data[0], b"\x41\x12")
 
     def test_ascii(self) -> None:
         input_program = """
@@ -194,14 +181,8 @@ class EmitTest(unittest.TestCase):
         result = program.parser.parse_as_ast(input_program)
         self.assertEqual(result.ast, [("ascii", "Final Fantasy VI    ")])
 
-        writer = StubWriter()
-
-        nodes = code_gen(result.nodes, program.resolver)
-        program.resolve_labels(nodes)
-
-        program.emit(nodes, writer)
-
-        self.assertEqual(writer.data[0], b"Final Fantasy VI    ")
+        linked = link_source("*=0x008000\n" + input_program)
+        self.assertEqual(linked.data[0], b"Final Fantasy VI    ")
 
     def test_if(self) -> None:
         input_program = """
@@ -223,14 +204,8 @@ class EmitTest(unittest.TestCase):
             result.ast,
         )
 
-        writer = StubWriter()
-
-        nodes = code_gen(result.nodes, program.resolver)
-        program.resolve_labels(nodes)
-
-        program.emit(nodes, writer)
-
-        self.assertEqual(writer.data[0], b"\x85")
+        linked = link_source("*=0x008000\n" + input_program)
+        self.assertEqual(linked.data[0], b"\x85")
 
     def test_else(self) -> None:
         input_program = """
@@ -252,14 +227,8 @@ class EmitTest(unittest.TestCase):
             result.ast,
         )
 
-        writer = StubWriter()
-
-        nodes = code_gen(result.nodes, program.resolver)
-        program.resolve_labels(nodes)
-
-        program.emit(nodes, writer)
-
-        self.assertEqual(writer.data[0], b"\x11")
+        linked = link_source("*=0x008000\n" + input_program)
+        self.assertEqual(linked.data[0], b"\x11")
 
     @skip("Not implemented yet")
     def test_tr(self) -> None:
@@ -271,14 +240,8 @@ class EmitTest(unittest.TestCase):
         result = program.parser.parse_as_ast(input_program)
         self.assertEqual(result.ast, [("ascii", "Final Fantasy VI    ")])
 
-        writer = StubWriter()
-
-        nodes = code_gen(result.nodes, program.resolver)
-        program.resolve_labels(nodes)
-
-        program.emit(nodes, writer)
-
-        self.assertEqual(writer.data[0], b"Final Fantasy VI    ")
+        linked = link_source("*=0x008000\n" + input_program)
+        self.assertEqual(linked.data[0], b"Final Fantasy VI    ")
 
     def test_clear_flag_implied_opcodes(self) -> None:
         """`cld`, `cli`, `clv` are 1-byte implied instructions matching the

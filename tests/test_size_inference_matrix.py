@@ -45,7 +45,7 @@ from a816.program import Program
 from a816.protocols import NodeProtocol, OpcodeProtocol
 from a816.symbols import Resolver
 from a816.writers import ObjectWriter
-from tests import CLIENT_POOL, StubWriter, label_address
+from tests import CLIENT_POOL, label_address
 
 _ORIGIN = 0x008000
 _WIDTH_BYTES: dict[str, int] = {"b": 1, "w": 2, "l": 3}
@@ -460,21 +460,17 @@ class _EmitLog:
         monkeypatch.setattr(OpcodeNode, "emit", spy)
 
 
-def _assemble(context: Context, setup: Setup, source: str) -> tuple[Program, list[NodeProtocol]]:
+def _assemble(setup: Setup, source: str) -> tuple[Program, list[NodeProtocol]]:
+    """Compile `source` to an object, as every build does; labels and emits share the pre-link frame."""
     program = Program()
     program.resolver.track_register_size = setup.state.track
-    if context.object_mode:
-        program.resolver.context.mode = AssemblyMode.OBJECT
-        program.resolver.context.object_writer = ObjectWriter("matrix.o")
+    program.resolver.context.mode = AssemblyMode.OBJECT
+    writer = ObjectWriter("matrix.o")
+    program.resolver.context.object_writer = writer
     error, nodes = program.parser.parse(source, "matrix.s")
     assert error is None, error
     program.resolve_labels(nodes)
-    if context.object_mode:
-        writer = program.resolver.context.object_writer
-        assert writer is not None
-        program.emit_with_relocations(nodes, writer)
-    else:
-        program.emit(nodes, StubWriter())
+    program.emit_with_relocations(nodes, writer)
     return program, nodes
 
 
@@ -511,6 +507,6 @@ def test_labels_follow_emitted_bytes(
     cases = _family_cases(mode, context.body_state(setup), context.object_mode)
     body = "\n".join(f"{case.line}\nL{k}:" for k, case in enumerate(cases))
     log = _EmitLog(monkeypatch)
-    program, nodes = _assemble(context, setup, context.render(setup.lines, body))
+    program, nodes = _assemble(setup, context.render(setup.lines, body))
     measured = _body_opcodes(nodes, len(cases), context.trailing)
     assert list(_e2e_failures(program, measured, cases, log)) == []
