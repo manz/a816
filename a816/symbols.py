@@ -6,7 +6,7 @@ from a816.context import AssemblyContext
 from a816.cpu.mapping import Address, Bus
 from a816.cpu.types import RomType
 from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
-from a816.link_expr import LinkExpr, RelocKind
+from a816.link_expr import LinkExpr
 from a816.mappers import build_mapper_bus
 from a816.parse.ast.nodes import BlockAstNode
 from a816.parse.tokens import Token
@@ -440,12 +440,6 @@ class Resolver:
         # it did (see `OpcodeNode._sized_length`).
         self.provisional_label_value: int | None = None
         self.provisional_label_used = False
-        # The address of the opcode being sized or emitted: a bare `jsr` /
-        # `jmp` picks its form from the target's bank against this one.
-        self.opcode_pc: int | None = None
-        # The range check a one-byte operand of that opcode carries to the
-        # linker (`RelocKind.BYTE_IMMEDIATE`, `DIRECT_PAGE`, ...).
-        self.byte_operand_check: RelocKind = RelocKind.VALUE
         # Placement context seen by `.import` at codegen. A `*=` cursor
         # stays active until the end of the source unit that opened it
         # (`.import` restores the importer's flag); the depth counts the

@@ -28,7 +28,7 @@ from a816.link_expr import RelocKind
 from a816.parse.nodes.errors import NodeError, format_node_warning, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
-from a816.protocols import NodeBase, OpcodeProtocol, ValueNodeProtocol
+from a816.protocols import NodeBase, OpcodeProtocol, OperandContext, ValueNodeProtocol
 from a816.symbols import Resolver
 
 logger = logging.getLogger("a816")
@@ -114,10 +114,9 @@ class OpcodeNode(NodeBase):
             return cast(BlockMoveOpcode, opcode_emitter).emit_block_move(
                 self.value_node, self.value_node2, self.resolver
             )
-        self.resolver.opcode_pc = current_pc.logical_value
-        self.resolver.byte_operand_check = _byte_operand_check(self.addressing_mode, self.index)
+        operand = OperandContext(current_pc.logical_value, _byte_operand_check(self.addressing_mode, self.index))
         try:
-            emitted = opcode_emitter.emit(self.value_node, self.resolver, self.size)
+            emitted = opcode_emitter.emit(self.value_node, self.resolver, self.size, operand)
         except UndecidableOperandSizeError as undecidable:
             raise self._undecidable_size_error(undecidable, opcode_emitter) from undecidable
         except CrossBankTransferError as cross_bank:
@@ -141,9 +140,6 @@ class OpcodeNode(NodeBase):
             ) from out_of_range
         except BranchTargetUnmappedError as unmapped:
             raise NodeError(str(unmapped), self._operand_token(), code=str(E_CODEGEN_BRANCH_UNMAPPED)) from unmapped
-        finally:
-            self.resolver.opcode_pc = None
-            self.resolver.byte_operand_check = RelocKind.VALUE
         self._check_provisional_length(emitted)
         self._check_byte_immediate_overflow(opcode_emitter)
         self._warn_on_immediate_width_mismatch(opcode_emitter)
@@ -273,14 +269,14 @@ class OpcodeNode(NodeBase):
         resolver = self.resolver
         resolver.provisional_label_value = current_pc.logical_value
         resolver.provisional_label_used = False
-        resolver.opcode_pc = current_pc.logical_value
         try:
-            length = emitter.supposed_length(self.value_node, self.size, resolver)
+            length = emitter.supposed_length(
+                self.value_node, self.size, resolver, OperandContext(current_pc.logical_value)
+            )
         except CrossBankTransferError as cross_bank:
             raise self._cross_bank_error(cross_bank) from cross_bank
         finally:
             resolver.provisional_label_value = None
-            resolver.opcode_pc = None
         if resolver.provisional_label_used and self._provisional_length is None:
             self._provisional_length = length
         return length

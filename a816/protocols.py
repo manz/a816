@@ -5,13 +5,35 @@ multiple modules. Extracting these to a separate module eliminates
 circular dependencies between cpu_65c816.py, symbols.py, and nodes.py.
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from a816.cpu.mapping import Address
 from a816.cpu.types import ValueSize
+from a816.link_expr import RelocKind
 
 if TYPE_CHECKING:  # pragma: nocover
     from a816.symbols import Resolver
+
+
+@dataclass(frozen=True)
+class OperandContext:
+    """Where the opcode whose operand is evaluated sits.
+
+    Passed to the emitter, never stored on the resolver: what an operand
+    means depends on its opcode, and only for that call.
+    """
+
+    pc: int | None = None
+    """The opcode's own address: a bare `jsr` / `jmp` picks its form from
+    the target's bank against it, and a branch after `@=` counts from it."""
+    byte_check: RelocKind = RelocKind.VALUE
+    """The range check a one-byte operand carries to the linker
+    (`RelocKind.BYTE_IMMEDIATE`, `DIRECT_PAGE`, ...)."""
+
+
+NO_OPERAND_CONTEXT = OperandContext()
+"""An operand looked at outside an opcode's emit or sizing."""
 
 
 class ValueNodeProtocol(Protocol):
@@ -62,6 +84,7 @@ class OpcodeProtocol(Protocol):
         value_node: ValueNodeProtocol | None,
         resolver: Resolver,
         size: ValueSize | None = None,
+        operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> bytes:
         """Emit machine code bytes for this opcode."""
 
@@ -69,7 +92,8 @@ class OpcodeProtocol(Protocol):
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: Resolver | None = None,
+        resolver: "Resolver | None" = None,
+        operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         """Return the expected byte length of this opcode."""
 
@@ -97,6 +121,7 @@ class OpcodeBase:
         value_node: ValueNodeProtocol | None,
         resolver: Resolver,
         size: ValueSize | None = None,
+        operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> bytes:
         raise NotImplementedError
 
@@ -104,6 +129,7 @@ class OpcodeBase:
         self,
         value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: Resolver | None = None,
+        resolver: "Resolver | None" = None,
+        operand: OperandContext = NO_OPERAND_CONTEXT,
     ) -> int:
         raise NotImplementedError
