@@ -11,6 +11,7 @@ from a816.exceptions import AssemblyError
 from a816.module_builder import ModuleBuilder
 from a816.parse.nodes import NodeError
 from a816.program import Program
+from a816.writers import ObjectWriter
 
 
 def test_compile_source_builds_an_object_in_memory() -> None:
@@ -39,3 +40,13 @@ def test_an_uncached_build_writes_no_sidecar(tmp_path: Path) -> None:
     builder = ModuleBuilder(module_paths=[tmp_path], output_dir=tmp_path / "obj", use_cache=False)
     builder.build(tmp_path / "main.s", main_text="*=0x008000\n    rts\n")
     assert not list((tmp_path / "obj").glob("*.deps"))
+
+
+def test_reading_the_object_leaves_the_writer_whole() -> None:
+    writer = ObjectWriter()
+    writer.begin()
+    writer.start_section(0x8000)
+    writer.write_block(b"", 0x8000)
+    writer.object_file()
+    writer.write_block(b"\x60", 0x8000)
+    assert [section.code for section in writer.object_file().sections] == [b"\x60"]

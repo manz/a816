@@ -313,13 +313,14 @@ class ObjectWriter(Writer):
 
     def object_file(self) -> ObjectFile:
         """The object collected so far, in memory."""
-        # Strip a trailing empty section (e.g. trailing `*=` with no code),
+        # Leave out a trailing empty section (e.g. trailing `*=` with no code),
         # but keep a bss section: it is byte-less by design.
-        if self.sections and not self.sections[-1].code and not self.sections[-1].bss:
-            self.sections.pop()
+        sections = list(self.sections)
+        if sections and not sections[-1].code and not sections[-1].bss:
+            sections.pop()
         relocatable = not self._has_explicit_position
         return ObjectFile(
-            self.sections,
+            sections,
             self.symbols,
             aliases=list(self.aliases),
             files=self.files,
