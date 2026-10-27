@@ -47,17 +47,17 @@ class OpcodeWithoutOperand(OpcodeBase):
 
     def emit(
         self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
+        value_node: ValueNodeProtocol | None,
+        resolver: Resolver,
         size: ValueSize | None = None,
     ) -> bytes:
         return struct.pack("B", self.opcode)
 
     def supposed_length(
         self,
-        value_node: "ValueNodeProtocol | None",
+        value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
     ) -> int:
         return 1
 
@@ -71,7 +71,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
     _PACK = "b"
     _RANGE = "signed 8-bit range (-128 to 127)"
 
-    def _relative_delta(self, value_node: "ValueNodeProtocol", resolver: "Resolver") -> int:
+    def _relative_delta(self, value_node: ValueNodeProtocol, resolver: Resolver) -> int:
         value = value_node.get_value()
         # Use duck typing: ExpressionNode has 'expression' attribute, ValueNode does not
         if hasattr(value_node, "expression"):
@@ -91,8 +91,8 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
 
     def emit(
         self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
+        value_node: ValueNodeProtocol | None,
+        resolver: Resolver,
         size: ValueSize | None = None,
     ) -> bytes:
         if value_node is None:
@@ -105,7 +105,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         extern = bool(getattr(value_node, "external_symbols", None))
         try:
             delta = self._relative_delta(value_node, resolver)
-        except (BranchTargetUnmappedError, UnmappedBankError):
+        except BranchTargetUnmappedError, UnmappedBankError:
             if not extern:
                 raise
             delta = 0
@@ -116,7 +116,7 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
         except struct.error as e:
             raise BranchOutOfRangeError(delta, self._RANGE) from e
 
-    def _relocate_at_link(self, value_node: "ValueNodeProtocol", resolver: "Resolver") -> None:
+    def _relocate_at_link(self, value_node: ValueNodeProtocol, resolver: Resolver) -> None:
         """Have the linker write the offset when the target is placed at link.
 
         The offset used to be final at compile, from provisional addresses:
@@ -136,9 +136,9 @@ class RelativeJumpOpcode(OpcodeWithoutOperand):
 
     def supposed_length(
         self,
-        value_node: "ValueNodeProtocol | None",
+        value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
     ) -> int:
         return 1 + self.OFFSET_BYTES
 
@@ -154,9 +154,9 @@ class RelativeLongJumpOpcode(RelativeJumpOpcode):
 
 
 def guess_value_size(
-    value_node: "ValueNodeProtocol",
+    value_node: ValueNodeProtocol,
     size: ValueSize | None,
-    resolver: "Resolver | None" = None,
+    resolver: Resolver | None = None,
     is_a: bool = False,
     is_x: bool = False,
 ) -> ValueSize:
@@ -200,7 +200,7 @@ class Opcode(OpcodeBase):
         self.alias = alias
         self.size_opcode_map: dict[str, int] = {"b": 0, "w": 1, "l": 2}
 
-    def emit_value(self, value_node: "ValueNodeProtocol", size: ValueSize) -> bytes:
+    def emit_value(self, value_node: ValueNodeProtocol, size: ValueSize) -> bytes:
         value = value_node.get_value()
 
         # Check if this is an ExpressionNode with a deferred expression from external symbols
@@ -237,9 +237,9 @@ class Opcode(OpcodeBase):
 
     def supposed_length(
         self,
-        value_node: "ValueNodeProtocol | None",
+        value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
     ) -> int:
         if value_node is None:
             raise MissingOperandError(f"opcode (def: {self.opcode_def})")
@@ -256,9 +256,7 @@ class Opcode(OpcodeBase):
         index = self.size_opcode_map[size]
         return self.opcode_def[index] if index < len(self.opcode_def) else None
 
-    def value_size(
-        self, value_node: "ValueNodeProtocol", size: ValueSize | None, resolver: "Resolver | None"
-    ) -> ValueSize:
+    def value_size(self, value_node: ValueNodeProtocol, size: ValueSize | None, resolver: Resolver | None) -> ValueSize:
         """`guess_value_size`, except where an opcode has a single form.
 
         A link-time operand (`rep #ext`, `pea ext`) takes that form: only a
@@ -290,8 +288,8 @@ class Opcode(OpcodeBase):
 
     def emit(
         self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
+        value_node: ValueNodeProtocol | None,
+        resolver: Resolver,
         size: ValueSize | None = None,
     ) -> bytes:
         if value_node is None:
@@ -321,9 +319,7 @@ class TransferOpcode(Opcode):
         super().__init__(opcode_def)
         self.mnemonic = mnemonic
 
-    def value_size(
-        self, value_node: "ValueNodeProtocol", size: ValueSize | None, resolver: "Resolver | None"
-    ) -> ValueSize:
+    def value_size(self, value_node: ValueNodeProtocol, size: ValueSize | None, resolver: Resolver | None) -> ValueSize:
         inferred = super().value_size(value_node, size, resolver)
         if size is not None or inferred != "l" or resolver is None or resolver.opcode_pc is None:
             return inferred
@@ -350,22 +346,22 @@ class LongOpcode(Opcode):
 
     def emit(
         self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
+        value_node: ValueNodeProtocol | None,
+        resolver: Resolver,
         size: ValueSize | None = None,
     ) -> bytes:
         return super().emit(value_node, resolver, "l")
 
     def supposed_length(
         self,
-        value_node: "ValueNodeProtocol | None",
+        value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
     ) -> int:
         return super().supposed_length(value_node, "l", resolver)
 
 
-def _relocate_byte(value_node: "ValueNodeProtocol", pending_block_bytes: int) -> None:
+def _relocate_byte(value_node: ValueNodeProtocol, pending_block_bytes: int) -> None:
     """In object mode, have the linker fill this one-byte operand when its
     expression waits on a symbol placed at link (as `Opcode.emit_value` does).
     `pending_block_bytes` is the operand's offset from the opcode byte."""
@@ -392,9 +388,9 @@ class BlockMoveOpcode(OpcodeBase):
 
     def emit_block_move(
         self,
-        src_node: "ValueNodeProtocol",
-        dest_node: "ValueNodeProtocol",
-        resolver: "Resolver",
+        src_node: ValueNodeProtocol,
+        dest_node: ValueNodeProtocol,
+        resolver: Resolver,
     ) -> bytes:
         del resolver
         src = src_node.get_value() & 0xFF
@@ -408,17 +404,17 @@ class BlockMoveOpcode(OpcodeBase):
 
     def emit(
         self,
-        value_node: "ValueNodeProtocol | None",
-        resolver: "Resolver",
+        value_node: ValueNodeProtocol | None,
+        resolver: Resolver,
         size: ValueSize | None = None,
     ) -> bytes:
         raise NoOpcodeForOperandSize()  # block move is routed via emit_block_move
 
     def supposed_length(
         self,
-        value_node: "ValueNodeProtocol | None",
+        value_node: ValueNodeProtocol | None,
         size: ValueSize | None = None,
-        resolver: "Resolver | None" = None,
+        resolver: Resolver | None = None,
     ) -> int:
         return 3
 

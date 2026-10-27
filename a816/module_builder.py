@@ -64,7 +64,7 @@ class BuildResult:
     exit_code: int
     symbol_map: dict[str, int] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
-    program: "Program | None" = None
+    program: Program | None = None
     debug_info_path: Path | None = None
 
 
@@ -131,7 +131,7 @@ class ModuleBuilder:
         symbols: dict[str, int | str] | None = None,
         include_paths: list[Path] | None = None,
         experimental: list[str] | None = None,
-        bus_map: "list[BusMapping] | None" = None,
+        bus_map: list[BusMapping] | None = None,
         use_cache: bool = True,
         arch: Arch = "65c816",
     ) -> None:
@@ -585,7 +585,7 @@ def _object_needs_linking(obj: ObjectFile) -> bool:
     )
 
 
-def apply_experimental_flags(program: "Program", flags: list[str] | None) -> None:
+def apply_experimental_flags(program: Program, flags: list[str] | None) -> None:
     """Set experimental feature flags on `program.resolver`.
 
     Known flags:
@@ -608,7 +608,7 @@ def _spelled_defines(defines: dict[str, str] | None, symbols: dict[str, int | st
     return {name: str(value) for name, value in (symbols or {}).items()}
 
 
-def _build_result(program: "Program", exit_code: int, output_file: Path) -> BuildResult:
+def _build_result(program: Program, exit_code: int, output_file: Path) -> BuildResult:
     """The linked build's outcome: its symbol map and, on success, its `.adbg`."""
     symbol_map = dict(program.resolver.get_all_labels())
     # `.label`-declared names are absolute addresses that should appear in
@@ -636,7 +636,7 @@ def build_with_imports(
     overlap_mode: str | None = None,
     experimental: list[str] | None = None,
     mapping: str | None = None,
-    bus_map: "list[BusMapping] | None" = None,
+    bus_map: list[BusMapping] | None = None,
     use_a816_toml: bool = True,
     use_cache: bool = True,
     bps: BpsConfig | None = None,

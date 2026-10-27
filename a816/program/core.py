@@ -188,7 +188,7 @@ class Program(ObjectEmitMixin, AssembleMixin, LinkMixin):
             bus = self.resolver.get_bus()
             addr = bus.get_address(logical_address)
             physical = addr.physical
-        except (KeyError, UnmappedBankError):
+        except KeyError, UnmappedBankError:
             return logical_address
         if physical is None:
             return logical_address

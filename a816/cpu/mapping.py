@@ -287,7 +287,7 @@ class Bus:
             if windows[-1][:2] == (0x0000, 0xFFFF)
         }
 
-    def get_address(self, addr: int) -> "Address":
+    def get_address(self, addr: int) -> Address:
         return Address(self, addr)
 
     def contiguous(self, last: int, first: int) -> bool:
@@ -342,7 +342,7 @@ class Address:
     def writable(self) -> bool:
         return self.mapping.writable
 
-    def __add__(self, other: Any) -> "Address":
+    def __add__(self, other: Any) -> Address:
         if isinstance(other, int):
             mapping = self._get_mapping()
             physical_address = mapping.physical_address(self.logical_value)
@@ -376,7 +376,7 @@ class EndAddress(Address):
     def physical(self) -> int:
         return self._physical
 
-    def __add__(self, other: Any) -> "Address":
+    def __add__(self, other: Any) -> Address:
         if other == 0:
             return self
         raise ValueError(f"physical ${self._physical:06X} is not reachable through this region")
@@ -406,7 +406,7 @@ class LinearAddress(Address):
     def physical(self) -> int:
         return self.logical_value
 
-    def __add__(self, other: Any) -> "LinearAddress":
+    def __add__(self, other: Any) -> LinearAddress:
         if isinstance(other, int):
             return LinearAddress(self.logical_value + other)
         raise ValueError("LinearAddress can only be added with ints.")

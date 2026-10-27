@@ -176,7 +176,7 @@ class BuildCache:
             return None
         try:
             data = json.loads(self.sidecar_path(obj_path).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return None
         if (
             not isinstance(data, dict)

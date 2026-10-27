@@ -277,7 +277,7 @@ class A816Document:
         # Document's own directory as a last resort.
         try:
             candidates.append(uri_to_path(self.uri).parent)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             pass
         for base in candidates:
             candidate = base / file_name

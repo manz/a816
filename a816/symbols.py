@@ -32,7 +32,7 @@ def _is_exportable(name: str) -> bool:
     return not name.startswith("_") or name.startswith("__")
 
 
-def _bubble_anon_exportables(scope: "Scope", parent: "Scope") -> None:
+def _bubble_anon_exportables(scope: Scope, parent: Scope) -> None:
     """Promote exportable labels/symbols from an anonymous scope to its parent.
 
     Used when an `.alloc` body or a macro / `{ }` block closes:
@@ -58,7 +58,7 @@ def _bubble_names[V: (int, int | str)](source: dict[str, V], target: dict[str, V
             owned[name] = value
 
 
-def _publish_named_dotted(scope: "NamedScope", parent: "Scope") -> None:
+def _publish_named_dotted(scope: NamedScope, parent: Scope) -> None:
     """Promote `Name.label`, `Name.symbol` and `Name.alias` into the parent scope.
 
     Both labels and symbols carry the dotted prefix so the object writer
@@ -95,7 +95,7 @@ class Scope:
     Symbol lookup traverses up the parent chain until found or root is reached.
     """
 
-    def __init__(self, resolver: "Resolver", parent: "Scope | None" = None) -> None:
+    def __init__(self, resolver: Resolver, parent: Scope | None = None) -> None:
         """Initialize a new scope.
 
         Args:
@@ -183,7 +183,7 @@ class Scope:
             scope = scope.parent
         return None
 
-    def find_label_scope(self, name: str) -> "Scope | None":
+    def find_label_scope(self, name: str) -> Scope | None:
         """Walk the scope chain looking for the scope that owns ``name`` as a label."""
         scope: Scope | None = self
         while scope is not None:
@@ -280,7 +280,7 @@ class AllocBodyScope(Scope):
 
 
 class NamedScope(Scope):
-    def __init__(self, name: str, resolver: "Resolver", parent: Scope | None = None):
+    def __init__(self, name: str, resolver: Resolver, parent: Scope | None = None):
         super().__init__(resolver, parent)
         self.name = name
 
@@ -465,7 +465,7 @@ class Resolver:
         self.imported_path_names: dict[str, PathName] = {}
         self.set_position(pc)
 
-    def path_name(self, name: str) -> "PathName | None":
+    def path_name(self, name: str) -> PathName | None:
         """The `.incbin` path name `name` used to be, if any."""
         return self.own_path_names.get(name) or self.imported_path_names.get(name)
 
@@ -623,7 +623,7 @@ class Resolver:
         return labels
 
     @staticmethod
-    def _export_name(name: str, scope: "Scope", idx: int, mangle_nested: bool) -> str:
+    def _export_name(name: str, scope: Scope, idx: int, mangle_nested: bool) -> str:
         """Compute the exported name for a label/symbol in `scope`.
 
         Names already carrying the scope's prefix (e.g. `shops.gils`
@@ -700,7 +700,7 @@ class Resolver:
         # *invocation*, which still needs distinct addresses across calls).
         return f"__sc{idx}__{name}" if mangle else name
 
-    def _scope_int_symbols(self, scope: "Scope") -> list[tuple[str, int]]:
+    def _scope_int_symbols(self, scope: Scope) -> list[tuple[str, int]]:
         return [(name, value) for name, value in scope.symbols.items() if isinstance(value, int)]
 
     def get_all_symbols(self) -> list[tuple[str, int]]:

@@ -129,7 +129,7 @@ def _array_count(
         return None
     try:
         value = eval_expression_str(count, resolver, _filename(file_info))
-    except (ExternalExpressionReference, SymbolNotDefined):
+    except ExternalExpressionReference, SymbolNotDefined:
         value = None
     if not isinstance(value, int) or value < 1:
         raise NodeError(

@@ -100,7 +100,7 @@ class Token:
         self._locate(position)
 
     @classmethod
-    def located(cls, type_: TokenType, value: str, line: int, column: int, file: File) -> "Token":
+    def located(cls, type_: TokenType, value: str, line: int, column: int, file: File) -> Token:
         """Build a token at `line`/`column` of `file` without allocating a `Position`."""
         token = cls.__new__(cls)
         token.type = type_

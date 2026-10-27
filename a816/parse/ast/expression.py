@@ -463,7 +463,7 @@ def _known_size(name: str, resolver: Resolver) -> int | str:
     an imported one stays a symbol for the linker."""
     try:
         value = resolver.current_scope.value_for(name)
-    except (SymbolNotDefined, ExternalSymbolReference):
+    except SymbolNotDefined, ExternalSymbolReference:
         return name
     return value if isinstance(value, int) else name
 

@@ -27,7 +27,7 @@ IDENTIFIER_START_CHARS = "_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 IDENTIFIER_CHARS = IDENTIFIER_START_CHARS + "0123456789"
 
 
-def lex_identifier(s: "Scanner") -> None:
+def lex_identifier(s: Scanner) -> None:
     s.accept_run(IDENTIFIER_CHARS)
 
     if s.peek() == ":" and s.peek(1) != "=":
@@ -44,7 +44,7 @@ def lex_identifier(s: "Scanner") -> None:
         s.emit(TokenType.IDENTIFIER)
 
 
-def _lex_string(s: "Scanner", quote_char: str) -> None:
+def _lex_string(s: Scanner, quote_char: str) -> None:
     """Scan a string delimited by quote_char."""
     # Capture position at the start of the string (the opening quote)
     start_position = s.get_position()
@@ -66,17 +66,17 @@ def _lex_string(s: "Scanner", quote_char: str) -> None:
     s.emit(TokenType.QUOTED_STRING)
 
 
-def lex_quoted_string(s: "Scanner") -> None:
+def lex_quoted_string(s: Scanner) -> None:
     """Scan a single-quoted string."""
     _lex_string(s, "'")
 
 
-def lex_double_quoted_string(s: "Scanner") -> None:
+def lex_double_quoted_string(s: Scanner) -> None:
     """Scan a double-quoted string."""
     _lex_string(s, '"')
 
 
-def lex_docstring(s: "Scanner", quote_char: str) -> None:
+def lex_docstring(s: Scanner, quote_char: str) -> None:
     """Scan a triple-quoted docstring delimited by quote_char."""
     # Capture position at the start of the docstring
     start_position = s.get_position()
@@ -100,7 +100,7 @@ def lex_docstring(s: "Scanner", quote_char: str) -> None:
     s.emit(TokenType.DOCSTRING)
 
 
-def accept_opcode(s: "Scanner") -> bool:
+def accept_opcode(s: Scanner) -> bool:
     opcode_candidate = s.input[s.start : s.pos + 3].lower()
     is_ws = s.peek(3)
     if opcode_candidate in snes_opcode_table and is_ws in (
@@ -115,7 +115,7 @@ def accept_opcode(s: "Scanner") -> bool:
     return False
 
 
-def _lex_postfix_dot_chain(s: "Scanner") -> None:
+def _lex_postfix_dot_chain(s: Scanner) -> None:
     """Emit `.field` postfix tokens after `)` or `]` for struct field access.
 
     Each `.IDENT` becomes a DOT token followed by an IDENTIFIER token so the
@@ -157,7 +157,7 @@ for _operator in EXPRESSION_OPERATORS:
     _OPERATORS_BY_FIRST_CHAR[_operator[0]] = (*_OPERATORS_BY_FIRST_CHAR.get(_operator[0], ()), _operator)
 
 
-def lex_expression_operator(s: "Scanner") -> bool:
+def lex_expression_operator(s: Scanner) -> bool:
     """Emit one expression operator token. Shared by every expression context.
 
     `/*` opens a block comment, not a division, so it is left to the caller.
@@ -172,7 +172,7 @@ def lex_expression_operator(s: "Scanner") -> bool:
     return False
 
 
-def lex_expression(s: "Scanner") -> None:
+def lex_expression(s: Scanner) -> None:
     while s.pos < len(s.input):
         s.ignore_run(" ")
         for handler in _EXPRESSION_HANDLERS.get(s.peek(), ()):
@@ -182,7 +182,7 @@ def lex_expression(s: "Scanner") -> None:
             break
 
 
-def lex_standalone_expression(s: "Scanner") -> None:
+def lex_standalone_expression(s: Scanner) -> None:
     """Scanner entry state for a bare expression string (linker, pool specs).
 
     Unlike `lex_expression` inside an operand, nothing follows the
@@ -199,7 +199,7 @@ def lex_standalone_expression(s: "Scanner") -> None:
         )
 
 
-def lex_operand(s: "Scanner") -> None:
+def lex_operand(s: Scanner) -> None:
     p = s.peek()
 
     if p == "#":
@@ -237,7 +237,7 @@ def lex_operand(s: "Scanner") -> None:
         lex_opcode_index(s)
 
 
-def lex_opcode_index(s: "Scanner") -> None:
+def lex_opcode_index(s: Scanner) -> None:
     s.ignore()
     s.ignore_run(" ")
     if s.accept("xXyYsS"):
@@ -251,7 +251,7 @@ def lex_opcode_index(s: "Scanner") -> None:
         )
 
 
-def lex_opcode_size(s: "Scanner") -> None:
+def lex_opcode_size(s: Scanner) -> None:
     s.ignore()
     if s.accept("bBwWlL"):
         s.emit(TokenType.OPCODE_SIZE)
@@ -272,13 +272,13 @@ def lex_opcode_size(s: "Scanner") -> None:
 _STATEMENT_END = re.compile(r"[ \t]*(?:;[^\n\0]*)?(?:[\n}\0]|\Z)")
 
 
-def _ends_statement(s: "Scanner") -> bool:
+def _ends_statement(s: Scanner) -> bool:
     """True when only blanks / a comment separate the cursor from a line end,
     end of input, or a closing `}` (`{ inc }` on one line)."""
     return _STATEMENT_END.match(s.input, s.pos) is not None
 
 
-def _next_word_is_opcode(s: "Scanner") -> bool:
+def _next_word_is_opcode(s: Scanner) -> bool:
     """True when the next word on the line is a mnemonic (`nop nop`)."""
     saved_pos = s.pos
     s.accept_run(" \t")
@@ -289,7 +289,7 @@ def _next_word_is_opcode(s: "Scanner") -> bool:
     return word in opcodes
 
 
-def _is_naked_opcode(s: "Scanner", opcode_candidate: str) -> bool:
+def _is_naked_opcode(s: Scanner, opcode_candidate: str) -> bool:
     """An operand-less opcode with nothing after it (no `.size` suffix).
 
     Implied-only mnemonics (`rts`, `nop`) never take an operand, so a
@@ -302,7 +302,7 @@ def _is_naked_opcode(s: "Scanner", opcode_candidate: str) -> bool:
     return opcode_candidate in implied_only_opcodes and _next_word_is_opcode(s)
 
 
-def lex_opcode(s: "Scanner") -> None:
+def lex_opcode(s: Scanner) -> None:
     opcode_candidate = s.input[s.start : s.pos].lower()
     if _is_naked_opcode(s, opcode_candidate):
         s.emit(TokenType.OPCODE_NAKED)
@@ -319,7 +319,7 @@ def lex_opcode(s: "Scanner") -> None:
         lex_operand(s)
 
 
-def lex_block_move_operands(s: "Scanner") -> None:
+def lex_block_move_operands(s: Scanner) -> None:
     """`mvn src, dst` / `mvp src, dst`: two expressions separated by a plain
     comma. Unlike the normal operand lexer, the comma is a `COMMA` token (a
     second operand), not an addressing-mode index (`,x`/`,y`/`,s`)."""
@@ -332,7 +332,7 @@ def lex_block_move_operands(s: "Scanner") -> None:
     lex_expression(s)
 
 
-def accept_spc_opcode(s: "Scanner") -> bool:
+def accept_spc_opcode(s: Scanner) -> bool:
     """An SPC700 mnemonic (`or`, `movw`, `tclr1`) followed by a blank or a statement end."""
     end = s.pos
     while end < len(s.input) and s.input[end] in IDENTIFIER_CHARS:
@@ -345,7 +345,7 @@ def accept_spc_opcode(s: "Scanner") -> bool:
     return True
 
 
-def lex_spc_opcode(s: "Scanner") -> None:
+def lex_spc_opcode(s: Scanner) -> None:
     if _ends_statement(s):
         s.emit(TokenType.OPCODE_NAKED)
         return
@@ -364,7 +364,7 @@ _SPC_PUNCTUATION: dict[str, TokenType] = {
 }
 
 
-def _lex_spc_index(s: "Scanner") -> bool:
+def _lex_spc_index(s: Scanner) -> bool:
     """`+x` / `+y` closing an operand: one index token, not an addition."""
     at = s.pos + 1
     while at < len(s.input) and s.input[at] in " \t":
@@ -378,7 +378,7 @@ def _lex_spc_index(s: "Scanner") -> bool:
     return True
 
 
-def _lex_spc_operand_token(s: "Scanner") -> bool:
+def _lex_spc_operand_token(s: Scanner) -> bool:
     ch = s.peek()
     kind = _SPC_PUNCTUATION.get(ch) if ch is not None else None
     if kind is not None:
@@ -394,7 +394,7 @@ def _lex_spc_operand_token(s: "Scanner") -> bool:
     return any(handler(s) for handler in _EXPRESSION_HANDLERS.get(ch, ()))
 
 
-def lex_spc_operands(s: "Scanner") -> None:
+def lex_spc_operands(s: Scanner) -> None:
     """Operand tokens up to the end of the statement."""
     while True:
         s.ignore_run(" \t")
@@ -449,7 +449,7 @@ DIRECTIVE_NAMES = {
 }
 
 
-def lex_directive(s: "Scanner") -> None:
+def lex_directive(s: Scanner) -> None:
     """Scan a `.NAME` directive token.
 
     Caller consumed the leading dot. Reads the name + emits a KEYWORD

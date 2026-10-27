@@ -67,7 +67,7 @@ class A816Parser:
         self.resolver = resolver
 
     def parse(
-        self, program: str, filename: str = "", parsed: "ParserResult | None" = None
+        self, program: str, filename: str = "", parsed: ParserResult | None = None
     ) -> tuple[str | None, list[NodeProtocol]]:
         context = self.resolver.context
         # A module the build cache didn't discovery-parse (warm build, an import
@@ -166,7 +166,7 @@ def _build_parse_error_from_position(
 ) -> ParseError:
     try:
         source_line = position.get_line()
-    except (IndexError, AttributeError):
+    except IndexError, AttributeError:
         source_line = ""
     context_before, context_after = _gather_context(position, before=1, after=1)
     return ParseError(
