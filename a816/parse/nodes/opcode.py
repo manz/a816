@@ -28,7 +28,7 @@ from a816.link_expr import RelocKind
 from a816.parse.nodes.errors import NodeError, format_node_warning, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
-from a816.protocols import NodeBase, OpcodeProtocol, OperandContext, ValueNodeProtocol
+from a816.protocols import NodeBase, OpcodeProtocol, OperandContext, StandIn, ValueNodeProtocol
 from a816.symbols import Resolver
 
 logger = logging.getLogger("a816")
@@ -266,18 +266,13 @@ class OpcodeNode(NodeBase):
         it and the inference picks what the real address will need. `emit`
         checks it did: a label that landed elsewhere is an error, not a shift.
         """
-        resolver = self.resolver
-        resolver.provisional_label_value = current_pc.logical_value
-        resolver.provisional_label_used = False
+        stand_in = StandIn(current_pc.logical_value)
+        operand = OperandContext(current_pc.logical_value, stand_in=stand_in)
         try:
-            length = emitter.supposed_length(
-                self.value_node, self.size, resolver, OperandContext(current_pc.logical_value)
-            )
+            length = emitter.supposed_length(self.value_node, self.size, self.resolver, operand)
         except CrossBankTransferError as cross_bank:
             raise self._cross_bank_error(cross_bank) from cross_bank
-        finally:
-            resolver.provisional_label_value = None
-        if resolver.provisional_label_used and self._provisional_length is None:
+        if stand_in.used and self._provisional_length is None:
             self._provisional_length = length
         return length
 

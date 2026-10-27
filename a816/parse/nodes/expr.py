@@ -8,7 +8,7 @@ from a816.parse.ast.expression import eval_expression
 from a816.parse.ast.nodes import ExpressionAstNode
 from a816.parse.nodes.errors import NodeError, undefined_symbol_error
 from a816.parse.tokens import Token
-from a816.protocols import ValueNodeProtocol
+from a816.protocols import NO_OPERAND_CONTEXT, OperandContext, ValueNodeProtocol
 from a816.symbols import Resolver
 
 
@@ -16,10 +16,10 @@ class ValueNode(ValueNodeProtocol):
     def __init__(self, value: str) -> None:
         self.value = value
 
-    def get_value(self) -> int:
+    def get_value(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
         return int(self.value, 16)
 
-    def get_value_string_len(self) -> int:
+    def get_value_string_len(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
         value_length = len(self.value)
         return value_length
 
@@ -51,9 +51,9 @@ class ExpressionNode(ValueNodeProtocol):
         if self._touches_local_label():
             self._deferred_expression = link_expression(self.expression, self.resolver)
 
-    def get_value(self) -> int | str:  # type:ignore
+    def get_value(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int | str:  # type:ignore
         try:
-            value = eval_expression(self.expression, self.resolver)
+            value = eval_expression(self.expression, self.resolver, operand.stand_in)
             self.external_symbols = set()
             if self.resolver.context.is_object_mode and isinstance(value, int):
                 # Module-local label refs: record the original expression so the
@@ -86,8 +86,8 @@ class ExpressionNode(ValueNodeProtocol):
         except SymbolNotDefined as e:
             raise undefined_symbol_error(e, self.file_info, self.resolver.current_scope) from e
 
-    def get_value_string_len(self) -> int:
-        value = self.get_value()
+    def get_value_string_len(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
+        value = self.get_value(operand)
         if not isinstance(value, int):
             raise TypeError(f"Expected int, got {type(value).__name__}")
         return len(hex(value)) - 2

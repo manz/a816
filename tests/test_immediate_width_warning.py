@@ -21,7 +21,7 @@ from a816.parse.nodes import OpcodeNode
 from a816.parse.nodes.errors import node_source_location
 from a816.parse.tokens import File, Position, Token, TokenType
 from a816.program import Program
-from a816.protocols import ValueNodeProtocol
+from a816.protocols import NO_OPERAND_CONTEXT, OperandContext, ValueNodeProtocol
 from a816.symbols import Resolver
 from tests import link_source
 
@@ -98,10 +98,10 @@ class TestNoWarningWhenConsistentOrUnknown:
 
 
 class _UnresolvedValue(ValueNodeProtocol):
-    def get_value(self) -> int:
+    def get_value(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
         raise SymbolNotDefined("LATER")
 
-    def get_value_string_len(self) -> int:
+    def get_value_string_len(self, operand: OperandContext = NO_OPERAND_CONTEXT) -> int:
         return 2
 
 

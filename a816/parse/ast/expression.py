@@ -24,6 +24,7 @@ from a816.parse.ast.nodes import (
 )
 from a816.parse.ast.nodes.base import shunting_yard
 from a816.parse.tokens import Token, TokenType
+from a816.protocols import StandIn
 from a816.symbols import Resolver
 
 
@@ -163,11 +164,13 @@ def _apply_binary(operator: BinOp, v1: int | str, v2: int | str) -> int:
         raise _located(error, operator.token) from None
 
 
-def _collect_external_symbols(ordered: Sequence[ExprNode], resolver: Resolver) -> set[str]:
+def _collect_external_symbols(
+    ordered: Sequence[ExprNode], resolver: Resolver, stand_in: StandIn | None = None
+) -> set[str]:
     external_symbols: set[str] = set()
     for current in ordered:
         if isinstance(current, CastAccessExprNode | CastValueExprNode):
-            external_symbols |= _collect_external_symbols(current.inner, resolver)
+            external_symbols |= _collect_external_symbols(current.inner, resolver, stand_in)
             continue
         if isinstance(current, SizeofExprNode):
             external_symbols |= _external_size(current, resolver)
@@ -175,7 +178,7 @@ def _collect_external_symbols(ordered: Sequence[ExprNode], resolver: Resolver) -
         if current.token.type != TokenType.IDENTIFIER:
             continue
         try:
-            _lookup(current.token.value, current.token, resolver)
+            _lookup(current.token.value, current.token, resolver, stand_in)
         except ExternalSymbolReference as e:
             external_symbols.add(e.symbol_name)
     return external_symbols
@@ -195,15 +198,22 @@ def _external_size(node: SizeofExprNode, resolver: Resolver) -> set[str]:
     return set()
 
 
-def _lookup(name: str, token: Token, resolver: Resolver) -> int | str | BlockAstNode | None:
+def _lookup(
+    name: str, token: Token, resolver: Resolver, stand_in: StandIn | None = None
+) -> int | str | BlockAstNode | None:
     """Resolve `name`, tagging a miss with the term token that named it.
 
     An inner miss (e.g. through an alias expression) that already carries a
     located token keeps it: that is where the undefined name was written.
+    With a `stand_in` (an opcode sizing itself), a name not bound yet reads
+    as its value instead.
     """
     try:
         value = resolver.current_scope.value_for(name)
     except SymbolNotDefined as exc:
+        if stand_in is not None:
+            stand_in.used = True
+            return stand_in.value
         if exc.name == name:
             _raise_for_macro_argument(name, token, resolver)
         if exc.token is None or exc.token.position is None:
@@ -239,13 +249,15 @@ def _raise_for_macro_argument(name: str, use: Token, resolver: Resolver) -> None
         raise
 
 
-def _eval_inner(inner: Sequence[ExprNode], resolver: Resolver) -> int | str:
-    return eval_expression(ExpressionAstNode(list(inner)), resolver)
+def _eval_inner(inner: Sequence[ExprNode], resolver: Resolver, stand_in: StandIn | None = None) -> int | str:
+    return eval_expression(ExpressionAstNode(list(inner)), resolver, stand_in)
 
 
-def _eval_cast_base(current: CastAccessExprNode | CastValueExprNode, resolver: Resolver) -> int:
+def _eval_cast_base(
+    current: CastAccessExprNode | CastValueExprNode, resolver: Resolver, stand_in: StandIn | None = None
+) -> int:
     """Evaluate `inner` of `(inner as T)`; it must be an address."""
-    base = _eval_inner(current.inner, resolver)
+    base = _eval_inner(current.inner, resolver, stand_in)
     if not isinstance(base, int):
         where = current.inner[0].token if current.inner else current.token
         raise _expression_error(
@@ -276,22 +288,24 @@ def _size_value(node: SizeofExprNode, resolver: Resolver) -> int:
     return value
 
 
-def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | str]) -> None:
+def _push_term(
+    current: ExprNode, resolver: Resolver, values_stack: list[int | str], stand_in: StandIn | None = None
+) -> None:
     if isinstance(current, SizeofExprNode):
         values_stack.append(_size_value(current, resolver))
         return
     if isinstance(current, CastAccessExprNode):
-        values_stack.append(_eval_cast_base(current, resolver) + _field_offset(current, resolver))
+        values_stack.append(_eval_cast_base(current, resolver, stand_in) + _field_offset(current, resolver))
         return
     if isinstance(current, CastValueExprNode):
-        values_stack.append(_eval_cast_base(current, resolver))
+        values_stack.append(_eval_cast_base(current, resolver, stand_in))
         return
     if current.token.type == TokenType.NUMBER:
         values_stack.append(eval_number(current.token.value))
     elif current.token.type == TokenType.QUOTED_STRING:
         values_stack.append(current.token.value[1:-1])
     elif current.token.type == TokenType.IDENTIFIER:
-        resolved_value = _lookup(current.token.value, current.token, resolver)
+        resolved_value = _lookup(current.token.value, current.token, resolver, stand_in)
         if not isinstance(resolved_value, int | str):
             raise _expression_error(
                 f"`{current.token.value}` names a block, not a value", current.token, E_SYMBOL_NOT_A_VALUE
@@ -299,19 +313,22 @@ def _push_term(current: ExprNode, resolver: Resolver, values_stack: list[int | s
         values_stack.append(resolved_value)
 
 
-def eval_expression(expression: ExpressionAstNode, resolver: Resolver) -> int | str:
-    """Evaluate an expression, detecting external symbol references"""
+def eval_expression(expression: ExpressionAstNode, resolver: Resolver, stand_in: StandIn | None = None) -> int | str:
+    """Evaluate an expression, detecting external symbol references.
+
+    `stand_in` is what a label not bound yet reads as, while an opcode sizes itself.
+    """
     ordered = _ordered(expression)
 
     if resolver.context.is_object_mode:
-        external_symbols = _collect_external_symbols(ordered, resolver)
+        external_symbols = _collect_external_symbols(ordered, resolver, stand_in)
         if external_symbols:
             # Aliases inline (a macro argument's name means nothing outside
             # the call) and labels take their exported names, so the linker
             # finds every name the relocation reads.
             raise ExternalExpressionReference(link_expression(expression, resolver), external_symbols)
 
-    return _fold_rpn(ordered, lambda current, stack: _push_term(current, resolver, stack))
+    return _fold_rpn(ordered, lambda current, stack: _push_term(current, resolver, stack, stand_in))
 
 
 TermPusher = Callable[[ExprNode, list[int | str]], None]

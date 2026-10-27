@@ -163,6 +163,7 @@ def guess_value_size(
     resolver: Resolver | None = None,
     is_a: bool = False,
     is_x: bool = False,
+    operand: OperandContext = NO_OPERAND_CONTEXT,
 ) -> ValueSize:
     if value_node is None:
         raise MissingOperandError("opcode")
@@ -176,7 +177,7 @@ def guess_value_size(
         if is_x and resolver.i_size == 16:
             return "w"
 
-    operand_size = value_node.get_operand_size()
+    operand_size = value_node.get_operand_size(operand)
     # An extern evaluates to 0 until link; its magnitude says nothing. An
     # A/X immediate is sized by the register width (8-bit here: the 16-bit
     # cases returned above), anything else needs an explicit suffix.
@@ -185,7 +186,7 @@ def guess_value_size(
         raise UndecidableOperandSizeError(external)
     # Same for a value only the PC stands in for so far (a label of a block
     # placed later, `BANK = (song >> 16) & 0xFF`): its size says nothing.
-    if (is_a or is_x) and resolver is not None and resolver.provisional_label_used:
+    if (is_a or is_x) and operand.stand_in is not None and operand.stand_in.used:
         return "b"
     return operand_size
 
@@ -207,7 +208,7 @@ class Opcode(OpcodeBase):
     def emit_value(
         self, value_node: "ValueNodeProtocol", size: ValueSize, operand: OperandContext = NO_OPERAND_CONTEXT
     ) -> bytes:
-        value = value_node.get_value()
+        value = value_node.get_value(operand)
 
         # Check if this is an ExpressionNode with a deferred expression from external symbols
         # Use duck typing: check for resolver attribute (ExpressionNode has it, ValueNode doesn't)
@@ -280,7 +281,7 @@ class Opcode(OpcodeBase):
         """
         forms = self.encodable_sizes()
         try:
-            inferred = guess_value_size(value_node, size, resolver, self.is_a, self.is_x)
+            inferred = guess_value_size(value_node, size, resolver, self.is_a, self.is_x, operand)
         except UndecidableOperandSizeError:
             if len(forms) == 1:
                 return forms[0]
@@ -343,7 +344,7 @@ class TransferOpcode(Opcode):
         inferred = super().value_size(value_node, size, resolver, operand)
         if size is not None or inferred != "l" or operand.pc is None:
             return inferred
-        target = value_node.get_value()
+        target = value_node.get_value(operand)
         if not isinstance(target, int):
             return inferred
         caller_bank = operand.pc >> 16 & 0xFF

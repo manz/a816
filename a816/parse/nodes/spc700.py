@@ -17,7 +17,7 @@ from a816.link_expr import LinkExpr, RelocKind, binary_op, constant
 from a816.parse.nodes.errors import NodeError, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
-from a816.protocols import NodeBase
+from a816.protocols import NO_OPERAND_CONTEXT, NodeBase, OperandContext, StandIn
 from a816.symbols import Resolver
 
 
@@ -49,20 +49,22 @@ class SpcOpcodeNode(NodeBase):
     def _source(self) -> str:
         return " ".join((self.opcode, ", ".join(operand.shape for operand in self.operands)))
 
-    def _evaluate(self, node: ExpressionNode | None) -> int | None:
+    def _evaluate(self, node: ExpressionNode | None, operand: OperandContext) -> int | None:
         if node is None:
             return None
         try:
-            value = node.get_value()
+            value = node.get_value(operand)
         except SymbolNotDefined as undefined:
             raise undefined_symbol_error(undefined, self.file_info, self.resolver.current_scope) from undefined
         if not isinstance(value, int):
             raise NodeError(f"`{self.opcode}` operand is not a number", self.file_info, code=str(E_SYMBOL_NOT_A_VALUE))
         return value
 
-    def _values(self) -> tuple[tuple[int | None, ...], tuple[int | None, ...]]:
-        values = tuple(self._evaluate(operand.value) for operand in self.operands)
-        bits = tuple(self._evaluate(operand.bit) for operand in self.operands)
+    def _values(
+        self, context: OperandContext = NO_OPERAND_CONTEXT
+    ) -> tuple[tuple[int | None, ...], tuple[int | None, ...]]:
+        values = tuple(self._evaluate(operand.value, context) for operand in self.operands)
+        bits = tuple(self._evaluate(operand.bit, context) for operand in self.operands)
         return values, bits
 
     def _encoding(self, values: tuple[int | None, ...]) -> Encoding:
@@ -86,15 +88,10 @@ class SpcOpcodeNode(NodeBase):
                 )
 
     def pc_after(self, current_pc: Address) -> Address:
-        resolver = self.resolver
-        resolver.provisional_label_value = current_pc.logical_value
-        resolver.provisional_label_used = False
-        try:
-            values, _ = self._values()
-        finally:
-            resolver.provisional_label_value = None
+        stand_in = StandIn(current_pc.logical_value)
+        values, _ = self._values(OperandContext(current_pc.logical_value, stand_in=stand_in))
         length = self._encoding(values).length
-        if resolver.provisional_label_used and self._provisional_length is None:
+        if stand_in.used and self._provisional_length is None:
             self._provisional_length = length
         return current_pc + length
 
