@@ -22,7 +22,7 @@ from a816.object_codec import decode, encode, schema
 from a816.object_file import (
     SCHEMA_DIGEST,
     BusMapping,
-    ObjectAssert,
+    LinkAssert,
     ObjectFile,
     PoolAlloc,
     PoolDecl,
@@ -109,7 +109,7 @@ def test_object_file_round_trips(tmp_path: Path) -> None:
         sections,
         sample.symbols,
         aliases=[("alias", LinkExpr.parse("far - 1")), ("other", LinkExpr.parse('~x == "s"'))],
-        asserts=[ObjectAssert(LinkExpr.parse("far < 0x10000"), "fits", "m.s:1", "far < 0x10000")],
+        asserts=[LinkAssert(LinkExpr.parse("far < 0x10000"), "fits", "m.s:1", "far < 0x10000")],
         files=sample.files,
         relocatable=False,
         pool_decls=sample.pool_decls,

@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from a816.error_codes import ErrorCode
+    from a816.link_expr import LinkExpr
     from a816.parse.tokens import Token
     from a816.pool import PoolOverflowError
 
@@ -59,10 +60,14 @@ class ExternalSymbolReference(A816Error):
 class ExternalExpressionReference(A816Error):
     """Raised when expressions contain external symbols."""
 
-    def __init__(self, expression_str: str, symbols: set[str]) -> None:
-        self.expression_str = expression_str
+    def __init__(self, expression: LinkExpr, symbols: set[str]) -> None:
+        self.expression = expression
         self.external_symbols = symbols
-        super().__init__(f"Expression contains external symbols: {expression_str}")
+        super().__init__(f"Expression contains external symbols: {expression}")
+
+    @property
+    def expression_str(self) -> str:
+        return str(self.expression)
 
 
 class UnableToEvaluateSize(A816Error):

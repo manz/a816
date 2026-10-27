@@ -97,12 +97,12 @@ class AssembleMixin:
         for check, scope in resolver.direct_asserts:
             resolver.current_scope = scope
             try:
-                holds = bool(eval_expression_str(check.expression, resolver))
+                holds = bool(eval_expression_str(str(check.expression), resolver))
             except SymbolNotDefined as e:
-                failures.append((f"{check.message} (`{e}` is not defined)", check.expression, check.source))
+                failures.append((f"{check.message} (`{e}` is not defined)", check.text, check.source))
                 continue
             if not holds:
-                failures.append((check.message, check.expression, check.source))
+                failures.append((check.message, check.text, check.source))
         resolver.current_scope = restore
         if failures:
             raise LinkAssertError(failures)

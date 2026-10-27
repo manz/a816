@@ -607,15 +607,6 @@ class Linker:
         self, name: str, final_address: int, section: SymbolSection, obj_file: ObjectFile
     ) -> None:
         self.linked_symbols.append((_shown_local_name(name, obj_file), final_address, SymbolType.LOCAL, section))
-        # LOCAL names feed `_resolve_aliases` so an alias RHS like
-        # `count = _endwinmap - _winmap` (macro arg bound to a
-        # module-local label inside an alloc body) folds at link time.
-        # `setdefault` keeps the FIRST module's binding when two
-        # modules happen to share a LOCAL name — underscore privacy is
-        # a source-side convention, not a hard linker guarantee.
-        # Modules that need durable cross-module refs must drop the
-        # underscore (export as GLOBAL).
-        self.symbol_map.setdefault(name, final_address)
 
     def _merge_file_table(self, obj_file: ObjectFile) -> dict[int, int]:
         local_to_linked: dict[int, int] = {}

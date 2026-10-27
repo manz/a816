@@ -6,7 +6,7 @@ from a816.context import AssemblyContext
 from a816.cpu.mapping import Address, Bus
 from a816.cpu.types import RomType
 from a816.exceptions import ExternalSymbolReference, SymbolNotDefined
-from a816.link_expr import RelocKind
+from a816.link_expr import LinkExpr, RelocKind
 from a816.mappers import build_mapper_bus
 from a816.parse.ast.nodes import BlockAstNode
 from a816.parse.tokens import Token
@@ -109,7 +109,7 @@ class Scope:
         # Aliased externals: name -> expression string (e.g. "extern_sym + 1").
         # The alias name behaves like an external symbol locally; the linker
         # resolves it once the underlying externs are known.
-        self.external_aliases: dict[str, str] = {}
+        self.external_aliases: dict[str, LinkExpr] = {}
         self.parent = parent
         self.resolver: Resolver = resolver
         self.table: Table | None = None
@@ -165,17 +165,17 @@ class Scope:
         """Mark a symbol as external (defined in another object file)"""
         self.external_symbols.add(symbol)
 
-    def add_external_alias(self, symbol: str, expression_str: str) -> None:
+    def add_external_alias(self, symbol: str, expression: LinkExpr) -> None:
         """Register an alias whose value is a deferred expression over externs.
 
         The alias is treated as an external symbol locally so references
         emit deferred relocations. The linker resolves the alias by
-        evaluating ``expression_str`` against the final symbol map.
+        evaluating ``expression`` against the final symbol map.
         """
         self.external_symbols.add(symbol)
-        self.external_aliases[symbol] = expression_str
+        self.external_aliases[symbol] = expression
 
-    def lookup_alias(self, symbol: str) -> str | None:
+    def lookup_alias(self, symbol: str) -> LinkExpr | None:
         """Walk the scope chain looking for a registered external alias."""
         scope: Scope | None = self
         while scope is not None:
@@ -664,7 +664,7 @@ class Resolver:
             return f"__sc{idx}__{name}"
         return name
 
-    def register_external_alias(self, name: str, expression: str) -> None:
+    def register_external_alias(self, name: str, expression: LinkExpr) -> None:
         """Bind `name` in the current scope to a link-time `expression`.
 
         The object writer gets the alias under its exported name (see

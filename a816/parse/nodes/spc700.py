@@ -13,7 +13,7 @@ from a816.error_codes import (
     E_SYMBOL_NOT_A_VALUE,
 )
 from a816.exceptions import SymbolNotDefined
-from a816.link_expr import RelocKind
+from a816.link_expr import LinkExpr, RelocKind, binary_op, constant
 from a816.parse.nodes.errors import NodeError, undefined_symbol_error
 from a816.parse.nodes.expr import ExpressionNode
 from a816.parse.tokens import Token
@@ -157,7 +157,14 @@ class SpcOpcodeNode(NodeBase):
             writer.add_expression_relocation(offset, deferred, 1, RelocKind.PC_RELATIVE)
         elif pattern in ("mem.bit", "/mem.bit"):
             assert bit is not None
-            writer.add_expression_relocation(offset, f"(({deferred}) & 0x1FFF) | {(bit & 7) << 13}", 2)
+            packed = (
+                *deferred.ops,
+                *constant(0x1FFF).ops,
+                binary_op("&"),
+                *constant((bit & 7) << 13).ops,
+                binary_op("|"),
+            )
+            writer.add_expression_relocation(offset, LinkExpr(packed), 2)
         else:
             writer.add_expression_relocation(offset, deferred, pattern_width(pattern))
 

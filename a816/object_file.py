@@ -176,19 +176,10 @@ class LinkAssert:
     """`.assert EXPR, "message"` carried to the linker, evaluated once every
     symbol has its final address."""
 
-    expression: str
-    message: str
-    source: str = ""
-    """`file:line` of the directive."""
-
-
-@dataclass
-class ObjectAssert:
-    """A `LinkAssert` as the object file carries it: its expression as data."""
-
     expression: LinkExpr
     message: str
     source: str = ""
+    """`file:line` of the directive."""
     text: str = ""
     """The expression as written, for messages."""
 
@@ -304,7 +295,7 @@ class ObjectFile:
         pool_decls: list[PoolDecl] | None = None,
         pool_allocs: list[PoolAlloc] | None = None,
         bus_mappings: list[BusMapping] | None = None,
-        asserts: list[ObjectAssert] | None = None,
+        asserts: list[LinkAssert] | None = None,
         path_names: list[PathNameRecord] | None = None,
         arch: str = "65c816",
     ) -> None:
@@ -332,7 +323,7 @@ class ObjectFile:
         self.pool_decls: list[PoolDecl] = pool_decls or []
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
         self.bus_mappings: list[BusMapping] = bus_mappings or []
-        self.asserts: list[ObjectAssert] = asserts or []
+        self.asserts: list[LinkAssert] = asserts or []
         self.path_names: list[PathNameRecord] = path_names or []
         self.arch = arch
         self.origin: str = ""
@@ -351,7 +342,7 @@ class ObjectFile:
                 ExprRelocation(r.offset, r.size, r.kind, r.expr.localize(own)) for r in section.expression_relocations
             ]
         self.aliases = [(name, expr.localize(own)) for name, expr in self.aliases]
-        self.asserts = [ObjectAssert(a.expression.localize(own), a.message, a.source, a.text) for a in self.asserts]
+        self.asserts = [LinkAssert(a.expression.localize(own), a.message, a.source, a.text) for a in self.asserts]
 
     # ----- legacy single-section accessors (tests / older callers) -----
     def _ensure_first_section(self) -> Section:
@@ -480,7 +471,7 @@ class ObjectFile:
             pool_allocs=wire.pool_allocs,
             bus_mappings=wire.bus_mappings,
             asserts=[
-                ObjectAssert(_ops(wire.expr_ops, a.start, a.count), a.message, a.source, a.text) for a in wire.asserts
+                LinkAssert(_ops(wire.expr_ops, a.start, a.count), a.message, a.source, a.text) for a in wire.asserts
             ],
             path_names=wire.path_names,
             arch=wire.arch,

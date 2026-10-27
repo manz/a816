@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from a816.error_codes import E_SYMBOL_EXTERNAL_NOT_ALLOWED, E_SYMBOL_NOT_DEFINED
 from a816.exceptions import ExternalExpressionReference, ExternalSymbolReference, SymbolNotDefined
 from a816.parse.ast.expression import eval_expression
@@ -37,41 +35,21 @@ class ExpressionNode(ValueNodeProtocol):
         self.external_symbols: set[str] = set()
         """Extern names the value waits on (object mode); empty once it resolved locally."""
 
-    def _compute_local_label_renames(self) -> tuple[dict[str, str], bool]:
-        """Return (rename map, touches_any_label). Nested-scope label refs
-        get rewritten to their EXPORTED form so the linker resolves them
-        against `symbol_map` (which holds the exported names, not the
-        source-level bare names). Defers to `Resolver.exported_label_name`,
-        which mirrors `_export_name`: NamedScope members become `Name.label`,
-        anonymous nested scopes get the `__sc<idx>__` mangle, and root /
-        AllocBodyScope labels keep their bare name."""
+    def _touches_local_label(self) -> bool:
         from a816.parse.ast.expression import identifier_tokens
 
-        rename: dict[str, str] = {}
-        touches_label = False
-        for tok in identifier_tokens(self.expression.tokens):
-            if self.resolver.current_scope.find_label_scope(tok.value) is None:
-                continue
-            touches_label = True
-            exported = self.resolver.exported_label_name(tok.value)
-            if exported != tok.value:
-                rename[tok.value] = exported
-        return rename, touches_label
+        return any(
+            self.resolver.current_scope.find_label_scope(token.value) is not None
+            for token in identifier_tokens(self.expression.tokens)
+        )
 
     def _record_local_label_relocation(self) -> None:
-        from a816.parse.ast.expression import _inline_aliases, fold_nested_constants, reconstruct_expression
+        """A module-local label moves with the module's placement: record the
+        expression for the linker to evaluate at the final address."""
+        from a816.parse.ast.expression import link_expression
 
-        rename, touches_label = self._compute_local_label_renames()
-        if not touches_label:
-            return
-        expr_str = _inline_aliases(reconstruct_expression(self.expression, self.resolver), self.resolver)
-        # A `.for` variable or an alloc-body constant is this scope's alone:
-        # fold it, or the linker cannot resolve it (dq6's `grid_font + k * 320`).
-        expr_str = fold_nested_constants(expr_str, self.resolver)
-        for short, mangled in rename.items():
-            expr_str = re.sub(rf"\b{re.escape(short)}\b", mangled, expr_str)
-        self._deferred_expression = expr_str
-        self._local_label_renames = rename
+        if self._touches_local_label():
+            self._deferred_expression = link_expression(self.expression, self.resolver)
 
     def get_value(self) -> int | str:  # type:ignore
         try:
@@ -84,7 +62,7 @@ class ExpressionNode(ValueNodeProtocol):
             return value
         except ExternalExpressionReference as e:
             if self.resolver.context.is_object_mode:
-                self._deferred_expression = e.expression_str
+                self._deferred_expression = e.expression
                 self._external_symbols = e.external_symbols
                 self.external_symbols = set(e.external_symbols)
                 return 0
@@ -95,19 +73,11 @@ class ExpressionNode(ValueNodeProtocol):
             ) from e
         except ExternalSymbolReference as e:
             if self.resolver.context.is_object_mode:
-                # Inline-substitute any aliases so macro-arg names
-                # (`jump_table`, `count`, etc.) bound by
-                # `add_external_alias` get replaced with their underlying
-                # extern expression. Without this, the relocation
-                # serialises the raw macro-arg name and the linker
-                # reports it as an unresolved external - which it is,
-                # because nobody outside the macro invocation knows that
-                # name.
-                from a816.parse.ast.expression import _inline_aliases, reconstruct_expression
+                # A macro argument bound to an extern is an alias: the
+                # relocation names what it stands for, not the argument.
+                from a816.parse.ast.expression import link_expression
 
-                self._deferred_expression = _inline_aliases(
-                    reconstruct_expression(self.expression, self.resolver), self.resolver
-                )
+                self._deferred_expression = link_expression(self.expression, self.resolver)
                 self.external_symbols = {e.symbol_name}
                 return 0
             raise NodeError(

@@ -67,6 +67,22 @@
   imported by a direct build lands on its label again; it was off by
   the operand's address. `xobj` prints them back fully parenthesised,
   numbers from 10 up in hex. Objects from earlier a816 are rebuilt.
+- Link-time operands, aliases and `.assert`s are built from the parsed
+  expression instead of rewritten source text. Three names the text
+  rewrite got wrong now link right: a number whose digits spell a nearby
+  local label (`0x1FFF` beside a label `x1FFF` linked as 0), a scoped
+  name beside a local label of the same last part (`Foo.loop` beside a
+  local `loop`), and a quoted string in an `.assert` that matched a label
+  name, and a macro parameter that shares a name with one an alias reads
+  (`ptr = base + ext` used in `.macro m(base)`) no longer replaces it.
+  A macro argument passed on to an inner
+  macro is written to the object once; it used to appear twice in the
+  `.adbg` symbols.
+- The linker no longer reads a name no module exports from another
+  module's private label of the same name (`_loop`): it is unresolved,
+  as written. A module that `.extern`s another's `_name` gets an
+  unresolved symbol: drop the underscore where it is defined to export
+  it.
 
 ## 1.2.0 (2026-10-25)
 
