@@ -61,6 +61,12 @@
   address the direct page reaches: $0000-$7FFF of banks $00-$3F /
   $80-$BF, or $7E:0000-$1FFF; a stack-relative one an offset 0..0xFF.
   Objects are rebuilt.
+- Objects store link-time expressions (operands, aliases, `.assert`s)
+  as operator lists instead of source text, and the linker evaluates
+  them without re-parsing. A branch inside a precompiled `.o`
+  imported by a direct build lands on its label again; it was off by
+  the operand's address. `xobj` prints them back fully parenthesised,
+  numbers from 10 up in hex. Objects from earlier a816 are rebuilt.
 
 ## 1.2.0 (2026-10-25)
 

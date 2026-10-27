@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from a816.link_expr import ExprRelocation, LinkExpr, RelocKind
 from a816.object_file import ObjectFile, PoolDecl, RelocationType, Section, SymbolSection, SymbolType
 
 
@@ -70,9 +71,9 @@ def test_write_object_file_with_relocations(tmp_path: Path) -> None:
 
 def test_write_object_file_with_expression_relocations(tmp_path: Path) -> None:
     test_filename = tmp_path / "test_object_file.o"
-    expression_relocations: list[tuple[int, str, int]] = [
-        (0x10, "symbol1 + 5", 2),
-        (0x20, "symbol2 - 1", 3),
+    expression_relocations: list[ExprRelocation] = [
+        ExprRelocation(0x10, 2, RelocKind.VALUE, LinkExpr.parse("symbol1 + 5")),
+        ExprRelocation(0x20, 3, RelocKind.VALUE, LinkExpr.parse("symbol2 - 1")),
     ]
     section = Section.anonymous_pinned(
         base_address=0, code=b"\x00" * 0x40, expression_relocations=expression_relocations
@@ -102,7 +103,7 @@ def test_read_write_with_expression_relocations(tmp_path: Path) -> None:
         b"\x00\x01\x02\x03",
         [("sym1", 0x10, SymbolType.GLOBAL, SymbolSection.CODE)],
         [(0x02, "sym1", RelocationType.RELATIVE_16)],
-        [(0x00, "sym2 + 10", 2)],
+        [ExprRelocation(0x00, 2, RelocKind.VALUE, LinkExpr.parse("sym2 + 10"))],
     )
     obj.write(str(tmp_path / "test.o"))
     obj2 = ObjectFile.from_file(str(tmp_path / "test.o"))
@@ -118,7 +119,7 @@ def test_multi_section_round_trip(tmp_path: Path) -> None:
         Section.anonymous_pinned(
             base_address=0x018000,
             code=b"\xa9\x42",
-            expression_relocations=[(1, "external + 1", 1)],
+            expression_relocations=[ExprRelocation(1, 1, RelocKind.VALUE, LinkExpr.parse("external + 1"))],
         ),
     ]
     obj = ObjectFile(sections, [], relocatable=False)
@@ -129,7 +130,9 @@ def test_multi_section_round_trip(tmp_path: Path) -> None:
     assert obj2.sections[0].code == b"\xea\xea"
     assert obj2.sections[1].base_address == 0x018000
     assert obj2.sections[1].code == b"\xa9\x42"
-    assert obj2.sections[1].expression_relocations == [(1, "external + 1", 1)]
+    assert obj2.sections[1].expression_relocations == [
+        ExprRelocation(1, 1, RelocKind.VALUE, LinkExpr.parse("external + 1"))
+    ]
     assert obj2.relocatable is False
 
 

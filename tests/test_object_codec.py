@@ -17,10 +17,12 @@ from typing import Any
 
 import pytest
 
+from a816.link_expr import ExprRelocation, LinkExpr, RelocKind
 from a816.object_codec import decode, encode, schema
 from a816.object_file import (
     SCHEMA_DIGEST,
     BusMapping,
+    ObjectAssert,
     ObjectFile,
     PoolAlloc,
     PoolDecl,
@@ -100,12 +102,14 @@ def test_adding_a_field_changes_the_schema() -> None:
 
 def test_object_file_round_trips(tmp_path: Path) -> None:
     sample = _sample(WireObject, 1)
-    sections = [Section.anonymous_pinned(base_address=0x8000, code=b"\x01\x02")]
+    relocation = ExprRelocation(1, 1, RelocKind.DIRECT_PAGE, LinkExpr.parse("<(far + 2) * 3"))
+    sections = [Section.anonymous_pinned(base_address=0x8000, code=b"\x01\x02", expression_relocations=[relocation])]
     sections[0].bss = True
     obj = ObjectFile(
         sections,
         sample.symbols,
-        aliases=sample.aliases,
+        aliases=[("alias", LinkExpr.parse("far - 1")), ("other", LinkExpr.parse('~x == "s"'))],
+        asserts=[ObjectAssert(LinkExpr.parse("far < 0x10000"), "fits", "m.s:1", "far < 0x10000")],
         files=sample.files,
         relocatable=False,
         pool_decls=sample.pool_decls,

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from a816.link_expr import ExprRelocation, LinkExpr, RelocKind
 from a816.object_file import (
     CODEGEN_REVISION,
     SCHEMA_DIGEST,
@@ -20,7 +21,7 @@ def _make_fixture(path: Path) -> Path:
         base_address=0x008000,
         code=b"\xea\xea",
         relocations=[(0x00, "ext_sym", RelocationType.ABSOLUTE_16)],
-        expression_relocations=[(0x01, "foo + 1", 2)],
+        expression_relocations=[ExprRelocation(0x01, 2, RelocKind.VALUE, LinkExpr.parse("foo + 1"))],
         lines=[(0x00, 0, 12, 4, 0)],
     )
     obj = ObjectFile(
@@ -134,7 +135,7 @@ def test_files_table_listed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
 def test_aliases_section_listed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Aliases (deferred constant bindings) round-trip through `--aliases`."""
     section = Section.anonymous_pinned(base_address=0x008000, code=b"\xea")
-    obj = ObjectFile([section], [], aliases=[("font_ptr", "target + 0x40")])
+    obj = ObjectFile([section], [], aliases=[("font_ptr", LinkExpr.parse("target + 0x40"))])
     obj.write(str(tmp_path / "fix.o"))
     rc = main([str(tmp_path / "fix.o"), "--aliases"])
     out = capsys.readouterr().out

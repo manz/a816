@@ -6,6 +6,7 @@ import logging
 
 from a816.cpu.mapping import Address
 from a816.exceptions import SymbolNotDefined
+from a816.link_expr import ExprRelocation, RelocKind
 from a816.object_file import Section
 from a816.parse.nodes.errors import NodeError
 from a816.protocols import NodeBase
@@ -176,8 +177,8 @@ class LinkedModuleNode(NodeBase):
         root_scope = self.resolver.scopes[0]
         saved = self._inject_locals(root_scope)
         try:
-            for offset, expr, size in section.expression_relocations:
-                self._eval_one_relocation(expr, offset, size, code_array, section)
+            for relocation in section.expression_relocations:
+                self._eval_one_relocation(relocation, code_array, section)
         finally:
             self._restore_locals(root_scope, saved)
         return bytes(code_array)
@@ -203,12 +204,11 @@ class LinkedModuleNode(NodeBase):
         for i in range(size):
             code_array[offset + i] = (value >> (8 * i)) & 0xFF
 
-    def _eval_one_relocation(self, expr: str, offset: int, size: int, code_array: bytearray, section: Section) -> None:
-        from a816.object_file import split_byte_operand
+    def _eval_one_relocation(self, relocation: ExprRelocation, code_array: bytearray, section: Section) -> None:
         from a816.parse.ast.expression import eval_expression_str
 
+        offset, size, expr = relocation.offset, relocation.size, str(relocation.expr)
         ctx = self._reloc_context(offset, section)
-        _check, expr = split_byte_operand(expr)
         try:
             value = eval_expression_str(expr, self.resolver)
         except (SymbolNotDefined, NodeError, ValueError) as e:
@@ -217,6 +217,8 @@ class LinkedModuleNode(NodeBase):
         if not isinstance(value, int):
             logger.warning(f"Expression '{expr}' did not evaluate to int: {value} [{ctx}]")
             return
+        if relocation.kind is RelocKind.PC_RELATIVE:
+            value -= section.placed_base + self._delta + offset + size
         self._write_reloc(code_array, offset, value, size, expr, section)
 
     def _inject_locals(self, root_scope: Scope) -> dict[str, int | str]:

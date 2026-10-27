@@ -1,5 +1,6 @@
 import hashlib
 import struct
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -30,6 +31,7 @@ class SymbolSection(Enum):
     ABS_LABEL = 0x03
 
 
+from a816.link_expr import ExprOp, ExprRelocation, LinkExpr, RelocKind
 from a816.object_codec import decode, encode, schema
 from a816.section import Placement, Section
 
@@ -41,7 +43,7 @@ def _legacy_pinned_section(
     base_address: int,
     code: bytes,
     relocations: list[tuple[int, str, RelocationType]] | None = None,
-    expression_relocations: list[tuple[int, str, int]] | None = None,
+    expression_relocations: list[ExprRelocation] | None = None,
     lines: list[tuple[int, int, int, int, int]] | None = None,
     name: str | None = None,
 ) -> Section:
@@ -160,44 +162,13 @@ class PoolAlloc:
     """The block may straddle bank edges where the ROM is contiguous."""
 
 
-CODEGEN_REVISION = 11  # 11: one-byte operand relocations carry their range check
+CODEGEN_REVISION = 12  # 12: link expressions stored as RPN, not text
 """Bumped whenever a816 emits different object bytes for unchanged source (a
 codegen fix such as #159's end-marker labels). With the format's schema digest
 it forms the object identity the build cache keys on, so a release that changes
 codegen rebuilds every cached object and one that doesn't keeps them.
 `tests/test_codegen_revision.py` fails when the output changes without a bump,
 or the revision moves with no output change."""
-
-PC_RELATIVE_PREFIX = "pc-relative:"
-"""Marks an expression relocation whose value is the expression minus the
-operand's final end address (a branch offset), range-checked to its width."""
-
-BYTE_IMMEDIATE_PREFIX = "byte-immediate:"
-"""Marks a one-byte immediate operand (`lda.b #ext`): the value must fit a
-byte, -0x100..0xFF, as at compile time."""
-
-DIRECT_PAGE_PREFIX = "direct-page:"
-"""Marks a one-byte direct-page operand (`lda.b ext`): the value must be an
-address the direct page reaches."""
-
-DIRECT_POINTER_PREFIX = "direct-pointer:"
-"""Marks a one-byte indirect direct-page operand (`lda (ext),y`, `[ext]`):
-the pointer it names must be in the direct page, as for `DIRECT_PAGE_PREFIX`."""
-
-STACK_OFFSET_PREFIX = "stack-offset:"
-"""Marks a one-byte stack-relative operand (`lda ext,s`, `(ext,s),y`): the
-value must be an offset 0..0xFF from S."""
-
-BYTE_OPERAND_PREFIXES = (BYTE_IMMEDIATE_PREFIX, DIRECT_PAGE_PREFIX, DIRECT_POINTER_PREFIX, STACK_OFFSET_PREFIX)
-
-
-def split_byte_operand(expression: str) -> tuple[str | None, str]:
-    """`(prefix, expression)`: the one-byte operand check an expression
-    relocation carries, if any, and the expression without it."""
-    for prefix in BYTE_OPERAND_PREFIXES:
-        if expression.startswith(prefix):
-            return prefix, expression.removeprefix(prefix)
-    return None, expression
 
 
 @dataclass
@@ -209,6 +180,45 @@ class LinkAssert:
     message: str
     source: str = ""
     """`file:line` of the directive."""
+
+
+@dataclass
+class ObjectAssert:
+    """A `LinkAssert` as the object file carries it: its expression as data."""
+
+    expression: LinkExpr
+    message: str
+    source: str = ""
+    text: str = ""
+    """The expression as written, for messages."""
+
+
+@dataclass
+class WireExprRelocation:
+    """An `ExprRelocation` on the wire: its expression is `count` ops from
+    `start` in the section's `expr_ops`."""
+
+    offset: int
+    size: int
+    kind: RelocKind
+    start: int
+    count: int
+
+
+@dataclass
+class WireAlias:
+    name: str
+    start: int
+    count: int
+
+
+@dataclass
+class WireAssert:
+    start: int
+    count: int
+    message: str
+    source: str
+    text: str
 
 
 @dataclass
@@ -231,7 +241,8 @@ class WireSection:
     code: bytes
     bss: bool
     relocations: list[tuple[int, str, RelocationType]]
-    expression_relocations: list[tuple[int, str, int]]
+    expression_relocations: list[WireExprRelocation]
+    expr_ops: list[ExprOp]
     lines: list[tuple[int, int, int, int, int]]
 
 
@@ -243,15 +254,17 @@ class WireObject:
 
     sections: list[WireSection]
     symbols: list[tuple[str, int, SymbolType, SymbolSection]]
-    aliases: list[tuple[str, str]]
+    aliases: list[WireAlias]
     files: list[str]
     pool_decls: list[PoolDecl]
     pool_allocs: list[PoolAlloc]
     bus_mappings: list[BusMapping]
-    asserts: list[LinkAssert] = field(default_factory=list)
+    asserts: list[WireAssert] = field(default_factory=list)
     path_names: list[PathNameRecord] = field(default_factory=list)
     arch: str = "65c816"
     """CPU the object was assembled for: the linker refuses to mix them."""
+    expr_ops: list[ExprOp] = field(default_factory=list)
+    """The ops of the aliases and asserts."""
 
 
 SCHEMA_DIGEST = hashlib.sha256(schema(WireObject).encode()).digest()[:16]
@@ -283,15 +296,15 @@ class ObjectFile:
         sections_or_code: list[Section] | bytes,
         symbols: list[tuple[str, int, SymbolType, SymbolSection]],
         relocations: list[tuple[int, str, RelocationType]] | None = None,
-        expression_relocations: list[tuple[int, str, int]] | None = None,
-        aliases: list[tuple[str, str]] | None = None,
+        expression_relocations: list[ExprRelocation] | None = None,
+        aliases: list[tuple[str, LinkExpr]] | None = None,
         files: list[str] | None = None,
         lines: list[tuple[int, int, int, int, int]] | None = None,
         relocatable: bool = True,
         pool_decls: list[PoolDecl] | None = None,
         pool_allocs: list[PoolAlloc] | None = None,
         bus_mappings: list[BusMapping] | None = None,
-        asserts: list[LinkAssert] | None = None,
+        asserts: list[ObjectAssert] | None = None,
         path_names: list[PathNameRecord] | None = None,
         arch: str = "65c816",
     ) -> None:
@@ -313,13 +326,13 @@ class ObjectFile:
         else:
             self.sections = sections_or_code
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = symbols
-        self.aliases: list[tuple[str, str]] = aliases or []
+        self.aliases: list[tuple[str, LinkExpr]] = aliases or []
         self.files: list[str] = files or []
         self.relocatable: bool = relocatable
         self.pool_decls: list[PoolDecl] = pool_decls or []
         self.pool_allocs: list[PoolAlloc] = pool_allocs or []
         self.bus_mappings: list[BusMapping] = bus_mappings or []
-        self.asserts: list[LinkAssert] = asserts or []
+        self.asserts: list[ObjectAssert] = asserts or []
         self.path_names: list[PathNameRecord] = path_names or []
         self.arch = arch
         self.origin: str = ""
@@ -327,6 +340,18 @@ class ObjectFile:
         self.module: str = ""
         """Module the object was built from (not serialized): qualifies its
         private labels in linked output, else the stem of `origin`."""
+        self._bind_locals()
+
+    def _bind_locals(self) -> None:
+        """Mark every name in a link expression that is one of this object's
+        LOCAL symbols `LOCAL`, so the linker reads it from this object."""
+        own = {name for name, _address, symbol_type, _section in self.symbols if symbol_type == SymbolType.LOCAL}
+        for section in self.sections:
+            section.expression_relocations = [
+                ExprRelocation(r.offset, r.size, r.kind, r.expr.localize(own)) for r in section.expression_relocations
+            ]
+        self.aliases = [(name, expr.localize(own)) for name, expr in self.aliases]
+        self.asserts = [ObjectAssert(a.expression.localize(own), a.message, a.source, a.text) for a in self.asserts]
 
     # ----- legacy single-section accessors (tests / older callers) -----
     def _ensure_first_section(self) -> Section:
@@ -351,11 +376,11 @@ class ObjectFile:
         self._ensure_first_section().relocations = list(value)
 
     @property
-    def expression_relocations(self) -> list[tuple[int, str, int]]:
+    def expression_relocations(self) -> list[ExprRelocation]:
         return self.sections[0].expression_relocations if self.sections else []
 
     @expression_relocations.setter
-    def expression_relocations(self, value: list[tuple[int, str, int]]) -> None:
+    def expression_relocations(self, value: list[ExprRelocation]) -> None:
         self._ensure_first_section().expression_relocations = list(value)
 
     @property
@@ -373,21 +398,24 @@ class ObjectFile:
 
     def wire(self) -> WireObject:
         """The object as its wire record (what `write` encodes)."""
-        sections = [
-            WireSection(s.placed_base, s.code, s.bss, s.relocations, s.expression_relocations, s.lines)
-            for s in self.sections
-        ]
+        ops: list[ExprOp] = []
+        alias_spans = _append_ops((expr for _name, expr in self.aliases), ops)
+        assert_spans = _append_ops((check.expression for check in self.asserts), ops)
         return WireObject(
-            sections,
+            [_wire_section(section) for section in self.sections],
             self.symbols,
-            self.aliases,
+            [WireAlias(name, *span) for (name, _expr), span in zip(self.aliases, alias_spans, strict=True)],
             self.files,
             self.pool_decls,
             self.pool_allocs,
             self.bus_mappings,
-            self.asserts,
+            [
+                WireAssert(*span, c.message, c.source, c.text)
+                for c, span in zip(self.asserts, assert_spans, strict=True)
+            ],
             self.path_names,
             self.arch,
+            ops,
         )
 
     @staticmethod
@@ -434,7 +462,10 @@ class ObjectFile:
                 base_address=ws.base_address,
                 code=ws.code,
                 relocations=ws.relocations,
-                expression_relocations=ws.expression_relocations,
+                expression_relocations=[
+                    ExprRelocation(r.offset, r.size, r.kind, _ops(ws.expr_ops, r.start, r.count))
+                    for r in ws.expression_relocations
+                ],
                 lines=ws.lines,
             )
             section.bss = ws.bss
@@ -442,13 +473,15 @@ class ObjectFile:
         obj = ObjectFile(
             sections,
             wire.symbols,
-            aliases=wire.aliases,
+            aliases=[(a.name, _ops(wire.expr_ops, a.start, a.count)) for a in wire.aliases],
             files=wire.files,
             relocatable=bool(header.flags & 0x01),
             pool_decls=wire.pool_decls,
             pool_allocs=wire.pool_allocs,
             bus_mappings=wire.bus_mappings,
-            asserts=wire.asserts,
+            asserts=[
+                ObjectAssert(_ops(wire.expr_ops, a.start, a.count), a.message, a.source, a.text) for a in wire.asserts
+            ],
             path_names=wire.path_names,
             arch=wire.arch,
         )
@@ -461,3 +494,31 @@ class ObjectFile:
         if self.files:
             return self.files[0]
         return self.origin or "<object>"
+
+
+def _append_ops(expressions: Iterable[LinkExpr], ops: list[ExprOp]) -> list[tuple[int, int]]:
+    """Append each expression's ops to `ops`; its `(start, count)` there."""
+    spans: list[tuple[int, int]] = []
+    for expression in expressions:
+        spans.append((len(ops), len(expression.ops)))
+        ops.extend(expression.ops)
+    return spans
+
+
+def _ops(ops: list[ExprOp], start: int, count: int) -> LinkExpr:
+    return LinkExpr(tuple(ops[start : start + count]))
+
+
+def _wire_section(section: Section) -> WireSection:
+    ops: list[ExprOp] = []
+    relocations = section.expression_relocations
+    spans = _append_ops((r.expr for r in relocations), ops)
+    return WireSection(
+        section.placed_base,
+        section.code,
+        section.bss,
+        section.relocations,
+        [WireExprRelocation(r.offset, r.size, r.kind, *span) for r, span in zip(relocations, spans, strict=True)],
+        ops,
+        section.lines,
+    )

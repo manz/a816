@@ -31,6 +31,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from a816.link_expr import ExprRelocation
     from a816.object_file import RelocationType
 
 
@@ -132,7 +133,7 @@ class Section:
     relocations: list[tuple[int, str, RelocationType]] = field(default_factory=list)
     """Symbol relocations: (offset_into_code, symbol_name, reloc_type)."""
 
-    expression_relocations: list[tuple[int, str, int]] = field(default_factory=list)
+    expression_relocations: list[ExprRelocation] = field(default_factory=list)
     """Expression relocations for deferred cross-module operand evaluation:
     (offset_into_code, expression_blob, size_bytes).
     """
@@ -212,7 +213,7 @@ class Section:
         code: bytes,
         *,
         relocations: list[tuple[int, str, RelocationType]] | None = None,
-        expression_relocations: list[tuple[int, str, int]] | None = None,
+        expression_relocations: list[ExprRelocation] | None = None,
         lines: list[tuple[int, int, int, int, int]] | None = None,
         end_address: int | None = None,
     ) -> Section:

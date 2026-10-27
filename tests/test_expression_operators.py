@@ -17,6 +17,7 @@ import pytest
 
 from a816.error_codes import E_CODEGEN_DIVISION_BY_ZERO
 from a816.exceptions import ExpressionEvaluationError
+from a816.link_expr import ExprRelocation, LinkExpr, RelocKind
 from a816.linker import Linker
 from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.parse.ast.expression import eval_expression_str
@@ -170,14 +171,14 @@ class TestLexerAmbiguities:
 
 def _linked_word(expression: str, value: int) -> int:
     obj = ObjectFile(b"\xa9\x00\x00", [("VAL", value, SymbolType.GLOBAL, SymbolSection.DATA)], [])
-    obj.expression_relocations = [(1, expression, 2)]
+    obj.expression_relocations = [ExprRelocation(1, 2, RelocKind.VALUE, LinkExpr.parse(expression))]
     linked = Linker([obj]).link()
     return int.from_bytes(bytes(linked.code[1:3]), "little")
 
 
 def _link_error(expression: str) -> ExpressionEvaluationError:
     obj = ObjectFile(b"\xa9\x00", [("VAL", 1, SymbolType.GLOBAL, SymbolSection.DATA)], [])
-    obj.expression_relocations = [(1, expression, 1)]
+    obj.expression_relocations = [ExprRelocation(1, 1, RelocKind.VALUE, LinkExpr.parse(expression))]
     linker = Linker([obj])
     with pytest.raises(ExpressionEvaluationError) as exc:
         linker.link()
@@ -209,8 +210,9 @@ class TestLinkerExpressionSemantics:
     def test_unresolved_symbol_is_a_clean_error(self) -> None:
         assert "missing" in _link_error("missing + 1").reason
 
-    def test_invalid_character_is_a_clean_error(self) -> None:
-        assert _link_error("VAL $ 2").expression == "VAL $ 2"
+    def test_invalid_character_is_refused_when_parsed(self) -> None:
+        with pytest.raises(ScannerException):
+            LinkExpr.parse("VAL $ 2")
 
 
 class TestExternRelocationOperators:

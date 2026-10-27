@@ -68,8 +68,8 @@ def test_an_inlined_alias_is_not_exported_again_by_each_importer(tmp_path: Path)
     )
     assert result.exit_code == 0, result.diagnostics
 
-    owner_aliases = ObjectFile.from_file(str(tmp_path / "obj" / "defs.o")).aliases
-    importer_aliases = ObjectFile.from_file(str(tmp_path / "obj" / "a.o")).aliases
+    owner_aliases = [(n, str(e)) for n, e in ObjectFile.from_file(str(tmp_path / "obj" / "defs.o")).aliases]
+    importer_aliases = [(n, str(e)) for n, e in ObjectFile.from_file(str(tmp_path / "obj" / "a.o")).aliases]
 
     assert (owner_aliases.count(("EV_FLAGS", "flags")), importer_aliases.count(("EV_FLAGS", "flags"))) == (1, 1)
 

@@ -98,7 +98,7 @@ def test_scoped_alias_object_export_is_dotted(tmp_path: Path) -> None:
     main = _LO_MAP + "*=0x008000\nhere:\n    nop\n.scope sc {\n    fd = here\n}\n"
     _build(tmp_path, main)
     obj = _main_object(tmp_path)
-    assert ("sc.fd", "here") in obj.aliases
+    assert ("sc.fd", "here") in [(n, str(e)) for n, e in obj.aliases]
 
 
 def test_scoped_alias_reaches_an_importer(tmp_path: Path) -> None:

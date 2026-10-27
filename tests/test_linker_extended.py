@@ -10,8 +10,10 @@ from a816.exceptions import (
     RelocationError,
     UnresolvedSymbolError,
 )
+from a816.link_expr import ExprRelocation, LinkExpr, RelocKind
 from a816.linker import Linker
 from a816.object_file import ObjectFile, RelocationType, SymbolSection, SymbolType
+from a816.parse.errors import ScannerException
 
 
 class LinkerRelocationTestCase(unittest.TestCase):
@@ -96,7 +98,7 @@ class LinkerExpressionTestCase(unittest.TestCase):
             [("BASE", 0x10, SymbolType.GLOBAL, SymbolSection.DATA)],
             [],
         )
-        obj.expression_relocations = [(1, "BASE + 5", 1)]
+        obj.expression_relocations = [ExprRelocation(1, 1, RelocKind.VALUE, LinkExpr.parse("BASE + 5"))]
 
         linker = Linker([obj])
         linked = linker.link()
@@ -111,7 +113,7 @@ class LinkerExpressionTestCase(unittest.TestCase):
             [("TABLE_BASE", 0x8000, SymbolType.GLOBAL, SymbolSection.DATA)],
             [],
         )
-        obj.expression_relocations = [(1, "TABLE_BASE + 0x100", 2)]
+        obj.expression_relocations = [ExprRelocation(1, 2, RelocKind.VALUE, LinkExpr.parse("TABLE_BASE + 0x100"))]
 
         linker = Linker([obj])
         linked = linker.link()
@@ -129,7 +131,7 @@ class LinkerExpressionTestCase(unittest.TestCase):
             [("ROM_BASE", 0x108000, SymbolType.GLOBAL, SymbolSection.DATA)],
             [],
         )
-        obj.expression_relocations = [(1, "ROM_BASE + 0x200", 3)]
+        obj.expression_relocations = [ExprRelocation(1, 3, RelocKind.VALUE, LinkExpr.parse("ROM_BASE + 0x200"))]
 
         linker = Linker([obj])
         linked = linker.link()
@@ -148,7 +150,7 @@ class LinkerExpressionTestCase(unittest.TestCase):
             ],
             [],
         )
-        obj.expression_relocations = [(1, "START + OFFSET * 2", 2)]
+        obj.expression_relocations = [ExprRelocation(1, 2, RelocKind.VALUE, LinkExpr.parse("START + OFFSET * 2"))]
 
         linker = Linker([obj])
         linked = linker.link()
@@ -166,26 +168,16 @@ class LinkerExpressionTestCase(unittest.TestCase):
             [("BIG_VALUE", 0x1000000, SymbolType.GLOBAL, SymbolSection.DATA)],
             [],
         )
-        obj.expression_relocations = [(1, "BIG_VALUE", 3)]
+        obj.expression_relocations = [ExprRelocation(1, 3, RelocKind.VALUE, LinkExpr.parse("BIG_VALUE"))]
 
         linker = Linker([obj])
         with pytest.raises(ExpressionEvaluationError):
             linker.link()
 
     def test_expression_relocation_invalid_syntax(self) -> None:
-        """Test expression with invalid syntax."""
-        obj = ObjectFile(
-            b"\xa9\x00",
-            [],
-            [],
-        )
-        obj.expression_relocations = [(1, "invalid $$$ expression", 1)]
-
-        linker = Linker([obj])
-        with pytest.raises(ExpressionEvaluationError) as exc_info:
-            linker.link()
-
-        self.assertIn("invalid $$$ expression", exc_info.value.expression)
+        """Malformed expression text is refused when it is parsed, before any link."""
+        with pytest.raises(ScannerException):
+            LinkExpr.parse("invalid $$$ expression")
 
     def test_expression_relocation_unsupported_size(self) -> None:
         """Test expression with unsupported operand size."""
@@ -194,7 +186,9 @@ class LinkerExpressionTestCase(unittest.TestCase):
             [("VAL", 0x100, SymbolType.GLOBAL, SymbolSection.DATA)],
             [],
         )
-        obj.expression_relocations = [(0, "VAL", 5)]  # 5 bytes not supported
+        obj.expression_relocations = [
+            ExprRelocation(0, 5, RelocKind.VALUE, LinkExpr.parse("VAL"))
+        ]  # 5 bytes not supported
 
         linker = Linker([obj])
         with pytest.raises(ExpressionEvaluationError) as exc_info:

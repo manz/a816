@@ -15,17 +15,10 @@ from pathlib import Path
 import pytest
 
 from a816.exceptions import ByteOperandError
+from a816.link_expr import ExprRelocation, LinkExpr, RelocKind
 from a816.linker import Linker, byte_operand_problem
 from a816.module_builder import build_with_imports
-from a816.object_file import (
-    BYTE_IMMEDIATE_PREFIX,
-    DIRECT_PAGE_PREFIX,
-    DIRECT_POINTER_PREFIX,
-    STACK_OFFSET_PREFIX,
-    ObjectFile,
-    SymbolSection,
-    SymbolType,
-)
+from a816.object_file import ObjectFile, SymbolSection, SymbolType
 
 POOLS = """\
 .pool rom {
@@ -140,29 +133,29 @@ def test_a_word_immediate_keeps_masking(tmp_path: Path, caplog: pytest.LogCaptur
 
 @pytest.mark.parametrize("value", [0x00, 0xFF, -0x100, -1])
 def test_byte_immediates_in_range(value: int) -> None:
-    assert byte_operand_problem(BYTE_IMMEDIATE_PREFIX, value) is None
+    assert byte_operand_problem(RelocKind.BYTE_IMMEDIATE, value) is None
 
 
 @pytest.mark.parametrize("value", [0x100, -0x101, 0x018000])
 def test_byte_immediates_out_of_range(value: int) -> None:
-    assert byte_operand_problem(BYTE_IMMEDIATE_PREFIX, value) is not None
+    assert byte_operand_problem(RelocKind.BYTE_IMMEDIATE, value) is not None
 
 
 @pytest.mark.parametrize("value", [0x10, 0x7E0010, 0x7E1FFF, 0x002100, 0x804300, 0x3F0010])
 def test_direct_page_reachable(value: int) -> None:
-    assert byte_operand_problem(DIRECT_PAGE_PREFIX, value) is None
+    assert byte_operand_problem(RelocKind.DIRECT_PAGE, value) is None
 
 
 @pytest.mark.parametrize("value", [0x018000, 0x008000, 0x7E2000, 0x7F0010, 0x400010, 0xC00010, -1])
 def test_direct_page_unreachable(value: int) -> None:
-    assert byte_operand_problem(DIRECT_PAGE_PREFIX, value) is not None
+    assert byte_operand_problem(RelocKind.DIRECT_PAGE, value) is not None
 
 
 def _link(lines: list[tuple[int, int, int, int, int]], files: list[str]) -> ByteOperandError:
     obj = ObjectFile(
         b"\xa5\x00",
         [("far", 0x018000, SymbolType.GLOBAL, SymbolSection.CODE)],
-        expression_relocations=[(1, DIRECT_PAGE_PREFIX + "far", 1)],
+        expression_relocations=[ExprRelocation(1, 1, RelocKind.DIRECT_PAGE, LinkExpr.parse("far"))],
         files=files,
         lines=lines,
         relocatable=False,
@@ -182,9 +175,9 @@ def test_a_line_past_the_file_table_gives_no_location() -> None:
 
 @pytest.mark.parametrize(("value", "fits"), [(0, True), (0xFF, True), (0x100, False), (-1, False)])
 def test_stack_offsets(value: int, fits: bool) -> None:
-    assert (byte_operand_problem(STACK_OFFSET_PREFIX, value) is None) is fits
+    assert (byte_operand_problem(RelocKind.STACK_OFFSET, value) is None) is fits
 
 
 @pytest.mark.parametrize("value", [0x7E0010, 0x018000])
 def test_a_pointer_follows_the_direct_page_rule(value: int) -> None:
-    assert byte_operand_problem(DIRECT_POINTER_PREFIX, value) == byte_operand_problem(DIRECT_PAGE_PREFIX, value)
+    assert byte_operand_problem(RelocKind.DIRECT_POINTER, value) == byte_operand_problem(RelocKind.DIRECT_PAGE, value)

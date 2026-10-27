@@ -19,12 +19,8 @@ from a816.exceptions import (
     UndeclaredPoolError,
     UnresolvedSymbolError,
 )
+from a816.link_expr import Binding, ExprRelocation, LinkExpr, Lookup, RelocKind, UnresolvedLinkName
 from a816.object_file import (
-    BYTE_IMMEDIATE_PREFIX,
-    DIRECT_PAGE_PREFIX,
-    DIRECT_POINTER_PREFIX,
-    PC_RELATIVE_PREFIX,
-    STACK_OFFSET_PREFIX,
     ObjectFile,
     PoolAlloc,
     PoolDecl,
@@ -32,22 +28,16 @@ from a816.object_file import (
     Section,
     SymbolSection,
     SymbolType,
-    split_byte_operand,
 )
-from a816.parse.ast.expression import eval_constant_expression
-from a816.parse.errors import ParserSyntaxError, ScannerException
-from a816.parse.nodes.errors import NodeError
+from a816.parse.ast.expression import ExprEvalError
 from a816.pool import Allocation, Pool, PoolOverflowError
 from a816.section import ANONYMOUS_ALLOC_PREFIX, PINNED_POOL_PREFIX, Placement
 
 _SIZE_SYMBOL_RE = re.compile(r"(?<![\w.])([A-Za-z_][\w.]*)\.__size\b")
-_IDENT_RE = re.compile(r"[A-Za-z_][\w.]*")
 _SCOPE_MANGLE_RE = re.compile(r"__sc\d+__(_.+)")
 _SCOPE_PREFIX_RE = re.compile(r"(?<![\w.])__sc\d+__(?=\w)")
 
 logger = logging.getLogger(__name__)
-
-SYMBOL_TOKEN_RE = re.compile(r"([A-Za-z_\.][A-Za-z0-9_\.]*)")
 
 
 class Linker:
@@ -74,8 +64,8 @@ class Linker:
         # (final_address, section_idx, symbol_name, RelocationType)
         self._linked_relocations: list[tuple[int, int, str, RelocationType]] = []
         # (final_address, section_idx, expression, size_bytes)
-        self._linked_expression_relocations: list[tuple[int, int, str, int]] = []
-        self.linked_aliases: list[tuple[str, str]] = []
+        self._linked_expression_relocations: list[tuple[int, int, ExprRelocation]] = []
+        self.linked_aliases: list[tuple[str, LinkExpr, int]] = []
         self.linked_files: list[str] = []
         self._file_index: dict[str, int] = {}
         self.symbol_map: dict[str, int] = {}
@@ -539,13 +529,13 @@ class Linker:
 
             for offset, name, reloc_type in section.relocations:
                 self._linked_relocations.append((final_base + offset, section_idx, name, reloc_type))
-            for offset, expression, size_bytes in section.expression_relocations:
-                self._linked_expression_relocations.append((final_base + offset, section_idx, expression, size_bytes))
+            for relocation in section.expression_relocations:
+                self._linked_expression_relocations.append((final_base + relocation.offset, section_idx, relocation))
 
         for sym in obj_file.symbols:
             self._ingest_symbol(sym, delta, obj_file, obj_idx)
 
-        self.linked_aliases.extend(obj_file.aliases)
+        self.linked_aliases.extend((name, expr, obj_idx) for name, expr in obj_file.aliases)
 
     def _ingest_symbol(
         self,
@@ -676,21 +666,42 @@ class Linker:
         module's own locals in scope; report all failures at once."""
         failures: list[tuple[str, str, str]] = []
         for obj_idx, obj_file in enumerate(self.object_files):
-            local_overlay = self._local_by_obj.get(obj_idx)
+            local_overlay = self._local_by_obj.get(obj_idx) or {}
             for check in obj_file.asserts:
+                text = check.text or str(check.expression)
                 try:
-                    holds = self._evaluate_expression(check.expression, local_overlay)
-                except ExpressionEvaluationError as exc:
-                    reason = _assert_reason(exc.reason, check.expression, local_overlay or {})
-                    failures.append(
-                        (f"{check.message} (cannot evaluate: {reason})", _as_written(check.expression), check.source)
-                    )
+                    holds = check.expression.evaluate_value(self._lookup(obj_idx))
+                except (UnresolvedLinkName, ExprEvalError) as exc:
+                    reason = _assert_reason(exc, check.expression, local_overlay)
+                    failures.append((f"{check.message} (cannot evaluate: {reason})", _as_written(text), check.source))
                     continue
                 if not holds:
-                    shown = self._show_sizes(check.expression, local_overlay)
+                    shown = self._show_sizes(text, local_overlay)
                     failures.append((check.message, _as_written(shown), check.source))
         if failures:
             raise LinkAssertError(failures)
+
+    def _lookup(self, obj_idx: int) -> Lookup:
+        """How an expression of object `obj_idx` reads a name: a `LOCAL` from
+        that object's own symbols, else from the linked symbol map."""
+        local_overlay = self._local_by_obj.get(obj_idx) or {}
+
+        def lookup(name: str, binding: Binding) -> int:
+            if binding is Binding.LOCAL and name in local_overlay:
+                return local_overlay[name]
+            if name in self.symbol_map:
+                return self.symbol_map[name]
+            raise UnresolvedLinkName(name)
+
+        return lookup
+
+    def _evaluate(self, expression: LinkExpr, obj_idx: int) -> int:
+        try:
+            return expression.evaluate(self._lookup(obj_idx))
+        except UnresolvedLinkName as exc:
+            raise ExpressionEvaluationError(str(expression), f"cannot resolve `{exc.name}` at link time") from exc
+        except (ExprEvalError, ValueError) as exc:
+            raise ExpressionEvaluationError(str(expression), str(exc)) from exc
 
     def _show_sizes(self, expression: str, local_overlay: dict[str, int] | None) -> str:
         """An assert as a user reads it: the internal `NAME.__size` symbols
@@ -710,12 +721,12 @@ class Linker:
         progress = True
         while remaining and progress:
             progress = False
-            still_pending: list[tuple[str, str]] = []
-            for name, expression in remaining:
+            still_pending: list[tuple[str, LinkExpr, int]] = []
+            for name, expression, obj_idx in remaining:
                 try:
-                    value = self._evaluate_expression(expression)
+                    value = self._evaluate(expression, obj_idx)
                 except ExpressionEvaluationError:
-                    still_pending.append((name, expression))
+                    still_pending.append((name, expression, obj_idx))
                     continue
                 self.symbol_map[name] = value
                 self.linked_symbols.append((name, value, SymbolType.GLOBAL, SymbolSection.DATA))
@@ -723,7 +734,7 @@ class Linker:
                 progress = True
             remaining = still_pending
         if remaining:
-            raise UnresolvedSymbolError({name for name, _ in remaining})
+            raise UnresolvedSymbolError({name for name, _expr, _obj in remaining})
 
     def _section_view(self, section_idx: int) -> tuple[Section, bytearray]:
         section = self.linked_sections[section_idx]
@@ -792,22 +803,22 @@ class Linker:
 
     def _apply_expression_relocations(self) -> None:
         self._section_buffers = {}
-        for final_address, section_idx, expression, size_bytes in self._linked_expression_relocations:
-            local_overlay = self._local_by_obj.get(self._section_obj.get(section_idx, -1))
-            check, expression = split_byte_operand(expression)
-            if expression.startswith(PC_RELATIVE_PREFIX):
-                evaluated_value = self._branch_offset(expression, final_address, size_bytes, local_overlay)
+        for final_address, section_idx, relocation in self._linked_expression_relocations:
+            obj_idx = self._section_obj.get(section_idx, -1)
+            expression, size_bytes, kind = relocation.expr, relocation.size, relocation.kind
+            if kind is RelocKind.PC_RELATIVE:
+                evaluated_value = self._branch_offset(expression, final_address, size_bytes, obj_idx)
             else:
-                evaluated_value = self._evaluate_expression(expression, local_overlay)
+                evaluated_value = self._evaluate(expression, obj_idx)
             section, code = self._section_view(section_idx)
             offset = final_address - section.placed_base
-            problem = byte_operand_problem(check, evaluated_value) if check else None
-            if check is not None and problem is not None:
+            problem = byte_operand_problem(kind, evaluated_value) if kind in _BYTE_OPERAND_HINTS else None
+            if problem is not None:
                 raise ByteOperandError(
-                    _as_written(expression),
+                    _as_written(str(expression)),
                     evaluated_value,
                     problem,
-                    _BYTE_OPERAND_HINTS[check],
+                    _BYTE_OPERAND_HINTS[kind],
                     self._line_at(section, offset),
                 )
             if size_bytes == 1:
@@ -816,12 +827,14 @@ class Linker:
                 struct.pack_into("<H", code, offset, evaluated_value & 0xFFFF)
             elif size_bytes == 3:
                 if not -0x800000 <= evaluated_value <= 0xFFFFFF:
-                    raise ExpressionEvaluationError(expression, f"result {evaluated_value:#x} is out of 24-bit range")
+                    raise ExpressionEvaluationError(
+                        str(expression), f"result {evaluated_value:#x} is out of 24-bit range"
+                    )
                 self._write_le24(code, offset, evaluated_value & 0xFFFFFF)
             elif size_bytes == 4:
                 struct.pack_into("<I", code, offset, evaluated_value & 0xFFFFFFFF)
             else:
-                raise ExpressionEvaluationError(expression, f"unsupported operand size: {size_bytes} bytes")
+                raise ExpressionEvaluationError(str(expression), f"unsupported operand size: {size_bytes} bytes")
 
         self._flush_section_buffers()
 
@@ -835,44 +848,18 @@ class Linker:
             return None
         return f"{self.linked_files[file_idx]}:{line + 1}"
 
-    def _branch_offset(
-        self, expression: str, operand_address: int, size_bytes: int, local_overlay: dict[str, int] | None
-    ) -> int:
+    def _branch_offset(self, target: LinkExpr, operand_address: int, size_bytes: int, obj_idx: int) -> int:
         """A relative branch's offset from final addresses: the target minus
         the operand's end (the next instruction), within the operand's signed width."""
-        target = expression.removeprefix(PC_RELATIVE_PREFIX)
-        offset = self._evaluate_expression(target, local_overlay) - (operand_address + size_bytes)
+        offset = self._evaluate(target, obj_idx) - (operand_address + size_bytes)
         limit = 1 << (8 * size_bytes - 1)
         if not -limit <= offset < limit:
             hint = "use `brl` or `jmp`" if size_bytes == 1 else "use `jmp` / `jml`"
             raise ExpressionEvaluationError(
-                target,
+                str(target),
                 f"branch offset {offset} from ${operand_address - 1:06X} exceeds signed {8 * size_bytes}-bit range; {hint}",
             )
         return offset
-
-    def _evaluate_expression(self, expression: str, local_overlay: dict[str, int] | None = None) -> int:
-        expr_to_eval = self._substitute_symbols(expression, local_overlay)
-        try:
-            return eval_constant_expression(expr_to_eval)
-        except NodeError as e:
-            raise ExpressionEvaluationError(expression, e.message) from e
-        except (ScannerException, ParserSyntaxError, RuntimeError, ValueError) as e:
-            raise ExpressionEvaluationError(expression, str(e)) from e
-
-    def _substitute_symbols(self, expression: str, local_overlay: dict[str, int] | None = None) -> str:
-        def replace(match: Match[str]) -> str:
-            token = match.group(0)
-            # Object-local symbols win over the global map: a relocation's
-            # bare LOCAL operand must resolve to the emitting module's label,
-            # not another module that happens to export the same name.
-            if local_overlay is not None and token in local_overlay:
-                return str(local_overlay[token])
-            if token in self.symbol_map:
-                return str(self.symbol_map[token])
-            return token
-
-        return SYMBOL_TOKEN_RE.sub(replace, expression)
 
     def _write_le24(self, code: bytearray, offset: int, value: int) -> None:
         code[offset : offset + 3] = bytes(
@@ -902,10 +889,9 @@ def _shown_local_name(name: str, obj_file: ObjectFile) -> str:
     return f"{module}.{match.group(1)}" if module else match.group(1)
 
 
-_UNRESOLVED_RE = re.compile(r"cannot resolve `([^`]+)` at link time")
-
-
-def _assert_reason(reason: str, expression: str, local_overlay: dict[str, int]) -> str:
+def _assert_reason(
+    error: UnresolvedLinkName | ExprEvalError, expression: LinkExpr, local_overlay: dict[str, int]
+) -> str:
     """Why an assert could not be evaluated, as its author can act on it.
 
     A name the evaluator left unresolved is in neither the linked symbols
@@ -913,19 +899,19 @@ def _assert_reason(reason: str, expression: str, local_overlay: dict[str, int]) 
     nowhere (ff6: a test harness had dropped its `-D` flags, and the
     link-time wording read like a linker limit)."""
     private = _alloc_private_hint(expression, local_overlay)
-    unresolved = _UNRESOLVED_RE.fullmatch(reason)
-    if private or unresolved is None:
-        return _as_written(reason) + private
-    name = _as_written(unresolved.group(1))
-    return f"`{name}` is not defined; a `-D` name goes on the command line or under `[defines]` in a816.toml"
+    if isinstance(error, ExprEvalError):
+        return _as_written(error.message) + private
+    if private:
+        return f"cannot resolve `{_as_written(error.name)}` at link time" + private
+    return f"`{_as_written(error.name)}` is not defined; a `-D` name goes on the command line or under `[defines]` in a816.toml"
 
 
-def _alloc_private_hint(expression: str, local_overlay: dict[str, int]) -> str:
+def _alloc_private_hint(expression: LinkExpr, local_overlay: dict[str, int]) -> str:
     """Why an assert misses a `_` label of an `.alloc` body: the name is
     private to that body, which exports it as `__sc<idx>__name`."""
     hidden = sorted(
         name
-        for name in set(_IDENT_RE.findall(expression))
+        for name in expression.names()
         if name.startswith("_")
         and name not in local_overlay
         and any(_is_alloc_private(key, name) for key in local_overlay)
@@ -1034,26 +1020,26 @@ def _linked_file_name(name: str) -> str:
 
 
 _BYTE_OPERAND_HINTS = {
-    BYTE_IMMEDIATE_PREFIX: "take a byte of it (`<x`, `>x`, `^x`), or write the opcode `.w` if the register is 16-bit",
-    DIRECT_PAGE_PREFIX: "the operand is one byte: write the opcode with `.w` or `.l` to address it in full",
-    DIRECT_POINTER_PREFIX: "an indirect operand names a pointer in the direct page: keep the pointer in bank 0 RAM",
-    STACK_OFFSET_PREFIX: "a stack-relative operand is a one-byte offset from S, not an address",
+    RelocKind.BYTE_IMMEDIATE: "take a byte of it (`<x`, `>x`, `^x`), or write the opcode `.w` if the register is 16-bit",
+    RelocKind.DIRECT_PAGE: "the operand is one byte: write the opcode with `.w` or `.l` to address it in full",
+    RelocKind.DIRECT_POINTER: "an indirect operand names a pointer in the direct page: keep the pointer in bank 0 RAM",
+    RelocKind.STACK_OFFSET: "a stack-relative operand is a one-byte offset from S, not an address",
 }
 
 
-def byte_operand_problem(check: str, value: int) -> str | None:
-    """Why `value` cannot fill a one-byte operand carrying `check`, if it can't.
+def byte_operand_problem(kind: RelocKind, value: int) -> str | None:
+    """Why `value` cannot fill a one-byte operand of `kind`, if it can't.
 
     A `.b` immediate takes -0x100..0xFF, as at compile time. A direct-page
     operand addresses bank 0 through D, which a816 does not track, so the
     check is what holds whatever D is: the address is in bank 0's RAM and
     I/O half ($0000-$7FFF, mirrored in banks $00-$3F and $80-$BF) or in the
     low 8K of WRAM at $7E:0000-$1FFF."""
-    if check == BYTE_IMMEDIATE_PREFIX:
+    if kind is RelocKind.BYTE_IMMEDIATE:
         if value >> 8 in (0, -1):
             return None
         return "does not fit in a byte (-0x100..0xFF)"
-    if check == STACK_OFFSET_PREFIX:
+    if kind is RelocKind.STACK_OFFSET:
         return None if 0 <= value <= 0xFF else "is not a stack offset (0..0xFF)"
     bank, offset = value >> 16, value & 0xFFFF
     if value >= 0 and ((bank <= 0x3F or 0x80 <= bank <= 0xBF) and offset < 0x8000 or bank == 0x7E and offset < 0x2000):

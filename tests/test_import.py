@@ -561,3 +561,21 @@ start:
 
             result = program.assemble(str(main_file), output_path)
             assert result == 0, "Assembly should succeed with multiple relocations"
+
+    def test_imported_branch_lands_on_its_label(self) -> None:
+        """A branch inside an imported `.o` keeps its offset in a direct build."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            module_file = Path(tmpdir) / "looper.s"
+            module_file.write_text("*=0x9000\nlooper:\n    nop\n_loop:\n    dex\n    bne _loop\n    rts\n")
+            Program().assemble_as_object(str(module_file), Path(tmpdir) / "looper.o")
+            main_file = Path(tmpdir) / "main.s"
+            main_file.write_text('.import "looper"\n*=0x8000\n    jsr.w looper\n')
+            output_path = Path(tmpdir) / "output.sfc"
+            program = Program()
+            program.add_module_path(tmpdir)
+            from a816.context import AssemblyMode
+
+            program.resolver.context.mode = AssemblyMode.DIRECT
+            program.assemble(str(main_file), output_path)
+
+            assert output_path.read_bytes()[0x1002:0x1004] == b"\xd0\xfd"
