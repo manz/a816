@@ -12,6 +12,9 @@
   it raises `AssemblyError` with the diagnostics. Unplaced code is
   refused (E0310): the source sets its own `*=` or `.alloc`. The CLI is
   unchanged.
+- Source strings compile without a file: `Program.compile_source`
+  returns the object in memory, and `ModuleBuilder.build(main_text=)`
+  builds a project whose entry is a string.
 - The Renovate preset `github>manz/a816//renovate/a816` is a whole
   config: a816, katsuji and the actions in one pull request, the other
   dependencies in another, each group's majors apart. Renovate merges the first two

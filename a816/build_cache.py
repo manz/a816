@@ -137,7 +137,11 @@ class BuildCache:
         return [] if data is None else [str(message) for message in data["warnings"]]
 
     def record(self, obj_path: Path, inputs: ModuleInputs) -> str:
-        """Write the sidecar for a freshly compiled object; return its key."""
+        """Write the sidecar for a freshly compiled object; return its key.
+        With caching off there is nothing to reuse it for (nor, for an
+        entry given as a string, a file to stat): no sidecar, no key."""
+        if not self.enabled:
+            return ""
         files = {path: _file_entry(path) for path in sorted(inputs.files)}
         key = _sha(
             {

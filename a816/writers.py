@@ -171,8 +171,9 @@ class ObjectWriter(Writer):
     `start_section(initial_base)` before emission begins.
     """
 
-    def __init__(self, output_file: str) -> None:
+    def __init__(self, output_file: str = "") -> None:
         self.output_file = output_file
+        """Where `end` writes the object; `object_file` alone needs none."""
         self.sections: list[Section] = []
         self.symbols: list[tuple[str, int, SymbolType, SymbolSection]] = []
         self.aliases: list[tuple[str, LinkExpr]] = []
@@ -308,12 +309,16 @@ class ObjectWriter(Writer):
             self.aliases.append((name, expr))
 
     def end(self) -> None:
+        self.object_file().write(self.output_file)
+
+    def object_file(self) -> ObjectFile:
+        """The object collected so far, in memory."""
         # Strip a trailing empty section (e.g. trailing `*=` with no code),
         # but keep a bss section: it is byte-less by design.
         if self.sections and not self.sections[-1].code and not self.sections[-1].bss:
             self.sections.pop()
         relocatable = not self._has_explicit_position
-        obj_file = ObjectFile(
+        return ObjectFile(
             self.sections,
             self.symbols,
             aliases=list(self.aliases),
@@ -326,7 +331,6 @@ class ObjectWriter(Writer):
             path_names=self.path_names,
             arch=current_arch.get(),
         )
-        obj_file.write(self.output_file)
 
     def _ensure_section(self) -> Section:
         if self._current_section is None:

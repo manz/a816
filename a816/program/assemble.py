@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 
 from a816.context import AssemblyMode
 from a816.cpu.arch import arch_for_path, using_arch
-from a816.object_file import SymbolSection, SymbolType
+from a816.exceptions import AssemblyError
+from a816.object_file import ObjectFile, SymbolSection, SymbolType
 from a816.parse.mzparser import A816Parser, ParserResult
 from a816.parse.nodes import NodeError
 from a816.protocols import NodeProtocol
@@ -144,40 +145,65 @@ class AssembleMixin:
     def assemble_with_object_emitter(
         self, asm_file: str, object_writer: ObjectWriter, parsed: ParserResult | None = None
     ) -> int:
-        """Assemble with object file emission, collecting symbols and relocations."""
+        """Assemble with object file emission, collecting symbols and relocations.
+
+        `asm_file` is read unless `parsed` already holds its AST (a build
+        whose entry is a string never has it on disk). Failures are logged,
+        not raised: 0 on success, -1 on failure.
+        """
+        try:
+            text = "" if parsed is not None else Path(asm_file).read_text(encoding="utf-8")
+            self.compile_text(text, asm_file, object_writer, parsed)
+        except AssemblyError as e:
+            self.logger.error(str(e))
+            return -1
+        except NodeError as e:
+            logger.error(str(e))  # NOSONAR python:S8572
+            logger.debug("Object emit failure traceback", exc_info=True)
+            return -1
+        except RuntimeError as e:
+            _log_internal_failure(e)
+            return -1
+        self.logger.debug("Success !")
+        return 0
+
+    def compile_text(
+        self, text: str, filename: str, object_writer: ObjectWriter, parsed: ParserResult | None = None
+    ) -> None:
+        """Compile `text`, named `filename` in diagnostics, into `object_writer`.
+
+        Raises:
+          AssemblyError: the text does not parse.
+          NodeError: codegen or label resolution failed (located).
+        """
         previous_mode = self.resolver.context.mode
         previous_writer = self.resolver.context.object_writer
         try:
             self.resolver.context.mode = AssemblyMode.OBJECT
             self.resolver.context.object_writer = object_writer
-
-            with open(asm_file, encoding="utf-8") as f:
-                input_program = f.read()
-
-            try:
-                error, nodes = self.parser.parse(input_program, asm_file, parsed=parsed)
-                if error is not None:
-                    self.logger.error(error)
-                    return -1
-
-                self.logger.debug("Resolving labels")
-                self.resolve_labels(nodes)
-                self._export_object_symbols(object_writer)
-
-                if self.dump_symbols:
-                    self.resolver.dump_symbol_map()
-
-                self.emit_with_relocations(nodes, object_writer)
-            except NodeError as e:
-                logger.error(str(e))  # NOSONAR python:S8572
-                logger.debug("Object emit failure traceback", exc_info=True)
-                return -1
-        except RuntimeError as e:
-            _log_internal_failure(e)
-            return -1
+            error, nodes = self.parser.parse(text, filename, parsed=parsed)
+            if error is not None:
+                raise AssemblyError(error)
+            self.logger.debug("Resolving labels")
+            self.resolve_labels(nodes)
+            self._export_object_symbols(object_writer)
+            if self.dump_symbols:
+                self.resolver.dump_symbol_map()
+            self.emit_with_relocations(nodes, object_writer)
         finally:
             self.resolver.context.mode = previous_mode
             self.resolver.context.object_writer = previous_writer
 
-        self.logger.debug("Success !")
-        return 0
+    def compile_source(self, text: str, filename: str = "<source>") -> ObjectFile:
+        """`text` compiled to an object in memory, as `assemble_as_object`
+        compiles a file. A `*.spc.s` filename makes it SPC700 code.
+
+        Raises:
+          AssemblyError: the text does not parse.
+          NodeError: codegen or label resolution failed (located).
+        """
+        object_writer = ObjectWriter()
+        object_writer.begin()
+        with using_arch(arch_for_path(filename)):
+            self.compile_text(text, filename, object_writer)
+            return object_writer.object_file()
