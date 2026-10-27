@@ -73,3 +73,8 @@ def test_diagnostics_name_the_source_relative_to_the_snippet() -> None:
     with pytest.raises(AssemblyError) as excinfo:
         assemble_source("*=0x008000\nlda.l missing\n")
     assert "--> main.s:2:7" in str(excinfo.value)
+
+
+def test_an_unnamed_alloc_adds_no_symbol() -> None:
+    assembled = assemble_source(".alloc at 0x7E0000 {\nstub:\n    stp\n}\n")
+    assert assembled.symbols == {"stub": 0x7E0000}

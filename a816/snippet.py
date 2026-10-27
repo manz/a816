@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from a816.exceptions import A816Error, AssemblyError
+from a816.section import ANONYMOUS_ALLOC_PREFIX
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,9 @@ def assemble_source(
             raise AssemblyError(_relative_to(root, e.format() if hasattr(e, "format") else str(e))) from e
     labels = dict(program.resolver.get_all_labels())
     labels.update(program.resolver.get_all_absolute_labels())
-    return Assembled(tuple(blocks), labels)
+    # An unnamed `.alloc at` gets an internal name; it is no label of the source.
+    named = {name: address for name, address in labels.items() if not name.startswith(ANONYMOUS_ALLOC_PREFIX)}
+    return Assembled(tuple(blocks), named)
 
 
 def _relative_to(root: Path, message: str) -> str:
