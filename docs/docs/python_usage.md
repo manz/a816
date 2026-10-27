@@ -82,7 +82,7 @@ stub = assemble_source(
     symbols={"kerning_func": 0x208000},  # like -D
 )
 stub.code     # b"\x22\x00\x80\x20\xdb"
-stub.blocks   # [(rom_offset, bytes), ...]
+stub.blocks   # ((0x7E0000, b"..."),): the IPS records, by patch address
 stub.symbols  # linked labels
 ```
 

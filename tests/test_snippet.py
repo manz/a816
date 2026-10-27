@@ -20,7 +20,7 @@ def test_labels_carry_their_linked_address() -> None:
 
 
 def test_blocks_carry_their_rom_offset() -> None:
-    assert assemble_source("*=0x038000\n.db 1\n").blocks == [(0x018000, b"\x01")]
+    assert assemble_source("*=0x038000\n.db 1\n").blocks == ((0x018000, b"\x01"),)
 
 
 def test_unplaced_code_is_refused() -> None:
@@ -53,3 +53,7 @@ def test_a_failed_build_raises_with_its_diagnostics() -> None:
 def test_diagnostics_keep_the_source_s_line_numbers() -> None:
     with pytest.raises(AssemblyError, match=r"main\.s:3"):
         assemble_source("*=0x008000\nnop\nlda.w missing\n")
+
+
+def test_a_wram_stub_keeps_its_address() -> None:
+    assert assemble_source(_STUB).blocks[0][0] == 0x7E0000

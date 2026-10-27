@@ -20,8 +20,11 @@ from a816.exceptions import AssemblyError
 class Assembled:
     """What `assemble_source` built."""
 
-    blocks: list[tuple[int, bytes]] = field(default_factory=list)
-    """Each run of bytes at its ROM file offset, in patch order."""
+    blocks: tuple[tuple[int, bytes], ...] = ()
+    """The output's IPS records: each run of bytes at the address the
+    patch writes it to (the ROM file offset for mapped ROM, the address
+    itself where no `.map` covers it, e.g. a `*= 0x7E0000` WRAM stub).
+    A run longer than 0xFFFF bytes spans several records."""
     symbols: dict[str, int] = field(default_factory=dict)
     """Every linked label's address."""
 
@@ -78,4 +81,4 @@ def assemble_source(
         if result.exit_code != 0:
             raise AssemblyError("\n".join(result.diagnostics) or f"build failed with exit code {result.exit_code}")
         records = ips.parse(out.read_bytes()).records
-    return Assembled([(record.offset, record.data) for record in records], dict(result.symbol_map))
+    return Assembled(tuple((record.offset, record.data) for record in records), dict(result.symbol_map))
