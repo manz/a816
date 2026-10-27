@@ -2,6 +2,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from a816.program import Program
 from a816.symbols import Resolver
 from a816.writers import Writer
 
@@ -61,6 +62,8 @@ class Linked:
     exit_code: int
     blocks: list[tuple[int, bytes]] = field(default_factory=list)
     symbols: dict[str, int] = field(default_factory=dict)
+    program: "Program | None" = None
+    """The program that linked, for what the symbol map leaves out (the `.sym` export)."""
 
     @property
     def data(self) -> list[bytes]:
@@ -72,7 +75,12 @@ class Linked:
 
 
 def link_source(
-    src: str, files: dict[str, str] | None = None, *, symbols: dict[str, int | str] | None = None
+    src: str,
+    files: dict[str, str] | None = None,
+    *,
+    symbols: dict[str, int | str] | None = None,
+    experimental: list[str] | None = None,
+    overlap_mode: str | None = None,
 ) -> Linked:
     """Compile `src` as `main.s` (with `files` beside it) to objects and link them to an IPS, as `a816 build` does."""
     from a816.module_builder import build_with_imports
@@ -86,7 +94,14 @@ def link_source(
             (tmp / name).write_text(text)
         out = tmp / "out.ips"
         result = build_with_imports(
-            tmp / "main.s", out, output_dir=tmp / "obj", use_a816_toml=False, use_cache=False, symbols=symbols
+            tmp / "main.s",
+            out,
+            output_dir=tmp / "obj",
+            use_a816_toml=False,
+            use_cache=False,
+            symbols=symbols,
+            experimental=experimental,
+            overlap_mode=overlap_mode,
         )
         blocks = parse_ips_records(out.read_bytes()) if out.exists() else []
-        return Linked(result.exit_code, blocks, dict(result.symbol_map))
+        return Linked(result.exit_code, blocks, dict(result.symbol_map), result.program)

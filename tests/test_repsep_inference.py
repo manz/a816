@@ -5,32 +5,16 @@ after every register-size change."""
 from __future__ import annotations
 
 import logging
-import tempfile
-from pathlib import Path
 
 import pytest
 
-from a816.module_builder import build_with_imports
-from tests import Linked
-from tests.ips_helpers import parse_ips_records
+from tests import Linked, link_source
 
 
 def _build(src: str) -> Linked:
     # rep/sep -> a_size/i_size inference is opt-in (experimental); the
     # whole suite exercises that behavior so the build turns it on.
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        (tmp / "main.s").write_text(src)
-        out = tmp / "out.ips"
-        result = build_with_imports(
-            tmp / "main.s",
-            out,
-            output_dir=tmp / "obj",
-            use_a816_toml=False,
-            use_cache=False,
-            experimental=["track_register_size"],
-        )
-        return Linked(result.exit_code, parse_ips_records(out.read_bytes()) if out.exists() else [])
+    return link_source(src, experimental=["track_register_size"])
 
 
 def _assemble(src: str) -> Linked:

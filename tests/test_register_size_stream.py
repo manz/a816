@@ -7,34 +7,19 @@ state drifts every later label off its bytes without an error.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from a816.context import AssemblyMode
-from a816.module_builder import build_with_imports
 from a816.program import Program
 from a816.writers import ObjectWriter
-from tests import CLIENT_POOL, label_address
-from tests.ips_helpers import parse_ips_records
+from tests import CLIENT_POOL, label_address, link_source
 
 
 def _assemble(src: str, track: bool = False) -> tuple[bytes, dict[str, int]]:
     """The bytes `src` links to and its linked labels; `track` turns on rep/sep size tracking."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        (tmp / "main.s").write_text(src)
-        out = tmp / "out.ips"
-        result = build_with_imports(
-            tmp / "main.s",
-            out,
-            output_dir=tmp / "obj",
-            use_a816_toml=False,
-            use_cache=False,
-            experimental=["track_register_size"] if track else None,
-        )
-        assert result.exit_code == 0
-        data = b"".join(block for _, block in parse_ips_records(out.read_bytes()))
-    return data, result.symbol_map
+    linked = link_source(src, experimental=["track_register_size"] if track else None)
+    assert linked.exit_code == 0
+    return b"".join(linked.data), linked.symbols
 
 
 def _assemble_object(src: str) -> tuple[bytes, Program]:

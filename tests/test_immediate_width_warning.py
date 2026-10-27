@@ -10,7 +10,6 @@ says so whenever the register size is actually known.
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,30 +23,17 @@ from a816.parse.tokens import File, Position, Token, TokenType
 from a816.program import Program
 from a816.protocols import ValueNodeProtocol
 from a816.symbols import Resolver
+from tests import link_source
 
 _WARNING_FRAGMENT = "immediate width"
 
 
 def _assemble(src: str, caplog: pytest.LogCaptureFixture, *, track: bool = False) -> bytes:
     """Build `src` through compile + link; `track` turns on the `track_register_size` experiment."""
-    from a816.module_builder import build_with_imports
-    from tests.ips_helpers import parse_ips_records
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        (tmp / "width.s").write_text(src)
-        out = tmp / "out.ips"
-        with caplog.at_level(logging.WARNING, logger="a816"):
-            result = build_with_imports(
-                tmp / "width.s",
-                out,
-                output_dir=tmp / "obj",
-                use_a816_toml=False,
-                use_cache=False,
-                experimental=["track_register_size"] if track else None,
-            )
-        assert result.exit_code == 0
-        return b"".join(block for _, block in parse_ips_records(out.read_bytes()))
+    with caplog.at_level(logging.WARNING, logger="a816"):
+        linked = link_source(src, experimental=["track_register_size"] if track else None)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 def _width_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -70,7 +56,7 @@ class TestMismatchWarns:
     def test_warning_carries_location_and_register(self, caplog: pytest.LogCaptureFixture) -> None:
         _assemble("*=0x008000\n.a16\nlda.b #1\n", caplog)
         message = _width_warnings(caplog)[0]
-        assert "width.s:3" in message
+        assert "main.s:3" in message
         assert "A is 16-bit" in message
 
     def test_tracked_rep_makes_state_known(self, caplog: pytest.LogCaptureFixture) -> None:

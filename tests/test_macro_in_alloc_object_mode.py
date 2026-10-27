@@ -1,21 +1,7 @@
-"""Reproduce: macro applied inside `.alloc … in pool { ... }` body must
-expand the same way in object mode as it does in direct mode. Macros are
-compile-time AST expansion; the assembly mode shouldn't matter.
-
-Today it doesn't:
-
-- **direct mode**: macro app expands inside the alloc body, args bind
-  to the macro scope, body opcodes evaluate against that scope, emit
-  is correct.
-- **object mode**: macro app's ScopeNode/PopScopeNode pair is in the
-  alloc body's generated node list, but `_object_emit_alloc` walks
-  the body without firing those scope-entry nodes in a way that puts
-  the macro args in `resolver.current_scope`. The macro body opcode's
-  `emit` then runs against the outer scope, where the arg name
-  (`source`, `count`, etc.) is undefined → `SymbolNotDefined`.
-
-The xfail is the bug. Flip to a passing test once `_object_emit_alloc`
-threads the same scope dispatch as the inline emit path.
+"""A macro applied inside an `.alloc ... in pool { ... }` body expands with
+its args bound to the macro scope, through compile and link: macros are
+compile-time AST expansion, so the alloc body must fire the macro's
+ScopeNode / PopScopeNode pair as inline code does.
 """
 
 from __future__ import annotations
@@ -24,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from a816.program import Program
+from tests import link_source
 
 _MACRO_DEF = """
 .macro store_word(source) {
@@ -50,28 +37,18 @@ def _write_module(dst: Path) -> None:
     )
 
 
-def test_macro_in_alloc_body_direct_mode_resolves() -> None:
-    """Sanity: macro args inside an alloc body bind correctly in direct
-    mode. The opcode `lda.l external_addr` emits a 4-byte LDA long with
-    `external_addr` as the operand symbol. Establishes the direct-mode
-    behavior we want object mode to mirror."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        _write_module(tmp)
-        main = tmp / "main.s"
-        # Provide `external_addr` in main so direct mode has it bound
-        # before the alloc body's macro app evaluates.
-        main.write_text(
-            'external_addr := 0x208100\n.include "mod.s"\n',
-            encoding="utf-8",
-        )
-        program = Program()
-        program.add_include_path(tmp)
-        program.add_module_path(tmp)
-        ips = tmp / "out.ips"
-        assert program.assemble_as_patch(str(main), ips) == 0
-        # Direct mode produced an IPS with the resolved opcode bytes.
-        assert ips.exists() and ips.stat().st_size > 0
+def test_macro_in_alloc_body_links() -> None:
+    """Macro args inside an alloc body bind to the macro scope through
+    compile and link: `lda.l external_addr` is the 4-byte LDA long of the
+    address `main.s` gives it."""
+    sources = {
+        "macros.i": _MACRO_DEF,
+        "bank.i": ".pool b { range 0x208000 0x20FFFF\n    strategy order\n}\n",
+        "mod.s": '.include "macros.i"\n.include "bank.i"\n.alloc body in b {\n    store_word(external_addr)\n}\n',
+    }
+    linked = link_source('external_addr := 0x208100\n.include "mod.s"\n', sources)
+    assert linked.exit_code == 0
+    assert linked.data == [b"\xaf\x00\x81\x20\x85\x00"]
 
 
 def test_macro_in_alloc_body_object_mode_resolves() -> None:
