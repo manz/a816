@@ -312,7 +312,9 @@ class ObjectWriter(Writer):
         self.object_file().write(self.output_file)
 
     def object_file(self) -> ObjectFile:
-        """The object collected so far, in memory."""
+        """The object collected so far, in memory: a view, not a snapshot.
+        It shares the writer's sections and symbols, so later writes show
+        through; the writer itself is left as it was."""
         # Leave out a trailing empty section (e.g. trailing `*=` with no code),
         # but keep a bss section: it is byte-less by design.
         sections = list(self.sections)
