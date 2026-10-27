@@ -1,10 +1,9 @@
-"""`assemble_with_emitter` always returns; never calls sys.exit.
+"""`assemble_as_object` always returns; never calls sys.exit.
 
 Embedders (LSP, fluff, tests) drive the assembler programmatically and
-would otherwise have to catch `SystemExit`. The embedder-facing
-`assemble_string_with_emitter` raises `A816Error` (parent of both
-`AssemblyError` and `NodeError`) so a single `except` catches both
-parser and codegen failures.
+would otherwise have to catch `SystemExit`. A failed compile returns -1
+and logs the located diagnostic; `AssemblyError` and `NodeError` share
+`A816Error` so a single `except` catches both parser and codegen failures.
 """
 
 from __future__ import annotations
@@ -17,69 +16,47 @@ import pytest
 from a816.exceptions import A816Error, AssemblyError
 from a816.parse.nodes import NodeError
 from a816.program import Program
-from a816.writers import SFCWriter
-from tests import StubWriter
 
 
-def _write_source(src: str) -> tuple[Path, Path]:
+def _compile(src: str) -> int:
     tmp = Path(tempfile.mkdtemp())
     asm = tmp / "main.s"
     asm.write_text(src, encoding="utf-8")
-    return tmp, asm
+    return Program().assemble_as_object(str(asm), tmp / "main.o")
 
 
-def test_assemble_with_emitter_returns_128_on_parser_error() -> None:
-    tmp, asm = _write_source(".struct\n")  # parser error: missing name
-    out = tmp / "out.sfc"
-    program = Program()
-    with out.open("wb") as fh:
-        rc = program.assemble_with_emitter(str(asm), SFCWriter(fh))
-    assert rc == 128
+def test_assemble_as_object_returns_minus_one_on_parser_error(caplog: pytest.LogCaptureFixture) -> None:
+    rc = _compile(".struct\n")  # parser error: missing name
+    assert rc == -1
+    assert "expected identifier" in caplog.text
 
 
-def test_assemble_with_emitter_returns_128_on_codegen_error() -> None:
+def test_assemble_as_object_returns_minus_one_on_codegen_error(caplog: pytest.LogCaptureFixture) -> None:
     src = """
         .struct Bad {
             qword x
         }
     """
-    tmp, asm = _write_source(src)
-    out = tmp / "out.sfc"
-    program = Program()
-    with out.open("wb") as fh:
-        rc = program.assemble_with_emitter(str(asm), SFCWriter(fh))
-    assert rc == 128
+    rc = _compile(src)
+    assert rc == -1
+    assert "Unknown struct field type 'qword'" in caplog.text
 
 
-def test_assemble_string_raises_assembly_error_on_parser_failure() -> None:
-    program = Program()
-    with pytest.raises(AssemblyError):
-        program.assemble_string_with_emitter(".struct\n", "x.s", StubWriter())
-
-
-def test_assemble_string_raises_node_error_on_codegen_failure() -> None:
-    program = Program()
-    with pytest.raises(NodeError):
-        program.assemble_string_with_emitter("nop #0x00", "x.s", StubWriter())
+def test_assemble_as_object_returns_minus_one_on_addressing_mode_error(caplog: pytest.LogCaptureFixture) -> None:
+    rc = _compile("*=0x008000\nnop #0x00\n")
+    assert rc == -1
+    assert "Addressing mode (immediate)" in caplog.text
 
 
 def test_assembly_error_and_node_error_share_a816_base() -> None:
     """A single `except A816Error` catches both shapes for embedders."""
-    program = Program()
-    with pytest.raises(A816Error):
-        program.assemble_string_with_emitter(".struct\n", "x.s", StubWriter())
-    with pytest.raises(A816Error):
-        program.assemble_string_with_emitter("nop #0x00", "x.s", StubWriter())
+    assert issubclass(AssemblyError, A816Error)
+    assert issubclass(NodeError, A816Error)
 
 
-def test_assemble_with_emitter_returns_zero_on_success() -> None:
+def test_assemble_as_object_returns_zero_on_success() -> None:
     src = """
         *=0x008000
             nop
     """
-    tmp, asm = _write_source(src)
-    out = tmp / "out.sfc"
-    program = Program()
-    with out.open("wb") as fh:
-        rc = program.assemble_with_emitter(str(asm), SFCWriter(fh))
-    assert rc == 0
+    assert _compile(src) == 0

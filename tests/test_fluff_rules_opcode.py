@@ -12,14 +12,13 @@ from pathlib import Path
 import pytest
 
 from a816.fluff.runner import apply_fixes, lint_text
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _assemble(src: str) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(src, "x.s", writer)
-    return b"".join(writer.data)
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 def _hits(src: str, code: str = "OP001") -> list[str]:

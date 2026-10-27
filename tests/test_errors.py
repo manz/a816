@@ -8,55 +8,40 @@ from a816.exceptions import (
 )
 from a816.linker import Linker
 from a816.object_file import ObjectFile, RelocationType, SymbolSection, SymbolType
-from a816.parse.nodes import NodeError
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 class ErrorsTest(unittest.TestCase):
+    def _failed_build_log(self, src: str) -> str:
+        """The error log of building `src`, which must fail."""
+        with self.assertLogs("a816", "ERROR") as logs:
+            linked = link_source(src)
+        self.assertNotEqual(linked.exit_code, 0)
+        return "\n".join(logs.output)
+
     def test_addressing_mode_error(self) -> None:
-        program = Program()
-        emitter = StubWriter()
-
-        def should_raise_node_error() -> None:
-            program.assemble_string_with_emitter("nop #0x00", "test.s", emitter)
-
-        self.assertRaises(NodeError, should_raise_node_error)
+        log = self._failed_build_log("*=0x008000\nnop #0x00\n")
+        self.assertIn("Addressing mode (immediate) for opcode_def (nop) is not defined", log)
 
     def test_opcode_size_error(self) -> None:
-        program = Program()
-        emitter = StubWriter()
-
-        def should_raise_node_error() -> None:
-            program.assemble_string_with_emitter("lda.l 0x000000, y\n", "test.s", emitter)
-
-        self.assertRaises(NodeError, should_raise_node_error)
+        log = self._failed_build_log("*=0x008000\nlda.l 0x000000, y\n")
+        self.assertIn("lda does not supports size (l)", log)
 
     def test_symbol_not_found(self) -> None:
-        emitter = StubWriter()
-        program = Program()
-        try:
-            program.assemble_string_with_emitter("jsr.l unknown_symbol\n", "test_undefined_symbol.s", emitter)
-        except NodeError as e:
-            v = str(e)
-            # Error should contain the error message, filename, and source line
-            self.assertIn("unknown_symbol", v, "error should mention the undefined symbol")
-            self.assertIn("not defined", v, "error should explain the symbol is not defined")
-            self.assertIn("test_undefined_symbol.s", v, "error should contain filename")
-            self.assertIn("jsr.l unknown_symbol", v, "error should show the source line")
+        v = self._failed_build_log("*=0x008000\njsr.l unknown_symbol\n")
+        # Error should contain the error message, filename, and source line
+        self.assertIn("unknown_symbol", v, "error should mention the undefined symbol")
+        self.assertIn("not defined", v, "error should explain the symbol is not defined")
+        self.assertIn("main.s", v, "error should contain filename")
+        self.assertIn("jsr.l unknown_symbol", v, "error should show the source line")
 
     def test_symbol_not_found_db(self) -> None:
-        emitter = StubWriter()
-        program = Program()
-        try:
-            program.assemble_string_with_emitter(".db unknown_symbol\n", "test_undefined_symbol_db.s", emitter)
-        except NodeError as e:
-            v = str(e)
-            # Error should contain the error message, filename, and source line
-            self.assertIn("unknown_symbol", v, "error should mention the undefined symbol")
-            self.assertIn("not defined", v, "error should explain the symbol is not defined")
-            self.assertIn("test_undefined_symbol_db.s", v, "error should contain filename")
-            self.assertIn(".db unknown_symbol", v, "error should show the source line")
+        v = self._failed_build_log("*=0x008000\n.db unknown_symbol\n")
+        # Error should contain the error message, filename, and source line
+        self.assertIn("unknown_symbol", v, "error should mention the undefined symbol")
+        self.assertIn("not defined", v, "error should explain the symbol is not defined")
+        self.assertIn("main.s", v, "error should contain filename")
+        self.assertIn(".db unknown_symbol", v, "error should show the source line")
 
 
 class LinkerErrorsTest(unittest.TestCase):

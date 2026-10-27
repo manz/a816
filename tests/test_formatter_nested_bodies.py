@@ -11,8 +11,7 @@ from __future__ import annotations
 import pytest
 
 from a816.formatter import A816Formatter
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 _MACRO = '"""M."""\n.macro patch(addr, body) {\n    {{ body }}\n}\n'
 
@@ -48,9 +47,11 @@ def _fmt(src: str) -> str:
 
 
 def _assemble(src: str) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(src, "t.s", writer)
-    return b"".join(writer.data)
+    """The bytes `src` builds to; `*=` gives the sources without an `.alloc` a place."""
+    linked = link_source("*=0x008000\n" + src)
+    assert linked.exit_code == 0
+    assert linked.data
+    return b"".join(linked.data)
 
 
 @pytest.mark.parametrize("name", sorted(_SOURCES))

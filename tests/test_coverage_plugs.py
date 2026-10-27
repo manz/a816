@@ -18,6 +18,17 @@ from a816.parse.nodes import NodeError
 from a816.program import Program
 
 
+def _codegen(src: str) -> None:
+    """Parse and generate `src` with a fresh resolver (PARSE mode, as the LSP and fluff run it)."""
+    from a816.parse.codegen import code_gen
+    from a816.parse.mzparser import A816Parser
+    from a816.symbols import Resolver
+
+    result = A816Parser.parse_as_ast(src, filename="t.s")
+    assert result.parse_error is None
+    code_gen(result.nodes, Resolver())
+
+
 class TestCliExperimental:
     """`--experimental` flag dispatch (module_builder.apply_experimental_flags)."""
 
@@ -77,10 +88,7 @@ class TestAllocAtSizeValidation:
     """parse/codegen/pool.py:193-194 — `at ADDR size N` rejects non-positive N."""
 
     def _assemble(self, src: str) -> None:
-        program = Program()
-        from tests import StubWriter
-
-        program.assemble_string_with_emitter(src, "t.s", StubWriter())
+        _codegen(src)
 
     def test_size_zero_rejected(self) -> None:
         with pytest.raises(NodeError, match="size must be positive"):
@@ -108,11 +116,7 @@ class TestAssignExternObjectMode:
 
     def test_alias_to_extern_in_non_object_mode_raises(self) -> None:
         program = Program()
-        from tests import StubWriter
-
+        error, nodes = program.parser.parse(".extern target\nfont_ptr = target + 0x40\n", "t.s")
+        assert error is None
         with pytest.raises(NodeError, match="external symbols only allowed in object"):
-            program.assemble_string_with_emitter(
-                ".extern target\nfont_ptr = target + 0x40\n",
-                "t.s",
-                StubWriter(),
-            )
+            program.resolve_labels(nodes)

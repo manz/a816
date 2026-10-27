@@ -12,21 +12,27 @@ bit 7 must be all zero or all one. That keeps `lda.b #-1` (0xFF) and
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 
 from a816.error_codes import E_CODEGEN_IMMEDIATE_OVERFLOW
-from a816.parse.nodes import NodeError
 from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _emit(src: str) -> bytes:
-    program = Program()
-    writer = StubWriter()
-    program.assemble_string_with_emitter("*=0x008000\n" + src, "ovf.s", writer)
-    return b"".join(writer.data)
+    linked = link_source("*=0x008000\n" + src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
+
+
+def _rejection(src: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The error the build of `src` logs; the build must fail."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        assert link_source("*=0x008000\n" + src).exit_code != 0
+    return caplog.text
 
 
 class TestByteOverflowErrors:
@@ -40,16 +46,12 @@ class TestByteOverflowErrors:
             "lda.b #target\ntarget:\n",
         ],
     )
-    def test_rejected(self, src: str) -> None:
-        with pytest.raises(NodeError) as exc:
-            _emit(src)
-        assert exc.value.code == str(E_CODEGEN_IMMEDIATE_OVERFLOW)
+    def test_rejected(self, src: str, caplog: pytest.LogCaptureFixture) -> None:
+        assert f"[{E_CODEGEN_IMMEDIATE_OVERFLOW}]" in _rejection(src, caplog)
 
-    def test_error_is_located(self) -> None:
-        with pytest.raises(NodeError) as exc:
-            _emit("nop\nlda.b #0x1234\n")
-        rendered = exc.value.format()
-        assert "ovf.s:3" in rendered
+    def test_error_is_located(self, caplog: pytest.LogCaptureFixture) -> None:
+        rendered = _rejection("nop\nlda.b #0x1234\n", caplog)
+        assert "main.s:3" in rendered
         assert "0x1234" in rendered
 
 

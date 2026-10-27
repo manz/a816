@@ -12,10 +12,9 @@ import pytest
 from a816.exceptions import LinkerError
 from a816.linker import Linker
 from a816.object_file import ObjectFile, PoolAlloc
-from a816.parse.nodes import NodeError
 from a816.program import Program
 from a816.writers import ObjectWriter
-from tests import StubWriter
+from tests import link_source
 
 _CODE_RE = re.compile(r"error\[(E\d{4})\]")
 _LOCATION_RE = re.compile(r"--> [^:]+:(\d+):(\d+)")
@@ -61,24 +60,42 @@ def parse_rendered(rendered: str) -> Rendered:
     )
 
 
+class _Errors(logging.Handler):
+    """Collects the ERROR records the `a816` logger emits."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.ERROR)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
 def _assemble_error(src: str) -> Rendered:
-    program = Program()
-    writer = StubWriter()
-    with pytest.raises(NodeError) as exc_info:
-        program.assemble_string_with_emitter(src, "t.s", writer)
-    return parse_rendered(str(exc_info.value))
+    """Build `src` (compile + link, as `a816 build`) and parse the first logged error."""
+    errors = _Errors()
+    logger = logging.getLogger("a816")
+    logger.addHandler(errors)
+    try:
+        linked = link_source(src)
+    finally:
+        logger.removeHandler(errors)
+    assert linked.exit_code != 0
+    return parse_rendered(errors.messages[0] if errors.messages else "")
 
 
 _STRUCT_S = ".struct S {\n    word x\n}\n"
 
+_AT = "*=0x8000\n"
+
 SYMBOL_CASES = [
-    pytest.param("    lda.w some_undefined\n", 1, "some_undefined", id="bare-operand"),
-    pytest.param("base = 0x10\n    lda.l base + missing\n", 2, "missing", id="binop-rhs"),
-    pytest.param(_STRUCT_S + "    lda.w (0x10 as S).zz\n", 4, "zz", id="cast-field"),
-    pytest.param("    .dw 1, missing\n", 1, "missing", id="data-word"),
-    pytest.param("    .db missing\n", 1, "missing", id="data-byte"),
+    pytest.param(_AT + "    lda.w some_undefined\n", 2, "some_undefined", id="bare-operand"),
+    pytest.param(_AT + "base = 0x10\n    lda.l base + missing\n", 3, "missing", id="binop-rhs"),
+    pytest.param(_AT + _STRUCT_S + "    lda.w (0x10 as S).zz\n", 5, "zz", id="cast-field"),
+    pytest.param(_AT + "    .dw 1, missing\n", 2, "missing", id="data-word"),
+    pytest.param(_AT + "    .db missing\n", 2, "missing", id="data-byte"),
     pytest.param(".pool p { range 0x8000 missing }\n", 1, "missing", id="pool-literal"),
-    pytest.param("my_routine:\n    rts\n    jsr.l my_routime\n", 3, "my_routime", id="errors-md-example"),
+    pytest.param(_AT + "my_routine:\n    rts\n    jsr.l my_routime\n", 4, "my_routime", id="errors-md-example"),
 ]
 
 
@@ -188,39 +205,11 @@ def test_include_ips_missing_file_caret(tmp_path: Path) -> None:
 _OVERFLOW_SRC = ".pool p { range 0x008000 0x008003 }\n.alloc foo in p {\n    .db 1, 2, 3, 4, 5, 6\n}\n"
 
 
-def test_pool_overflow_code() -> None:
-    assert _assemble_error(_OVERFLOW_SRC).code == "E0318"
-
-
-def test_pool_overflow_caret_on_alloc_name() -> None:
-    assert _assemble_error(_OVERFLOW_SRC).underlined == "foo"
-
-
-def _direct_overflow(src: str) -> NodeError:
-    program = Program()
-    writer = StubWriter()
-    with pytest.raises(NodeError) as exc_info:
-        program.assemble_string_with_emitter(src, "t.s", writer)
-    return exc_info.value
-
-
 _EXHAUSTED_SRC = (
     ".pool p { range 0x008000 0x008007 }\n"
     ".alloc a in p {\n    .db 1, 2, 3, 4, 5, 6\n}\n"
     ".alloc b in p {\n    .db 1, 2, 3, 4\n}\n"
 )
-
-
-def test_pool_overflow_names_largest_free_chunk() -> None:
-    assert "largest free chunk is 2 bytes" in str(_direct_overflow(_EXHAUSTED_SRC))
-
-
-def test_pool_overflow_larger_than_any_range_names_the_range_limit() -> None:
-    assert "larger than the pool (4 bytes)" in str(_direct_overflow(_OVERFLOW_SRC))
-
-
-def test_pool_overflow_larger_than_any_range_hint_suggests_splitting() -> None:
-    assert "split 'foo'" in (_direct_overflow(_OVERFLOW_SRC).hint or "")
 
 
 def _link_error(tmp_path: Path, src: str) -> LinkerError:
@@ -306,36 +295,3 @@ def test_cli_rejects_unknown_mapping_exit_code() -> None:
 def test_cli_unknown_mapping_lists_choices(capsys: pytest.CaptureFixture[str]) -> None:
     _parse_cli(["main.s", "-m", "high_rom"])
     assert "invalid choice: 'high_rom'" in capsys.readouterr().err
-
-
-def _object_mode_error(src: str, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> Rendered:
-    """Compile `src` to a `.o` (the `a816 build` path) and parse the logged error."""
-    source = tmp_path / "t.s"
-    source.write_text(src, encoding="utf-8")
-    writer = ObjectWriter(str(tmp_path / "t.o"))
-    writer.begin()
-    with caplog.at_level(logging.ERROR):
-        Program().assemble_with_object_emitter(str(source), writer)
-    messages = [record.getMessage() for record in caplog.records if record.levelno == logging.ERROR]
-    return parse_rendered(messages[0] if messages else "")
-
-
-@pytest.mark.parametrize(("src", "line", "token"), SYMBOL_CASES)
-def test_object_mode_undefined_symbol_caret(
-    src: str, line: int, token: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    assert _object_mode_error(src, tmp_path, caplog).underlined == token
-
-
-@pytest.mark.parametrize(("src", "code", "line", "token"), PLACEMENT_CASES + EMIT_CASES)
-def test_object_mode_code(
-    src: str, code: str, line: int, token: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    assert _object_mode_error(src, tmp_path, caplog).code == code
-
-
-@pytest.mark.parametrize(("src", "code", "line", "token"), PLACEMENT_CASES + EMIT_CASES)
-def test_object_mode_caret(
-    src: str, code: str, line: int, token: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    assert _object_mode_error(src, tmp_path, caplog).underlined == token

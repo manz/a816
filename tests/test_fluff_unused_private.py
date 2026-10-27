@@ -237,15 +237,13 @@ def test_the_fix_unwraps_a_scope_keeping_its_body() -> None:
     assert _fixed(source) == HEAD + "{\n    lda #1\n_x:\n    bra _x\n}\n"
 
 
-def _assembled(source: str) -> bytes:
-    import io
+def _assembled(source: str) -> list[tuple[int, bytes]]:
+    from tests import link_source
 
-    from a816.program import Program
-    from a816.writers import SFCWriter
-
-    buffer = io.BytesIO()
-    Program().assemble_string_with_emitter(source, "main.s", SFCWriter(buffer))
-    return buffer.getvalue()
+    linked = link_source(source)
+    assert linked.exit_code == 0
+    assert linked.blocks
+    return linked.blocks
 
 
 def test_an_unwrapped_scope_assembles_to_the_same_bytes() -> None:
