@@ -3,23 +3,16 @@
 from __future__ import annotations
 
 import logging
-import tempfile
-from pathlib import Path
 
 import pytest
 
-from a816.program import Program
+from tests import link_source
 
 
 def _assemble_ips(src: str) -> bytes:
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        asm = root / "main.s"
-        asm.write_text(src, encoding="utf-8")
-        ips = root / "out.ips"
-        program = Program()
-        assert program.assemble_as_patch(str(asm), ips) == 0
-        return ips.read_bytes()
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 _OAM_DEF = """
