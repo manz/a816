@@ -10,7 +10,7 @@
   To assemble a source string to bytes, use
   `a816.snippet.assemble_source` (see [Python usage](python_usage.md));
   it raises `AssemblyError` with the diagnostics. Unplaced code is
-  refused (E0310): the source sets its own `*=` or `.alloc`. The CLI is
+  refused (E0310): the source places itself with `.alloc at`. The CLI is
   unchanged.
 - Source strings compile without a file: `Program.compile_source`
   returns the object in memory, and `ModuleBuilder.build(main_text=)`

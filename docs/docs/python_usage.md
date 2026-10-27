@@ -69,13 +69,14 @@ already has is refused.
 
 For a few lines of assembly with no project on disk (a stub to drop in an
 emulator's RAM, a fragment to compare), `assemble_source` compiles and
-links the string as a build would. The source places its own code:
+links the string as a build would. The source places its own code
+(`.alloc at`, as any module does):
 
 ```python
 from a816.snippet import assemble_source
 
 stub = assemble_source(
-    "*= 0x7E0000\njsr.l kerning_func\nstp\n",
+    ".alloc at 0x7E0000 {\n    jsr.l kerning_func\n    stp\n}\n",
     symbols={"kerning_func": 0x208000},  # like -D
 )
 stub.code     # b"\x22\x00\x80\x20\xdb"
