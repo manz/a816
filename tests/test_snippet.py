@@ -67,3 +67,9 @@ def test_diagnostics_keep_the_source_s_line_numbers() -> None:
 
 def test_a_wram_stub_keeps_its_address() -> None:
     assert assemble_source(_STUB).blocks[0][0] == 0x7E0000
+
+
+def test_diagnostics_name_the_source_relative_to_the_snippet() -> None:
+    with pytest.raises(AssemblyError) as excinfo:
+        assemble_source("*=0x008000\nlda.l missing\n")
+    assert "--> main.s:2:7" in str(excinfo.value)

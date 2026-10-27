@@ -8,6 +8,7 @@ every build takes.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -75,9 +76,16 @@ def assemble_source(
         try:
             blocks = program.placed_blocks(builder.build(root / "main.s", main_text=source))
         except ModuleCompileError as e:
-            raise AssemblyError("\n".join(e.diagnostics) or str(e)) from e
+            raise AssemblyError(_relative_to(root, "\n".join(e.diagnostics) or str(e))) from e
         except A816Error as e:
-            raise AssemblyError(e.format() if hasattr(e, "format") else str(e)) from e
+            raise AssemblyError(_relative_to(root, e.format() if hasattr(e, "format") else str(e))) from e
     labels = dict(program.resolver.get_all_labels())
     labels.update(program.resolver.get_all_absolute_labels())
     return Assembled(tuple(blocks), labels)
+
+
+def _relative_to(root: Path, message: str) -> str:
+    """`message` with the temporary directory's paths made relative (`main.s:3`), so it reads the same every run."""
+    for prefix in {str(root), str(root.resolve())}:
+        message = message.replace(prefix + os.sep, "")
+    return message
