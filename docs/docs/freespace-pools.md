@@ -300,10 +300,10 @@ Available stats: `<pool>.capacity`, `<pool>.fragments`,
 ## Pool exhaustion
 
 When an alloc doesn't fit, the build stops with an error naming the
-pool, the alloc and its size. Direct mode reports `error[E0318]`
-with a caret on the alloc name; link time reports
-`linker error[E0404]` with the pool, the `file:line` of the alloc
-body and a hint. The message says which of three cases you hit:
+pool, the alloc and its size: `linker error[E0404]` with the pool,
+the `file:line` of the alloc body and a hint. The editor (LSP), which
+allocates pools without linking, shows the same overflow as
+`error[E0318]` with a caret on the alloc name. The message says which of three cases you hit:
 
 ```
 alloc 'big' (20 bytes) does not fit in pool 'slack': larger than its largest range (16 bytes); a block never spans a bank boundary or two separate ranges

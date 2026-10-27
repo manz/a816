@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Breaking (Python API):** direct assembly is gone. Every build
+  compiles to objects and links, as `a816 build` already did.
+  `Program.assemble`, `assemble_as_patch`, `assemble_with_emitter`,
+  `assemble_string_with_emitter` and `emit`, `AssemblyMode.DIRECT`,
+  `WriteAuditor` / `OverlapError` and `LinkedModuleNode` are removed.
+  To assemble a source string to bytes, use
+  `a816.snippet.assemble_source` (see [Python usage](python_usage.md));
+  it raises `AssemblyError` with the diagnostics. Unplaced code is
+  refused (E0310): the source sets its own `*=` or `.alloc`. The CLI is
+  unchanged.
 - The Renovate preset `github>manz/a816//renovate/a816` is a whole
   config: a816, katsuji and the actions in one pull request, the other
   dependencies in another, each group's majors apart. Renovate merges the first two

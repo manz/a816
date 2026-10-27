@@ -68,5 +68,24 @@ They join at link, never at `.import`, and link afresh on every build:
 no module's cached object depends on them. A name that a source module
 already has is refused.
 
-`Program` and its `assemble*` methods are the single-pass direct mode;
-it is deprecated and new features land in the build path only.
+## A source string to bytes
+
+For a few lines of assembly with no project on disk (a stub to drop in an
+emulator's RAM, a fragment to compare), `assemble_source` compiles and
+links the string as a build would. The source places its own code:
+
+```python
+from a816.snippet import assemble_source
+
+stub = assemble_source(
+    "*= 0x7E0000\njsr.l kerning_func\nstp\n",
+    symbols={"kerning_func": 0x208000},  # like -D
+)
+stub.code     # b"\x22\x00\x80\x20\xdb"
+stub.blocks   # [(rom_offset, bytes), ...]
+stub.symbols  # linked labels
+```
+
+`files` serves its `.include`s and `.import`s (path -> text),
+`include_paths` and `experimental` mirror the CLI. A failed build raises
+`AssemblyError` carrying the diagnostics.
