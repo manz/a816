@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
@@ -10,9 +11,7 @@ import pytest
 from a816.exceptions import LinkAssertError
 from a816.formatter import A816Formatter
 from a816.module_builder import BuildResult, build_with_imports
-from a816.parse.nodes import NodeError
-from a816.program import Program
-from tests import StubWriter
+from tests import Linked, link_source
 from tests.test_reserve import _PREAMBLE, _link
 
 _STRUCTS = """
@@ -32,10 +31,26 @@ ROWS = 3
 """
 
 
+def _linked(src: str) -> Linked:
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    return linked
+
+
+def _word_src(expr: str, prelude: str = _STRUCTS) -> str:
+    return prelude + f"*=0x8000\n    .dw {expr}\n"
+
+
 def _word(expr: str, prelude: str = _STRUCTS) -> int:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(prelude + f"*=0x8000\n    .dw {expr}\n", "m.s", writer)
-    return int.from_bytes(b"".join(writer.data), "little")
+    return int.from_bytes(b"".join(_linked(_word_src(expr, prelude)).data), "little")
+
+
+def _rejects(src: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The error a failed build of `src` logs."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        exit_code = link_source(src).exit_code
+    assert exit_code != 0
+    return caplog.text
 
 
 @pytest.mark.parametrize(
@@ -57,12 +72,6 @@ def test_sizeof_and_countof_values(expr: str, value: int) -> None:
     assert _word(expr) == value
 
 
-def _error(expr: str) -> NodeError:
-    with pytest.raises(NodeError) as exc_info:
-        _word(expr)
-    return exc_info.value
-
-
 @pytest.mark.parametrize(
     ("expr", "message", "hint"),
     [
@@ -75,9 +84,11 @@ def _error(expr: str) -> NodeError:
         ("countof(Path)", "needs an array field", "countof counts the elements"),
     ],
 )
-def test_bad_arguments_report_e0321_at_the_argument(expr: str, message: str, hint: str) -> None:
-    error = _error(expr)
-    assert (error.code, message in str(error), hint in (error.hint or "")) == ("E0321", True, True)
+def test_bad_arguments_report_e0321_at_the_argument(
+    expr: str, message: str, hint: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    error = _rejects(_word_src(expr), caplog)
+    assert ("error[E0321]" in error, message in error, hint in error) == (True, True, True)
 
 
 def test_a_label_named_sizeof_is_still_a_label() -> None:
@@ -90,9 +101,7 @@ def test_sizeof_sizes_a_struct_array_length() -> None:
 
 def test_countof_bounds_a_for_loop() -> None:
     src = _STRUCTS + "*=0x8000\n.for i := 0, countof(Path.points) {\n    nop\n}\n"
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(src, "m.s", writer)
-    assert b"".join(writer.data) == b"\xea" * 3
+    assert b"".join(_linked(src).data) == b"\xea" * 3
 
 
 def test_the_formatter_keeps_the_operators() -> None:
@@ -198,20 +207,16 @@ def test_countof_a_typed_reservation_field() -> None:
     assert _object_code(src) == b"\xa2\x03\x00"
 
 
-def _direct_word(expr: str) -> int:
-    writer = StubWriter()
-    src = _PREAMBLE + _PATH_RESERVE + f".alloc user at 0xc18000 {{\n    .dw {expr}\n}}\n"
-    Program().assemble_string_with_emitter(src, "m.s", writer)
-    return int.from_bytes(b"".join(writer.data), "little")
+def _alloc_word_src(expr: str) -> str:
+    return _PREAMBLE + _PATH_RESERVE + f".alloc user at 0xc18000 {{\n    .dw {expr}\n}}\n"
 
 
-def test_sizeof_a_typed_reservation_field_in_direct_mode() -> None:
-    assert _direct_word("sizeof(route.points)") == 12
+def test_sizeof_a_typed_reservation_field_in_a_linked_build() -> None:
+    assert int.from_bytes(b"".join(_linked(_alloc_word_src("sizeof(route.points)")).data), "little") == 12
 
 
-def test_sizeof_an_unknown_typed_reservation_field_names_its_type() -> None:
-    with pytest.raises(NodeError, match="struct `Path` has no field `nope`"):
-        _direct_word("sizeof(route.nope)")
+def test_sizeof_an_unknown_typed_reservation_field_names_its_type(caplog: pytest.LogCaptureFixture) -> None:
+    assert "struct `Path` has no field `nope`" in _rejects(_alloc_word_src("sizeof(route.nope)"), caplog)
 
 
 def test_sizeof_an_imported_typed_reservation_field(tmp_path: Path) -> None:

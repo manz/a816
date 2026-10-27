@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import re
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -9,7 +12,7 @@ from a816.parse.mzparser import A816Parser
 from a816.pool import Strategy
 from a816.program import Program
 from a816.symbols import Resolver
-from tests import StubWriter
+from tests import Linked, link_source
 
 
 def _gen(src: str) -> Resolver:
@@ -18,6 +21,36 @@ def _gen(src: str) -> Resolver:
     assert result.parse_error is None
     code_gen(result.nodes, resolver)
     return resolver
+
+
+def _compile(src: str) -> tuple[Program, int]:
+    """Compile `src` to an object; the program (its resolver populated) and the exit code."""
+    program = Program()
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "test.s"
+        asm.write_text(src)
+        exit_code = program.assemble_as_object(str(asm), Path(tmp) / "test.o")
+    return program, exit_code
+
+
+def _program(src: str) -> Program:
+    program, exit_code = _compile(src)
+    assert exit_code == 0
+    return program
+
+
+def _linked(src: str) -> Linked:
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    return linked
+
+
+def _rejected(src: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The error a failed build of `src` logs."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        exit_code = link_source(src).exit_code
+    assert exit_code != 0
+    return caplog.text
 
 
 class TestPoolCodegen:
@@ -144,21 +177,19 @@ class TestAllocCodegen:
 
 class TestAllocEndToEnd:
     def test_body_lands_at_allocated_addr(self) -> None:
-        writer = StubWriter()
-        program = Program()
         src = """
         .pool p { range 0x028000 0x0280ff }
         .alloc fn in p {
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
+        linked = _linked(src)
         # rts opcode = 0x60. Body should land at allocator-chosen 0x028000.
-        assert b"\x60" in writer.data
-        idx = writer.data.index(b"\x60")
+        assert b"\x60" in linked.data
+        idx = linked.data.index(b"\x60")
         # The address recorded is physical; first range starts at logical
         # 0x028000 which maps to physical 0x010000 under low_rom.
-        assert writer.data_addresses[idx] in (0x028000, 0x010000)
+        assert linked.data_addresses[idx] in (0x028000, 0x010000)
 
     def test_alloc_with_register_size_toggle_reserves_full_body(self) -> None:
         """`.a16` toggle inside an `.alloc` makes immediates whose value
@@ -170,8 +201,6 @@ class TestAllocEndToEnd:
         guessed as `b` from value, no resolver state consulted) but
         emitted as 3 bytes (resolver A=16). The second alloc lands one
         byte inside the first's body."""
-        writer = StubWriter()
-        program = Program()
         src = """
         .pool p { range 0x028000 0x0280ff strategy order }
         .alloc first in p {
@@ -184,8 +213,7 @@ class TestAllocEndToEnd:
             nop
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
-        labels = program.resolver.current_scope.labels
+        labels = _linked(src).symbols
         first = labels["first"]
         second = labels["second"]
         # first body: c2 20 a9 01 00 60 = 6 bytes (lda imm is 3 bytes under A16
@@ -196,33 +224,25 @@ class TestAllocEndToEnd:
         )
 
     def test_alloc_binds_symbol(self) -> None:
-        program = Program()
-        resolver = program.resolver
         src = """
         .pool p { range 0x028000 0x0280ff }
         .alloc fn in p {
             rts
         }
         """
-        writer = StubWriter()
-        program.assemble_string_with_emitter(src, "test.s", writer)
         # Symbol `fn` should resolve to the allocator-picked address.
-        labels = resolver.current_scope.labels
-        assert "fn" in labels
+        assert _linked(src).symbols["fn"] == 0x028000
 
 
-class TestAllocBodyLabelsDirectPath:
+class TestAllocBodyLabels:
     """Labels inside a later `.alloc` in a pool must bind at that alloc's
-    placed address on the direct path, not at the pool base the pass-1
-    size measurement walks from."""
+    placed address, not at the pool base the pass-1 size measurement
+    walks from."""
 
     @staticmethod
     def _assemble(src: str) -> tuple[dict[str, int], dict[int, bytes]]:
-        program = Program()
-        writer = StubWriter()
-        program.assemble_string_with_emitter(src, "test.s", writer)
-        blocks = dict(zip(writer.data_addresses, writer.data, strict=True))
-        return program.resolver.current_scope.labels, blocks
+        linked = _linked(src)
+        return linked.symbols, dict(linked.blocks)
 
     def test_label_used_before_its_alloc(self) -> None:
         labels, blocks = self._assemble(
@@ -370,8 +390,6 @@ class TestAllocPass1ForwardRefs:
         """Mirrors ff4-modules pattern: body references a label declared
         later in another scope. Pre-fix this raised SymbolNotDefined
         during AllocNode's pass-1 size measurement."""
-        program = Program()
-        writer = StubWriter()
         src = """
         .pool p { range 0x028000 0x0280ff }
         .alloc fn in p {
@@ -385,17 +403,17 @@ class TestAllocPass1ForwardRefs:
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
+        linked = _linked(src)
 
-        labels = program.resolver.current_scope.labels
+        labels = linked.symbols
         assert "fn" in labels, "alloc label must bind"
-        # fn binds at logical 0x028000 (only chunk start). Translate to
-        # physical via the bus so we can find the matching writer record.
-        fn_logical = labels["fn"]
-        fn_phys = program.resolver.get_bus().get_address(fn_logical).physical
+        # fn binds at logical 0x028000 (only chunk start), physical 0x010000
+        # under low_rom: the matching IPS record.
+        assert labels["fn"] == 0x028000
+        fn_phys = 0x010000
         # Body bytes: 22 00 80 00 (jsr.l later.target) + 60 (rts) = 5 bytes.
         alloc_block = next(
-            (b for a, b in zip(writer.data_addresses, writer.data, strict=False) if a == fn_phys),
+            (b for a, b in linked.blocks if a == fn_phys),
             None,
         )
         assert alloc_block == b"\x22\x00\x80\x00\x60", (
@@ -809,12 +827,10 @@ class TestObjectMode:
 
 
 class TestPoolExhaustion:
-    """Pool overflow errors are surfaced loudly in both modes."""
+    """Pool overflow errors are surfaced loudly."""
 
-    def test_direct_mode_overflow_raises_with_alloc_name(self) -> None:
-        """One .alloc bigger than the only chunk → loud failure at codegen."""
-        program = Program()
-        writer = StubWriter()
+    def test_overflow_names_the_alloc(self, caplog: pytest.LogCaptureFixture) -> None:
+        """One .alloc bigger than the only chunk → loud failure."""
         src = """
         .pool tiny { range 0x028000 0x028000 }
         .alloc oversized in tiny {
@@ -823,13 +839,10 @@ class TestPoolExhaustion:
             rts
         }
         """
-        with pytest.raises(Exception, match="oversized"):
-            program.assemble_string_with_emitter(src, "test.s", writer)
+        assert "oversized" in _rejected(src, caplog)
 
-    def test_direct_mode_two_allocs_overflow_raises(self) -> None:
+    def test_two_allocs_overflow_fails(self, caplog: pytest.LogCaptureFixture) -> None:
         """First .alloc fills pool, second has nowhere to go."""
-        program = Program()
-        writer = StubWriter()
         src = """
         .pool tiny { range 0x028000 0x028001 strategy order }
         .alloc filler in tiny {
@@ -840,8 +853,7 @@ class TestPoolExhaustion:
             rts
         }
         """
-        with pytest.raises(Exception, match="spill|does not fit"):
-            program.assemble_string_with_emitter(src, "test.s", writer)
+        assert re.search("spill|does not fit", _rejected(src, caplog))
 
 
 class TestPoolStatsSymbols:
@@ -885,8 +897,6 @@ class TestPoolStatsSymbols:
 
     def test_capacity_usable_in_if_guard(self) -> None:
         # Compile-time .if reading <pool>.capacity must not crash.
-        program = Program()
-        writer = StubWriter()
         src = """
         .pool p {
             range 0x028000 0x0280ff
@@ -898,7 +908,7 @@ class TestPoolStatsSymbols:
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
+        _linked(src)
 
 
 class TestPoolExpressions:
@@ -912,8 +922,6 @@ class TestPoolExpressions:
     def test_pool_range_uses_constant_symbol_forward_ref(self) -> None:
         """Constant declared before .pool is bound eagerly so the pool
         literal can read it at codegen time."""
-        program = Program()
-        writer = StubWriter()
         src = """
         BANK02_BASE = 0x028000
         BANK02_TOP  = 0x028fff
@@ -925,15 +933,13 @@ class TestPoolExpressions:
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
+        program = _program(src)
         pool = program.resolver.pools["p"]
         assert pool.ranges[0].start == 0x028000
         assert pool.ranges[0].end == 0x028FFF
         assert pool.fill == 0xEA
 
     def test_pool_fill_arithmetic_expression(self) -> None:
-        program = Program()
-        writer = StubWriter()
         src = """
         .pool p {
             range 0x028000 0x028000 + 0xff
@@ -943,7 +949,7 @@ class TestPoolExpressions:
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
+        program = _program(src)
         pool = program.resolver.pools["p"]
         assert pool.ranges[0].start == 0x028000
         assert pool.ranges[0].end == 0x0280FF
@@ -967,26 +973,22 @@ class TestPoolExpressions:
             code_gen(result.nodes, resolver)
 
     def test_reclaim_uses_arithmetic_expression(self) -> None:
-        program = Program()
-        writer = StubWriter()
         src = """
         .pool p { range 0x028000 0x0280ff }
         .reclaim p 0x02c000 0x02c000 + 0x17f
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
+        program = _program(src)
         pool = program.resolver.pools["p"]
         assert pool.capacity == 0x100 + 0x180
 
     def test_relocate_uses_arithmetic_expression(self) -> None:
-        program = Program()
-        writer = StubWriter()
         src = """
         .pool p { range 0x028000 0x0280ff }
         .relocate fn 0x02c000 0x02c000 + 0x17f into p {
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
+        program = _program(src)
         # Original range reclaimed alongside the body's allocation.
         pool = program.resolver.pools["p"]
         assert pool.capacity == 0x100 + 0x180
@@ -996,8 +998,6 @@ class TestMultiAlloc:
     def test_two_allocs_order_strategy_contiguous(self) -> None:
         """Multi-alloc dogfood: two .allocs in order strategy lay out
         contiguously, byte-identical to a single .alloc of combined size."""
-        program = Program()
-        writer = StubWriter()
         src = """
         .pool p {
             range 0x028000 0x0280ff
@@ -1012,8 +1012,7 @@ class TestMultiAlloc:
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
-        labels = program.resolver.current_scope.labels
+        labels = _linked(src).symbols
         a_logical = labels["a"]
         b_logical = labels["b"]
         # a is 3 bytes (nop, nop, rts), b should follow at a+3.
@@ -1078,8 +1077,6 @@ class TestAllocNodeInternals:
 
     def test_alloc_skips_symbol_node_in_pass1(self) -> None:
         """`continue` branch in _measure_body when body has a SymbolNode."""
-        program = Program()
-        writer = StubWriter()
         # `local_const = 0x42` produces a SymbolNode that pass-1 must skip
         # to keep measurement deterministic (regardless of RHS resolvability).
         src = """
@@ -1089,9 +1086,7 @@ class TestAllocNodeInternals:
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
-        labels = program.resolver.current_scope.labels
-        assert "fn" in labels
+        assert "fn" in _linked(src).symbols
 
 
 class TestRelocateNodeInternals:
@@ -1121,42 +1116,42 @@ class TestRelocateNodeInternals:
 
 class TestRelocateEndToEnd:
     def test_relocate_reclaims_old_range_into_pool(self) -> None:
-        program = Program()
-        writer = StubWriter()
         src = """
         .pool p { range 0x028000 0x0280ff }
         .relocate fn 0x02c000 0x02c17f into p {
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
+        program = _program(src)
         pool = program.resolver.pools["p"]
         # Pool now contains the original 0x100-byte range plus the
-        # reclaimed 0x180-byte range, minus the 1 byte the body used.
+        # reclaimed 0x180-byte range.
         assert pool.capacity == 0x100 + 0x180
-        assert pool.used == 1
 
-    def test_relocate_binds_symbol_to_new_addr(self) -> None:
-        program = Program()
-        writer = StubWriter()
+    def test_relocated_body_is_placed_in_the_pool_at_link(self) -> None:
         src = """
         .pool p { range 0x028000 0x0280ff }
         .relocate fn 0x02c000 0x02c17f into p {
             rts
         }
         """
-        program.assemble_string_with_emitter(src, "test.s", writer)
-        labels = program.resolver.current_scope.labels
-        assert "fn" in labels
+        # The 1-byte body takes the pool's first byte (physical 0x010000).
+        assert _linked(src).blocks == [(0x010000, b"\x60")]
 
-    def test_relocate_reclaim_overlapping_pool_range_errors(self) -> None:
-        program = Program()
-        writer = StubWriter()
+    def test_relocate_binds_symbol_to_new_addr(self) -> None:
+        src = """
+        .pool p { range 0x028000 0x0280ff }
+        .relocate fn 0x02c000 0x02c17f into p {
+            rts
+        }
+        """
+        assert "fn" in _linked(src).symbols
+
+    def test_relocate_reclaim_overlapping_pool_range_errors(self, caplog: pytest.LogCaptureFixture) -> None:
         src = """
         .pool p { range 0x02c100 0x02c200 }
         .relocate fn 0x02c150 0x02c1ff into p {
             rts
         }
         """
-        with pytest.raises(Exception, match="overlap"):
-            program.assemble_string_with_emitter(src, "test.s", writer)
+        assert "overlap" in _rejected(src, caplog)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
@@ -11,9 +12,8 @@ from a816.formatter import A816Formatter
 from a816.linker import Linker
 from a816.object_file import ObjectFile
 from a816.parse.mzparser import A816Parser
-from a816.parse.nodes import NodeError
 from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 _HEADER = """
 .struct Hdr {
@@ -47,9 +47,19 @@ def _disable_colors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(err_mod, "_USE_COLORS", False)
 
 
-def _symbols(src: str) -> dict[str, int]:
+def _compile(src: str) -> tuple[Program, int]:
+    """Compile `src` to an object; the program (its resolver scopes populated) and the exit code."""
     program = Program()
-    program.assemble_string_with_emitter(src, "arrays.s", StubWriter())
+    with tempfile.TemporaryDirectory() as tmp:
+        asm = Path(tmp) / "arrays.s"
+        asm.write_text(src)
+        exit_code = program.assemble_as_object(str(asm), Path(tmp) / "arrays.o")
+    return program, exit_code
+
+
+def _symbols(src: str) -> dict[str, int]:
+    program, exit_code = _compile(src)
+    assert exit_code == 0
     return {
         name: value
         for scope in program.resolver.scopes
@@ -62,12 +72,18 @@ def _parse_error(src: str) -> str:
     return A816Parser.parse_as_ast(src, "arrays.s").error or ""
 
 
-def _codegen_error(src: str) -> NodeError:
-    program = Program()
-    writer = StubWriter()
-    with pytest.raises(NodeError) as exc_info:
-        program.assemble_string_with_emitter(src, "arrays.s", writer)
-    return exc_info.value
+def _codegen_error(src: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The error a failed compile of `src` logs."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        _, exit_code = _compile(src)
+    assert exit_code != 0
+    return caplog.text
+
+
+def _bytes(src: str) -> bytes:
+    linked = link_source(src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 @pytest.mark.parametrize(
@@ -123,9 +139,9 @@ def test_identical_redefinition_with_arrays_is_noop() -> None:
     assert _symbols(_HEADER + _HEADER)["Hdr.__size"] == 24
 
 
-def test_array_of_unknown_struct_errors() -> None:
-    error = _codegen_error(".struct A {\n    Nope[2] v\n}\n")
-    assert "Unknown struct field type 'Nope'" in str(error)
+def test_array_of_unknown_struct_errors(caplog: pytest.LogCaptureFixture) -> None:
+    error = _codegen_error(".struct A {\n    Nope[2] v\n}\n", caplog)
+    assert "Unknown struct field type 'Nope'" in error
 
 
 def test_zero_count_reports_e0120() -> None:
@@ -164,10 +180,8 @@ def test_count_takes_a_constant_expression(name: str, expected: int) -> None:
 
 
 def test_istruct_fills_an_expression_sized_array() -> None:
-    src = "N = 2\n.struct A {\n    word[N + 1] v\n}\n.istruct A { v = [1, 2, 3] }\n"
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(src, "arrays.s", writer)
-    assert b"".join(writer.data) == bytes([1, 0, 2, 0, 3, 0])
+    src = "N = 2\n.struct A {\n    word[N + 1] v\n}\n*=0x8000\n.istruct A { v = [1, 2, 3] }\n"
+    assert _bytes(src) == bytes([1, 0, 2, 0, 3, 0])
 
 
 def test_formatter_keeps_an_expression_count() -> None:
@@ -175,12 +189,12 @@ def test_formatter_keeps_an_expression_count() -> None:
     assert A816Formatter().format_text(src) == src
 
 
-def test_undefined_constant_count_reports_e0120() -> None:
-    assert "E0120" in str(_codegen_error(".struct A {\n    byte[N] v\n}\n"))
+def test_undefined_constant_count_reports_e0120(caplog: pytest.LogCaptureFixture) -> None:
+    assert "E0120" in _codegen_error(".struct A {\n    byte[N] v\n}\n", caplog)
 
 
-def test_non_positive_expression_count_reports_e0120() -> None:
-    assert "E0120" in str(_codegen_error("N = 1\n.struct A {\n    byte[N - 1] v\n}\n"))
+def test_non_positive_expression_count_reports_e0120(caplog: pytest.LogCaptureFixture) -> None:
+    assert "E0120" in _codegen_error("N = 1\n.struct A {\n    byte[N - 1] v\n}\n", caplog)
 
 
 def test_unclosed_count_is_rejected() -> None:
@@ -203,10 +217,8 @@ def test_typed_bind_offsets_array_fields() -> None:
 
 
 def test_inline_cast_reaches_struct_array_element_zero() -> None:
-    writer = StubWriter()
     src = _POINTS + "*=0x8000\nlda.w (0x1000 as Path).points.y\n"
-    Program().assemble_string_with_emitter(src, "arrays.s", writer)
-    assert b"".join(writer.data) == b"\xad\x03\x10"
+    assert _bytes(src) == b"\xad\x03\x10"
 
 
 def test_typed_reserve_spans_whole_array() -> None:
