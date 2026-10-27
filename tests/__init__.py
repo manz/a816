@@ -1,3 +1,5 @@
+import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from a816.symbols import Resolver
@@ -50,3 +52,41 @@ def build_rom(tmp_path: Path, files: dict[str, str], experimental: list[str] | N
         experimental=experimental,
     )
     return result.exit_code, out.read_bytes() if out.exists() else b""
+
+
+@dataclass
+class Linked:
+    """What `link_source` built: the exit code, the IPS records and the linked symbols."""
+
+    exit_code: int
+    blocks: list[tuple[int, bytes]] = field(default_factory=list)
+    symbols: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def data(self) -> list[bytes]:
+        return [block for _, block in self.blocks]
+
+    @property
+    def data_addresses(self) -> list[int]:
+        return [address for address, _ in self.blocks]
+
+
+def link_source(
+    src: str, files: dict[str, str] | None = None, *, symbols: dict[str, int | str] | None = None
+) -> Linked:
+    """Compile `src` as `main.s` (with `files` beside it) to objects and link them to an IPS, as `a816 build` does."""
+    from a816.module_builder import build_with_imports
+    from tests.ips_helpers import parse_ips_records
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        (tmp / "main.s").write_text(src)
+        for name, text in (files or {}).items():
+            (tmp / name).parent.mkdir(parents=True, exist_ok=True)
+            (tmp / name).write_text(text)
+        out = tmp / "out.ips"
+        result = build_with_imports(
+            tmp / "main.s", out, output_dir=tmp / "obj", use_a816_toml=False, use_cache=False, symbols=symbols
+        )
+        blocks = parse_ips_records(out.read_bytes()) if out.exists() else []
+        return Linked(result.exit_code, blocks, dict(result.symbol_map))
