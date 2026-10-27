@@ -11,6 +11,15 @@ from a816.parse.ast.nodes import ImportAstNode
 from a816.parse.mzparser import A816Parser
 from a816.parse.nodes import ExternNode
 from a816.program import Program
+from tests import Linked, link_source
+
+
+def _image(linked: Linked) -> bytearray:
+    """The linked IPS records laid out at their ROM offsets."""
+    image = bytearray(max((address + len(block) for address, block in linked.blocks), default=0))
+    for address, block in linked.blocks:
+        image[address : address + len(block)] = block
+    return image
 
 
 class TestImportParsing:
@@ -469,23 +478,9 @@ main:
     jsr.w get_data_plus2
     rts
 """
-            main_file = Path(tmpdir) / "main.s"
-            main_file.write_text(main_code)
-
-            # Assemble in direct assembly mode
-            output_path = Path(tmpdir) / "output.sfc"
-            program = Program()
-            program.add_module_path(tmpdir)
-            from a816.context import AssemblyMode
-
-            program.resolver.context.mode = AssemblyMode.DIRECT
-
-            result = program.assemble(str(main_file), output_path)
-            assert result == 0, "Assembly should succeed"
-
-            # Read the output and verify relocations were applied
-            with open(output_path, "rb") as f:
-                code = f.read()
+            linked = link_source(main_code, {"module.s": module_code})
+            assert linked.exit_code == 0, "Assembly should succeed"
+            code = _image(linked)
 
             # The module code should have the actual address, not 0x000000
             # The module pins itself at 0x9000; data_table sits at 0x8000 in main.
@@ -549,33 +544,12 @@ start:
     jsr.w func2
     rts
 """
-            main_file = Path(tmpdir) / "main.s"
-            main_file.write_text(main_code)
-
-            output_path = Path(tmpdir) / "output.sfc"
-            program = Program()
-            program.add_module_path(tmpdir)
-            from a816.context import AssemblyMode
-
-            program.resolver.context.mode = AssemblyMode.DIRECT
-
-            result = program.assemble(str(main_file), output_path)
-            assert result == 0, "Assembly should succeed with multiple relocations"
+            linked = link_source(main_code, {"multi_reloc.s": module_code})
+            assert linked.exit_code == 0, "Assembly should succeed with multiple relocations"
 
     def test_imported_branch_lands_on_its_label(self) -> None:
-        """A branch inside an imported `.o` keeps its offset in a direct build."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            module_file = Path(tmpdir) / "looper.s"
-            module_file.write_text("*=0x9000\nlooper:\n    nop\n_loop:\n    dex\n    bne _loop\n    rts\n")
-            Program().assemble_as_object(str(module_file), Path(tmpdir) / "looper.o")
-            main_file = Path(tmpdir) / "main.s"
-            main_file.write_text('.import "looper"\n*=0x8000\n    jsr.w looper\n')
-            output_path = Path(tmpdir) / "output.sfc"
-            program = Program()
-            program.add_module_path(tmpdir)
-            from a816.context import AssemblyMode
-
-            program.resolver.context.mode = AssemblyMode.DIRECT
-            program.assemble(str(main_file), output_path)
-
-            assert output_path.read_bytes()[0x1002:0x1004] == b"\xd0\xfd"
+        """A branch inside an imported module keeps its offset once linked."""
+        looper = "*=0x9000\nlooper:\n    nop\n_loop:\n    dex\n    bne _loop\n    rts\n"
+        linked = link_source('.import "looper"\n*=0x8000\n    jsr.w looper\n', {"looper.s": looper})
+        assert linked.exit_code == 0
+        assert _image(linked)[0x1002:0x1004] == b"\xd0\xfd"

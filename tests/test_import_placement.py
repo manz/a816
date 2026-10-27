@@ -17,29 +17,27 @@ from a816.context import AssemblyMode
 from a816.error_codes import E_CODEGEN_IMPORT_IN_PLACEMENT
 from a816.parse.nodes import NodeError
 from a816.program import Program
+from tests import link_source
 
 
-class _NoopEmitter:
-    def begin(self) -> None: ...
-
-    def end(self) -> None: ...
-
-    def write_block_header(self, *_: object, **__: object) -> None: ...
-
-    def write_block(self, *_: object, **__: object) -> None: ...
-
-
-def _assemble(src: str, module_dir: Path | None = None) -> None:
+def _codegen(src: str) -> Program:
+    """Program whose resolver ran `src`'s object-mode codegen: placement
+    errors raise as `NodeError`."""
     program = Program()
-    program.resolver.context.mode = AssemblyMode.DIRECT
-    if module_dir is not None:
-        program.add_module_path(str(module_dir))
-    program.assemble_string_with_emitter(src, "main.s", _NoopEmitter())
+    program.resolver.context.mode = AssemblyMode.OBJECT
+    error, _ = program.parser.parse(src, "main.s")
+    assert error is None
+    return program
+
+
+def _assemble(src: str, files: dict[str, str] | None = None) -> None:
+    linked = link_source(src, files)
+    assert linked.exit_code == 0
 
 
 def _assemble_error(src: str) -> NodeError:
     with pytest.raises(NodeError) as excinfo:
-        _assemble(src)
+        _codegen(src)
     return excinfo.value
 
 
@@ -97,9 +95,9 @@ def test_import_between_alloc_blocks_is_not_a_hard_error() -> None:
     _assemble(src)
 
 
-def test_star_eq_inside_imported_module_does_not_leak_into_importer(tmp_path: Path) -> None:
-    (tmp_path / "legacy.s").write_text('"""Legacy."""\n*=0x008000\nlegacy_entry:\n    rts\n')
-    _assemble('.import "legacy"\n.import "@std/snes/ppu"\n', tmp_path)
+def test_star_eq_inside_imported_module_does_not_leak_into_importer() -> None:
+    legacy = '"""Legacy."""\n*=0x008000\nlegacy_entry:\n    rts\n'
+    _assemble('.import "legacy"\n.import "@std/snes/ppu"\n', {"legacy.s": legacy})
 
 
 def test_import_after_star_eq_is_rejected_in_object_mode(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -112,17 +110,13 @@ def test_import_after_star_eq_is_rejected_in_object_mode(tmp_path: Path, caplog:
 
 def test_alloc_depth_unwinds_after_a_rejected_import() -> None:
     program = Program()
-    program.resolver.context.mode = AssemblyMode.DIRECT
-    emitter = _NoopEmitter()
+    program.resolver.context.mode = AssemblyMode.OBJECT
     with pytest.raises(NodeError):
-        program.assemble_string_with_emitter(
-            '.alloc at 0x008000 {\n    .import "@std/snes/ppu"\n}\n', "main.s", emitter
-        )
+        program.parser.parse('.alloc at 0x008000 {\n    .import "@std/snes/ppu"\n}\n', "main.s")
     assert program.resolver.placement_body_depth == 0
 
 
 def test_star_eq_cursor_does_not_leak_into_the_next_source_unit() -> None:
-    program = Program()
-    program.resolver.context.mode = AssemblyMode.DIRECT
-    program.assemble_string_with_emitter("*=0x008000\n    nop\n", "first.s", _NoopEmitter())
-    program.assemble_string_with_emitter('.import "@std/snes/ppu"\n', "second.s", _NoopEmitter())
+    program = _codegen("*=0x008000\n    nop\n")
+    error, _ = program.parser.parse('.import "@std/snes/ppu"\n', "second.s")
+    assert error is None
