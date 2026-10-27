@@ -8,17 +8,25 @@ JML since a44). A 16-bit value is an address in the current bank, as before.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
-from a816.parse.nodes import NodeError
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _bytes(source: str) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(source, "transfer.s", writer)
-    return b"".join(writer.data)
+    linked = link_source(source)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
+
+
+def _error(source: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The diagnostics of a build that fails on `source`."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        linked = link_source(source)
+    assert linked.exit_code != 0
+    return caplog.text
 
 
 @pytest.mark.parametrize(("opcode", "absolute"), [("jsr", 0x20), ("jmp", 0x4C)])
@@ -32,18 +40,16 @@ def test_a_forward_same_bank_label_is_absolute() -> None:
     assert _bytes("*= 0x018000\n    jsr fwd\nfwd:\n    rts\n") == b"\x20\x03\x80\x60"
 
 
-def test_a_label_in_another_bank_is_an_error() -> None:
+def test_a_label_in_another_bank_is_an_error(caplog: pytest.LogCaptureFixture) -> None:
     source = "*= 0x028000\nfar:\n    rtl\n*= 0x018000\n    jsr far\n"
 
-    with pytest.raises(NodeError, match="E0346"):
-        _bytes(source)
+    assert "E0346" in _error(source, caplog)
 
 
-def test_the_error_names_the_long_form() -> None:
+def test_the_error_names_the_long_form(caplog: pytest.LogCaptureFixture) -> None:
     source = "*= 0x028000\nfar:\n    rtl\n*= 0x018000\n    jmp far\n"
 
-    with pytest.raises(NodeError, match="write `jml`"):
-        _bytes(source)
+    assert "write `jml`" in _error(source, caplog)
 
 
 def test_a_16_bit_value_is_an_address_in_the_current_bank() -> None:

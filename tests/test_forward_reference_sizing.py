@@ -8,20 +8,27 @@ a bare forward `jsr fwd` was E0200 while `jsr.w fwd` built (Feda, BL).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 
 from a816.module_builder import ModuleBuilder
-from a816.parse.nodes import NodeError
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _bytes(source: str) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(source, "fwd.s", writer)
-    return b"".join(writer.data)
+    linked = link_source(source)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
+
+
+def _error(source: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The diagnostics of a build that fails on `source`."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        linked = link_source(source)
+    assert linked.exit_code != 0
+    return caplog.text
 
 
 def test_a_forward_jsr_and_jmp_in_bank_zero_are_absolute() -> None:
@@ -42,25 +49,23 @@ def test_a_forward_data_operand_in_bank_zero_is_absolute() -> None:
     assert _bytes("*= 0x008000\n    lda fwd\nfwd:\n    .db 0x42\n") == b"\xad\x03\x80\x42"
 
 
-def test_a_target_in_another_bank_is_reported() -> None:
+def test_a_target_in_another_bank_is_reported(caplog: pytest.LogCaptureFixture) -> None:
     """The PC guessed bank $00; the label landed in bank $01: a bare jsr can't reach it."""
     source = "*= 0x008000\n    jsr far\n    rts\n*= 0x018000\nfar:\n    rtl\n"
 
-    with pytest.raises(NodeError, match="E0346"):
-        _bytes(source)
+    assert "E0346" in _error(source, caplog)
 
 
-def test_a_target_outside_the_block_with_another_size_asks_for_the_size() -> None:
+def test_a_target_outside_the_block_with_another_size_asks_for_the_size(caplog: pytest.LogCaptureFixture) -> None:
     """Same bank, different class: guessed absolute (PC >= $0100), landed in direct page."""
     source = "*= 0x008000\n    lda fwd\n    rts\n*= 0x000010\nfwd:\n    .db 0\n"
 
-    with pytest.raises(NodeError, match="given a 16-bit operand before its value was known, and the value needs 8-bit"):
-        _bytes(source)
+    message = "given a 16-bit operand before its value was known, and the value needs 8-bit"
+    assert message in _error(source, caplog)
 
 
-def test_a_name_never_defined_is_still_undefined() -> None:
-    with pytest.raises(NodeError, match="nowhere"):
-        _bytes("*= 0x008000\n    jsr nowhere\n    rts\n")
+def test_a_name_never_defined_is_still_undefined(caplog: pytest.LogCaptureFixture) -> None:
+    assert "nowhere" in _error("*= 0x008000\n    jsr nowhere\n    rts\n", caplog)
 
 
 def test_a_forward_jsr_inside_an_alloc_body(tmp_path: Path) -> None:

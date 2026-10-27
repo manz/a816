@@ -4,26 +4,43 @@ after every register-size change."""
 
 from __future__ import annotations
 
+import logging
+import tempfile
+from pathlib import Path
+
 import pytest
 
-from a816.parse.nodes import NodeError
-from a816.program import Program
-from tests import StubWriter
+from a816.module_builder import build_with_imports
+from tests import Linked
+from tests.ips_helpers import parse_ips_records
 
 
-def _assemble(src: str) -> StubWriter:
-    program = Program()
+def _build(src: str) -> Linked:
     # rep/sep -> a_size/i_size inference is opt-in (experimental); the
-    # whole suite exercises that behavior so flip the resolver flag
-    # before assembling.
-    program.resolver.track_register_size = True
-    writer = StubWriter()
-    program.assemble_string_with_emitter(src, "test_repsep.s", writer)
-    return writer
+    # whole suite exercises that behavior so the build turns it on.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        (tmp / "main.s").write_text(src)
+        out = tmp / "out.ips"
+        result = build_with_imports(
+            tmp / "main.s",
+            out,
+            output_dir=tmp / "obj",
+            use_a816_toml=False,
+            use_cache=False,
+            experimental=["track_register_size"],
+        )
+        return Linked(result.exit_code, parse_ips_records(out.read_bytes()) if out.exists() else [])
 
 
-def _emitted_bytes(writer: StubWriter) -> bytes:
-    return b"".join(writer.data)
+def _assemble(src: str) -> Linked:
+    linked = _build(src)
+    assert linked.exit_code == 0
+    return linked
+
+
+def _emitted_bytes(linked: Linked) -> bytes:
+    return b"".join(linked.data)
 
 
 class TestRepSetTracksASize:
@@ -78,13 +95,14 @@ class TestForwardReferenceImmediate:
         writer = _assemble(src)
         assert _emitted_bytes(writer) == b"\xc2\x30\xa9\xef\xbe"
 
-    def test_rep_with_forward_label_operand_is_an_error(self) -> None:
+    def test_rep_with_forward_label_operand_is_an_error(self, caplog: pytest.LogCaptureFixture) -> None:
         # Labels bind on the first pass only, so a `rep` that cannot be
         # evaluated there would size the code after it at the old width
         # and every later label would drift off its bytes. Stay loud.
         src = "*=0x008000\nrep.b #flags & 0x30\nlda #0x12\n*=0x008020\nflags:\n"
-        with pytest.raises(NodeError, match="E0200"):
-            _assemble(src)
+        with caplog.at_level(logging.ERROR, logger="a816"):
+            assert _build(src).exit_code != 0
+        assert "E0200" in caplog.text
 
 
 class TestSymbolicImmediateStillUpdatesSize:

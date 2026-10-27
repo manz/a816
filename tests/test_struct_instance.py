@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
+import logging
 import tempfile
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -10,9 +13,8 @@ import pytest
 from a816.linker import Linker
 from a816.object_file import ObjectFile
 from a816.parse.mzparser import A816Parser
-from a816.parse.nodes import NodeError
 from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 _SCALARS = """
 .struct S {
@@ -53,22 +55,34 @@ def _disable_colors(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _emit(src: str) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter("*=0x8000\n" + src, "inst.s", writer)
-    return b"".join(writer.data)
+    linked = link_source("*=0x8000\n" + src)
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
-def _codegen_error(src: str) -> NodeError:
-    program = Program()
-    writer = StubWriter()
-    with pytest.raises(NodeError) as exc_info:
-        program.assemble_string_with_emitter("*=0x8000\n" + src, "inst.s", writer)
-    return exc_info.value
+def _codegen_error(src: str) -> str:
+    """The rendered diagnostics of a build that fails on `src`."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    logger = logging.getLogger("a816")
+    logger.addHandler(handler)
+    try:
+        linked = link_source("*=0x8000\n" + src)
+    finally:
+        logger.removeHandler(handler)
+    assert linked.exit_code != 0
+    return stream.getvalue()
 
 
 def _error_token(src: str) -> str:
-    token = _codegen_error(src).file_info
-    return token.value if token is not None else ""
+    """The source text the diagnostic's caret underlines."""
+    lines = _codegen_error(src).splitlines()
+    for source, caret in pairwise(lines):
+        marks = caret.partition("| ")[2]
+        if "|" in source and marks.strip() and set(marks.strip()) == {"^"}:
+            start = marks.index("^")
+            return source.partition("| ")[2][start : start + marks.count("^")]
+    return ""
 
 
 def _parse_error(src: str) -> str:
@@ -149,7 +163,7 @@ def test_label_before_instance_binds_its_address() -> None:
 
 
 def test_unknown_struct_reports_e0330() -> None:
-    assert _codegen_error(".istruct Nope {}\n").code == "E0330"
+    assert "error[E0330]" in _codegen_error(".istruct Nope {}\n")
 
 
 def test_unknown_struct_points_at_type() -> None:
@@ -157,7 +171,7 @@ def test_unknown_struct_points_at_type() -> None:
 
 
 def test_unknown_field_reports_e0331() -> None:
-    assert _codegen_error(_SCALARS + ".istruct S { zz = 1 }\n").code == "E0331"
+    assert "error[E0331]" in _codegen_error(_SCALARS + ".istruct S { zz = 1 }\n")
 
 
 def test_unknown_field_points_at_field_name() -> None:
@@ -165,7 +179,7 @@ def test_unknown_field_points_at_field_name() -> None:
 
 
 def test_unknown_nested_field_reports_e0331() -> None:
-    assert _codegen_error(_ARRAYS + ".istruct A { pos = { z = 1 } }\n").code == "E0331"
+    assert "error[E0331]" in _codegen_error(_ARRAYS + ".istruct A { pos = { z = 1 } }\n")
 
 
 @pytest.mark.parametrize(
@@ -177,7 +191,7 @@ def test_unknown_nested_field_reports_e0331() -> None:
     ],
 )
 def test_scalar_field_rejects_aggregate_values(init: str) -> None:
-    assert _codegen_error(_SCALARS + f".istruct S {{ {init} }}\n").code == "E0332"
+    assert "error[E0332]" in _codegen_error(_SCALARS + f".istruct S {{ {init} }}\n")
 
 
 @pytest.mark.parametrize(
@@ -193,25 +207,25 @@ def test_scalar_field_rejects_aggregate_values(init: str) -> None:
     ],
 )
 def test_aggregate_field_rejects_mismatched_values(init: str) -> None:
-    assert _codegen_error(_ARRAYS + f".istruct A {{ {init} }}\n").code == "E0332"
+    assert "error[E0332]" in _codegen_error(_ARRAYS + f".istruct A {{ {init} }}\n")
 
 
 def test_bit_field_rejects_aggregate_value() -> None:
-    assert _codegen_error(_BITS + ".istruct F { lo = [1] }\n").code == "E0332"
+    assert "error[E0332]" in _codegen_error(_BITS + ".istruct F { lo = [1] }\n")
 
 
 @pytest.mark.parametrize("init", ['name = "ABCDE"', "name = [1, 2, 3, 4, 5]", "pts = [{}, {}, {}]"])
 def test_too_long_initializer_reports_e0333(init: str) -> None:
-    assert _codegen_error(_ARRAYS + f".istruct A {{ {init} }}\n").code == "E0333"
+    assert "error[E0333]" in _codegen_error(_ARRAYS + f".istruct A {{ {init} }}\n")
 
 
 def test_non_ascii_string_reports_e0334() -> None:
-    assert _codegen_error(_ARRAYS + '.istruct A { name = "é" }\n').code == "E0334"
+    assert "error[E0334]" in _codegen_error(_ARRAYS + '.istruct A { name = "é" }\n')
 
 
 def test_bit_run_wider_than_32_bits_reports_e0335() -> None:
     src = ".struct W {\n    u20 a\n    u20 b\n}\n.istruct W { a = 1 }\n"
-    assert _codegen_error(src).code == "E0335"
+    assert "error[E0335]" in _codegen_error(src)
 
 
 def test_wide_bit_run_left_unset_is_zero_filled() -> None:

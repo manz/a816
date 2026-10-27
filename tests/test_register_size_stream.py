@@ -7,18 +7,34 @@ state drifts every later label off its bytes without an error.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from a816.context import AssemblyMode
+from a816.module_builder import build_with_imports
 from a816.program import Program
 from a816.writers import ObjectWriter
-from tests import CLIENT_POOL, StubWriter, label_address
+from tests import CLIENT_POOL, label_address
+from tests.ips_helpers import parse_ips_records
 
 
-def _assemble(src: str, track: bool = False) -> tuple[bytes, Program]:
-    program = Program()
-    program.resolver.track_register_size = track
-    writer = StubWriter()
-    program.assemble_string_with_emitter(src, "stream.s", writer)
-    return b"".join(writer.data), program
+def _assemble(src: str, track: bool = False) -> tuple[bytes, dict[str, int]]:
+    """The bytes `src` links to and its linked labels; `track` turns on rep/sep size tracking."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        (tmp / "main.s").write_text(src)
+        out = tmp / "out.ips"
+        result = build_with_imports(
+            tmp / "main.s",
+            out,
+            output_dir=tmp / "obj",
+            use_a816_toml=False,
+            use_cache=False,
+            experimental=["track_register_size"] if track else None,
+        )
+        assert result.exit_code == 0
+        data = b"".join(block for _, block in parse_ips_records(out.read_bytes()))
+    return data, result.symbol_map
 
 
 def _assemble_object(src: str) -> tuple[bytes, Program]:
@@ -40,8 +56,8 @@ _TRAILING_REP = "*=0x008000\nlda #0x12\nafter:\nrep #0x20\n"
 def test_trailing_tracked_rep_does_not_leak_into_emission() -> None:
     # The `lda` runs before the `rep`, at the power-on 8-bit A: the label
     # passes end with A=16 and emission must still start at A=8.
-    data, program = _assemble(_TRAILING_REP, track=True)
-    assert (data, label_address(program.resolver, "after")) == (b"\xa9\x12\xc2\x20", 0x008002)
+    data, labels = _assemble(_TRAILING_REP, track=True)
+    assert (data, labels["after"]) == (b"\xa9\x12\xc2\x20", 0x008002)
 
 
 def test_trailing_tracked_rep_does_not_leak_into_object_emission() -> None:
@@ -53,33 +69,36 @@ def test_trailing_tracked_rep_does_not_leak_into_alloc_label_pass() -> None:
     # Alloc bodies rebind their labels on pass 2, which must not start
     # from the A=16 pass 1 ended with.
     src = CLIENT_POOL + ".alloc r in client {\nlda #0x12\ninside:\nnop\n}\n*=0x018000\nrep #0x20\n"
-    data, program = _assemble(src, track=True)
-    assert (data, label_address(program.resolver, "inside")) == (b"\xa9\x12\xea\xc2\x20", 0x008002)
+    data, labels = _assemble(src, track=True)
+    assert (data, labels["inside"]) == (b"\xa9\x12\xea\xc2\x20", 0x008002)
 
 
-def test_reused_program_sizes_pool_slots_from_power_on_state() -> None:
+def test_reused_program_sizes_pool_slots_from_power_on_state(tmp_path: Path) -> None:
     # The first build leaves A=16 behind; the next build's pass 1, which
     # measures the pool slots, must not inherit it.
     program = Program()
-    program.assemble_string_with_emitter("*=0x018000\n.a16\nnop\n", "first.s", StubWriter())
-    src = CLIENT_POOL + ".alloc one in client {\nlda #0x12\n}\n.alloc two in client {\nnop\n}\n"
-    program.assemble_string_with_emitter(src, "second.s", StubWriter())
+    (tmp_path / "first.s").write_text("*=0x018000\n.a16\nnop\n")
+    (tmp_path / "second.s").write_text(
+        CLIENT_POOL + ".alloc one in client {\nlda #0x12\n}\n.alloc two in client {\nnop\n}\n"
+    )
+    assert program.assemble_as_object(str(tmp_path / "first.s"), tmp_path / "first.o") == 0
+    assert program.assemble_as_object(str(tmp_path / "second.s"), tmp_path / "second.o") == 0
     assert label_address(program.resolver, "two") == 0x008002
 
 
 def test_top_level_size_directive_sizes_labels() -> None:
     # `.a16` widens the emitted immediate; the label must follow it.
-    data, program = _assemble("*=0x008000\n.a16\nlda #0x12\nafter:\n")
-    assert (data, label_address(program.resolver, "after")) == (b"\xa9\x12\x00", 0x008003)
+    data, labels = _assemble("*=0x008000\n.a16\nlda #0x12\nafter:\n")
+    assert (data, labels["after"]) == (b"\xa9\x12\x00", 0x008003)
 
 
 def test_alloc_body_inherits_size_set_before_it() -> None:
     src = CLIENT_POOL + "*=0x018000\n.a16\nnop\n.alloc r in client {\nlda #0x12\nafter:\nnop\n}\n"
-    data, program = _assemble(src)
-    assert (data, label_address(program.resolver, "after")) == (b"\xea\xa9\x12\x00\xea", 0x008003)
+    data, labels = _assemble(src)
+    assert (data, labels["after"]) == (b"\xea\xa9\x12\x00\xea", 0x008003)
 
 
 def test_code_after_alloc_inherits_size_set_inside_it() -> None:
     src = CLIENT_POOL + ".alloc r in client {\n.a16\nnop\n}\n*=0x018000\nlda #0x12\nafter:\n"
-    data, program = _assemble(src)
-    assert (data, label_address(program.resolver, "after")) == (b"\xea\xa9\x12\x00", 0x018003)
+    data, labels = _assemble(src)
+    assert (data, labels["after"]) == (b"\xea\xa9\x12\x00", 0x018003)

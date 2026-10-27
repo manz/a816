@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from a816.module_builder import BuildResult, build_with_imports
+from tests import link_source
 from tests.test_reserve import _PREAMBLE
 
 _STRUCT = ".struct T {\n    byte lo\n    byte bank\n}\n"
@@ -76,21 +77,12 @@ def test_an_eager_typed_bind_over_a_pooled_label_points_at_the_lazy_form(
     assert (result.exit_code, "use `=` for a forward reference" in caplog.text) == (1, True)
 
 
-def test_a_lazy_typed_view_of_an_unknown_struct_says_so() -> None:
-    from a816.parse.nodes import NodeError
-    from a816.program import Program
-    from tests import StubWriter
-
-    program, writer = Program(), StubWriter()
-    with pytest.raises(NodeError, match="unknown struct type 'Nope'"):
-        program.assemble_string_with_emitter("view = (0x7e1000 as Nope)\n", "m.s", writer)
+def test_a_lazy_typed_view_of_an_unknown_struct_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR):
+        linked = link_source("view = (0x7e1000 as Nope)\n")
+    assert (linked.exit_code != 0, "unknown struct type 'Nope'" in caplog.text) == (True, True)
 
 
 def test_a_lazy_typed_view_over_a_constant() -> None:
-    from a816.program import Program
-    from tests import StubWriter
-
-    writer = StubWriter()
-    src = _STRUCT + "view = (0x7e1000 as T)\n*=0x8000\n    .dl view.bank\n"
-    Program().assemble_string_with_emitter(src, "m.s", writer)
-    assert b"".join(writer.data) == b"\x01\x10\x7e"
+    linked = link_source(_STRUCT + "view = (0x7e1000 as T)\n*=0x8000\n    .dl view.bank\n")
+    assert (linked.exit_code, b"".join(linked.data)) == (0, b"\x01\x10\x7e")

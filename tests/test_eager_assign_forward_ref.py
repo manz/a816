@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+from itertools import pairwise
+
 import pytest
 
-from a816.parse.nodes import NodeError
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 PLAIN_SRC = """P := later
 later = 0x1234
@@ -42,57 +43,55 @@ def _disable_colors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(err_mod, "_USE_COLORS", False)
 
 
-def _assemble_error(src: str) -> NodeError:
-    program = Program()
-    writer = StubWriter()
-    with pytest.raises(NodeError) as exc_info:
-        program.assemble_string_with_emitter(src, "fwd.s", writer)
-    return exc_info.value
+def _assemble_error(src: str, caplog: pytest.LogCaptureFixture) -> str:
+    """The rendered diagnostic of a build that fails on `src`."""
+    with caplog.at_level(logging.ERROR, logger="a816"):
+        linked = link_source(src)
+    assert linked.exit_code != 0
+    return caplog.text
+
+
+def _pointed(rendered: str) -> str:
+    """The source text the rendered diagnostic's caret underlines."""
+    lines = rendered.splitlines()
+    for source, caret in pairwise(lines):
+        marks = caret.partition("| ")[2]
+        if "|" in source and marks.strip() and set(marks.strip()) == {"^"}:
+            start = marks.index("^")
+            return source.partition("| ")[2][start : start + marks.count("^")]
+    return ""
 
 
 @pytest.mark.parametrize("src", [PLAIN_SRC, TYPED_SRC, NESTED_SRC, CAST_THEN_REF_SRC])
-def test_forward_ref_carries_code(src: str) -> None:
-    assert _assemble_error(src).code == "E0210"
+def test_forward_ref_carries_code(src: str, caplog: pytest.LogCaptureFixture) -> None:
+    assert "error[E0210]" in _assemble_error(src, caplog)
 
 
 @pytest.mark.parametrize("src", [PLAIN_SRC, TYPED_SRC, NESTED_SRC, CAST_THEN_REF_SRC])
-def test_forward_ref_points_at_symbol_token(src: str) -> None:
-    error = _assemble_error(src)
-    assert error.file_info is not None
-    assert error.file_info.value == "later"
+def test_forward_ref_points_at_symbol_token(src: str, caplog: pytest.LogCaptureFixture) -> None:
+    assert _pointed(_assemble_error(src, caplog)) == "later"
 
 
-def test_plain_forward_ref_caret_column() -> None:
-    error = _assemble_error(PLAIN_SRC)
-    assert error.file_info is not None
-    assert error.file_info.position is not None
-    assert error.file_info.position.column == len("P := ")
+def test_plain_forward_ref_caret_column(caplog: pytest.LogCaptureFixture) -> None:
+    assert f"main.s:1:{len('P := ') + 1}\n" in _assemble_error(PLAIN_SRC, caplog)
 
 
-def test_typed_forward_ref_caret_line() -> None:
-    error = _assemble_error(TYPED_SRC)
-    assert error.file_info is not None
-    assert error.file_info.position is not None
-    assert error.file_info.position.line == 3
+def test_typed_forward_ref_caret_line(caplog: pytest.LogCaptureFixture) -> None:
+    assert "main.s:4:" in _assemble_error(TYPED_SRC, caplog)
 
 
-def test_forward_ref_hint_suggests_lazy_assign() -> None:
-    error = _assemble_error(PLAIN_SRC)
-    assert error.hint is not None
-    assert "use `=` for a forward reference" in error.hint
+def test_forward_ref_hint_suggests_lazy_assign(caplog: pytest.LogCaptureFixture) -> None:
+    assert "hint: `:=` evaluates immediately; use `=` for a forward reference" in _assemble_error(PLAIN_SRC, caplog)
 
 
-def test_forward_ref_message_names_symbol() -> None:
-    assert "`later`" in _assemble_error(PLAIN_SRC).message
+def test_forward_ref_message_names_symbol(caplog: pytest.LogCaptureFixture) -> None:
+    assert "error[E0210]: `later`" in _assemble_error(PLAIN_SRC, caplog)
 
 
-def test_forward_ref_rendered_with_caret_under_symbol() -> None:
-    rendered = str(_assemble_error(PLAIN_SRC))
-    assert "  |      ^^^^^\n" in rendered
+def test_forward_ref_rendered_with_caret_under_symbol(caplog: pytest.LogCaptureFixture) -> None:
+    assert "  |      ^^^^^\n" in _assemble_error(PLAIN_SRC, caplog)
 
 
 def test_lazy_assign_forward_ref_still_works() -> None:
-    program = Program()
-    writer = StubWriter()
-    program.assemble_string_with_emitter("P = later\nlater = 0x1234\n*=0x8000\nlda.w #P\n", "lazy.s", writer)
-    assert writer.data == [bytes([0xA9, 0x34, 0x12])]
+    linked = link_source("P = later\nlater = 0x1234\n*=0x8000\nlda.w #P\n")
+    assert linked.data == [bytes([0xA9, 0x34, 0x12])]

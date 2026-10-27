@@ -9,7 +9,7 @@ from a816.parse.codegen import code_gen
 from a816.parse.mzparser import A816Parser, ParserResult
 from a816.program import Program
 from a816.symbols import Resolver
-from tests import StubWriter
+from tests import StubWriter, link_source
 
 
 class TestParse(TestCase):
@@ -356,7 +356,7 @@ DEBUG := 1
         self.assertEqual(-1, assign_value)
 
     def test_code_variable(self) -> None:
-        program = """
+        program = """*=0x008000
         .macro ram_patch(address, code) {
   .dw start & 0xffff
   .db start >> 16
@@ -376,6 +376,5 @@ ram_patch(0x7E5CFB, {
     .dw credits_text.PT0001
 })"""
 
-        p = Program()
-        writer = StubWriter()
-        p.assemble_string_with_emitter(program, "memory.s", writer)
+        linked = link_source(program)
+        self.assertEqual(linked.exit_code, 0)

@@ -3,13 +3,10 @@ import unittest
 from unittest import skip
 
 from a816.cpu.cpu_65c816 import AddressingMode
-from a816.parse.ast.expression import eval_expression
-from a816.parse.ast.nodes import ExpressionAstNode, Term
 from a816.parse.codegen import code_gen
 from a816.parse.nodes import NodeError
-from a816.parse.tokens import Token, TokenType
 from a816.program import Program
-from tests import StubWriter
+from tests import StubWriter, link_source
 
 
 class EmitTest(unittest.TestCase):
@@ -97,9 +94,6 @@ class EmitTest(unittest.TestCase):
         self.assertEqual(writer.data[0], b"\xc5\x1a\xf0")
 
     def test_ateq_using_map(self) -> None:
-        writer = StubWriter()
-
-        program = Program()
         input_program = """
         .map identifier=1 bank_range=0x00, 0x6f addr_range=0x8000, 0xffff mask=0x8000 mirror_bank_range=0x80, 0xcf
         .map identifier=2 bank_range=0x7e, 0x7f addr_range=0x0000, 0xffff mask=0x10000 writable=0
@@ -109,16 +103,12 @@ class EmitTest(unittest.TestCase):
         label:
         .pointer label
         """
-        program.assemble_string_with_emitter(input_program, "test_at_eq", writer)
+        linked = link_source(input_program)
 
-        self.assertEqual(writer.data[0], b"\x00\x40\x7e")
-        self.assertEqual(writer.data_addresses[0], 0x100000)
+        self.assertEqual(linked.data[0], b"\x00\x40\x7e")
+        self.assertEqual(linked.data_addresses[0], 0x100000)
 
     def test_ateq_bank_boundaries(self) -> None:
-        writer = StubWriter()
-
-        program = Program()
-
         input_program = """
         *=0x008000
         @=0x7effff
@@ -126,47 +116,37 @@ class EmitTest(unittest.TestCase):
         .pointer label
         label2:
         """
-        program.assemble_string_with_emitter(input_program, "test_macro_application", writer)
+        linked = link_source(input_program)
 
-        self.assertEqual(writer.data[0], b"\xff\xff\x7e")
-        self.assertEqual(writer.data_addresses[0], 0x000000)
-        self.assertEqual(program.resolver.current_scope["label2"], 0x7F0002)
+        self.assertEqual(linked.data[0], b"\xff\xff\x7e")
+        self.assertEqual(linked.data_addresses[0], 0x000000)
+        self.assertEqual(linked.symbols["label2"], 0x7F0002)
 
     def test_stareq(self) -> None:
-        writer = StubWriter()
-
-        program = Program()
         input_program = """
         *=0x038000
         label:
         .pointer label
         """
-        program.assemble_string_with_emitter(input_program, "test_macro_application", writer)
+        linked = link_source(input_program)
 
-        self.assertEqual(writer.data_addresses[0], program.get_physical_address(0x038000))
-        self.assertEqual(writer.data[0], b"\x00\x80\x03")
+        self.assertEqual(linked.data_addresses[0], Program().get_physical_address(0x038000))
+        self.assertEqual(linked.data[0], b"\x00\x80\x03")
 
     def test_stareq_bank_boundaries(self) -> None:
-        writer = StubWriter()
-
-        program = Program()
         input_program = """
            *=0x03FFFF
            label:
            .pointer label
            label2:
            """
-        program.assemble_string_with_emitter(input_program, "test_macro_application", writer)
+        linked = link_source(input_program)
 
-        self.assertEqual(writer.data[0], b"\xff\xff\x03")
-        self.assertEqual(writer.data_addresses[0], program.get_physical_address(0x03FFFF))
-        self.assertEqual(program.resolver.current_scope["label2"], 0x048002)
+        self.assertEqual(linked.data[0], b"\xff\xff\x03")
+        self.assertEqual(linked.data_addresses[0], Program().get_physical_address(0x03FFFF))
+        self.assertEqual(linked.symbols["label2"], 0x048002)
 
     def test_symbols_are_globals_in_current_scope(self) -> None:
-        writer = StubWriter()
-
-        program = Program()
-        #        program.resolver.bus
         input_program = """
         *=0x008000
         .macro test(pointer) {
@@ -178,12 +158,11 @@ class EmitTest(unittest.TestCase):
             label:
         }
         """
-        program.assemble_string_with_emitter(input_program, "test_macro_application", writer)
-        expression = ExpressionAstNode([Term(Token(TokenType.IDENTIFIER, "newgame.label"))])
-        self.assertEqual(writer.data_addresses[0], program.get_physical_address(0x008000))
-        self.assertEqual(eval_expression(expression, program.resolver), 0x008004)
-        self.assertEqual(writer.data[0], b"\x04\x80\x00\x00")
-        self.assertEqual(writer.data_addresses[0], 0x000000)
+        linked = link_source(input_program)
+        self.assertEqual(linked.data_addresses[0], Program().get_physical_address(0x008000))
+        self.assertEqual(linked.symbols["newgame.label"], 0x008004)
+        self.assertEqual(linked.data[0], b"\x04\x80\x00\x00")
+        self.assertEqual(linked.data_addresses[0], 0x000000)
 
     def test_eor_dp_sr(self) -> None:
         input_program = """
@@ -304,8 +283,6 @@ class EmitTest(unittest.TestCase):
     def test_clear_flag_implied_opcodes(self) -> None:
         """`cld`, `cli`, `clv` are 1-byte implied instructions matching the
         symmetric set-flag ops (`sed`, `sei`)."""
-        program = Program()
-        writer = StubWriter()
-        program.assemble_string_with_emitter("clc\ncld\ncli\nclv\n", "test_clear_flags", writer)
+        linked = link_source("*=0x008000\nclc\ncld\ncli\nclv\n")
         # clc=0x18, cld=0xD8, cli=0x58, clv=0xB8
-        self.assertEqual(writer.data[0], b"\x18\xd8\x58\xb8")
+        self.assertEqual(linked.data[0], b"\x18\xd8\x58\xb8")

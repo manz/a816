@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import pytest
 
 from a816.cli import build_main
-from a816.cpu.arch import using_arch
 from a816.formatter import A816Formatter
-from a816.module_builder import ARAM_BUS
+from a816.module_builder import build_with_imports
 from a816.parse.ast.expression import eval_constant_expression
-from a816.program import Program
-from a816.writers import AramWriter
 
 
 @pytest.mark.parametrize(
@@ -34,17 +30,12 @@ def test_the_byte_operators_bind_tightest(expression: str, value: int) -> None:
     assert eval_constant_expression(expression) == value
 
 
-def test_an_spc700_immediate_takes_a_byte_of_a_label() -> None:
-    output = io.BytesIO()
-    writer = AramWriter(output)
-    program = Program()
-    program.resolver.context.bus_map = [ARAM_BUS]
-    with using_arch("spc700"):
-        program.assemble_string_with_emitter(
-            ".alloc d at 0x0400 {\ntable:\n    mov a, #<table\n    mov y, #>table\n}\n", "d.spc.s", writer
-        )
-    writer.end()
-    assert output.getvalue() == bytes([0xE8, 0x00, 0x8D, 0x04])
+def test_an_spc700_immediate_takes_a_byte_of_a_label(tmp_path: Path) -> None:
+    source = tmp_path / "d.spc.s"
+    source.write_text(".alloc d at 0x0400 {\ntable:\n    mov a, #<table\n    mov y, #>table\n}\n", encoding="utf-8")
+    output = tmp_path / "d.aram"
+    result = build_with_imports(source, output, output_format="aram", output_dir=tmp_path / "obj", use_a816_toml=False)
+    assert (result.exit_code, output.read_bytes()) == (0, bytes([0xE8, 0x00, 0x8D, 0x04]))
 
 
 def test_the_linker_takes_a_byte_of_an_extern(tmp_path: Path) -> None:

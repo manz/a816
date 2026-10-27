@@ -7,14 +7,13 @@ pins it so the two can't drift apart again.
 
 from __future__ import annotations
 
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _bytes(lo: int, hi: int) -> bytes:
-    writer = StubWriter()
-    Program().assemble_string_with_emitter(f"*= 0x008000\n.for i := {lo}, {hi} {{\n    .db i\n}}\n", "for.s", writer)
-    return b"".join(writer.data)
+    linked = link_source(f"*= 0x008000\n.for i := {lo}, {hi} {{\n    .db i\n}}\n")
+    assert linked.exit_code == 0
+    return b"".join(linked.data)
 
 
 def test_hi_is_excluded() -> None:

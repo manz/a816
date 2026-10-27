@@ -13,8 +13,7 @@ import pytest
 from a816.build_cache import BuildSettings, _sha
 from a816.exceptions import A816Error
 from a816.parse.mzparser import build_date
-from a816.program import Program
-from tests import StubWriter
+from tests import link_source
 
 
 def _settings() -> BuildSettings:
@@ -42,11 +41,11 @@ def test_a_malformed_epoch_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_a_build_defines_the_epoch_date(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOURCE_DATE_EPOCH", "0")
-    program = Program()
+    source = '*=0x008000\n.if BUILD_DATE == "1970-01-01 00:00:00" {\n    .db 1\n} .else {\n    .db 0\n}\n'
 
-    program.assemble_string_with_emitter("*=0x008000\n    rts\n", "date.s", StubWriter())
+    linked = link_source(source)
 
-    assert program.resolver.scopes[0].symbols["BUILD_DATE"] == "1970-01-01 00:00:00"
+    assert (linked.exit_code, linked.data) == (0, [b"\x01"])
 
 
 def test_a_new_epoch_changes_the_cache_key(monkeypatch: pytest.MonkeyPatch) -> None:
