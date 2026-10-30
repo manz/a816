@@ -12,6 +12,9 @@
   it raises `AssemblyError` with the diagnostics. Unplaced code is
   refused (E0310): the source places itself with `.alloc at`. The CLI is
   unchanged.
+- **Breaking:** the deprecated `script` package is gone, as 1.2
+  announced: import from `katsuji.script`. `script.formulas.long_low_rom_pointer`
+  has no alias; `katsuji.script.formulas.long_pointer` takes a bus address.
 - Source strings compile without a file: `Program.compile_source`
   returns the object in memory, and `ModuleBuilder.build(main_text=)`
   builds a project whose entry is a string.
