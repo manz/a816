@@ -25,7 +25,7 @@ path = "hatch_version.py"
 expression = "get_version()"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["a816", "script"]
+only-include = ["a816"]
 sources = ["."]
 
 [project.urls]
@@ -53,7 +53,7 @@ dev = [
 
 [tool.ruff]
 # What `ruff check` and `ruff format` cover, shared by tests:check and tests:format.
-include = ["a816/**/*.py", "script/**/*.py", "tests/**/*.py"]
+include = ["a816/**/*.py", "tests/**/*.py"]
 # Exclude a variety of commonly ignored directories.
 exclude = [
     ".git",
@@ -76,10 +76,7 @@ extend-select = ["I", "B", "UP"]
 
 [tool.coverage.run]
 relative_files = true
-# One root, so `coverage.xml` names every file from the repository root:
-# with `--cov=a816 --cov=script` both `__init__.py` came out as `__init__.py`
-# and SonarCloud couldn't place either (0% on any script/__init__.py change).
-include = ["a816/*", "script/*"]
+include = ["a816/*"]
 
 # Environments
 
@@ -102,7 +99,7 @@ format = [
     "check",
 ]
 
-type = "mypy -p a816 -p script -p tests --strict --show-error-codes"
+type = "mypy -p a816 -p tests --strict --show-error-codes"
 
 all = ["check", "type", "coverage"]
 
