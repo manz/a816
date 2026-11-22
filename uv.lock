@@ -20,7 +20,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "katsuji", specifier = ">=0.5.0,<0.7" },
+    { name = "katsuji", specifier = ">=0.5.0,<0.8" },
     { name = "lsprotocol", specifier = ">=2025.0.0,<2026" },
     { name = "pygls", specifier = ">=2.1.1,<3" },
 ]
